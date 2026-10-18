@@ -2,4 +2,5 @@
 
 pub mod approval;
 pub mod cancel;
+pub mod compact;
 pub mod run_turn;
