@@ -8,5 +8,6 @@ pub mod mcp;
 pub mod plugin;
 pub mod search;
 pub mod shell;
+pub mod sim;
 pub mod store;
 pub mod telemetry;

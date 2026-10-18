@@ -100,6 +100,15 @@ impl HeadlessSink {
                 );
             }
             DomainEvent::ModalUpdated { .. } | DomainEvent::ModalClosed { .. } => {}
+            DomainEvent::SimulationReady { board } => {
+                w.line(
+                    Some(Style::Dim),
+                    &format!(
+                        "board of {} ready (only visible in the window; board.html in its simulation/)",
+                        board.spec
+                    ),
+                );
+            }
             DomainEvent::Notice { level, message } => {
                 let (style, label) = match level {
                     NoticeLevel::Info => (Style::Dim, "info"),

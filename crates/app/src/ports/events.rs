@@ -9,6 +9,7 @@ use domain::conversation::{SessionId, StopReason, TurnId, Usage};
 use domain::modal::{ModalId, ModalSpec};
 use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
+use domain::sysmodel::Board;
 use serde::{Deserialize, Serialize};
 
 use super::approval::ApprovalRequestId;
@@ -148,16 +149,25 @@ pub enum DomainEvent {
         /// The modal.
         id: ModalId,
     },
+    /// A solution was simulated (`:simulate`, `simulate_solution`): the
+    /// window opens its board in a full-size modal.
+    SimulationReady {
+        /// The model and the run of every scenario.
+        board: Box<Board>,
+    },
 }
 
 impl DomainEvent {
-    /// Whether this event is about a plugin modal; those are not part of
-    /// the saved timeline.
+    /// Whether this event is about a modal (a plugin's or a simulation
+    /// board); those are not part of the saved timeline.
     #[must_use]
     pub fn is_modal(&self) -> bool {
         matches!(
             self,
-            Self::ModalOpened { .. } | Self::ModalUpdated { .. } | Self::ModalClosed { .. }
+            Self::ModalOpened { .. }
+                | Self::ModalUpdated { .. }
+                | Self::ModalClosed { .. }
+                | Self::SimulationReady { .. }
         )
     }
 }
