@@ -107,6 +107,10 @@ else
 	$(CARGO) run -p $(PACKAGE) -- --headless "$(PROMPT)" --workspace $(WORKSPACE)
 endif
 
+.PHONY: package
+package: release ## Arma el tarball de release (dist/)
+	$(BASH) $(SCRIPTS)/package.sh
+
 .PHONY: install
 install: release ## Copia target/release/crest a PREFIX/bin (PREFIX=~/.local)
 	mkdir -p "$(PREFIX)/bin"
