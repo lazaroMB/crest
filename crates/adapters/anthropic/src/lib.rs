@@ -6,9 +6,11 @@ pub mod convert;
 pub mod error;
 pub mod request;
 pub mod retry;
+pub mod server_tools;
 pub mod stream;
 pub mod wire;
 
 pub use catalog::AnthropicCatalog;
 pub use client::{AnthropicClient, ApiKey, ClientConfig};
 pub use retry::{AnthropicLlm, RetryPolicy};
+pub use server_tools::{ServerToolConfig, ServerToolOptions};

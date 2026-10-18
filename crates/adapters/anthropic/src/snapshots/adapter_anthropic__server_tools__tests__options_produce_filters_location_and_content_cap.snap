@@ -1,0 +1,32 @@
+---
+source: crates/adapters/anthropic/src/server_tools.rs
+expression: "tools_json(&ServerToolConfig::default(), &options, ModelRole::Explore)"
+---
+[
+  {
+    "type": "web_search_20260318",
+    "name": "web_search",
+    "max_uses": 5,
+    "allowed_domains": [
+      "docs.rs",
+      "rust-lang.org"
+    ],
+    "user_location": {
+      "type": "approximate",
+      "city": "Guadalajara",
+      "country": "MX"
+    }
+  },
+  {
+    "type": "web_fetch_20260318",
+    "name": "web_fetch",
+    "max_uses": 5,
+    "citations": {
+      "enabled": true
+    },
+    "blocked_domains": [
+      "example.com"
+    ],
+    "max_content_tokens": 40000
+  }
+]
