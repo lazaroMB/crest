@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "domain",
+]
+
+[[package]]
 name = "domain"
 version = "0.1.0"

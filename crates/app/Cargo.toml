@@ -1,0 +1,11 @@
+[package]
+name = "application"
+description = "Use cases and port definitions for crest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+domain.workspace = true

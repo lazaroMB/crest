@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/domain",
+    "crates/app",
 ]
 
 [workspace.package]
@@ -14,6 +15,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 domain = { path = "crates/domain" }
+application = { path = "crates/app" }
 
 # Shared external crates
 anyhow = "1.0.104"
