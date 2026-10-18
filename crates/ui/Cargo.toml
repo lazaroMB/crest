@@ -33,6 +33,7 @@ rusty-mermaid.workspace = true
 rusty-mermaid-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }
