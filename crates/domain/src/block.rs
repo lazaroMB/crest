@@ -114,6 +114,15 @@ pub enum BlockKind {
     Diff(DiffSpec),
     /// A Mermaid diagram (tool `show_mermaid`).
     Mermaid(MermaidSpec),
+    /// A markdown document (tool `show_markdown` or a written `.md`), shown
+    /// with document typography and toggleable to source.
+    Markdown {
+        /// Document title, e.g. the file name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// Markdown source.
+        source: String,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -688,5 +697,15 @@ mod tests {
         })));
         assert_eq!(value["type"], "mermaid");
         assert!(value.get("title").is_none());
+    }
+
+    #[test]
+    fn markdown_block_roundtrip() {
+        let value = roundtrip(&Block::new(BlockKind::Markdown {
+            title: Some("spec.md".into()),
+            source: "# Spec".into(),
+        }));
+        assert_eq!(value["type"], "markdown");
+        assert_eq!(value["title"], "spec.md");
     }
 }
