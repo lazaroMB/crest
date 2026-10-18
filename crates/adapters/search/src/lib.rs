@@ -25,7 +25,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use application::ports::search::{
-    ContentSearchPort, DEFAULT_SEARCH_TIMEOUT, GrepRequest, GrepResult, SearchError,
+    ContentSearchPort, DEFAULT_SEARCH_TIMEOUT, FileList, FileSearchPort, FindFileRequest,
+    GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 use async_trait::async_trait;
 use domain::workspace::{SensitivePathRules, WorkspaceRoot};
@@ -116,6 +117,21 @@ impl RipgrepSearch {
 }
 
 #[async_trait]
+impl FileSearchPort for RipgrepSearch {
+    async fn list_files(&self, request: ListFilesRequest) -> Result<FileList, SearchError> {
+        files::list_files(self, request).await
+    }
+
+    async fn find_file(&self, request: FindFileRequest) -> Result<FileList, SearchError> {
+        find::find_file(self, request).await
+    }
+
+    async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
+        files::tree(self, request).await
+    }
+}
+
+#[async_trait]
 impl ContentSearchPort for RipgrepSearch {
     async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
         grep::grep(self, request).await
@@ -136,5 +152,18 @@ mod tests {
         let port: Arc<dyn ContentSearchPort> = Arc::new(ws.search());
         let result = port.grep(GrepRequest::new("needle")).await.unwrap();
         assert_eq!(result.hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn lists_and_finds_through_the_port() {
+        let ws = Workspace::new();
+        ws.write("src/main.rs", "").write(".env", "");
+        let port: Arc<dyn FileSearchPort> = Arc::new(ws.search());
+        let all = port.list_files(ListFilesRequest::default()).await.unwrap();
+        assert_eq!(all.total, 1);
+        let found = port.find_file(FindFileRequest::new("main")).await.unwrap();
+        assert_eq!(found.paths, all.paths);
+        let tree = port.tree(TreeRequest::default()).await.unwrap();
+        assert_eq!(tree.children.len(), 1);
     }
 }
