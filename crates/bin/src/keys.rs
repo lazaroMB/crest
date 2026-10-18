@@ -30,7 +30,7 @@ pub fn keymap(specs: &[KeymapSpec], options: &AppOptions) -> (Keymap<Action>, Ve
             KeyAction::Callback(id) => Action::Callback(id.0),
         };
         if let Err(err) = keymap.set(mode, &spec.lhs, action) {
-            warnings.push(format!("keymap `{}` ignorado: {err}", spec.lhs));
+            warnings.push(format!("keymap `{}` ignored: {err}", spec.lhs));
         }
     }
     (keymap, warnings)
