@@ -202,6 +202,113 @@ pub async fn run(
     })
 }
 
+/// How long the first process of a [`pipe`] may keep running after the
+/// second one finished before it is killed.
+const PIPE_GRACE: Duration = Duration::from_millis(500);
+
+/// Result of a [`pipe`]: the second process's output plus the status and
+/// stderr of the first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipeOutput {
+    /// Output of the second process. `timed_out` covers the whole pipe.
+    pub output: ProcessOutput,
+    /// Exit status of the first process. It may have been killed (or died
+    /// of `SIGPIPE`) because the second one stopped reading early.
+    pub first_status: ExitStatus,
+    /// Everything the first process wrote to stderr.
+    pub first_stderr: Vec<u8>,
+}
+
+/// Runs `first | second` without a shell: the stdout of `first` is
+/// connected directly to the stdin of `second`.
+///
+/// If `second` finishes before `first` (for example because it only takes
+/// the first lines), `first` gets `EPIPE`/`SIGPIPE` on its next write; if it
+/// is still running after a short grace period it is killed, so it never
+/// lingers. On timeout both processes are killed and the partial output is
+/// returned with `timed_out = true`.
+pub async fn pipe(
+    first: &ProcessSpec,
+    second: &ProcessSpec,
+    timeout: Duration,
+) -> Result<PipeOutput, ProcessError> {
+    let mut command = first.command();
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut first_child = first.spawn(command).await?;
+    let link: Stdio = match first_child.stdout.take() {
+        Some(stdout) => stdout.try_into()?,
+        None => Stdio::null(),
+    };
+    let mut command = second.command();
+    command
+        .stdin(link)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // `spawn` consumes `command`, which held our copy of the pipe's read
+    // end: once the second process exits, the first one sees EPIPE.
+    let mut second_child = match second.spawn(command).await {
+        Ok(child) => child,
+        Err(err) => {
+            kill(&mut first_child).await?;
+            return Err(err);
+        }
+    };
+    let mut first_err = first_child.stderr.take();
+    let mut out = second_child.stdout.take();
+    let mut err = second_child.stderr.take();
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut first_stderr = Vec::new();
+    let work = async {
+        let second_then_first = async {
+            let (read_out, read_err) = tokio::join!(
+                read_all(out.as_mut(), &mut stdout),
+                read_all(err.as_mut(), &mut stderr)
+            );
+            read_out?;
+            read_err?;
+            let second_status = second_child.wait().await?;
+            let first_status = match tokio::time::timeout(PIPE_GRACE, first_child.wait()).await {
+                Ok(status) => status?,
+                Err(_) => kill(&mut first_child).await?,
+            };
+            Ok::<_, io::Error>((second_status, first_status))
+        };
+        let (statuses, read_first_err) = tokio::join!(
+            second_then_first,
+            read_all(first_err.as_mut(), &mut first_stderr)
+        );
+        read_first_err?;
+        statuses
+    };
+    let result = tokio::time::timeout(timeout, work).await;
+    let (second_status, first_status, timed_out) = match result {
+        Ok(statuses) => {
+            let (second_status, first_status) = statuses?;
+            (second_status, first_status, false)
+        }
+        Err(_) => {
+            let first_status = kill(&mut first_child).await?;
+            let second_status = kill(&mut second_child).await?;
+            (second_status, first_status, true)
+        }
+    };
+    Ok(PipeOutput {
+        output: ProcessOutput {
+            status: second_status,
+            stdout,
+            stderr,
+            timed_out,
+        },
+        first_status,
+        first_stderr,
+    })
+}
+
 /// Appends everything `reader` yields to `buf`. Reads chunk by chunk so a
 /// cancelled call (on timeout) leaves the bytes read so far in `buf`.
 async fn read_all<R: AsyncRead + Unpin>(
@@ -311,6 +418,69 @@ mod tests {
         let out = run(&spec, None, Duration::from_millis(300)).await.unwrap();
         assert!(out.timed_out);
         assert_eq!(out.stdout, b"partial\n");
+    }
+
+    #[tokio::test]
+    async fn pipe_connects_stdout_to_stdin() {
+        let out = pipe(&spec("printf").arg("b\\na\\n"), &spec("sort"), LONG)
+            .await
+            .unwrap();
+        assert_eq!(out.output.stdout, b"a\nb\n");
+        assert!(out.output.status.success());
+        assert!(out.first_status.success());
+        assert!(!out.output.timed_out);
+    }
+
+    #[tokio::test]
+    async fn pipe_stops_an_endless_first_process() {
+        let start = std::time::Instant::now();
+        let out = pipe(&spec("yes"), &spec("head").args(["-n", "3"]), LONG)
+            .await
+            .unwrap();
+        assert_eq!(out.output.stdout, b"y\ny\ny\n");
+        assert!(out.output.status.success());
+        assert!(!out.output.timed_out);
+        // `yes` dies of SIGPIPE (or is killed): it must not keep running.
+        assert!(!out.first_status.success());
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn pipe_collects_stderr_of_both() {
+        let out = pipe(
+            &spec("cat").arg("/nonexistent/crest-a"),
+            &spec("cat").args(["-", "/nonexistent/crest-b"]),
+            LONG,
+        )
+        .await
+        .unwrap();
+        assert!(String::from_utf8_lossy(&out.first_stderr).contains("crest-a"));
+        assert!(String::from_utf8_lossy(&out.output.stderr).contains("crest-b"));
+        assert!(!out.first_status.success());
+        assert!(!out.output.status.success());
+    }
+
+    #[tokio::test]
+    async fn pipe_times_out() {
+        let start = std::time::Instant::now();
+        let out = pipe(
+            &spec("sleep").arg("5"),
+            &spec("cat"),
+            Duration::from_millis(200),
+        )
+        .await
+        .unwrap();
+        assert!(out.output.timed_out);
+        assert!(!out.first_status.success());
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn pipe_with_missing_second_program_fails() {
+        let err = pipe(&spec("yes"), &spec("crest-no-such-program"), LONG)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProcessError::NotFound { .. }), "{err:?}");
     }
 
     #[tokio::test]
