@@ -95,7 +95,7 @@ impl ResearchNode for Hypotheses {
 
     async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
         if ctx.state().evidence.is_empty() {
-            let to = analysis::back_target(ctx.state(), &[Stage::Data, Stage::Observation]);
+            let to = ctx.first_stage_of(&[Stage::Data, Stage::Observation]);
             return Ok(NodeOutcome::Back {
                 to,
                 reason: "no hay evidencia en la que basar las hipótesis".into(),
@@ -104,7 +104,7 @@ impl ResearchNode for Hypotheses {
         let findings: Vec<Finding> = ctx.data(KEY_FINDINGS).unwrap_or_default();
         let prompt = prompt(ctx.problem(), ctx.state(), &findings, ctx.user_reply());
         let state = ctx.state().clone();
-        let answer: Answer = analysis::ask_json(ctx, SYSTEM, &prompt, |a| check(a, &state)).await?;
+        let answer: Answer = ctx.ask_json(SYSTEM, &prompt, |a| check(a, &state)).await?;
 
         let evidence = apply(ctx.state_mut(), &answer);
         let effect = one_line(&answer.effect);

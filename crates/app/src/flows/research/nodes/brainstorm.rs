@@ -13,7 +13,6 @@ use domain::block::{BlockKind, Cell, Column, TableSpec};
 use domain::research::{EvidenceId, Stage};
 use serde::{Deserialize, Serialize};
 
-use super::define::json;
 use super::research::{OPTIONS_KEY, PriorSolution};
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
@@ -81,10 +80,11 @@ impl ResearchNode for Brainstorm {
         };
         let prompt = prompt(ctx, &prior);
         let state = ctx.state();
-        let answer: Answer = json::ask_json(ctx, SYSTEM, &prompt, |a: &Answer| {
-            validate(a, |ids| state.cites_only_known_evidence(ids).is_ok())
-        })
-        .await?;
+        let answer: Answer = ctx
+            .ask_json(SYSTEM, &prompt, |a: &Answer| {
+                validate(a, |ids| state.cites_only_known_evidence(ids).is_ok())
+            })
+            .await?;
         let ideas = answer.ideas;
         ctx.emit(BlockKind::Table(table(&ideas)))?;
         ctx.set_data(IDEAS_KEY, &ideas)?;

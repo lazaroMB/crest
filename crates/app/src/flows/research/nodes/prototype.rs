@@ -49,7 +49,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, SourceRef, ToolStatus};
-use domain::conversation::{ContentPart, Role, Session, SessionId, ToolUseId, TurnId};
+use domain::conversation::{SessionId, ToolUseId, TurnId};
 use domain::permission::{ActionRequest, Decision as Verdict};
 use domain::research::{Decision, EvidenceId, Stage};
 use serde::{Deserialize, Serialize};
@@ -308,7 +308,7 @@ async fn run_spike(
     decision: &Decision,
     spike: &Spike,
 ) -> Result<Report, NodeError> {
-    let mut session = Session::new(".", ctx.now());
+    let mut session = ctx.new_session();
     let system = SPIKE_PROMPT.replace("{dir}", &spike.path);
     let input = format!(
         "{system}\n\nPedido: {}\nOpción elegida: {}\nPor qué: {}",
@@ -316,54 +316,13 @@ async fn run_spike(
         decision.chosen,
         decision.rationale
     );
-    agent
-        .run_turn(&mut session, input, ctx.turn_options())
-        .await?;
-    let error = match parse_report(&session) {
-        Ok(report) => return Ok(report),
-        Err(error) => error,
-    };
-    agent
-        .run_turn(
-            &mut session,
-            format!("El veredicto no es válido: {error}. Responde SOLO con el JSON pedido."),
-            ctx.turn_options(),
-        )
-        .await?;
-    parse_report(&session)
-        .map_err(|e| NodeError::Failed(format!("el spike no dio un veredicto válido: {e}")))
-}
-
-fn parse_report(session: &Session) -> Result<Report, String> {
-    let text: String = session
-        .turns
-        .last()
-        .and_then(|turn| {
-            turn.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == Role::Assistant)
-        })
-        .map(|message| {
-            message
-                .content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let body = match (text.find('{'), text.rfind('}')) {
-        (Some(start), Some(end)) if start < end => &text[start..=end],
-        _ => text.as_str(),
-    };
-    let report: Report = serde_json::from_str(body).map_err(|e| format!("JSON inválido: {e}"))?;
-    if report.command.trim().is_empty() || report.summary.trim().is_empty() {
-        return Err("faltan el comando o el resumen".into());
-    }
-    Ok(report)
+    ctx.agent_json(agent, &mut session, input, |report: &Report| {
+        if report.command.trim().is_empty() || report.summary.trim().is_empty() {
+            return Err("faltan el comando o el resumen".into());
+        }
+        Ok(())
+    })
+    .await
 }
 
 fn record(

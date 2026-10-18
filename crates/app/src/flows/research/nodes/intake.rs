@@ -5,17 +5,12 @@
 //! a `Text` block. The stage has a gate: an answer other than an approval
 //! reruns the node with it, and the answer is added to the brief before it
 //! is restated again.
-//!
-//! The JSON helpers at the end ([`parse_json`], [`ask_json`]) are shared
-//! with the other discovery nodes.
 
 use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::BlockKind;
-use domain::conversation::{ContentPart, Message};
 use domain::research::Stage;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
@@ -31,8 +26,6 @@ Responde solo con un objeto JSON, sin texto alrededor:
 {\"kind\": \"feature\" | \"bug\" | \"performance\" | \"refactor\", \"restated\": \"…\", \
 \"questions\": [\"…\"]}
 Si no falta nada, `questions` es [].";
-
-const RETRY: &str = "Tu respuesta anterior no es válida";
 
 /// What the user asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,7 +167,7 @@ impl ResearchNode for Intake {
             answers.push(reply.to_owned());
         }
         let prompt = prompt(ctx.problem(), previous.as_ref(), &answers);
-        let answer: Answer = ask_json(ctx, SYSTEM, &prompt, Answer::validate).await?;
+        let answer: Answer = ctx.ask_json(SYSTEM, &prompt, Answer::validate).await?;
         let brief = IntakeBrief {
             kind: answer.kind,
             restated: answer.restated.trim().to_owned(),
@@ -204,74 +197,6 @@ impl ResearchNode for Intake {
     }
 }
 
-/// The JSON object in a model answer: from its first `{` to its last `}`,
-/// so code fences and stray text around it are ignored.
-fn json_body(answer: &str) -> &str {
-    match (answer.find('{'), answer.rfind('}')) {
-        (Some(start), Some(end)) if start < end => &answer[start..=end],
-        _ => answer.trim(),
-    }
-}
-
-/// Parses the JSON object of a model answer.
-///
-/// # Errors
-///
-/// The serde error, as text to send back to the model.
-pub(crate) fn parse_json<T: DeserializeOwned>(answer: &str) -> Result<T, String> {
-    serde_json::from_str(json_body(answer)).map_err(|e| e.to_string())
-}
-
-/// Parses and validates `answer`.
-pub(crate) fn parse_valid<T: DeserializeOwned>(
-    answer: &str,
-    validate: impl Fn(&T) -> Result<(), String>,
-) -> Result<T, String> {
-    let value = parse_json(answer)?;
-    validate(&value)?;
-    Ok(value)
-}
-
-/// The message sent back to the model when its answer is invalid.
-pub(crate) fn retry_message(error: &str) -> String {
-    format!("{RETRY}: {error}. Responde de nuevo solo con el objeto JSON pedido.")
-}
-
-/// The error of a node whose model answered invalid JSON twice.
-pub(crate) fn invalid_answer(error: &str) -> NodeError {
-    NodeError::Failed(format!(
-        "el modelo respondió dos veces un JSON inválido: {error}"
-    ))
-}
-
-/// Asks the stage's model for a JSON object of type `T`, without tools.
-///
-/// An answer that does not parse or `validate` is sent back once with the
-/// error; a second failure is a [`NodeError::Failed`].
-///
-/// # Errors
-///
-/// The model's errors, or the invalid answer.
-pub(crate) async fn ask_json<T: DeserializeOwned>(
-    ctx: &NodeContext,
-    system: &str,
-    prompt: &str,
-    validate: impl Fn(&T) -> Result<(), String>,
-) -> Result<T, NodeError> {
-    let first = ctx.ask(system, prompt).await?;
-    let error = match parse_valid(&first, &validate) {
-        Ok(value) => return Ok(value),
-        Err(error) => error,
-    };
-    let messages = vec![
-        Message::user_text(prompt),
-        Message::assistant(vec![ContentPart::text(first)]),
-        Message::user_text(retry_message(&error)),
-    ];
-    let second = ctx.complete(ctx.request(system, messages)).await?;
-    parse_valid(&second, &validate).map_err(|e| invalid_answer(&e))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -280,6 +205,7 @@ mod tests {
     use domain::research::ResearchState;
 
     use super::*;
+    use crate::flows::research::json::RETRY_PREFIX as RETRY;
     use crate::flows::research::node::NodeDeps;
     use crate::ports::events::DomainEvent;
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};

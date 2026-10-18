@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, SourceRef, TableSpec};
-use domain::conversation::{ContentPart, Role, Session, ToolResultContent};
+use domain::conversation::{ContentPart, Session, ToolResultContent};
 use domain::research::{
     EvidenceId, Hypothesis, HypothesisId, HypothesisStatus, ResearchState, Stage,
 };
@@ -60,9 +60,6 @@ const SCHEMA: &str = r#"Cuando termines, responde solo con este JSON, sin texto 
   ]
 }
 Incluye un experimento por cada hipótesis de la lista."#;
-
-const RETRY: &str =
-    "Tu respuesta final no sirve: {error}. Responde de nuevo solo con el JSON corregido.";
 
 /// What the experiment says about its hypothesis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,29 +170,11 @@ impl ResearchNode for Experiments {
         }
 
         let agent = std::sync::Arc::clone(ctx.agent()?);
-        let mut session = Session::new(".", ctx.now());
+        let mut session = ctx.new_session();
         let input = prompt(ctx.problem(), ctx.state(), &targets, ctx.user_reply());
-        let check = |r: &Report| check(r, &targets);
-        agent
-            .run_turn(&mut session, input, ctx.turn_options())
+        let report: Report = ctx
+            .agent_json(&agent, &mut session, input, |r| check(r, &targets))
             .await?;
-        let report = match analysis::parse_checked(&final_text(&session), &check) {
-            Ok(report) => report,
-            Err(error) => {
-                agent
-                    .run_turn(
-                        &mut session,
-                        RETRY.replace("{error}", &error),
-                        ctx.turn_options(),
-                    )
-                    .await?;
-                analysis::parse_checked(&final_text(&session), &check).map_err(|error| {
-                    NodeError::Failed(format!(
-                        "Experimentos: el agente no devolvió un JSON válido: {error}"
-                    ))
-                })?
-            }
-        };
 
         let runs = command_runs(&session);
         let now = ctx.now();
@@ -276,25 +255,6 @@ fn check(report: &Report, targets: &[Hypothesis]) -> Result<(), String> {
     } else {
         Err(format!("faltan experimentos para {}", missing.join(", ")))
     }
-}
-
-/// Text of the last assistant message of the session.
-fn final_text(session: &Session) -> String {
-    session
-        .turns
-        .iter()
-        .flat_map(|t| &t.messages)
-        .rfind(|m| m.role == Role::Assistant)
-        .map(|m| {
-            m.content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Every `run_command` the agent ran and got a result for.

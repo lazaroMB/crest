@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, SourceRef, TableSpec};
 use domain::conversation::Message;
 use domain::research::{EvidenceId, Stage};
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use super::intake::{BRIEF_KEY, IntakeBrief};
@@ -28,7 +27,7 @@ use super::observation::{
 };
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
-use crate::ports::llm::{Citation, LlmError, MessageAssembler};
+use crate::ports::llm::Citation;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Flow data key of the [`DataReport`].
@@ -265,28 +264,7 @@ fn source_kind(source: &SourceRef) -> &'static str {
 /// returns its answer and citations.
 async fn search_web(ctx: &NodeContext, prompt: &str) -> Result<(String, Vec<Citation>), NodeError> {
     let req = ctx.request(WEB_SYSTEM, vec![Message::user_text(prompt)]);
-    let mut stream = ctx.llm().stream(req).await?;
-    let mut assembler = MessageAssembler::new();
-    while let Some(event) = stream.next().await {
-        assembler
-            .push(event?)
-            .map_err(|e| LlmError::Decode(e.to_string()))?;
-    }
-    let assembled = assembler
-        .finish()
-        .map_err(|e| LlmError::Decode(e.to_string()))?;
-    let text = assembled
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            domain::conversation::ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>()
-        .trim()
-        .to_owned();
-    Ok((text, assembled.citations))
+    ctx.complete_with_citations(req).await
 }
 
 #[async_trait]
@@ -311,7 +289,7 @@ impl ResearchNode for Data {
         };
         let git = has_shell(ctx);
         let mcp: Vec<String> = ctx
-            .agent()?
+            .explore_agent()?
             .tools()
             .names()
             .filter(|name| name.starts_with("mcp__"))
@@ -457,6 +435,8 @@ impl ResearchNode for Data {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use crate::ports::llm::LlmError;
 
     use domain::conversation::{StopReason, Usage};
     use domain::model::{ModelId, ModelRole};

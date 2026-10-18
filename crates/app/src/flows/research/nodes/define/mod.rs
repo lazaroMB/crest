@@ -8,7 +8,6 @@
 //! missing. Without evidence or hypotheses the flow goes back to the
 //! stage that should have produced them.
 
-pub(crate) mod json;
 pub mod measurable;
 
 use std::fmt::Write as _;
@@ -201,7 +200,7 @@ fn context_prompt(ctx: &NodeContext) -> String {
 
 async fn ask_draft(ctx: &NodeContext, prompt: &str) -> Result<Draft, NodeError> {
     let state = ctx.state();
-    json::ask_json(ctx, DRAFT_SYSTEM, prompt, |d: &Draft| {
+    ctx.ask_json(DRAFT_SYSTEM, prompt, |d: &Draft| {
         if d.problems.is_empty() {
             return Err("`problems` está vacío: hace falta al menos una definición".into());
         }
@@ -243,17 +242,18 @@ async fn rejections(ctx: &NodeContext, draft: &Draft) -> Result<Vec<Rejection>, 
         let _ = writeln!(prompt, "{i}. {s}");
     }
     let count = candidates.len();
-    let verdicts: Verdicts = json::ask_json(ctx, JUDGE_SYSTEM, &prompt, |v: &Verdicts| {
-        if (0..count).all(|i| v.verdicts.iter().any(|x| x.index == i)) {
-            Ok(())
-        } else {
-            Err(format!(
-                "falta un veredicto por cada índice de 0 a {}",
-                count - 1
-            ))
-        }
-    })
-    .await?;
+    let verdicts: Verdicts = ctx
+        .ask_json(JUDGE_SYSTEM, &prompt, |v: &Verdicts| {
+            if (0..count).all(|i| v.verdicts.iter().any(|x| x.index == i)) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "falta un veredicto por cada índice de 0 a {}",
+                    count - 1
+                ))
+            }
+        })
+        .await?;
     for (i, statement) in candidates.into_iter().enumerate() {
         let verdict = verdicts.verdicts.iter().find(|v| v.index == i);
         if let Some(v) = verdict.filter(|v| !v.measurable) {

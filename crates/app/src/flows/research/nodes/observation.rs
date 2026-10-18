@@ -10,19 +10,18 @@
 //! Without the brief of Intake there is no problem to observe, so the node
 //! goes back there.
 //!
-//! [`explore_json`] (one agent turn that must end in a JSON object) is
-//! shared with the Data node.
+//! [`explore_json`] (one turn of the read-only agent that must end in a
+//! JSON object) is shared with the Data node.
 
 use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, Column, MermaidSpec, SourceRef, TableSpec};
-use domain::conversation::{ContentPart, Role, Session};
 use domain::research::{EvidenceId, Stage};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use super::intake::{BRIEF_KEY, IntakeBrief, invalid_answer, parse_valid, retry_message};
+use super::intake::{BRIEF_KEY, IntakeBrief};
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
 /// Flow data key of the [`ObservationReport`].
@@ -143,35 +142,9 @@ fn mermaid_source(text: &str) -> String {
         .to_owned()
 }
 
-/// The text of the last assistant message of `session`.
-fn last_answer(session: &Session) -> String {
-    session
-        .turns
-        .last()
-        .and_then(|turn| {
-            turn.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == Role::Assistant)
-        })
-        .map(|m| {
-            m.content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Runs one turn of the agent with `input` and parses its last answer as
-/// a JSON object of type `T`.
-///
-/// An answer that does not parse or `validate` gets a second turn in the
-/// same session with the error; a second failure is a
-/// [`NodeError::Failed`].
+/// Runs one turn of the read-only agent with `input` and parses its last
+/// answer as a JSON object of type `T`, with one retry in the same session
+/// (see [`NodeContext::agent_json`]).
 ///
 /// # Errors
 ///
@@ -182,24 +155,14 @@ pub(crate) async fn explore_json<T: DeserializeOwned>(
     input: &str,
     validate: impl Fn(&T) -> Result<(), String>,
 ) -> Result<T, NodeError> {
-    let agent = ctx.agent()?;
-    let mut session = Session::new(".", ctx.now());
-    agent
-        .run_turn(&mut session, input, ctx.turn_options())
-        .await?;
-    let error = match parse_valid(&last_answer(&session), &validate) {
-        Ok(value) => return Ok(value),
-        Err(error) => error,
-    };
-    agent
-        .run_turn(&mut session, retry_message(&error), ctx.turn_options())
-        .await?;
-    parse_valid(&last_answer(&session), &validate).map_err(|e| invalid_answer(&e))
+    let agent = ctx.explore_agent()?;
+    let mut session = ctx.new_session();
+    ctx.agent_json(agent, &mut session, input, validate).await
 }
 
 /// Whether the agent can run read-only git commands.
 pub(crate) fn has_shell(ctx: &NodeContext) -> bool {
-    ctx.agent()
+    ctx.explore_agent()
         .is_ok_and(|agent| agent.tools().get("run_command").is_some())
 }
 

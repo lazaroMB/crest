@@ -11,9 +11,7 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, SourceRef, TableSpec};
-use domain::conversation::{ContentPart, Message};
 use domain::research::{EvidenceId, ResearchState, Stage};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
@@ -53,8 +51,6 @@ const SCHEMA: &str = r#"Formato de la respuesta:
 }
 "findings" tiene al menos un elemento; "charts" puede estar vacío si no hay números. \
 Cada serie tiene un valor por etiqueta; "pie" lleva una sola serie."#;
-
-const RETRY: &str = "Tu respuesta no sirve: {error}. Responde de nuevo solo con el JSON corregido.";
 
 /// Whether the data backs the idea it is contrasted with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,7 +162,7 @@ impl ResearchNode for Analysis {
 
     async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
         if ctx.state().evidence.is_empty() {
-            let to = back_target(ctx.state(), &[Stage::Data, Stage::Observation]);
+            let to = ctx.first_stage_of(&[Stage::Data, Stage::Observation]);
             return Ok(NodeOutcome::Back {
                 to,
                 reason: "no hay evidencia que analizar; hacen falta datos del proyecto".into(),
@@ -177,7 +173,7 @@ impl ResearchNode for Analysis {
             context_prompt(ctx.problem(), ctx.state(), ctx.user_reply())
         );
         let state = ctx.state().clone();
-        let report: Report = ask_json(ctx, SYSTEM, &prompt, |r| check(r, &state)).await?;
+        let report: Report = ctx.ask_json(SYSTEM, &prompt, |r| check(r, &state)).await?;
 
         ctx.emit(BlockKind::Table(findings_table(&report.findings)))?;
         let mut charts: Vec<ChartSpec> = report
@@ -382,76 +378,6 @@ fn evidence_by_source(state: &ResearchState) -> ChartSpec {
     }
 }
 
-/// The first of `candidates` this flow has been through (it wrote the
-/// journal, or was skipped), else the first one.
-///
-/// Nodes cannot see the stages of the graph, so the journal stands in:
-/// every stage that ran or was skipped left an entry.
-pub(super) fn back_target(state: &ResearchState, candidates: &[Stage]) -> Stage {
-    candidates
-        .iter()
-        .copied()
-        .find(|stage| state.journal.iter().any(|e| e.stage == *stage))
-        .or_else(|| candidates.first().copied())
-        .unwrap_or(Stage::Intake)
-}
-
-/// The JSON object in a model answer: the content of a code fence if
-/// there is one, else from the first `{` to the last `}`.
-pub(super) fn extract_json(answer: &str) -> &str {
-    let fenced = answer.split_once("```").and_then(|(_, rest)| {
-        let rest = rest.strip_prefix("json").unwrap_or(rest);
-        rest.split_once("```").map(|(body, _)| body)
-    });
-    let body = fenced.unwrap_or(answer);
-    match (body.find('{'), body.rfind('}')) {
-        (Some(start), Some(end)) if start < end => &body[start..=end],
-        _ => body.trim(),
-    }
-}
-
-/// Parses `answer` as `T` and checks it.
-pub(super) fn parse_checked<T: DeserializeOwned>(
-    answer: &str,
-    check: &impl Fn(&T) -> Result<(), String>,
-) -> Result<T, String> {
-    let value: T =
-        serde_json::from_str(extract_json(answer)).map_err(|e| format!("JSON inválido: {e}"))?;
-    check(&value)?;
-    Ok(value)
-}
-
-/// Asks the model for JSON, parses it as `T` and checks it; a bad answer
-/// is retried once with the error.
-///
-/// # Errors
-///
-/// The model's errors, or [`NodeError::Failed`] when the retry is bad too.
-pub(super) async fn ask_json<T: DeserializeOwned>(
-    ctx: &NodeContext,
-    system: &str,
-    prompt: &str,
-    check: impl Fn(&T) -> Result<(), String>,
-) -> Result<T, NodeError> {
-    let first = ctx.ask(system, prompt).await?;
-    let error = match parse_checked(&first, &check) {
-        Ok(value) => return Ok(value),
-        Err(error) => error,
-    };
-    let messages = vec![
-        Message::user_text(prompt),
-        Message::assistant(vec![ContentPart::text(first)]),
-        Message::user_text(RETRY.replace("{error}", &error)),
-    ];
-    let second = ctx.complete(ctx.request(system, messages)).await?;
-    parse_checked(&second, &check).map_err(|error| {
-        NodeError::Failed(format!(
-            "{}: el modelo no devolvió un JSON válido: {error}",
-            ctx.stage().name_es()
-        ))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -628,9 +554,12 @@ mod tests {
             }
         ));
 
-        let mut state = ResearchState::default();
-        state.log(1, Stage::Observation, "árbol del repo");
-        let mut ctx = context(&llm, &sink, state);
+        // A graph without Datos goes back to Observación.
+        let stages: Arc<[Stage]> = Stage::ALL
+            .into_iter()
+            .filter(|s| *s != Stage::Data)
+            .collect();
+        let mut ctx = context(&llm, &sink, ResearchState::default()).with_stages(stages);
         let outcome = Analysis::new().run(&mut ctx).await.unwrap();
         assert!(matches!(
             outcome,
@@ -641,12 +570,5 @@ mod tests {
         ));
         assert!(blocks(&sink).is_empty());
         assert_eq!(llm.requests().len(), 0);
-    }
-
-    #[test]
-    fn json_is_found_inside_prose_and_fences() {
-        assert_eq!(extract_json("Aquí va:\n{\"a\": 1}\nlisto"), "{\"a\": 1}");
-        assert_eq!(extract_json("```json\n{\"a\": {}}\n```"), "{\"a\": {}}");
-        assert_eq!(extract_json("nada"), "nada");
     }
 }

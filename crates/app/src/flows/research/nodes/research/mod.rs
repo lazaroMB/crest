@@ -18,14 +18,13 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, Column, SourceRef, TableSpec};
-use domain::conversation::{ContentPart, Message, Role, Session};
+use domain::conversation::Message;
 use domain::research::{EvidenceId, Stage};
-use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
-use super::define::json;
+use crate::flows::research::json::final_text;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
-use crate::ports::llm::{Citation, LlmError, MessageAssembler, ServerTool};
+use crate::ports::llm::ServerTool;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Key of the prior solutions found (`Vec<PriorSolution>`).
@@ -211,31 +210,31 @@ fn brief(ctx: &NodeContext) -> String {
 
 /// Prior solutions already in the repo, from a read-only agent turn.
 async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolution>, NodeError> {
-    let Ok(agent) = ctx.agent().cloned() else {
+    let Ok(agent) = ctx.explore_agent().cloned() else {
         ctx.log("Sin agente con tools: no se exploró el repo.");
         return Ok(Vec::new());
     };
     let prompt = format!("{REPO_PROMPT}\n\n{brief}");
-    let mut session = Session::new(".", ctx.now());
+    let mut session = ctx.new_session();
     agent
         .run_turn(&mut session, prompt.clone(), ctx.turn_options())
         .await?;
     let report = final_text(&session);
-    let answer: RepoAnswer = json::fix_json(
-        ctx,
-        "",
-        vec![Message::user_text(prompt)],
-        report,
-        |a: &RepoAnswer| {
-            a.findings.iter().try_for_each(|f| {
-                if f.name.trim().is_empty() || f.path.trim().is_empty() {
-                    return Err("cada hallazgo necesita `name` y `path`".to_owned());
-                }
-                f.source().validate().map_err(|e| e.to_string())
-            })
-        },
-    )
-    .await?;
+    let answer: RepoAnswer = ctx
+        .fix_json(
+            "",
+            vec![Message::user_text(prompt)],
+            report,
+            |a: &RepoAnswer| {
+                a.findings.iter().try_for_each(|f| {
+                    if f.name.trim().is_empty() || f.path.trim().is_empty() {
+                        return Err("cada hallazgo necesita `name` y `path`".to_owned());
+                    }
+                    f.source().validate().map_err(|e| e.to_string())
+                })
+            },
+        )
+        .await?;
     let now = ctx.now();
     Ok(answer
         .findings
@@ -268,21 +267,22 @@ async fn web_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolu
             max_uses: Some(WEB_FETCHES),
         },
     ];
-    let (text, citations) = complete_with_citations(ctx, req).await?;
+    let (text, citations) = ctx.complete_with_citations(req).await?;
     let now = ctx.now();
     let cited = citations_to_evidence(&citations, ctx.state_mut(), now);
-    let answer: WebAnswer = json::fix_json(ctx, WEB_SYSTEM, messages, text, |a: &WebAnswer| {
-        a.options.iter().try_for_each(|o| {
-            if o.name.trim().is_empty() || o.summary.trim().is_empty() {
-                Err("cada opción necesita `name` y `summary`".to_owned())
-            } else if !o.url.starts_with("http") {
-                Err(format!("la URL de «{}» no es válida: {:?}", o.name, o.url))
-            } else {
-                Ok(())
-            }
+    let answer: WebAnswer = ctx
+        .fix_json(WEB_SYSTEM, messages, text, |a: &WebAnswer| {
+            a.options.iter().try_for_each(|o| {
+                if o.name.trim().is_empty() || o.summary.trim().is_empty() {
+                    Err("cada opción necesita `name` y `summary`".to_owned())
+                } else if !o.url.starts_with("http") {
+                    Err(format!("la URL de «{}» no es válida: {:?}", o.name, o.url))
+                } else {
+                    Ok(())
+                }
+            })
         })
-    })
-    .await?;
+        .await?;
     let mut options = Vec::new();
     for o in answer.options {
         let mut ids: Vec<EvidenceId> = cited
@@ -313,55 +313,6 @@ async fn web_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolu
         });
     }
     Ok(options)
-}
-
-/// Sends `req` and returns its text, trimmed, and its citations.
-async fn complete_with_citations(
-    ctx: &NodeContext,
-    req: crate::ports::llm::LlmRequest,
-) -> Result<(String, Vec<Citation>), NodeError> {
-    let mut stream = ctx.llm().stream(req).await?;
-    let mut assembler = MessageAssembler::new();
-    while let Some(event) = stream.next().await {
-        assembler
-            .push(event?)
-            .map_err(|e| LlmError::Decode(e.to_string()))?;
-    }
-    let assembled = assembler
-        .finish()
-        .map_err(|e| LlmError::Decode(e.to_string()))?;
-    let text = text_of(&assembled.message.content);
-    if text.is_empty() {
-        return Err(NodeError::EmptyAnswer);
-    }
-    Ok((text, assembled.citations))
-}
-
-fn text_of(parts: &[ContentPart]) -> String {
-    parts
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>()
-        .trim()
-        .to_owned()
-}
-
-/// Text of the last assistant message of the session's last turn.
-fn final_text(session: &Session) -> String {
-    session
-        .turns
-        .last()
-        .and_then(|turn| {
-            turn.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == Role::Assistant)
-        })
-        .map(|m| text_of(&m.content))
-        .unwrap_or_default()
 }
 
 fn source_label(source: &SourceRef) -> String {

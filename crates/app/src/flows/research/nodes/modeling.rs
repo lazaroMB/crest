@@ -32,12 +32,12 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, Column, MermaidSpec, TableSpec};
-use domain::conversation::{ContentPart, Message};
 use domain::research::{
     Constraint, ConstraintKind, DecisionId, EvidenceId, Stage, extract_citations,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::flows::research::json::parse_json;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
 /// Flow-data key where the brainstorm (node 9) leaves its options, as a
@@ -247,32 +247,12 @@ async fn ask_validated(
     prompt: &str,
     options: &[IdeaOption],
 ) -> Result<Model, NodeError> {
-    let mut messages = vec![Message::user_text(prompt)];
-    let text = ctx.complete(ctx.request(SYSTEM, messages.clone())).await?;
-    let error = match validate(ctx, &text, options) {
-        Ok(model) => return Ok(model),
-        Err(error) => error,
-    };
-    messages.push(Message::assistant(vec![ContentPart::text(text)]));
-    messages.push(Message::user_text(format!(
-        "La respuesta no es válida: {error}. Responde de nuevo SOLO con el JSON corregido."
-    )));
-    let text = ctx.complete(ctx.request(SYSTEM, messages)).await?;
-    validate(ctx, &text, options)
-        .map_err(|e| NodeError::Failed(format!("el modelo no produjo una matriz válida: {e}")))
-}
-
-/// The JSON object inside `text`, without code fences.
-fn json_body(text: &str) -> &str {
-    match (text.find('{'), text.rfind('}')) {
-        (Some(start), Some(end)) if start < end => &text[start..=end],
-        _ => text,
-    }
+    ctx.ask_parsed(SYSTEM, prompt, |text| validate(ctx, text, options))
+        .await
 }
 
 fn validate(ctx: &NodeContext, text: &str, options: &[IdeaOption]) -> Result<Model, String> {
-    let answer: Answer =
-        serde_json::from_str(json_body(text)).map_err(|e| format!("JSON inválido: {e}"))?;
+    let answer: Answer = parse_json(text)?;
     let titles: BTreeSet<&str> = options.iter().map(|o| o.title.as_str()).collect();
     if answer.criteria.is_empty() {
         return Err("faltan criterios".into());

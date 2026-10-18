@@ -11,6 +11,7 @@ use super::*;
 use crate::flows::research::node::NodeDeps;
 use crate::ports::approval::ApprovalResponse;
 use crate::ports::events::DomainEvent;
+use crate::ports::llm::Citation;
 use crate::ports::llm::{LlmEvent, LlmRequest};
 use crate::testing::fs::InMemoryFs;
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
