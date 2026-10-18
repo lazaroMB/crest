@@ -73,6 +73,9 @@ pub struct ExplorePorts {
     pub shell: Option<Arc<dyn ShellPort>>,
     /// Extra read-only tools (MCP queries registered with a read effect).
     pub extra_tools: Vec<Arc<dyn Tool>>,
+    /// Receives one [`DomainEvent::Activity`] per tool call of the agent
+    /// (see [`ExploreActivity`]); nothing else of its turns.
+    pub activity: Arc<dyn EventSink>,
 }
 
 /// The read tools of `ports` in one registry cut to `budget`.
@@ -109,7 +112,7 @@ pub fn explore_agent(ports: ExplorePorts) -> Result<AgentService, RegisterError>
     let tools = read_only_tools(&ports, ResultBudget::default())?;
     let deps = AgentDeps {
         llm: ports.llm,
-        events: Arc::new(DiscardEvents),
+        events: Arc::new(ExploreActivity::new(Arc::clone(&ports.activity))),
         approval: Arc::new(DenyApprovals),
         telemetry: ports.telemetry,
     };
@@ -135,7 +138,8 @@ pub fn node_agent(
 /// Forwards to `inner` only what the timeline should show of a node's
 /// agent turn: tool call blocks (and diffs or other blocks it adds), their
 /// status, approvals, notices and retries. Text and thinking blocks with
-/// their deltas, usage and the turn framing are dropped.
+/// their deltas, usage and the turn framing are dropped; the start of the
+/// turn becomes an [`DomainEvent::Activity`] line.
 pub struct NodeEvents {
     inner: Arc<dyn EventSink>,
 }
@@ -165,7 +169,8 @@ impl NodeEvents {
             | DomainEvent::ApprovalRequested { .. }
             | DomainEvent::Notice { .. }
             | DomainEvent::Retrying { .. }
-            | DomainEvent::ModelFallback { .. } => true,
+            | DomainEvent::ModelFallback { .. }
+            | DomainEvent::Activity { .. } => true,
             _ => false,
         }
     }
@@ -173,8 +178,48 @@ impl NodeEvents {
 
 impl EventSink for NodeEvents {
     fn emit(&self, event: DomainEvent) {
-        if Self::keeps(&event) {
+        if let DomainEvent::TurnStarted { model, .. } = &event {
+            self.inner.emit(DomainEvent::Activity {
+                message: format!("agent working ({model})"),
+            });
+        } else if Self::keeps(&event) {
             self.inner.emit(event);
+        }
+    }
+}
+
+/// What the timeline sees of the read-only agent: each of its tool calls
+/// as an [`DomainEvent::Activity`] line (`explore · grep "foo"`). Its
+/// blocks, text and turn framing are dropped.
+pub struct ExploreActivity {
+    inner: Arc<dyn EventSink>,
+}
+
+impl std::fmt::Debug for ExploreActivity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExploreActivity").finish_non_exhaustive()
+    }
+}
+
+impl ExploreActivity {
+    /// Sends the activity lines to `inner`.
+    #[must_use]
+    pub fn new(inner: Arc<dyn EventSink>) -> Self {
+        Self { inner }
+    }
+}
+
+impl EventSink for ExploreActivity {
+    fn emit(&self, event: DomainEvent) {
+        if let DomainEvent::BlockAdded { block } = &event
+            && let BlockKind::ToolCall { name, summary, .. } = &block.kind
+        {
+            let message = if summary.is_empty() {
+                format!("explore · {name}")
+            } else {
+                format!("explore · {name} {summary}")
+            };
+            self.inner.emit(DomainEvent::Activity { message });
         }
     }
 }
@@ -223,6 +268,7 @@ mod tests {
             fs,
             shell: Some(Arc::new(ScriptedShell::new())),
             extra_tools: Vec::new(),
+            activity: Arc::new(DiscardEvents),
         }
     }
 
@@ -265,6 +311,11 @@ mod tests {
             kinds.contains(&"tool_status_changed".to_owned()),
             "{kinds:?}"
         );
+        assert_eq!(
+            kinds.first().map(String::as_str),
+            Some("activity"),
+            "{kinds:?}"
+        );
         for event in sink.events() {
             assert!(NodeEvents::keeps(&event), "{event:?}");
             if let DomainEvent::BlockAdded { block } = event {
@@ -274,6 +325,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn the_explore_agent_reports_only_its_tool_calls_as_activity() {
+        use crate::testing::system::RecordingSink;
+        let fs = Arc::new(
+            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/lib.rs", "x\n"),
+        );
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::tool_use("t1", "read_file", json!({ "path": "src/lib.rs" })),
+            ScriptedResponse::text("listo"),
+        ]));
+        let sink = Arc::new(RecordingSink::new());
+        let mut p = ports(llm, fs);
+        p.activity = sink.clone();
+        let agent = explore_agent(p).unwrap();
+        let mut session = Session::new("/ws", 0);
+        agent
+            .run_turn(&mut session, "lee", TurnOptions::new(ModelRole::Main))
+            .await
+            .unwrap();
+        let events = sink.events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let DomainEvent::Activity { message } = &events[0] else {
+            panic!("{events:?}");
+        };
+        assert!(message.starts_with("explore · read_file"), "{message}");
     }
 
     #[tokio::test]

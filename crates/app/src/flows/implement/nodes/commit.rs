@@ -243,6 +243,7 @@ impl ImplementNode for CommitTask {
             None => None,
         };
         let message = commit_message(&task, scope.as_deref());
+        ctx.activity("committing the task");
         match commit_task(ctx.shell().as_ref(), &files, &message).await {
             Ok(CommitOutcome::Committed(hash)) => {
                 let record = ctx.state_mut().record_mut(&task.id);

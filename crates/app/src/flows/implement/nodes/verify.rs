@@ -160,10 +160,12 @@ impl ImplementNode for VerifyPlan {
         };
         let mut results = Vec::new();
         for test in &plan.hypothesis_tests {
+            ctx.activity(format!("running {}", test.reference.trim()));
             let run = run_check(ctx.shell().as_ref(), &test.reference).await;
             results.push(hypothesis_result(test, &run));
         }
         for test in &plan.constraint_tests {
+            ctx.activity(format!("running {}", test.reference.trim()));
             let run = run_check(ctx.shell().as_ref(), &test.reference).await;
             results.push(constraint_result(test, &run));
         }

@@ -125,6 +125,13 @@ pub enum DomainEvent {
         /// Human-readable error.
         error: String,
     },
+    /// What a long piece of work (a flow stage, a sub-agent, a check) is
+    /// doing now, for the activity line. Transient: it is neither a block
+    /// nor saved, and the next one replaces it.
+    Activity {
+        /// Short present-tense description.
+        message: String,
+    },
     /// A message for the status bar.
     Notice {
         /// Severity.
@@ -253,6 +260,9 @@ mod tests {
             DomainEvent::TurnFailed {
                 turn_id: TurnId::new(),
                 error: "boom".into(),
+            },
+            DomainEvent::Activity {
+                message: "data: asking the model".into(),
             },
             DomainEvent::Notice {
                 level: NoticeLevel::Warning,

@@ -355,6 +355,13 @@ impl NodeContext {
         Ok(self.deps.emit(kind)?)
     }
 
+    /// Tells the activity line what the stage is doing now.
+    pub fn activity(&self, message: impl Into<String>) {
+        self.deps.events.emit(DomainEvent::Activity {
+            message: message.into(),
+        });
+    }
+
     /// Shows a status-bar message.
     pub fn notice(&self, level: NoticeLevel, message: impl Into<String>) {
         self.deps.notice(level, message);
@@ -416,9 +423,16 @@ impl NodeContext {
         &self,
         req: LlmRequest,
     ) -> Result<(String, Vec<Citation>), NodeError> {
+        let stage = self.stage.name();
+        self.activity(format!("{stage}: asking {}", req.model.spec.id));
         let mut stream = self.deps.llm.stream(req).await?;
         let mut assembler = MessageAssembler::new();
+        let mut answering = false;
         while let Some(event) = stream.next().await {
+            if !answering {
+                answering = true;
+                self.activity(format!("{stage}: the model is answering"));
+            }
             assembler
                 .push(event?)
                 .map_err(|e| LlmError::Decode(e.to_string()))?;

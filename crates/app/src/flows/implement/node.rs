@@ -307,6 +307,13 @@ impl StepContext {
         self.deps.notice(level, message);
     }
 
+    /// Tells the activity line what the step is doing now.
+    pub fn activity(&self, message: impl Into<String>) {
+        self.deps.events.emit(DomainEvent::Activity {
+            message: message.into(),
+        });
+    }
+
     /// The event sink.
     #[must_use]
     pub fn events(&self) -> &Arc<dyn EventSink> {

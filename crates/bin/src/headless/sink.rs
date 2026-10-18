@@ -65,7 +65,9 @@ impl HeadlessSink {
                 status,
                 output,
             } => print_status(state, w, block_id, status, output.as_deref()),
-            DomainEvent::ApprovalRequested { .. } | DomainEvent::ModeChanged { .. } => {}
+            DomainEvent::ApprovalRequested { .. }
+            | DomainEvent::ModeChanged { .. }
+            | DomainEvent::Activity { .. } => {}
             DomainEvent::UsageUpdated {
                 session, cost_usd, ..
             } => state.usage = Some((session, cost_usd)),

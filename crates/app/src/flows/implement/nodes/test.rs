@@ -121,6 +121,7 @@ impl ImplementNode for TestTask {
             if !fix_first {
                 let mut runs = Vec::with_capacity(task.acceptance.len());
                 for check in &task.acceptance {
+                    ctx.activity(format!("running {}", check.reference.trim()));
                     runs.push(run_check(ctx.shell().as_ref(), &check.reference).await);
                 }
                 Self::show(ctx, &runs)?;

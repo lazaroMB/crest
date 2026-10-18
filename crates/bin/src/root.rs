@@ -544,6 +544,7 @@ pub async fn build_app(
                     fs: Arc::clone(&fs),
                     shell: Some(shell),
                     extra_tools: Vec::new(),
+                    activity: Arc::clone(&events),
                 },
                 workspace: ResearchWorkspace {
                     fs,
