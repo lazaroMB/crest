@@ -1,6 +1,6 @@
 //! Opening a client session with one configured server.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::Stdio;
 
 use application::ports::plugin::{McpServerSpec, McpTransport};
@@ -45,13 +45,7 @@ fn client_config() -> ClientConfig {
 pub(crate) async fn connect(spec: &McpServerSpec) -> Result<Client, String> {
     match &spec.transport {
         McpTransport::Stdio { command, args, env } => {
-            let mut cmd = Command::new(command);
-            cmd.args(args).kill_on_drop(true);
-            for key in SCRUBBED_ENV_VARS {
-                cmd.env_remove(key);
-            }
-            cmd.envs(env);
-            let (transport, stderr) = TokioChildProcess::builder(cmd)
+            let (transport, stderr) = TokioChildProcess::builder(stdio_command(command, args, env))
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|err| format!("cannot start `{command}`: {err}"))?;
@@ -83,10 +77,56 @@ pub(crate) async fn connect(spec: &McpServerSpec) -> Result<Client, String> {
     }
 }
 
+/// The command of a stdio server: the inherited environment minus
+/// [`SCRUBBED_ENV_VARS`], plus the spec's `env` (which may set them back).
+fn stdio_command(command: &str, args: &[String], env: &BTreeMap<String, String>) -> Command {
+    let mut cmd = Command::new(command);
+    cmd.args(args).kill_on_drop(true);
+    for key in SCRUBBED_ENV_VARS {
+        cmd.env_remove(key);
+    }
+    cmd.envs(env);
+    cmd
+}
+
 /// Forwards what a stdio server writes on stderr to the log.
 async fn log_stderr(server: String, stderr: ChildStderr) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         tracing::debug!(target: "crest::mcp", server = %server, "{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::*;
+
+    #[test]
+    fn stdio_servers_lose_api_keys_but_get_their_env() {
+        let env = BTreeMap::from([
+            ("GITHUB_TOKEN".to_owned(), "placeholder".to_owned()),
+            ("OPENAI_API_KEY".to_owned(), "explicit".to_owned()),
+        ]);
+        let cmd = stdio_command("server", &["--flag".to_owned()], &env);
+        let std = cmd.as_std();
+        assert_eq!(std.get_program(), "server");
+        assert_eq!(std.get_args().collect::<Vec<_>>(), ["--flag"]);
+        let envs: BTreeMap<_, _> = std.get_envs().collect();
+        assert_eq!(envs[OsStr::new("ANTHROPIC_API_KEY")], None);
+        assert_eq!(envs[OsStr::new("MISTRAL_API_KEY")], None);
+        assert_eq!(
+            envs[OsStr::new("GITHUB_TOKEN")],
+            Some(OsStr::new("placeholder"))
+        );
+        assert_eq!(
+            envs[OsStr::new("OPENAI_API_KEY")],
+            Some(OsStr::new("explicit"))
+        );
+        assert!(
+            !envs.contains_key(OsStr::new("PATH")),
+            "the rest is inherited"
+        );
     }
 }
