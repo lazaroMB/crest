@@ -28,7 +28,7 @@ pub mod intake;
 pub mod observation;
 
 // T5.5c: Data
-// pub mod data;
+pub mod data;
 
 // T5.5d: Analysis
 // pub mod analysis;
@@ -74,7 +74,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Observation => Some(Arc::new(observation::Observation::new())),
 
         // T5.5c: Some(Arc::new(data::<Type>::new()))
-        Stage::Data => None,
+        Stage::Data => Some(Arc::new(data::Data::new())),
 
         // T5.5d: Some(Arc::new(analysis::<Type>::new()))
         Stage::Analysis => None,
