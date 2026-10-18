@@ -1,0 +1,196 @@
+//! What the frame keeps in the graph-flow `Context` besides the
+//! [`ResearchState`](domain::research::ResearchState): the flow status,
+//! the pending gate and the user's answer to it.
+//!
+//! Every key the frame owns starts with [`RESERVED_PREFIX`]; nodes store
+//! their own data under any other key (see
+//! [`NodeContext::set_data`](super::node::NodeContext::set_data)).
+
+use domain::research::Stage;
+use serde::{Deserialize, Serialize};
+
+/// Prefix of the context keys owned by the frame.
+pub const RESERVED_PREFIX: &str = "research.";
+
+/// Prefix of the graph-flow task ids of the nodes.
+const TASK_PREFIX: &str = "research/";
+
+/// The graph-flow task id of the node of `stage`, e.g. `research/intake`.
+#[must_use]
+pub fn task_id(stage: Stage) -> String {
+    let name = serde_json::to_value(stage)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{stage:?}"));
+    format!("{TASK_PREFIX}{name}")
+}
+
+/// The stage of a graph-flow task id built by [`task_id`].
+#[must_use]
+pub fn stage_of_task(id: &str) -> Option<Stage> {
+    let name = id.strip_prefix(TASK_PREFIX)?;
+    serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
+}
+
+/// Where the flow is, as stored in the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum FlowStatus {
+    /// Between nodes: the next `step` runs `next`.
+    Running {
+        /// Node that runs next.
+        next: Stage,
+    },
+    /// A node stopped at a gate and waits for the user.
+    WaitingForInput {
+        /// Node that waits.
+        stage: Stage,
+        /// What it asks.
+        prompt: String,
+    },
+    /// The last node finished.
+    Completed,
+    /// The user aborted the flow with `/abort`.
+    Aborted,
+}
+
+impl FlowStatus {
+    /// Whether `step` would run a node.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running { .. })
+    }
+}
+
+/// Why a node waits for the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateKind {
+    /// A gated node finished and asks to confirm before going on. An
+    /// approving answer (see [`is_approval`]) moves on; anything else
+    /// runs the node again with the answer as feedback.
+    Confirm,
+    /// The node asked a question ([`NodeOutcome::NeedsInput`]); it runs
+    /// again with the answer.
+    ///
+    /// [`NodeOutcome::NeedsInput`]: super::node::NodeOutcome::NeedsInput
+    Question,
+}
+
+/// A gate waiting for the user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingGate {
+    /// Node that waits.
+    pub stage: Stage,
+    /// Kind of gate.
+    pub kind: GateKind,
+    /// What the user is asked.
+    pub prompt: String,
+}
+
+/// The user's answer to a [`PendingGate`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateReply {
+    /// Node the answer is for.
+    pub stage: Stage,
+    /// What the user wrote.
+    pub text: String,
+}
+
+/// Whether `text` approves a confirmation gate: empty, or a short "yes"
+/// such as `sí`, `ok`, `continuar` or `dale` (case and accents ignored,
+/// trailing punctuation allowed).
+#[must_use]
+pub fn is_approval(text: &str) -> bool {
+    const YES: &[&str] = &[
+        "",
+        "si",
+        "s",
+        "ok",
+        "okay",
+        "vale",
+        "dale",
+        "listo",
+        "sigue",
+        "seguir",
+        "continua",
+        "continuar",
+        "adelante",
+        "de acuerdo",
+        "aprobado",
+        "y",
+        "yes",
+        "go",
+        "lgtm",
+    ];
+    let normalized = normalize(text);
+    let trimmed = normalized.trim_end_matches(['.', '!', ',']).trim();
+    YES.contains(&trimmed)
+}
+
+/// Lowercase, trimmed and without Spanish accents, for lenient matching.
+pub(crate) fn normalize(text: &str) -> String {
+    text.trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'á' | 'à' | 'ä' => 'a',
+            'é' | 'è' | 'ë' => 'e',
+            'í' | 'ì' | 'ï' => 'i',
+            'ó' | 'ò' | 'ö' => 'o',
+            'ú' | 'ù' | 'ü' => 'u',
+            other => other,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_ids_round_trip_for_every_stage() {
+        for stage in Stage::ALL {
+            let id = task_id(stage);
+            assert!(id.starts_with("research/"), "{id}");
+            assert_eq!(stage_of_task(&id), Some(stage));
+        }
+        assert_eq!(task_id(Stage::CriticalReview), "research/critical_review");
+        assert_eq!(stage_of_task("other"), None);
+        assert_eq!(stage_of_task("research/nope"), None);
+    }
+
+    #[test]
+    fn approvals_are_short_yeses() {
+        for yes in [
+            "",
+            "  ",
+            "sí",
+            "Si.",
+            "OK",
+            "dale!",
+            "Continuar",
+            "de acuerdo",
+        ] {
+            assert!(is_approval(yes), "{yes:?}");
+        }
+        for no in [
+            "no",
+            "sí, pero agrega la hipótesis H3",
+            "falta el benchmark",
+        ] {
+            assert!(!is_approval(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn status_round_trips_through_json() {
+        let status = FlowStatus::WaitingForInput {
+            stage: Stage::Hypotheses,
+            prompt: "¿Seguimos?".into(),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["status"], "waiting_for_input");
+        assert_eq!(serde_json::from_value::<FlowStatus>(json).unwrap(), status);
+    }
+}
