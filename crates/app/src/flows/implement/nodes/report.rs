@@ -1,13 +1,21 @@
-//! Step 6, Reporte y futuro: renders `report.md` from the journal and the
-//! results: achievements, failures, deviations from the plan and ideas for
-//! later Specs.
+//! Step 6, Reporte y futuro: writes `report.md` in the Spec folder from
+//! the journal and the results (achievements, failures, deviations from
+//! the plan and ideas for later Specs) and stops at the last gate before
+//! closing the flow.
 
 use std::fmt::Write as _;
 
+use async_trait::async_trait;
+use domain::block::BlockKind;
+use domain::workspace::WorkspacePath;
+
 use super::verify::check_label;
+use crate::flows::implement::gate::{GateChoice, parse_choice};
+use crate::flows::implement::node::{ImplementNode, NodeError, StepContext, StepOutcome};
 use crate::flows::implement::state::{
     EntryKind, ImplementState, JournalEntry, Step, TaskRecord, TaskStatus,
 };
+use crate::ports::fs::WriteFileRequest;
 
 /// Name of the report in the Spec folder.
 pub const REPORT_FILE: &str = "report.md";
@@ -195,13 +203,90 @@ pub fn render_report(state: &ImplementState) -> String {
     out
 }
 
+/// Step 6, Reporte y futuro.
+#[derive(Debug, Default)]
+pub struct WriteReport;
+
+impl WriteReport {
+    /// The step.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
+    async fn write(ctx: &mut StepContext) -> Result<String, NodeError> {
+        let path = format!("{}/{REPORT_FILE}", ctx.state().spec_dir());
+        let workspace_path =
+            WorkspacePath::parse(&path).map_err(|e| NodeError::Failed(e.to_string()))?;
+        let content = render_report(ctx.state());
+        let fs = ctx.fs();
+        let change = fs
+            .prepare_write(WriteFileRequest {
+                path: workspace_path,
+                content: content.clone(),
+            })
+            .await
+            .map_err(|e| NodeError::Failed(format!("cannot write {path}: {e}")))?;
+        fs.apply(change)
+            .await
+            .map_err(|e| NodeError::Failed(format!("cannot write {path}: {e}")))?;
+        ctx.emit(BlockKind::Markdown {
+            title: Some(REPORT_FILE.to_owned()),
+            source: content,
+        })?;
+        ctx.state_mut().report_path = Some(path.clone());
+        Ok(path)
+    }
+}
+
+#[async_trait]
+impl ImplementNode for WriteReport {
+    fn step(&self) -> Step {
+        Step::Report
+    }
+
+    async fn run(&self, ctx: &mut StepContext) -> Result<StepOutcome, NodeError> {
+        let rewrite = match ctx.user_reply().map(parse_choice) {
+            None => true,
+            Some(GateChoice::Continue) => return Ok(StepOutcome::Finish),
+            Some(GateChoice::Abort) => {
+                return Ok(StepOutcome::Abort {
+                    reason: "el usuario no cerró el reporte".to_owned(),
+                });
+            }
+            Some(GateChoice::BackToSpec) => {
+                return Ok(StepOutcome::BackToSpec {
+                    reason: "el usuario pidió volver al Spec tras leer el reporte".to_owned(),
+                });
+            }
+            // Notes for the report (the frame logged the answer).
+            Some(GateChoice::Other(_)) => true,
+            Some(GateChoice::Retry | GateChoice::Skip) => false,
+        };
+        let path = if rewrite {
+            let path = Self::write(ctx).await?;
+            ctx.log(EntryKind::Note, format!("Reporte escrito en {path}."));
+            path
+        } else {
+            ctx.state().report_path.clone().unwrap_or_default()
+        };
+        Ok(StepOutcome::Ask {
+            prompt: format!(
+                "Escribí `{path}`. Responde «sí» para cerrar el flujo, escribe notas para \
+                 agregarlas al reporte, o «volver al spec» si el resultado pide replantear \
+                 el Spec."
+            ),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::plan::TaskId;
     use domain::research::TestKind;
 
     use super::*;
-    use crate::flows::implement::nodes::tests::loaded_state;
+    use crate::flows::implement::nodes::tests::{Harness, loaded_state};
     use crate::flows::implement::state::{CheckResult, CheckSubject};
 
     fn finished_state() -> ImplementState {
@@ -309,5 +394,32 @@ mod tests {
             "{report}"
         );
         assert!(report.contains("ni de restricciones"), "{report}");
+    }
+
+    #[tokio::test]
+    async fn writes_the_report_in_the_spec_folder_and_asks_to_close() {
+        let h = Harness::without_shell([]);
+        let mut ctx = h.ctx(Step::Report, finished_state());
+        let out = WriteReport::new().run(&mut ctx).await.unwrap();
+        let path = ".crest/specs/0007-cache-de-sesiones/report.md";
+        assert!(
+            matches!(&out, StepOutcome::Ask { prompt } if prompt.contains(path)),
+            "{out:?}"
+        );
+        let written = h.fs.file(path).unwrap();
+        assert!(written.starts_with("# Reporte de implementación: 0007-cache-de-sesiones"));
+        assert_eq!(ctx.state().report_path.as_deref(), Some(path));
+
+        let state = ctx.into_state();
+        let mut close = h.ctx(Step::Report, state.clone()).with_reply("sí");
+        assert_eq!(
+            WriteReport::new().run(&mut close).await.unwrap(),
+            StepOutcome::Finish
+        );
+        let mut back = h.ctx(Step::Report, state).with_reply("volver al spec");
+        assert!(matches!(
+            WriteReport::new().run(&mut back).await.unwrap(),
+            StepOutcome::BackToSpec { .. }
+        ));
     }
 }
