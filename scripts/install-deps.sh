@@ -252,6 +252,8 @@ LOCAL_BIN=${CREST_LOCAL_BIN:-$HOME/.local/bin}
 CARGO_BIN=${CARGO_HOME:-$HOME/.cargo}/bin
 ORIG_PATH=$PATH
 MISSING=''        # ids de lo que falta (ver pkg_names)
+SHADOWED_DIRS=''  # directorios añadidos al PATH que el usuario no tiene primero
+SHADOWED_CMDS=''
 VULKAN_DRIVER=0   # 1 si se encontró un ICD de Vulkan
 
 # Los binarios que este script instala en ~/.local/bin o ~/.cargo/bin deben
@@ -277,8 +279,17 @@ check_shadowed() {
     esac
     user_path=$(PATH=$ORIG_PATH && command -v "$cmd" 2>/dev/null)
     if [ "$user_path" != "$path" ]; then
-        report_warn "$cmd" "pon ${path%/*} al principio de tu PATH (hoy resuelve a ${user_path:-nada})"
+        SHADOWED_DIRS=$(list_add "$SHADOWED_DIRS" "${path%/*}")
+        SHADOWED_CMDS=$(list_add "$SHADOWED_CMDS" "$cmd")
     fi
+}
+
+# Un solo aviso por directorio que el PATH del usuario no resuelve primero.
+report_shadowed() {
+    local dir
+    for dir in $SHADOWED_DIRS; do
+        report_warn PATH "pon $dir al principio de tu PATH (usado por: $SHADOWED_CMDS)"
+    done
 }
 
 # check_tool ID CMD ETIQUETA [VERSION_MINIMA]
@@ -326,15 +337,17 @@ check_libs() {
 
 # El driver depende de la GPU y en CI suele no haberla: solo avisa.
 check_vulkan_driver() {
-    local dir f found=''
+    local dir f n=0 first=''
     for dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/local/share/vulkan/icd.d; do
         for f in "$dir"/*.json; do
-            [ -e "$f" ] && found="${found:+$found, }${f##*/}"
+            [ -e "$f" ] || continue
+            n=$((n + 1))
+            [ -n "$first" ] || first=${f##*/}
         done
     done
-    if [ -n "$found" ]; then
+    if [ "$n" -gt 0 ]; then
         VULKAN_DRIVER=1
-        report_ok "driver Vulkan" "$found"
+        report_ok "driver Vulkan" "$n ICD ($first$([ "$n" -gt 1 ] && printf ', ...'))"
     else
         VULKAN_DRIVER=0
         report_warn "driver Vulkan" "no hay ICD en .../vulkan/icd.d; instala el driver de tu GPU (mesa o nvidia)"
@@ -430,6 +443,8 @@ EOF
 
 run_checks() {
     MISSING=''
+    SHADOWED_DIRS=''
+    SHADOWED_CMDS=''
     info "Verificando dependencias"
     if [ "$PLATFORM" = macos ]; then
         check_macos
@@ -461,6 +476,7 @@ run_checks() {
         check_cargo_sub cargo-insta insta
         check_cargo_sub cargo-nextest nextest
     fi
+    report_shadowed
 }
 
 # --- paquetes por gestor ----------------------------------------------------
