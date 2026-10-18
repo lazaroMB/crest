@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "crest"
+path = "src/lib.rs"
+
 [[bin]]
 name = "crest"
 path = "src/main.rs"
@@ -23,6 +27,7 @@ adapter-lua.workspace = true
 adapter-mcp.workspace = true
 adapter-telemetry.workspace = true
 ui.workspace = true
+clap.workspace = true
 
 [lints]
 workspace = true
