@@ -198,6 +198,11 @@ impl InputView {
         &self.command
     }
 
+    /// The keymap in use.
+    pub fn keymap(&self) -> &Keymap<Action> {
+        self.sequencer.keymap()
+    }
+
     /// The sequencer, e.g. to change `timeoutlen` or add mappings.
     pub fn sequencer_mut(&mut self) -> &mut KeySequencer<Action> {
         &mut self.sequencer
