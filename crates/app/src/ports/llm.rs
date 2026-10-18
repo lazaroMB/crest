@@ -424,6 +424,27 @@ pub trait LlmPort: Send + Sync {
     }
 }
 
+/// A model offered by the provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Id to use in requests.
+    pub id: ModelId,
+    /// Human-readable name.
+    pub display_name: String,
+    /// Release date as reported by the provider (RFC 3339), if any.
+    pub created_at: Option<String>,
+}
+
+/// Lists the models the provider offers, to validate the role
+/// configuration at startup (`ModelPolicy::validate_against`).
+///
+/// Cancellation: drop the future.
+#[async_trait]
+pub trait ModelCatalogPort: Send + Sync {
+    /// Every available model, following pagination to the end.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError>;
+}
+
 /// Error turning an event stream into a message: the stream broke the
 /// protocol described in [`LlmEvent`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1066,5 +1087,25 @@ mod tests {
         let out = asm.interrupt();
         assert_eq!(out.message.content, vec![ContentPart::text("voy a buscar")]);
         assert_eq!(out.stop_reason, StopReason::Interrupted);
+    }
+
+    struct OneModel;
+
+    #[async_trait]
+    impl ModelCatalogPort for OneModel {
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+            Ok(vec![ModelInfo {
+                id: ModelId::new("claude-haiku-5-5"),
+                display_name: "Claude Haiku 5.5".into(),
+                created_at: None,
+            }])
+        }
+    }
+
+    #[tokio::test]
+    async fn model_catalog_is_object_safe() {
+        let port: std::sync::Arc<dyn ModelCatalogPort> = std::sync::Arc::new(OneModel);
+        let models = port.list_models().await.unwrap();
+        assert_eq!(models[0].id, ModelId::new("claude-haiku-5-5"));
     }
 }
