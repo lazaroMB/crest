@@ -32,6 +32,11 @@ pub struct Args {
     /// En headless, aprueba todas las acciones sin preguntar.
     #[arg(long, requires = "headless")]
     pub yes: bool,
+
+    /// Confía en el servidor MCP NAME del `.crest/init.lua` del workspace y
+    /// lo arranca; se recuerda para este workspace. Repetible.
+    #[arg(long = "trust-mcp", value_name = "NAME")]
+    pub trust_mcp: Vec<String>,
 }
 
 impl Args {
@@ -90,6 +95,13 @@ mod tests {
         assert_eq!(args.model.as_deref(), Some("opus"));
         assert_eq!(args.mode, Some(PermissionMode::AutoEdit));
         assert!(args.yes);
+    }
+
+    #[test]
+    fn trust_mcp_can_repeat() {
+        assert!(parse(&[]).unwrap().trust_mcp.is_empty());
+        let args = parse(&["--trust-mcp", "git", "--trust-mcp", "docs"]).unwrap();
+        assert_eq!(args.trust_mcp, ["git", "docs"]);
     }
 
     #[test]
