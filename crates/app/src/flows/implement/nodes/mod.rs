@@ -1,6 +1,7 @@
 //! The steps after Cargar plan, one file each, and what they share: the
 //! agent turn restricted to the task ([`run_agent`]) and skipping a task.
 
+pub mod commit;
 pub mod implement;
 pub mod test;
 
