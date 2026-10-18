@@ -9,11 +9,20 @@
 //!
 //! Each server has either `command` (a child process speaking over stdio,
 //! with optional `args` and `env`) or `url` (streamable HTTP, with optional
-//! `headers`).
+//! `headers`). Both take:
+//!
+//! - `effect`: what calling its tools does, for the permission policy:
+//!   `"read"`, `"write"`, `"execute"` (the default, so every call asks like
+//!   a command) or `"network"`;
+//! - `timeout`: limit for one tool call, in seconds.
+//!
+//! Server names become part of tool names (`mcp__<server>__<tool>`), so
+//! they may only have letters, digits, `-` and single `_`.
 
 use std::collections::BTreeMap;
 
 use application::ports::plugin::{McpServerSpec, McpTransport};
+use domain::permission::ToolEffect;
 use serde_json::{Map, Value};
 
 fn as_map(value: &Value) -> Option<&Map<String, Value>> {
@@ -62,12 +71,81 @@ fn string_map(value: &Value, what: &str, problems: &mut Vec<String>) -> BTreeMap
     out
 }
 
+/// Fields a server definition may have.
+const FIELDS: &[&str] = &[
+    "command", "args", "env", "url", "headers", "effect", "timeout",
+];
+
+/// Why `name` cannot name a server, if it cannot. Tools are offered as
+/// `mcp__<server>__<tool>`, so `__` would make the name ambiguous.
+fn invalid_name(name: &str) -> Option<String> {
+    let valid_chars = name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    (name.is_empty() || !valid_chars || name.contains("__")).then(|| {
+        format!("invalid MCP server name `{name}` (use letters, digits, `-` and single `_`)")
+    })
+}
+
+/// A non-empty string field; `Ok(None)` when absent.
+fn text<'a>(def: &'a Value, key: &str, what: &str) -> Result<Option<&'a str>, String> {
+    match def.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(Some(s)),
+        Some(_) => Err(format!("{what}.{key} must be a non-empty string")),
+    }
+}
+
+fn effect(value: &Value, what: &str) -> Result<ToolEffect, String> {
+    match value.as_str() {
+        Some("read") => Ok(ToolEffect::Read),
+        Some("write") => Ok(ToolEffect::Write),
+        Some("execute") => Ok(ToolEffect::Execute),
+        Some("network") => Ok(ToolEffect::Network),
+        _ => Err(format!(
+            "{what}.effect: unknown effect {value} (use \"read\", \"write\", \"execute\" or \"network\")"
+        )),
+    }
+}
+
+/// `timeout` in seconds, as milliseconds.
+fn timeout_ms(value: &Value, what: &str) -> Result<u64, String> {
+    match value.as_f64() {
+        Some(secs) if secs > 0.0 && secs.is_finite() => {
+            // Saturates for absurd values, which is what we want.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let ms = (secs * 1000.0).ceil() as u64;
+            Ok(ms)
+        }
+        _ => Err(format!(
+            "{what}.timeout must be a positive number of seconds, got {value}"
+        )),
+    }
+}
+
 /// Reads the definition of server `name`. Problems go to `problems`; a
-/// definition that cannot be used gives `None`.
+/// definition that cannot be used gives `None`, a bad optional field is
+/// dropped with its problem.
 pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Option<McpServerSpec> {
     let what = format!("app.mcp.{name}");
-    let command = def.get("command").and_then(Value::as_str);
-    let url = def.get("url").and_then(Value::as_str);
+    if let Some(problem) = invalid_name(name) {
+        problems.push(problem);
+        return None;
+    }
+    let Some(fields) = def.as_object() else {
+        problems.push(format!("{what} must be a table with `command` or `url`"));
+        return None;
+    };
+    for key in fields.keys().filter(|k| !FIELDS.contains(&k.as_str())) {
+        problems.push(format!("{what}: unknown field `{key}`"));
+    }
+    let (command, url) = match (text(def, "command", &what), text(def, "url", &what)) {
+        (Ok(command), Ok(url)) => (command, url),
+        (Err(e), _) | (_, Err(e)) => {
+            problems.push(e);
+            return None;
+        }
+    };
     let transport = match (command, url) {
         (Some(command), None) => McpTransport::Stdio {
             command: command.to_owned(),
@@ -80,19 +158,42 @@ pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Opt
                 .map(|e| string_map(e, &format!("{what}.env"), problems))
                 .unwrap_or_default(),
         },
-        (None, Some(url)) => McpTransport::Http {
-            url: url.to_owned(),
-            headers: def
-                .get("headers")
-                .map(|h| string_map(h, &format!("{what}.headers"), problems))
-                .unwrap_or_default(),
-        },
-        _ => {
+        (None, Some(url)) => {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                problems.push(format!("{what}.url must start with http:// or https://"));
+                return None;
+            }
+            McpTransport::Http {
+                url: url.to_owned(),
+                headers: def
+                    .get("headers")
+                    .map(|h| string_map(h, &format!("{what}.headers"), problems))
+                    .unwrap_or_default(),
+            }
+        }
+        (Some(_), Some(_)) => {
+            problems.push(format!("{what} cannot have both `command` and `url`"));
+            return None;
+        }
+        (None, None) => {
             problems.push(format!("{what} needs either `command` or `url`"));
             return None;
         }
     };
-    Some(McpServerSpec::new(name, transport))
+    let mut spec = McpServerSpec::new(name, transport);
+    if let Some(value) = def.get("effect") {
+        match effect(value, &what) {
+            Ok(effect) => spec.effect = effect,
+            Err(e) => problems.push(e),
+        }
+    }
+    if let Some(value) = def.get("timeout") {
+        match timeout_ms(value, &what) {
+            Ok(ms) => spec.timeout_ms = Some(ms),
+            Err(e) => problems.push(e),
+        }
+    }
+    Some(spec)
 }
 
 /// Reads the table form, `app.mcp = { <name> = <definition>, ... }`.
@@ -106,4 +207,76 @@ pub(crate) fn servers(value: &Value, problems: &mut Vec<String>) -> Vec<McpServe
     map.iter()
         .filter_map(|(name, def)| server(name, def, problems))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn read(name: &str, def: Value) -> (Option<McpServerSpec>, Vec<String>) {
+        let mut problems = Vec::new();
+        let spec = server(name, &def, &mut problems);
+        (spec, problems)
+    }
+
+    #[test]
+    fn reads_effect_and_timeout() {
+        let (spec, problems) = read(
+            "echo",
+            json!({ "command": "echo-server", "effect": "read", "timeout": 2.5 }),
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        let spec = spec.unwrap();
+        assert_eq!(spec.effect, ToolEffect::Read);
+        assert_eq!(spec.timeout_ms, Some(2500));
+    }
+
+    #[test]
+    fn defaults_to_execute_without_timeout() {
+        let (spec, _) = read("docs", json!({ "url": "https://example.test/mcp" }));
+        let spec = spec.unwrap();
+        assert_eq!(spec.effect, ToolEffect::Execute);
+        assert_eq!(spec.timeout_ms, None);
+    }
+
+    #[test]
+    fn rejects_unusable_definitions() {
+        for (name, def, needle) in [
+            ("a__b", json!({ "command": "x" }), "invalid MCP server name"),
+            ("a b", json!({ "command": "x" }), "invalid MCP server name"),
+            ("", json!({ "command": "x" }), "invalid MCP server name"),
+            (
+                "both",
+                json!({ "command": "x", "url": "https://h" }),
+                "both",
+            ),
+            ("none", json!({ "args": [] }), "either"),
+            ("num", json!({ "command": 3 }), "non-empty string"),
+            ("blank", json!({ "command": " " }), "non-empty string"),
+            ("ftp", json!({ "url": "ftp://h" }), "http://"),
+            ("str", json!("mcp-git"), "must be a table"),
+        ] {
+            let (spec, problems) = read(name, def);
+            assert!(spec.is_none(), "{name}");
+            assert!(
+                problems.iter().any(|p| p.contains(needle)),
+                "{name}: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bad_optional_fields_are_dropped_with_a_problem() {
+        let (spec, problems) = read(
+            "echo",
+            json!({ "command": "x", "effect": "maybe", "timeout": -1, "cwd": "/" }),
+        );
+        let spec = spec.unwrap();
+        assert_eq!(spec.effect, ToolEffect::Execute);
+        assert_eq!(spec.timeout_ms, None);
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems.iter().any(|p| p.contains("unknown field `cwd`")));
+    }
 }
