@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Export the spans to Langfuse (LANGFUSE_* variables).
+langfuse = ["adapter-telemetry/langfuse"]
+
 [lib]
 name = "crest"
 path = "src/lib.rs"

@@ -7,3 +7,4 @@ pub mod args;
 pub mod headless;
 pub mod root;
 pub mod startup;
+pub mod telemetry;
