@@ -57,7 +57,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T2.I2 | integrada | T2.I1 | `domain/src/plan.rs` |
 | T3.1 ★ | integrada | T2.A3, T2.B4, T2.C5, T2.D3, T2.D4 | `crates/bin/` |
 | T3.2 | integrada | T2.A1, T2.C5, T2.C4, T2.D3 | `application/src/tools/files.rs` |
-| T3.3 ★ | en curso | T3.1, T2.H2, T2.H3 | `ui/src/session.rs` |
+| T3.3 ★ | integrada | T3.1, T2.H2, T2.H3 | `ui/src/session.rs` |
 | T3.4 | integrada | T2.H2, T2.A3 | `ui/src/blocks/diff.rs`, `ui/src/approval.rs` |
 | T3.5 | integrada | T2.H1, T2.C3 | `ui/src/tree.rs` |
 | T3.6 | integrada | T2.H1, T2.C5, T2.C4 | `ui/src/picker.rs` |
@@ -67,34 +67,34 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T3.10 | integrada | T2.H2 | `ui/src/blocks/mermaid.rs` |
 | T3.11 | integrada | T2.H2 | `ui/src/blocks/markdown.rs` |
 | T3.12 | integrada | T2.H2 | `ui/src/blocks/thinking.rs` |
-| T4.1 | pendiente | T2.F3, T3.3 | `adapters/lua/src/api/keymap.rs` |
+| T4.1 | integrada | T2.F3, T3.3 | `adapters/lua/src/api/keymap.rs` |
 | T4.2 | integrada | T2.F3, T2.A1 | `api/tools.rs` |
 | T4.3 | integrada | T2.F3, T2.A3 | `api/hooks.rs` |
 | T4.4 | integrada | T2.F1, T2.H2 | `api/ui.rs`, `ui/src/blocks/custom.rs` |
-| T4.5 | pendiente | T2.F3, T3.3 | `crates/bin/` |
-| T4.6 | pendiente | T2.E2, T3.3 | `application/src/usecases/resume.rs` |
+| T4.5 | integrada | T2.F3, T3.3 | `crates/bin/` |
+| T4.6 | integrada | T2.E2, T3.3 | `application/src/usecases/resume.rs` |
 | T4.7 | integrada | T2.A2, T1.3 | `application/src/usecases/compact.rs` |
 | T4.8 | integrada | T2.B2, T2.H4 | `application/src/cost.rs`, `ui/src/status.rs` |
 | T5.1 ★ | integrada | T2.E1 | `adapters/store/src/graphflow.rs` |
 | T5.2 | integrada | T2.B2 | `adapters/anthropic/src/server_tools.rs` |
-| T5.3 ★ | pendiente | T2.I1, T3.3, T5.1 | `application/src/flows/research/mod.rs` |
+| T5.3 ★ | integrada | T2.I1, T3.3, T5.1 | `application/src/flows/research/mod.rs` |
 | T5.4 | integrada | T2.H2, T1.2 | `ui/src/blocks/` |
-| T5.5a–f | pendiente | T5.3 (Datos también T5.2) | `flows/research/nodes/<nodo>.rs` |
-| T5.6 | pendiente | T5.3 | `nodes/define.rs` |
-| T5.7a–d | pendiente | T5.3 (Investigación también T5.2) | `nodes/<nodo>.rs` |
-| T5.8 ★ | pendiente | T5.3, T2.I2 | `nodes/spec.rs`, `nodes/plan.rs` |
-| T5.9 ★ | pendiente | T5.8 | `nodes/review.rs` |
+| T5.5a–f | integrada | T5.3 (Datos también T5.2) | `flows/research/nodes/<nodo>.rs` |
+| T5.6 | integrada | T5.3 | `nodes/define.rs` |
+| T5.7a–d | en curso | T5.3 (Investigación también T5.2) | `nodes/<nodo>.rs` |
+| T5.8 ★ | integrada | T5.3, T2.I2 | `nodes/spec.rs`, `nodes/plan.rs` |
+| T5.9 ★ | en curso | T5.8 | `nodes/review.rs` |
 | T5.10 ★ | pendiente | T5.4–T5.9 | `flows/research/graph.rs` |
-| T6.1 ★ | pendiente | T2.I2, T5.3 | `application/src/flows/implement/load.rs` |
-| T6.2 ★ | pendiente | T6.1 | `nodes/implement.rs` |
-| T6.3 ★ | pendiente | T6.2 | `nodes/test.rs` |
-| T6.4 | pendiente | T6.2 | `nodes/commit.rs` |
-| T6.5 | pendiente | T6.1, T3.8 | `nodes/verify.rs` |
-| T6.6 | pendiente | T6.5 | `nodes/report.rs` |
+| T6.1 ★ | en curso | T2.I2, T5.3 | `application/src/flows/implement/load.rs` |
+| T6.2 ★ | en curso | T6.1 | `nodes/implement.rs` |
+| T6.3 ★ | en curso | T6.2 | `nodes/test.rs` |
+| T6.4 | en curso | T6.2 | `nodes/commit.rs` |
+| T6.5 | en curso | T6.1, T3.8 | `nodes/verify.rs` |
+| T6.6 | en curso | T6.5 | `nodes/report.rs` |
 | T6.7 ★ | pendiente | T6.3–T6.6, T5.10 | `flows/implement/graph.rs` |
 | T7.1 | integrada | T1.6a, T2.A1 | `adapters/mcp/` |
-| T7.2 | en curso | T7.1, T2.F3 | `adapters/lua/src/api/mcp.rs` |
+| T7.2 | integrada | T7.1, T2.F3 | `adapters/lua/src/api/mcp.rs` |
 | T7.3 | integrada | T2.A2 | `application/src/tools/task.rs` |
-| T7.4 | pendiente | T0.5, T3.3 | `.github/workflows/release.yml` |
+| T7.4 | integrada | T0.5, T3.3 | `.github/workflows/release.yml` |
 
 Nota del orquestador: los carriles de la ola 2 cuyas tareas comparten crate y archivos (A1–A5, C2–C5, E1–E2…) se ejecutan en serie dentro de una sola rama por carril, con un commit `Task: <id>` por tarea, para evitar conflictos en `lib.rs`/`Cargo.toml` del crate.
