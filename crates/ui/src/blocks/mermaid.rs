@@ -10,6 +10,7 @@
 
 pub mod diagram;
 pub mod paint;
+pub mod wrap;
 
 use std::cell::Cell;
 use std::rc::Rc;

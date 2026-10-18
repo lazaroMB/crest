@@ -11,6 +11,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use super::wrap;
 use gpui::Rgba;
 use rusty_mermaid_core::{
     Color, FontWeight, MarkerPath, MarkerType, PathSegment, Point, Primitive, Style, TextAnchor,
@@ -126,7 +127,8 @@ pub struct Diagram {
 /// understands, when it panics, or when the result is empty.
 pub fn parse(source: &str, dark: bool) -> Result<Diagram, String> {
     let theme = if dark { Theme::dark() } else { Theme::light() };
-    let scene = catch_unwind(AssertUnwindSafe(|| rusty_mermaid::render(source, &theme)))
+    let source = wrap::wrap_labels(source, wrap::LABEL_COLUMNS);
+    let scene = catch_unwind(AssertUnwindSafe(|| rusty_mermaid::render(&source, &theme)))
         .map_err(|_| "the Mermaid parser crashed on this input".to_owned())?
         .map_err(|err| format!("cannot parse the diagram: {err}"))?;
     let mut flattener = Flattener {
@@ -150,6 +152,36 @@ pub fn parse(source: &str, dark: bool) -> Result<Diagram, String> {
         background: rgba(theme.background, 1.0),
         shapes: flattener.shapes,
     })
+}
+
+/// Label text as rusty-mermaid measured it: `<br>` (any case and form)
+/// is a line break and other HTML tags (`<b>`, `</i>`...) are dropped. A
+/// `<` that does not start a tag stays.
+fn strip_tags(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let is_tag = tail[1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '/');
+        match tail.find('>').filter(|_| is_tag) {
+            Some(end) => {
+                if wrap::find_br(&tail[..=end]) == Some((0, end + 1)) {
+                    out.push('\n');
+                }
+                rest = &tail[end + 1..];
+            }
+            None => {
+                out.push('<');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Source text safe to show: control characters other than newlines and
@@ -447,10 +479,7 @@ impl Flattener<'_> {
         anchor: TextAnchor,
         style: &TextStyle,
     ) {
-        let content = content
-            .replace("<br/>", "\n")
-            .replace("<br />", "\n")
-            .replace("<br>", "\n");
+        let content = strip_tags(content);
         let lines: Vec<String> = content.lines().map(printable).collect();
         if lines.iter().all(|line| line.trim().is_empty()) {
             return;
@@ -685,6 +714,39 @@ mod tests {
         for input in ["", "   \n", "not a diagram", garbage.as_str()] {
             assert!(parse(input, true).is_err(), "{input:?} should not parse");
         }
+    }
+
+    #[test]
+    fn long_labels_wrap_into_narrower_nodes() {
+        let long = "Validate the user input and check every permission";
+        let source = format!("flowchart LR\n  A[{long}]\n");
+        let diagram = parse(&source, true).unwrap_or_else(|err| panic!("{err}"));
+        let label = diagram
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Text(label) => Some(label.clone()),
+                Shape::Path { .. } => None,
+            })
+            .unwrap_or_else(|| panic!("no label"));
+        assert_eq!(label.lines.len(), 3, "{:?}", label.lines);
+        assert_eq!(label.lines.join(" "), long);
+        let theme = Theme::dark();
+        let unwrapped =
+            rusty_mermaid::render(&source, &theme).unwrap_or_else(|err| panic!("{err}"));
+        assert!(
+            diagram.width < unwrapped.width as f32 / 1.5,
+            "{} vs {}",
+            diagram.width,
+            unwrapped.width
+        );
+    }
+
+    #[test]
+    fn tags_are_stripped_and_breaks_kept_in_any_case() {
+        assert_eq!(strip_tags("a<BR>b<br />c<b>d</b>"), "a\nb\ncd");
+        assert_eq!(strip_tags("x < y <3"), "x < y <3");
+        assert_eq!(strip_tags("unclosed <b"), "unclosed <b");
     }
 
     #[test]
