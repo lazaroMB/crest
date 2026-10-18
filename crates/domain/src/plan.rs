@@ -621,7 +621,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// The `plan.json` example of `docs/flujos.md`, verbatim.
+    /// The `plan.json` example of `docs/workflows.md`, verbatim.
     pub(super) const PLAN_EXAMPLE: &str = r#"{
   "spec": "0007-cache-de-sesiones",
   "tasks": [
