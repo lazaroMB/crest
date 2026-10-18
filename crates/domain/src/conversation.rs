@@ -621,7 +621,7 @@ mod tests {
         ));
         turn.messages
             .push(Message::assistant(vec![ContentPart::text(
-                "está en src/main.rs",
+                "it is in src/main.rs",
             )]));
         turn.usage = usage(100, 20, 50, 10);
         turn.stop_reason = Some(StopReason::EndTurn);

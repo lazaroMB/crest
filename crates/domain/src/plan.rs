@@ -152,7 +152,7 @@ pub struct ConstraintTest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
-    /// Folder name of the Spec, e.g. `0007-cache-de-sesiones`.
+    /// Folder name of the Spec, e.g. `0007-session-cache`.
     pub spec: String,
     /// Tasks, in the order they were written.
     pub tasks: Vec<Task>,
@@ -489,23 +489,23 @@ impl Plan {
             .topological_order()
             .unwrap_or_else(|_| self.tasks.iter().collect());
         let mut out = format!(
-            "# Plan: {}\n\n<!-- Generado desde plan.json; no editar a mano. -->\n\n",
+            "# Plan: {}\n\n<!-- Generated from plan.json; do not edit by hand. -->\n\n",
             one_line(&self.spec)
         );
         let mermaid = self.to_mermaid();
         let fence = "`".repeat(longest_tick_run(&mermaid).max(2) + 1);
         out.push_str(&format!(
-            "## Dependencias\n\n{fence}mermaid\n{mermaid}{fence}\n\n"
+            "## Dependencies\n\n{fence}mermaid\n{mermaid}{fence}\n\n"
         ));
-        out.push_str("## Tareas\n");
+        out.push_str("## Tasks\n");
         for task in tasks {
             push_task(&mut out, task);
         }
-        out.push_str("\n## Pruebas de hipótesis\n\n");
+        out.push_str("\n## Hypothesis tests\n\n");
         if self.hypothesis_tests.is_empty() {
-            out.push_str("Ninguna.\n");
+            out.push_str("None.\n");
         } else {
-            out.push_str("| Tipo | Comando | Esperado |\n| --- | --- | --- |\n");
+            out.push_str("| Kind | Command | Expected |\n| --- | --- | --- |\n");
             for test in &self.hypothesis_tests {
                 out.push_str(&format!(
                     "| {} | {} | {} |\n",
@@ -515,11 +515,11 @@ impl Plan {
                 ));
             }
         }
-        out.push_str("\n## Pruebas de restricciones\n\n");
+        out.push_str("\n## Constraint tests\n\n");
         if self.constraint_tests.is_empty() {
-            out.push_str("Ninguna.\n");
+            out.push_str("None.\n");
         } else {
-            out.push_str("| Restricción | Tipo | Comando |\n| --- | --- | --- |\n");
+            out.push_str("| Constraint | Kind | Command |\n| --- | --- | --- |\n");
             for test in &self.constraint_tests {
                 out.push_str(&format!(
                     "| {} | {} | {} |\n",
@@ -545,7 +545,7 @@ fn push_task(out: &mut String, task: &Task) {
         out.push_str("\n\n");
     }
     let deps = if task.depends_on.is_empty() {
-        "ninguna".to_owned()
+        "none".to_owned()
     } else {
         task.depends_on
             .iter()
@@ -553,16 +553,16 @@ fn push_task(out: &mut String, task: &Task) {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    out.push_str(&format!("- **Depende de**: {}\n", one_line(&deps)));
-    out.push_str(&format!("- **Rol**: `{}`\n", task.role));
-    out.push_str(&format!("- **Riesgo**: {}\n", risk_name(task.risk)));
-    out.push_str("- **Archivos**:\n");
+    out.push_str(&format!("- **Depends on**: {}\n", one_line(&deps)));
+    out.push_str(&format!("- **Role**: `{}`\n", task.role));
+    out.push_str(&format!("- **Risk**: {}\n", risk_name(task.risk)));
+    out.push_str("- **Files**:\n");
     for file in &task.files {
         out.push_str(&format!("  - {}\n", code(file)));
     }
-    out.push_str("- **Aceptación**:");
+    out.push_str("- **Acceptance**:");
     if task.acceptance.is_empty() {
-        out.push_str(" ninguna\n");
+        out.push_str(" none\n");
     } else {
         out.push('\n');
         for test in &task.acceptance {
@@ -577,9 +577,9 @@ fn push_task(out: &mut String, task: &Task) {
 
 const fn risk_name(risk: Risk) -> &'static str {
     match risk {
-        Risk::Low => "bajo",
-        Risk::Medium => "medio",
-        Risk::High => "alto",
+        Risk::Low => "low",
+        Risk::Medium => "medium",
+        Risk::High => "high",
     }
 }
 
@@ -623,11 +623,11 @@ mod tests {
 
     /// The `plan.json` example of `docs/workflows.md`, verbatim.
     pub(super) const PLAN_EXAMPLE: &str = r#"{
-  "spec": "0007-cache-de-sesiones",
+  "spec": "0007-session-cache",
   "tasks": [
     {
       "id": "T1",
-      "title": "Agregar SessionCache al puerto de storage",
+      "title": "Add SessionCache to the storage port",
       "description": "...",
       "depends_on": [],
       "files": ["crates/app/src/ports/store.rs"],
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn the_documented_example_parses_and_roundtrips() {
         let plan: Plan = serde_json::from_str(PLAN_EXAMPLE).unwrap();
-        assert_eq!(plan.spec, "0007-cache-de-sesiones");
+        assert_eq!(plan.spec, "0007-session-cache");
         let task = &plan.tasks[0];
         assert_eq!(task.id, TaskId::new("T1"));
         assert_eq!(task.role, ModelRole::Main);
@@ -698,7 +698,7 @@ mod tests {
     fn task(id: &str, deps: &[&str]) -> Task {
         Task {
             id: TaskId::new(id),
-            title: format!("Tarea {id}"),
+            title: format!("Task {id}"),
             description: String::new(),
             depends_on: deps.iter().copied().map(TaskId::new).collect(),
             files: vec![format!("src/{id}.rs")],
@@ -854,14 +854,14 @@ mod tests {
     #[test]
     fn mermaid_draws_one_edge_per_known_dependency() {
         let mut t3 = task("T3", &["T1", "T2", "T1", "T9"]);
-        t3.title = "Usa \"cache\" <rápido>\nya".into();
+        t3.title = "Use \"cache\" <fast>\nnow".into();
         let p = plan(vec![task("T1", &[]), task("T2", &["T1"]), t3]);
         assert_eq!(
             p.to_mermaid(),
             "flowchart TD\n\
-             \x20   t1[\"T1: Tarea T1\"]\n\
-             \x20   t2[\"T2: Tarea T2\"]\n\
-             \x20   t3[\"T3: Usa #quot;cache#quot; #lt;rápido#gt; ya\"]\n\
+             \x20   t1[\"T1: Task T1\"]\n\
+             \x20   t2[\"T2: Task T2\"]\n\
+             \x20   t3[\"T3: Use #quot;cache#quot; #lt;fast#gt; now\"]\n\
              \x20   t1 --> t2\n\
              \x20   t1 --> t3\n\
              \x20   t2 --> t3\n"
@@ -877,8 +877,8 @@ mod tests {
     #[test]
     fn markdown_follows_dependency_order_and_escapes() {
         let mut t1 = task("T1", &["T2"]);
-        t1.title = "Usa la | tabla".into();
-        t1.description = "Línea uno.\n\nLínea dos.".into();
+        t1.title = "Use the | table".into();
+        t1.description = "Line one.\n\nLine two.".into();
         t1.risk = Risk::High;
         t1.role = ModelRole::Plan;
         t1.acceptance = vec![TestRef {

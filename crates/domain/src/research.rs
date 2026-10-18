@@ -228,6 +228,18 @@ impl Phase {
 
     /// Name shown to the user.
     #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Discovery => "Discovery",
+            Self::Definition => "Definition",
+            Self::SolutionSearch => "Solution search",
+            Self::Specification => "Specification",
+        }
+    }
+
+    /// Spanish name, kept so older inputs that name the phase in Spanish
+    /// still parse.
+    #[must_use]
     pub const fn name_es(self) -> &'static str {
         match self {
             Self::Discovery => "Descubrimiento",
@@ -338,6 +350,28 @@ impl Stage {
     }
 
     /// Name shown to the user (e.g. in the `StageHeader` block).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Intake => "Intake",
+            Self::Observation => "Observation",
+            Self::Data => "Data",
+            Self::Analysis => "Analysis",
+            Self::Hypotheses => "Hypotheses",
+            Self::Experiments => "Experiments",
+            Self::Definition => "Definition and constraints",
+            Self::Research => "Research",
+            Self::Brainstorm => "Brainstorm",
+            Self::Modeling => "Modeling",
+            Self::Prototype => "Prototype",
+            Self::Spec => "Spec",
+            Self::Plan => "Plan",
+            Self::CriticalReview => "Critical review",
+        }
+    }
+
+    /// Spanish name, kept as an alias so commands such as `/back hipotesis`
+    /// still parse.
     #[must_use]
     pub const fn name_es(self) -> &'static str {
         match self {
@@ -854,6 +888,8 @@ mod tests {
         assert_eq!(Stage::Data.default_role(), ModelRole::Explore);
         assert_eq!(Stage::CriticalReview.default_role(), ModelRole::Plan);
         assert_eq!(Stage::ALL.iter().filter(|s| s.has_gate()).count(), 5);
+        assert_eq!(Stage::Definition.name(), "Definition and constraints");
+        assert_eq!(Phase::SolutionSearch.name(), "Solution search");
         assert_eq!(Stage::Definition.name_es(), "Definición y restricciones");
         assert_eq!(Phase::SolutionSearch.name_es(), "Búsqueda de soluciones");
     }
@@ -874,7 +910,7 @@ mod tests {
     fn records_have_a_stable_wire_shape() {
         let evidence = Evidence {
             id: EvidenceId(3),
-            claim: "p95 sube a 500 ms con 500 rps".into(),
+            claim: "p95 rises to 500 ms at 500 rps".into(),
             source: SourceRef::Command {
                 command: "make bench".into(),
                 output_excerpt: "p95=500ms".into(),
@@ -885,7 +921,7 @@ mod tests {
             serde_json::to_value(&evidence).unwrap(),
             json!({
                 "id": "E3",
-                "claim": "p95 sube a 500 ms con 500 rps",
+                "claim": "p95 rises to 500 ms at 500 rps",
                 "source": {"type": "command", "command": "make bench", "output_excerpt": "p95=500ms"},
                 "collected_at": 1_700_000_000_000_u64
             })
@@ -893,7 +929,7 @@ mod tests {
         let constraint = Constraint {
             id: ConstraintId(2),
             kind: ConstraintKind::Compatibility,
-            statement: "funciona sin red".into(),
+            statement: "works offline".into(),
             test: Some(TestRef {
                 kind: TestKind::Test,
                 reference: "cargo test -p store offline".into(),
@@ -904,7 +940,7 @@ mod tests {
             json!({
                 "id": "C2",
                 "kind": "compatibility",
-                "statement": "funciona sin red",
+                "statement": "works offline",
                 "test": {"kind": "test", "ref": "cargo test -p store offline"}
             })
         );
@@ -948,7 +984,7 @@ mod tests {
         );
         let decision = state.add_decision("x", vec!["y".into()], "r", vec![EvidenceId(2)]);
         assert_eq!(decision, DecisionId(1));
-        state.log(3, Stage::Modeling, "eligió x");
+        state.log(3, Stage::Modeling, "chose x");
         assert_eq!(state.journal.len(), 1);
         assert_eq!(state.evidence(EvidenceId(2)).unwrap().claim, "b");
     }
@@ -998,22 +1034,22 @@ mod tests {
 
     #[test]
     fn citations_are_extracted_in_first_cited_order() {
-        let text = "La latencia sube [E3] con la carga [E1, E4].\n\nOtra vez [E3] y [ E2 ].";
+        let text = "Latency rises [E3] with load [E1, E4].\n\nAgain [E3] and [ E2 ].";
         assert_eq!(ids(text), ["E3", "E1", "E4", "E2"]);
     }
 
     #[test]
     fn non_citation_brackets_are_ignored() {
-        let text = "[docs](https://x) [E1 y E2] [E0] [H1] [E1, docs] [] [[E5]] - [x] tarea [E6";
+        let text = "[docs](https://x) [E1 and E2] [E0] [H1] [E1, docs] [] [[E5]] - [x] task [E6";
         assert_eq!(ids(text), ["E5"]);
     }
 
     #[test]
     fn citations_inside_code_are_ignored() {
-        let text = "Antes [E1] y `arr[E2]` y ``x `[E3]` y``.\n\
+        let text = "Before [E1] and `arr[E2]` and ``x `[E3]` and``.\n\
                     ```rust\nlet a = v[E4];\n```\n\
                     ~~~~\n```\n[E5]\n~~~~\n\
-                    Después [E6] y `sin cerrar [E7]";
+                    Then [E6] and `unclosed [E7]";
         assert_eq!(ids(text), ["E1", "E6", "E7"]);
     }
 
@@ -1021,7 +1057,7 @@ mod tests {
     fn citations_feed_the_known_evidence_check() {
         let mut state = ResearchState::default();
         state.add_evidence("a", url("https://a"), 1);
-        let cited = extract_citations("Sí [E1]; no [E2].");
+        let cited = extract_citations("Yes [E1]; no [E2].");
         assert_eq!(
             state.cites_only_known_evidence(&cited),
             Err(vec![EvidenceId(2)])

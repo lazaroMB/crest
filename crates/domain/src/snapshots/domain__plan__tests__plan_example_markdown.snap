@@ -2,39 +2,39 @@
 source: crates/domain/src/plan.rs
 expression: plan.to_markdown()
 ---
-# Plan: 0007-cache-de-sesiones
+# Plan: 0007-session-cache
 
-<!-- Generado desde plan.json; no editar a mano. -->
+<!-- Generated from plan.json; do not edit by hand. -->
 
-## Dependencias
+## Dependencies
 
 ```mermaid
 flowchart TD
-    t1["T1: Agregar SessionCache al puerto de storage"]
+    t1["T1: Add SessionCache to the storage port"]
 ```
 
-## Tareas
+## Tasks
 
-### T1. Agregar SessionCache al puerto de storage
+### T1. Add SessionCache to the storage port
 
 ...
 
-- **Depende de**: ninguna
-- **Rol**: `main`
-- **Riesgo**: bajo
-- **Archivos**:
+- **Depends on**: none
+- **Role**: `main`
+- **Risk**: low
+- **Files**:
   - `crates/app/src/ports/store.rs`
-- **Aceptación**:
+- **Acceptance**:
   - test: `cargo test -p app session_cache`
 
-## Pruebas de hipótesis
+## Hypothesis tests
 
-| Tipo | Comando | Esperado |
+| Kind | Command | Expected |
 | --- | --- | --- |
 | command | `make bench-sessions` | p95 < 20ms |
 
-## Pruebas de restricciones
+## Constraint tests
 
-| Restricción | Tipo | Comando |
+| Constraint | Kind | Command |
 | --- | --- | --- |
 | C2 | test | `cargo test -p store offline` |

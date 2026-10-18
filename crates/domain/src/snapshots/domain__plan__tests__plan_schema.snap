@@ -9,7 +9,7 @@ expression: "schemars::schema_for!(Plan)"
   "type": "object",
   "properties": {
     "spec": {
-      "description": "Folder name of the Spec, e.g. `0007-cache-de-sesiones`.",
+      "description": "Folder name of the Spec, e.g. `0007-session-cache`.",
       "type": "string"
     },
     "tasks": {

@@ -4,48 +4,48 @@ expression: p.to_markdown()
 ---
 # Plan: 0001-demo
 
-<!-- Generado desde plan.json; no editar a mano. -->
+<!-- Generated from plan.json; do not edit by hand. -->
 
-## Dependencias
+## Dependencies
 
 ```mermaid
 flowchart TD
-    t1["T1: Usa la | tabla"]
-    t2["T2: Tarea T2"]
+    t1["T1: Use the | table"]
+    t2["T2: Task T2"]
     t2 --> t1
 ```
 
-## Tareas
+## Tasks
 
-### T2. Tarea T2
+### T2. Task T2
 
-- **Depende de**: ninguna
-- **Rol**: `main`
-- **Riesgo**: bajo
-- **Archivos**:
+- **Depends on**: none
+- **Role**: `main`
+- **Risk**: low
+- **Files**:
   - `src/T2.rs`
-- **Aceptación**: ninguna
+- **Acceptance**: none
 
-### T1. Usa la | tabla
+### T1. Use the | table
 
-Línea uno.
+Line one.
 
-Línea dos.
+Line two.
 
-- **Depende de**: T2
-- **Rol**: `plan`
-- **Riesgo**: alto
-- **Archivos**:
+- **Depends on**: T2
+- **Role**: `plan`
+- **Risk**: high
+- **Files**:
   - `src/T1.rs`
-- **Aceptación**:
+- **Acceptance**:
   - command: `` echo `x` ``
 
-## Pruebas de hipótesis
+## Hypothesis tests
 
-Ninguna.
+None.
 
-## Pruebas de restricciones
+## Constraint tests
 
-| Restricción | Tipo | Comando |
+| Constraint | Kind | Command |
 | --- | --- | --- |
 | C1 | test | `cargo test a\|b` |
