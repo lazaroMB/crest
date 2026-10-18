@@ -123,6 +123,46 @@ impl WorkspaceGuard {
         Ok((path, target))
     }
 
+    /// Fails with [`FsError::SensitivePath`] when `path` matches one of the
+    /// sensitive-path rules (any component, so `.git/config` is denied by
+    /// `.git/`).
+    pub fn check_readable(&self, path: &WorkspacePath) -> Result<(), FsError> {
+        match self.rules.matching_pattern(path) {
+            Some(pattern) => Err(FsError::SensitivePath {
+                path: path.clone(),
+                pattern: pattern.to_owned(),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// [`Self::resolve_existing`] followed by [`Self::check_readable`] on
+    /// both the requested path and the symlink-resolved one, so an innocent
+    /// name linking to `.env` is denied too.
+    pub async fn resolve_readable(&self, input: &str) -> Result<(WorkspacePath, PathBuf), FsError> {
+        let (path, canonical) = self.resolve_existing(input).await?;
+        self.check_readable(&path)?;
+        if let Some(real) = self.relative(&canonical)
+            && real != path
+            && let Some(pattern) = self.rules.matching_pattern(&real)
+        {
+            return Err(FsError::SensitivePath {
+                path,
+                pattern: pattern.to_owned(),
+            });
+        }
+        Ok((path, canonical))
+    }
+
+    /// The workspace-relative form of a canonical path inside the root.
+    fn relative(&self, canonical: &Path) -> Option<WorkspacePath> {
+        let rest = canonical.strip_prefix(self.root.as_path()).ok()?;
+        if rest.as_os_str().is_empty() {
+            return Some(WorkspacePath::root());
+        }
+        WorkspacePath::parse(&rest.to_string_lossy()).ok()
+    }
+
     /// Fails with [`PathError::OutsideWorkspace`] unless `canonical` is the
     /// root or below it. [`Path::starts_with`] compares whole components,
     /// so `/ws-other` is not inside `/ws`.
@@ -433,5 +473,69 @@ mod tests {
             f.guard.resolve_existing("inside").await,
             Err(FsError::NotFound { .. })
         ));
+    }
+
+    fn sensitive(result: Result<impl std::fmt::Debug, FsError>) -> Option<String> {
+        match result {
+            Err(FsError::SensitivePath { pattern, .. }) => Some(pattern),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn readable_denies_default_sensitive_paths() {
+        let f = fixture();
+        std::fs::write(f.ws.join(".env"), "KEY=x").unwrap();
+        std::fs::write(f.ws.join(".env.local"), "KEY=x").unwrap();
+        std::fs::create_dir(f.ws.join(".git")).unwrap();
+        std::fs::write(f.ws.join(".git/config"), "").unwrap();
+        std::fs::write(f.ws.join("cert.pem"), "").unwrap();
+
+        let guard = &f.guard;
+        assert_eq!(
+            sensitive(guard.resolve_readable(".env").await).as_deref(),
+            Some(".env*")
+        );
+        assert_eq!(
+            sensitive(guard.resolve_readable(".env.local").await).as_deref(),
+            Some(".env*")
+        );
+        assert_eq!(
+            sensitive(guard.resolve_readable(".git/config").await).as_deref(),
+            Some(".git/")
+        );
+        assert_eq!(
+            sensitive(guard.resolve_readable("cert.pem").await).as_deref(),
+            Some("*.pem")
+        );
+    }
+
+    #[tokio::test]
+    async fn readable_denies_symlink_to_sensitive_file() {
+        let f = fixture();
+        std::fs::write(f.ws.join(".env"), "KEY=x").unwrap();
+        symlink(".env", f.ws.join("innocent.txt")).unwrap();
+        assert_eq!(
+            sensitive(f.guard.resolve_readable("innocent.txt").await).as_deref(),
+            Some(".env*")
+        );
+    }
+
+    #[tokio::test]
+    async fn readable_allows_normal_files_and_custom_rules() {
+        let f = fixture();
+        std::fs::write(f.ws.join(".env"), "KEY=x").unwrap();
+        std::fs::write(f.ws.join("notes.md"), "n").unwrap();
+        assert!(f.guard.resolve_readable("notes.md").await.is_ok());
+
+        let guard = f
+            .guard
+            .clone()
+            .with_sensitive_rules(SensitivePathRules::new(["*.md"]).unwrap());
+        assert!(guard.resolve_readable(".env").await.is_ok());
+        assert_eq!(
+            sensitive(guard.resolve_readable("notes.md").await).as_deref(),
+            Some("*.md")
+        );
     }
 }
