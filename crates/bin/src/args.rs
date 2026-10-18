@@ -39,6 +39,17 @@ pub struct Args {
     #[arg(long, value_name = "PROBLEM", requires = "headless")]
     pub research: Option<String>,
 
+    /// In headless mode, simulates the solution of a Spec (its folder, its
+    /// number or its path): prints the verdict of every scenario and the
+    /// path of its `board.html`; exits with 0 only when all of them pass.
+    #[arg(
+        long,
+        value_name = "SPEC",
+        requires = "headless",
+        conflicts_with_all = ["implement", "research"]
+    )]
+    pub simulate: Option<String>,
+
     /// Model for the turn: alias (`opus`), role (`plan`) or full id.
     #[arg(long, value_name = "ALIAS|ID")]
     pub model: Option<String>,
@@ -82,6 +93,8 @@ pub enum HeadlessRun<'a> {
     Implement(&'a str),
     /// The research flow of the problem (`resume`: the pending one).
     Research(&'a str),
+    /// The simulation of the Spec named by the target.
+    Simulate(&'a str),
 }
 
 impl Args {
@@ -93,20 +106,27 @@ impl Args {
     /// or both.
     pub fn headless_run(&self) -> Option<Result<HeadlessRun<'_>, &'static str>> {
         let prompt = self.headless.as_deref()?;
-        let flow = match (self.implement.as_deref(), self.research.as_deref()) {
-            (Some(target), _) => Some(HeadlessRun::Implement(target)),
-            (None, Some(problem)) => Some(HeadlessRun::Research(problem)),
-            (None, None) => None,
+        let flow = match (
+            self.implement.as_deref(),
+            self.research.as_deref(),
+            self.simulate.as_deref(),
+        ) {
+            (Some(target), _, _) => Some(HeadlessRun::Implement(target)),
+            (None, Some(problem), _) => Some(HeadlessRun::Research(problem)),
+            (None, None, Some(spec)) => Some(HeadlessRun::Simulate(spec)),
+            (None, None, None) => None,
         };
         Some(match (prompt.trim().is_empty(), flow) {
             (false, None) => Ok(HeadlessRun::Prompt(prompt)),
             (true, Some(flow)) => Ok(flow),
-            (true, None) => {
-                Err("--headless needs a prompt, --implement <path> or --research <problem>")
-            }
-            (false, Some(_)) => {
-                Err("--headless takes a prompt or a flow (--implement, --research), not both")
-            }
+            (true, None) => Err(
+                "--headless needs a prompt, --implement <path>, --research <problem> or \
+                     --simulate <spec>",
+            ),
+            (false, Some(_)) => Err(
+                "--headless takes a prompt or a flow (--implement, --research, --simulate), \
+                     not both",
+            ),
         })
     }
 
@@ -125,6 +145,16 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Args, clap::Error> {
         Args::try_parse_from(std::iter::once("crest").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn simulate_runs_headless_alone() {
+        let args = parse(&["--headless", "--simulate", "0003"]).unwrap();
+        assert_eq!(args.headless_run(), Some(Ok(HeadlessRun::Simulate("0003"))));
+        assert!(parse(&["--simulate", "0003"]).is_err(), "needs --headless");
+        assert!(parse(&["--headless", "--simulate", "1", "--research", "x"]).is_err());
+        let both = parse(&["--headless", "hola", "--simulate", "1"]).unwrap();
+        assert!(both.headless_run().unwrap().is_err());
     }
 
     #[test]
