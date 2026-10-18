@@ -41,12 +41,18 @@
 //! flow.handle_line("sí").await?;
 //! ```
 //!
+//! [`implement_graph`](graph::implement_graph) chains exactly these six
+//! steps, and [`ImplementSession`](graph::ImplementSession) opens (or
+//! resumes) the flow of one plan, as `:implement` does.
+//!
 //! # Modules
 //!
 //! - [`builder`]: chains steps into an [`ImplementGraph`](builder::ImplementGraph).
 //! - [`checks`]: running the plan's checks through the shell.
 //! - [`flow`]: [`ImplementFlow`](flow::ImplementFlow), one session of the graph.
 //! - [`gate`]: the answers every gate accepts.
+//! - [`graph`]: the six steps assembled ([`implement_graph`](graph::implement_graph))
+//!   and [`ImplementSession`](graph::ImplementSession), one implementation of a Spec.
 //! - [`load`]: reading, validating and ordering `plan.json`; the branch.
 //! - [`measure`]: expected against obtained in check outputs.
 //! - [`node`]: the step contract ([`ImplementNode`](node::ImplementNode)).
@@ -62,6 +68,7 @@ pub mod checks;
 pub mod fake;
 pub mod flow;
 pub mod gate;
+pub mod graph;
 pub mod load;
 pub mod measure;
 pub mod node;

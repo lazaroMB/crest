@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use domain::block::{Block, BlockId, BlockKind};
 use domain::conversation::{ContentPart, Role, Session};
 use domain::model::ModelPolicy;
+use domain::workspace::WorkspaceRoot;
 
 use super::state::{EntryKind, ImplementState, Step};
 pub use crate::flows::research::node::NodeError;
@@ -170,6 +171,10 @@ impl ImplementDeps {
 
     pub(crate) fn now(&self) -> u64 {
         (self.clock)()
+    }
+
+    pub(crate) fn root(&self) -> &WorkspaceRoot {
+        self.fs.root()
     }
 
     pub(crate) fn emit(&self, kind: BlockKind) -> Result<BlockId, NodeError> {
