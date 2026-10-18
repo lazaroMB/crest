@@ -37,7 +37,7 @@ pub mod analysis;
 pub mod hypotheses;
 
 // T5.5f: Experiments
-// pub mod experiments;
+pub mod experiments;
 
 // T5.6: Definition
 // pub mod define;
@@ -83,7 +83,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Hypotheses => Some(Arc::new(hypotheses::Hypotheses::new())),
 
         // T5.5f: Some(Arc::new(experiments::<Type>::new()))
-        Stage::Experiments => None,
+        Stage::Experiments => Some(Arc::new(experiments::Experiments::new())),
 
         // T5.6: Some(Arc::new(define::<Type>::new()))
         Stage::Definition => None,
