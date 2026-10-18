@@ -177,10 +177,17 @@ impl TimelineView {
         }
     }
 
-    fn render_item(&self, ix: usize, view: WeakEntity<Self>, cx: &App) -> AnyElement {
+    fn render_item(
+        &self,
+        ix: usize,
+        view: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         let Some(entry) = self.state.get(ix) else {
             return div().into_any_element();
         };
+        let content = render_block(entry, window, cx);
         let theme = cx.theme();
         let selected = self.state.selected() == Some(ix);
         let row = div()
@@ -192,7 +199,7 @@ impl TimelineView {
             .on_click(move |_, _, cx| {
                 view.update(cx, |this, cx| this.click(ix, cx)).ok();
             })
-            .child(render_block(entry, cx));
+            .child(content);
         if selected {
             row.border_color(theme.list_active_border)
                 .bg(theme.list_active)
@@ -227,11 +234,15 @@ impl Render for TimelineView {
             .relative()
             .size_full()
             .child(
-                list(self.list.clone(), move |ix, _window, cx| {
+                list(self.list.clone(), move |ix, window, cx| {
                     let Some(entity) = view.upgrade() else {
                         return div().into_any_element();
                     };
-                    entity.read(cx).render_item(ix, view.clone(), cx)
+                    // `update` rather than `read`: block renderers need a
+                    // mutable App to keep their per-block state.
+                    entity.update(cx, |this, cx| {
+                        this.render_item(ix, view.clone(), window, cx)
+                    })
                 })
                 .size_full(),
             )

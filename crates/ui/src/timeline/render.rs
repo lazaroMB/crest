@@ -7,7 +7,7 @@
 use domain::block::{BlockId, BlockKind, ToolStatus};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString,
-    Styled as _, div,
+    Styled as _, Window, div,
 };
 use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -103,7 +103,7 @@ fn element_id(prefix: &str, id: BlockId) -> ElementId {
 }
 
 /// Draws the content of one block (without the selection frame).
-pub fn render_block(entry: &TimelineEntry, cx: &App) -> AnyElement {
+pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let id = entry.block.id;
     match &entry.block.kind {
         // Streaming re-renders the same keyed TextView: its state sees the
@@ -129,7 +129,7 @@ pub fn render_block(entry: &TimelineEntry, cx: &App) -> AnyElement {
             cx,
         ),
         BlockKind::Error { message, hint } => render_error(message, hint.as_deref(), cx),
-        _ => crate::blocks::render(entry, cx)
+        _ => crate::blocks::render(entry, window, cx)
             .unwrap_or_else(|| crate::blocks::placeholder(entry, cx)),
     }
 }

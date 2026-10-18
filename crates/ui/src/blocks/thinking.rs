@@ -8,7 +8,7 @@
 use domain::block::BlockKind;
 use gpui::{
     AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
-    div,
+    Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -34,7 +34,7 @@ pub fn summary_line(text: &str) -> &str {
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, cx: &App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Thinking { text, .. } = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
@@ -126,9 +126,11 @@ mod tests {
         expanded.expanded = true;
         let cx = cx.add_empty_window();
         for entry in [collapsed, expanded] {
-            cx.draw(point(px(0.), px(0.)), size(px(600.), px(200.)), |_, cx| {
-                render(&entry, cx)
-            });
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(600.), px(200.)),
+                |window, cx| render(&entry, window, cx),
+            );
         }
     }
 }

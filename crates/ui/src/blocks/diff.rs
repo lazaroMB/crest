@@ -7,7 +7,7 @@
 use domain::block::{ApprovalState, BlockKind, DiffSpec};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, div,
+    SharedString, Styled as _, Window, div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -185,7 +185,7 @@ fn render_buttons(entry: &TimelineEntry, path: &str) -> AnyElement {
 
 /// Draws the block held by `entry`: the header, and the diff while the
 /// block is expanded.
-pub fn render(entry: &TimelineEntry, cx: &App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Diff(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };

@@ -9,7 +9,7 @@
 use domain::block::{BlockId, BlockKind};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, div,
+    Styled as _, Window, div,
 };
 use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -34,7 +34,7 @@ fn element_id(prefix: &str, id: BlockId) -> ElementId {
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, cx: &App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Markdown { title, source } = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
