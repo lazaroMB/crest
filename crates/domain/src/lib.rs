@@ -10,4 +10,5 @@ pub mod model;
 pub mod permission;
 pub mod plan;
 pub mod research;
+pub mod sysmodel;
 pub mod workspace;
