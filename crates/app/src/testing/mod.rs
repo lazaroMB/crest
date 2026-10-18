@@ -2,4 +2,5 @@
 
 pub mod fs;
 pub mod llm;
+pub mod sim;
 pub mod system;

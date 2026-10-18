@@ -393,7 +393,7 @@ pub fn journal_markdown(journal: &[JournalEntry]) -> String {
 }
 
 /// `YYYY-MM-DD HH:MM` (UTC) of Unix epoch milliseconds.
-fn utc(ms: u64) -> String {
+pub(crate) fn utc(ms: u64) -> String {
     let secs = ms / 1000;
     let days = i64::try_from(secs / 86_400).unwrap_or(0);
     let rem = secs % 86_400;

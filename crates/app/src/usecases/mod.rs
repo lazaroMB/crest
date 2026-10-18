@@ -6,3 +6,4 @@ pub mod compact;
 pub mod evidence;
 pub mod resume;
 pub mod run_turn;
+pub mod simulate;

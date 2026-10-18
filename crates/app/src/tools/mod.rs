@@ -6,4 +6,5 @@ pub mod files;
 pub mod mcp;
 pub mod plugin;
 pub mod registry;
+pub mod simulate;
 pub mod task;
