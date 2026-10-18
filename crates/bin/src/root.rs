@@ -7,7 +7,7 @@
 //! model above all, see `tests/headless_demo.rs`).
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adapter_anthropic::{AnthropicCatalog, AnthropicClient, AnthropicLlm, ApiKey, ClientConfig};
@@ -53,6 +53,7 @@ use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
 
 use crate::args::Args;
+use crate::images::{ImageGuardSink, SharedGuard};
 use crate::mcp::{self, McpServers, TrustOptions};
 use crate::plugin_trust;
 use crate::research;
@@ -314,16 +315,6 @@ pub async fn build_app(
     frontend: Frontend,
     overrides: Overrides,
 ) -> anyhow::Result<App> {
-    let timeline = Arc::new(Mutex::new(TimelineState::new()));
-    // Startup problems go straight to the front end: they belong to this
-    // run, not to the saved timeline of the session.
-    let startup_events = Arc::clone(&frontend.events);
-    let events: Arc<dyn EventSink> = Arc::new(TimelineSink {
-        timeline: Arc::clone(&timeline),
-        inner: frontend.events,
-    });
-    let mut warnings = Vec::new();
-
     let guard = WorkspaceGuard::open(&config.workspace).map_err(|err| {
         anyhow!(
             "cannot open the workspace {}: {err}",
@@ -331,9 +322,30 @@ pub async fn build_app(
         )
     })?;
     let root = guard.root().clone();
+    // Image files named by plugins are checked like the file tools' paths;
+    // the configured sensitive-path rules replace the defaults below.
+    let image_guard: SharedGuard = Arc::new(RwLock::new(guard.clone()));
+
+    let timeline = Arc::new(Mutex::new(TimelineState::new()));
+    // Startup problems go straight to the front end: they belong to this
+    // run, not to the saved timeline of the session.
+    let startup_events = Arc::clone(&frontend.events);
+    let events: Arc<dyn EventSink> = Arc::new(ImageGuardSink::new(
+        Arc::new(TimelineSink {
+            timeline: Arc::clone(&timeline),
+            inner: frontend.events,
+        }),
+        Arc::clone(&image_guard),
+    ));
+    let mut warnings = Vec::new();
 
     let lua_options = HostOptions {
         workspace: Some(root.as_path().to_path_buf()),
+        // Plugin modals belong to this run, not to the saved timeline.
+        events: Some(Arc::new(ImageGuardSink::new(
+            Arc::clone(&startup_events),
+            Arc::clone(&image_guard),
+        ))),
         ..HostOptions::default()
     };
     let plugins = match LuaHost::spawn(lua_options) {
@@ -363,6 +375,7 @@ pub async fn build_app(
     let (rules, rules_warning) = startup::sensitive_rules(&loaded);
     warnings.extend(rules_warning);
     let guard = guard.with_sensitive_rules(rules.clone());
+    *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
     let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
     warnings.extend(search.check_tools().await.problems());

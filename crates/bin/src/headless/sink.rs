@@ -93,6 +93,13 @@ impl HeadlessSink {
             DomainEvent::TurnFailed { error, .. } => {
                 w.line(Some(Style::Red), &format!("error: {error}"));
             }
+            DomainEvent::ModalOpened { spec } => {
+                w.line(
+                    Some(Style::Dim),
+                    &format!("modal `{}` opened (only visible in the window)", spec.title),
+                );
+            }
+            DomainEvent::ModalUpdated { .. } | DomainEvent::ModalClosed { .. } => {}
             DomainEvent::Notice { level, message } => {
                 let (style, label) = match level {
                     NoticeLevel::Info => (Style::Dim, "info"),
@@ -364,5 +371,34 @@ mod tests {
             stop_reason: StopReason::Interrupted,
         });
         assert_eq!(buf.text(), "error: 401\n(interrupted)\n");
+    }
+
+    #[test]
+    fn modals_are_a_one_line_notice() {
+        use domain::block::CustomNode;
+        use domain::modal::{ModalId, ModalSpec};
+        let (term, buf) = terminal(false);
+        let sink = HeadlessSink::new(term);
+        let id = ModalId::new("cov/report");
+        sink.emit(DomainEvent::ModalOpened {
+            spec: ModalSpec {
+                id: id.clone(),
+                plugin: "cov".into(),
+                title: "Coverage".into(),
+                width: domain::modal::Percent::default(),
+                height: domain::modal::Percent::default(),
+                position: domain::modal::ModalPosition::default(),
+                content: CustomNode::Text { text: "x".into() },
+            },
+        });
+        sink.emit(DomainEvent::ModalUpdated {
+            id: id.clone(),
+            content: CustomNode::Text { text: "y".into() },
+        });
+        sink.emit(DomainEvent::ModalClosed { id });
+        assert_eq!(
+            buf.text(),
+            "modal `Coverage` opened (only visible in the window)\n"
+        );
     }
 }
