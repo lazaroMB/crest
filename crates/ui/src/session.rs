@@ -25,7 +25,7 @@
 //! - `<leader>e` shows the tree, `<leader>ff` / `<leader>fg` the pickers.
 //!   Choosing a file inserts `@path ` (or `@path:line ` for a text match)
 //!   at the cursor of the prompt, in insert mode, so it can be referenced
-//!   in the next prompt.
+//!   in the next prompt. A file cited by a block (`Sources`) does the same.
 //! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
 //!   `:clear` (a new, empty session; not while a turn runs) and `:q`.
 
@@ -54,6 +54,7 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::app::RootView;
 use crate::approval::{ApprovalInbox, ApprovalView};
+use crate::blocks::sources::{BlockEvent, block_events};
 use crate::input::{InputEvent, InputView};
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
@@ -282,7 +283,7 @@ impl Session {
             });
         }
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe_in(&input, window, Self::on_input),
             cx.subscribe_in(
                 &tree,
@@ -310,6 +311,17 @@ impl Session {
             ),
             Self::intercept_interrupt(cx),
         ];
+        // A file cited by a block (Sources) opens like a picker choice.
+        let block_events = block_events(cx);
+        subscriptions.push(cx.subscribe_in(
+            &block_events,
+            window,
+            |this, _, event: &BlockEvent, window, cx| {
+                if let BlockEvent::OpenFile { path, line } = event {
+                    this.insert_reference(&file_reference(path, *line), window, cx);
+                }
+            },
+        ));
 
         let mut this = Self {
             controller,
@@ -1108,6 +1120,23 @@ mod tests {
             assert_eq!(s.model_override(), Some("opus"));
         });
         assert!(blocks(&h, cx).is_empty(), ":clear empties the timeline");
+    }
+
+    #[gpui::test]
+    fn a_file_cited_by_a_block_is_referenced_in_the_prompt(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.update(|_, cx| {
+            crate::blocks::sources::emit(
+                BlockEvent::OpenFile {
+                    path: WorkspacePath::parse("src/lib.rs").unwrap(),
+                    line: Some(7),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let text = h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx));
+        assert_eq!(text, "@src/lib.rs:7 ");
     }
 
     #[test]
