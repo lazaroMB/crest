@@ -259,4 +259,4 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
