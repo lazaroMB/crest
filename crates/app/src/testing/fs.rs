@@ -1,7 +1,8 @@
 //! In-memory fakes of the file ports: [`InMemoryFs`] implements
 //! [`FileSystemPort`], [`FileSearchPort`] and [`ContentSearchPort`] over a
 //! map of paths to bytes, so use cases can be tested with a single fake
-//! without touching the disk, `rg` or `fzf`.
+//! without touching the disk, `rg` or `fzf`; [`ScriptedShell`] fakes
+//! [`ShellPort`] with programmed replies.
 //!
 //! The fake applies the same guards the real adapter does (sensitive paths,
 //! binary files, the read size limit) and lets tests simulate what only a
@@ -13,7 +14,8 @@
 //! for the adapter's `similar`-based diff.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceRoot};
@@ -26,6 +28,7 @@ use crate::ports::search::{
     ColumnRange, ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit,
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
+use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
 
 /// A workspace held in memory. Directories are implied by the files below
 /// them, as in a file listing, so empty directories do not exist.
@@ -558,6 +561,132 @@ fn to_owned(lines: &[&str]) -> Vec<String> {
     lines.iter().map(|line| (*line).to_owned()).collect()
 }
 
+/// What [`ScriptedShell`] does for a command.
+#[derive(Debug, Clone)]
+enum Reply {
+    Return(Result<CommandOutput, ShellError>),
+    Hang,
+}
+
+/// A [`ShellPort`] that answers from a script instead of spawning
+/// processes.
+///
+/// Replies are keyed by the exact program and arguments; the timeout is
+/// ignored. Unscripted commands get the default reply, which is
+/// [`ShellError::NotFound`] unless configured. A hanging reply never
+/// resolves, to test timeouts and cancellation: dropping its future counts
+/// as one [`ScriptedShell::cancelled`].
+#[derive(Debug, Default)]
+pub struct ScriptedShell {
+    script: BTreeMap<(String, Vec<String>), Reply>,
+    default: Option<Reply>,
+    calls: Mutex<Vec<RunCommandRequest>>,
+    cancelled: Arc<AtomicUsize>,
+}
+
+impl ScriptedShell {
+    /// A shell with an empty script.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Answers `command args` with `output`, replacing an earlier reply.
+    pub fn on<I, S>(self, command: &str, args: I, output: CommandOutput) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reply(command, args, Reply::Return(Ok(output)))
+    }
+
+    /// Answers `command args` with `error`.
+    pub fn on_error<I, S>(self, command: &str, args: I, error: ShellError) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reply(command, args, Reply::Return(Err(error)))
+    }
+
+    /// Makes `command args` hang forever.
+    pub fn on_hang<I, S>(self, command: &str, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reply(command, args, Reply::Hang)
+    }
+
+    /// Answers unscripted commands with `output`.
+    pub fn with_default(mut self, output: CommandOutput) -> Self {
+        self.default = Some(Reply::Return(Ok(output)));
+        self
+    }
+
+    /// Answers unscripted commands with `error`.
+    pub fn with_default_error(mut self, error: ShellError) -> Self {
+        self.default = Some(Reply::Return(Err(error)));
+        self
+    }
+
+    /// Makes unscripted commands hang forever.
+    pub fn hang_by_default(mut self) -> Self {
+        self.default = Some(Reply::Hang);
+        self
+    }
+
+    /// Every request received, in order, including hanging ones.
+    pub fn calls(&self) -> Vec<RunCommandRequest> {
+        self.calls_lock().clone()
+    }
+
+    /// How many hanging runs were dropped before resolving.
+    pub fn cancelled(&self) -> usize {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn reply<I, S>(mut self, command: &str, args: I, reply: Reply) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let args = args.into_iter().map(Into::into).collect();
+        self.script.insert((command.to_owned(), args), reply);
+        self
+    }
+
+    fn calls_lock(&self) -> MutexGuard<'_, Vec<RunCommandRequest>> {
+        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Counts a cancellation when a hanging run is dropped.
+struct CancelGuard(Arc<AtomicUsize>);
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl ShellPort for ScriptedShell {
+    async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
+        let key = (request.command.clone(), request.args.clone());
+        let reply = self.script.get(&key).or(self.default.as_ref()).cloned();
+        let command = request.command.clone();
+        self.calls_lock().push(request);
+        match reply {
+            Some(Reply::Return(result)) => result,
+            None => Err(ShellError::NotFound { command }),
+            Some(Reply::Hang) => {
+                let _guard = CancelGuard(Arc::clone(&self.cancelled));
+                std::future::pending().await
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1083,5 +1212,86 @@ mod tests {
                 path: "docs".into()
             }))
         );
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use std::time::Duration;
+
+    use domain::permission::ToolEffect;
+
+    use super::*;
+
+    fn ok(stdout: &str) -> CommandOutput {
+        CommandOutput {
+            status: Some(0),
+            stdout: stdout.into(),
+            ..CommandOutput::default()
+        }
+    }
+
+    fn run(command: &str, args: &[&str]) -> RunCommandRequest {
+        RunCommandRequest::new(command, args.iter().copied())
+    }
+
+    #[tokio::test]
+    async fn replies_by_exact_command_and_records_calls() {
+        let shell = ScriptedShell::new()
+            .on("cargo", ["test"], ok("old"))
+            .on("cargo", ["test"], ok("passed"))
+            .on_error("cargo", ["fmt"], ShellError::Spawn("denied".into()));
+
+        assert_eq!(shell.run(run("cargo", &["test"])).await, Ok(ok("passed")));
+        assert_eq!(
+            shell.run(run("cargo", &["fmt"])).await,
+            Err(ShellError::Spawn("denied".into()))
+        );
+        assert_eq!(
+            shell.run(run("cargo", &["test", "-q"])).await,
+            Err(ShellError::NotFound {
+                command: "cargo".into()
+            })
+        );
+        let calls: Vec<_> = shell
+            .calls()
+            .iter()
+            .map(RunCommandRequest::display)
+            .collect();
+        assert_eq!(calls, ["cargo test", "cargo fmt", "cargo test -q"]);
+    }
+
+    #[tokio::test]
+    async fn default_reply_is_configurable() {
+        let shell = ScriptedShell::new().with_default(ok("any"));
+        assert_eq!(shell.run(run("ls", &[])).await, Ok(ok("any")));
+        let failing = ScriptedShell::new().with_default_error(ShellError::Io("boom".into()));
+        assert_eq!(
+            failing.run(run("ls", &[])).await,
+            Err(ShellError::Io("boom".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn hanging_runs_count_cancellation_on_drop() {
+        let shell = ScriptedShell::new()
+            .on("echo", ["hi"], ok("hi"))
+            .hang_by_default()
+            .on_hang("sleep", ["9"]);
+        for request in [run("sleep", &["9"]), run("other", &[])] {
+            let timed = tokio::time::timeout(Duration::from_millis(10), shell.run(request)).await;
+            assert!(timed.is_err());
+        }
+        assert_eq!(shell.cancelled(), 2);
+        assert_eq!(shell.calls().len(), 2);
+        assert_eq!(shell.run(run("echo", &["hi"])).await, Ok(ok("hi")));
+        assert_eq!(shell.cancelled(), 2);
+    }
+
+    #[test]
+    fn classification_uses_the_port_default() {
+        let shell = ScriptedShell::new();
+        assert_eq!(shell.classify(&run("git", &["status"])), ToolEffect::Read);
+        assert_eq!(shell.classify(&run("rm", &["x"])), ToolEffect::Execute);
     }
 }
