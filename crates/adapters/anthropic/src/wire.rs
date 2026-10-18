@@ -416,6 +416,11 @@ pub struct MessagesRequest {
     /// Opus 4.6 reject any value but 1.0, so leave it unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Automatic prompt caching: the API places this breakpoint on the
+    /// last cacheable block and moves it forward as the conversation
+    /// grows. Takes one of the four breakpoint slots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
 }
 
 impl MessagesRequest {
@@ -434,6 +439,7 @@ impl MessagesRequest {
             metadata: None,
             stop_sequences: Vec::new(),
             temperature: None,
+            cache_control: None,
         }
     }
 }
@@ -511,7 +517,16 @@ pub struct ServerToolDef {
     /// Cache breakpoint after this tool.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    /// Who may call the tool: `["direct"]` (Claude itself) or a code
+    /// execution version (dynamic filtering). Omitted means the API
+    /// default, which from the `_20260209` versions on is code execution;
+    /// models without programmatic tool calling must send `["direct"]`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_callers: Vec<&'static str>,
 }
+
+/// `allowed_callers` value for direct calls (no dynamic filtering).
+pub const CALLER_DIRECT: &str = "direct";
 
 impl ServerToolDef {
     /// The web search tool.
@@ -523,6 +538,7 @@ impl ServerToolDef {
             max_uses,
             citations: None,
             cache_control: None,
+            allowed_callers: Vec::new(),
         }
     }
 
@@ -536,6 +552,7 @@ impl ServerToolDef {
             max_uses,
             citations: Some(CitationsConfig { enabled: true }),
             cache_control: None,
+            allowed_callers: Vec::new(),
         }
     }
 }
@@ -1254,6 +1271,10 @@ mod request_tests {
             user_id: Some("u".into()),
         });
         req.stop_sequences = vec!["STOP".into()];
+        req.cache_control = Some(CacheControl::EPHEMERAL);
+        if let WireTool::Server(web_fetch) = &mut req.tools[2] {
+            web_fetch.allowed_callers = vec![CALLER_DIRECT];
+        }
         assert_eq!(
             serde_json::to_value(&req).unwrap(),
             json!({
@@ -1269,13 +1290,14 @@ mod request_tests {
                         "cache_control": {"type": "ephemeral", "ttl": "1h"}
                     },
                     {"type": "web_search_20260318", "name": "web_search", "max_uses": 5},
-                    {"type": "web_fetch_20260318", "name": "web_fetch", "citations": {"enabled": true}}
+                    {"type": "web_fetch_20260318", "name": "web_fetch", "citations": {"enabled": true}, "allowed_callers": ["direct"]}
                 ],
                 "tool_choice": {"type": "tool", "name": "get_weather"},
                 "thinking": {"type": "enabled", "budget_tokens": 1024},
                 "stream": true,
                 "metadata": {"user_id": "u"},
-                "stop_sequences": ["STOP"]
+                "stop_sequences": ["STOP"],
+                "cache_control": {"type": "ephemeral"}
             })
         );
         assert_eq!(
