@@ -2,3 +2,4 @@
 //! graph-flow adapter, gates in the chat and conditional returns.
 
 pub mod gate;
+pub mod node;
