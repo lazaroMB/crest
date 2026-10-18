@@ -2,7 +2,7 @@
 
 pub mod keymap;
 pub mod ports;
-pub mod tools;
-pub mod usecases;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod tools;
+pub mod usecases;
