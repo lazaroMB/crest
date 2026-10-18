@@ -197,10 +197,230 @@ print_system() {
     info "Sistema: $DISTRO_NAME ($PLATFORM, $ARCH), gestor de paquetes: $PKG_MGR"
 }
 
+# --- utilidades de listas y versiones ----------------------------------------
+
+# Imprime la lista $1 con la palabra $2 añadida si no estaba.
+list_add() {
+    case " $1 " in
+        *" $2 "*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' "${1:+$1 }$2" ;;
+    esac
+}
+
+list_count() {
+    # shellcheck disable=SC2086 # se cuentan las palabras a propósito
+    set -- $1
+    echo $#
+}
+
+# Extrae la primera versión numérica (1.2, 1.2.3...) de la entrada estándar.
+extract_version() {
+    sed -n 's/^[^0-9]*\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*$/\1/p' | head -n 1
+}
+
+# version_ge A B: éxito si la versión A >= B. Compara campo a campo, en número;
+# los campos que faltan cuentan como 0 y los sufijos (-rc1) se ignoran.
+version_ge() {
+    local a=$1 b=$2 x y
+    while [ -n "$a" ] || [ -n "$b" ]; do
+        x=${a%%.*}
+        y=${b%%.*}
+        case $a in *.*) a=${a#*.} ;; *) a='' ;; esac
+        case $b in *.*) b=${b#*.} ;; *) b='' ;; esac
+        x=${x%%[!0-9]*}
+        y=${y%%[!0-9]*}
+        x=${x:-0}
+        y=${y:-0}
+        if [ "$x" -gt "$y" ]; then return 0; fi
+        if [ "$x" -lt "$y" ]; then return 1; fi
+    done
+    return 0
+}
+
+# Versión que informa `cmd [args...] --version`, sin leer de stdin.
+tool_version() {
+    "$@" --version </dev/null 2>/dev/null | extract_version
+}
+
+# --- verificación -----------------------------------------------------------
+
+RG_MIN=13.0
+FZF_MIN=0.36
+LINUX_LIBS="xkbcommon xkbcommon-x11 wayland-client xcb x11-xcb fontconfig freetype2 vulkan"
+LOCAL_BIN=${CREST_LOCAL_BIN:-$HOME/.local/bin}
+CARGO_BIN=${CARGO_HOME:-$HOME/.cargo}/bin
+ORIG_PATH=$PATH
+MISSING=''        # ids de lo que falta (ver pkg_names)
+VULKAN_DRIVER=0   # 1 si se encontró un ICD de Vulkan
+
+# Los binarios que este script instala en ~/.local/bin o ~/.cargo/bin deben
+# encontrarse aunque esos directorios aún no estén en el PATH del usuario.
+PATH="$LOCAL_BIN:$CARGO_BIN:$PATH"
+export PATH
+
+report_ok() { printf '  %s[ok]%s    %-18s %s\n' "$C_GREEN" "$C_RESET" "$1" "$2"; }
+report_warn() { printf '  %s[aviso]%s %-18s %s\n' "$C_YELLOW" "$C_RESET" "$1" "$2"; }
+# report_missing ID ETIQUETA DETALLE
+report_missing() {
+    printf '  %s[falta]%s %-18s %s\n' "$C_RED" "$C_RESET" "$2" "$3"
+    MISSING=$(list_add "$MISSING" "$1")
+}
+
+# Avisa si CMD se encontró en un directorio que añadió este script y el PATH
+# del usuario no lo resuelve a ese mismo binario.
+check_shadowed() {
+    local cmd=$1 path=$2 user_path
+    case $path in
+        "$LOCAL_BIN"/* | "$CARGO_BIN"/*) ;;
+        *) return 0 ;;
+    esac
+    user_path=$(PATH=$ORIG_PATH && command -v "$cmd" 2>/dev/null)
+    if [ "$user_path" != "$path" ]; then
+        report_warn "$cmd" "pon ${path%/*} al principio de tu PATH (hoy resuelve a ${user_path:-nada})"
+    fi
+}
+
+# check_tool ID CMD ETIQUETA [VERSION_MINIMA]
+check_tool() {
+    local id=$1 cmd=$2 label=$3 min=${4:-} path ver
+    if ! path=$(command -v "$cmd" 2>/dev/null); then
+        report_missing "$id" "$label" "no se encuentra '$cmd'"
+        return 1
+    fi
+    ver=$(tool_version "$cmd")
+    if [ -n "$min" ] && { [ -z "$ver" ] || ! version_ge "$ver" "$min"; }; then
+        report_missing "$id" "$label" "versión ${ver:-desconocida} en $path; se necesita >= $min"
+        return 1
+    fi
+    report_ok "$label" "${ver:+$ver }($path)"
+    check_shadowed "$cmd" "$path"
+}
+
+check_c_compiler() {
+    if have cc; then
+        check_tool cc cc "compilador C"
+    elif have gcc; then
+        check_tool cc gcc "compilador C"
+    else
+        report_missing cc "compilador C" "no se encuentra 'cc' ni 'gcc'"
+    fi
+}
+
+check_libs() {
+    local lib ver
+    if ! have pkg-config; then
+        for lib in $LINUX_LIBS; do
+            report_missing "$lib" "lib $lib" "no se puede verificar sin pkg-config"
+        done
+        return 0
+    fi
+    for lib in $LINUX_LIBS; do
+        if ver=$(pkg-config --modversion "$lib" 2>/dev/null); then
+            report_ok "lib $lib" "$ver"
+        else
+            report_missing "$lib" "lib $lib" "pkg-config no encuentra $lib.pc"
+        fi
+    done
+}
+
+# El driver depende de la GPU y en CI suele no haberla: solo avisa.
+check_vulkan_driver() {
+    local dir f found=''
+    for dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/local/share/vulkan/icd.d; do
+        for f in "$dir"/*.json; do
+            [ -e "$f" ] && found="${found:+$found, }${f##*/}"
+        done
+    done
+    if [ -n "$found" ]; then
+        VULKAN_DRIVER=1
+        report_ok "driver Vulkan" "$found"
+    else
+        VULKAN_DRIVER=0
+        report_warn "driver Vulkan" "no hay ICD en .../vulkan/icd.d; instala el driver de tu GPU (mesa o nvidia)"
+    fi
+}
+
+check_rust() {
+    local ver
+    check_tool rust cargo cargo
+    check_tool rust rustc rustc
+    check_tool rustfmt rustfmt rustfmt
+    if have cargo && ver=$(tool_version cargo clippy) && [ -n "$ver" ]; then
+        report_ok clippy "$ver"
+    else
+        report_missing clippy clippy "'cargo clippy' no disponible"
+    fi
+    if have rustup; then
+        report_ok rustup "$(tool_version rustup)"
+    elif have cargo; then
+        report_warn rustup "Rust no viene de rustup: rust-toolchain.toml no se aplicará"
+    fi
+}
+
+# check_cargo_sub ID SUBCOMANDO
+check_cargo_sub() {
+    local ver
+    if have cargo && ver=$(tool_version cargo "$2") && [ -n "$ver" ]; then
+        report_ok "$1" "$ver"
+    else
+        report_missing "$1" "$1" "'cargo $2' no disponible"
+    fi
+}
+
+run_checks() {
+    MISSING=''
+    info "Verificando dependencias"
+    check_c_compiler
+    check_tool pkg-config pkg-config pkg-config
+    check_tool cmake cmake cmake
+    check_tool clang clang clang
+    check_tool git git git
+    check_tool jq jq jq
+    check_tool rg rg ripgrep "$RG_MIN"
+    check_tool fzf fzf fzf "$FZF_MIN"
+    if [ "$PLATFORM" = linux ]; then
+        check_libs
+        check_vulkan_driver
+    fi
+    if [ "$OPT_NO_RUST" = 0 ]; then
+        check_rust
+    fi
+    if [ "$OPT_DEV" = 1 ]; then
+        check_cargo_sub cargo-insta insta
+        check_cargo_sub cargo-nextest nextest
+    fi
+}
+
+# Resume lo que falta. Éxito si no falta nada.
+print_summary() {
+    if [ -z "$MISSING" ]; then
+        info "${C_GREEN}Todas las dependencias están presentes.${C_RESET}"
+        return 0
+    fi
+    err "faltan $(list_count "$MISSING") dependencias: $MISSING"
+    printf 'Para instalarlas: %s%s%s\n' "$0" \
+        "$([ "$OPT_DEV" = 1 ] && printf ' --dev')" \
+        "$([ "$OPT_NO_RUST" = 1 ] && printf ' --no-rust')"
+    return 1
+}
+
 main() {
     parse_args "$@"
     detect_system
     print_system
+    if [ "$PLATFORM" = unknown ]; then
+        warn "sistema no soportado: $(uname -s); solo se verificará"
+        OPT_CHECK=1
+    fi
+    # Al verificar, rustup no debe descargar el toolchain de rust-toolchain.toml.
+    if [ "$OPT_CHECK" = 1 ]; then
+        RUSTUP_AUTO_INSTALL=0
+        export RUSTUP_AUTO_INSTALL
+    fi
+    # Desde la raíz del repo, para que rustup aplique su rust-toolchain.toml.
+    cd "$(dirname "$0")/.." || die "no se puede entrar a la raíz del repo"
+    run_checks
+    print_summary
 }
 
 # Con CREST_INSTALL_DEPS_LIB=1 el script solo define funciones (para tests).
