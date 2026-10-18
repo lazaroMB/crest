@@ -6,7 +6,7 @@
 //! input port, implemented by the binary over the `AgentService`) and shows
 //! the [`DomainEvent`]s that the controller's event sink sends back on a
 //! channel. One consumer task applies them, in order, to the timeline and
-//! the status bar.
+//! the status bar; plugin modal events go to the [`ModalHost`] overlay.
 //!
 //! # Turns
 //!
@@ -27,7 +27,8 @@
 //!   at the cursor of the prompt, in insert mode, so it can be referenced
 //!   in the next prompt. A file cited by a block (`Sources`) does the same.
 //! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
-//!   `:clear` (a new, empty session; not while a turn runs) and `:q`.
+//!   `:clear` (a new, empty session; not while a turn runs), `:modal close`
+//!   (closes the front plugin modal) and `:q`.
 //! - Any other `:name args` goes to [`SessionController::run_command`]
 //!   (commands of `init.lua`, `:mcp`, `:plugin`, `:implement`, `:research`); a name
 //!   with a dot runs that builtin action (`:picker.files`).
@@ -64,6 +65,7 @@ use crate::app::RootView;
 use crate::approval::{ApprovalInbox, ApprovalView};
 use crate::blocks::sources::{BlockEvent, block_events};
 use crate::input::{InputEvent, InputView};
+use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
 use crate::timeline::TimelineView;
@@ -250,6 +252,7 @@ pub struct Session {
     tree: Entity<TreePanel>,
     picker: Entity<PickerView>,
     approval: Entity<ApprovalView>,
+    modal: Entity<ModalHost>,
     focus_handle: FocusHandle,
     running: Option<CancelToken>,
     turn: Option<Task<()>>,
@@ -271,13 +274,14 @@ pub fn open(
     let root = cx.new(RootView::new);
     let session = cx.new(|cx| Session::new(parts, root.downgrade(), window, cx));
     let s = session.read(cx);
-    let (timeline, input, status, tree, picker, approval) = (
+    let (timeline, input, status, tree, picker, approval, modal) = (
         s.timeline.clone(),
         s.input.clone(),
         s.status.clone(),
         s.tree.clone(),
         s.picker.clone(),
         s.approval.clone(),
+        s.modal.clone(),
     );
     root.update(cx, |root, cx| {
         root.set_timeline(timeline, cx);
@@ -286,6 +290,9 @@ pub fn open(
         root.set_side_panel(tree, cx);
         root.push_overlay(picker, cx);
         root.push_overlay(session.clone(), cx);
+        // Plugin modals sit below the approval dialog, which must stay
+        // reachable while one is open.
+        root.push_overlay(modal, cx);
         root.push_overlay(approval, cx);
     });
     input.update(cx, |input, cx| input.focus(window, cx));
@@ -339,6 +346,7 @@ impl Session {
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
         let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
         let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
+        let modal = cx.new(|cx| ModalHost::new(window, cx));
 
         let mut watch_error = None;
         if let Some(dir) = &workspace_dir {
@@ -398,6 +406,7 @@ impl Session {
             tree,
             picker,
             approval,
+            modal,
             focus_handle: cx.focus_handle(),
             running: None,
             turn: None,
@@ -471,6 +480,11 @@ impl Session {
         &self.approval
     }
 
+    /// The plugin modals.
+    pub fn modal(&self) -> &Entity<ModalHost> {
+        &self.modal
+    }
+
     /// Whether a turn is running.
     pub fn is_running(&self) -> bool {
         self.running.is_some()
@@ -497,6 +511,14 @@ impl Session {
     }
 
     fn dispatch_all(&mut self, events: Vec<DomainEvent>, cx: &mut Context<Self>) {
+        let (modal, events): (Vec<_>, Vec<_>) = events.into_iter().partition(DomainEvent::is_modal);
+        let host = self.modal.read(cx);
+        for event in modal {
+            host.post(event);
+        }
+        if events.is_empty() {
+            return;
+        }
         self.status.update(cx, |status, cx| {
             for event in &events {
                 status.apply(event, cx);
@@ -643,6 +665,19 @@ impl Session {
                 Err(err) => self.notice(NoticeLevel::Warning, format!(":mode: {err}"), cx),
             },
             "clear" => self.clear(window, cx),
+            "modal" if arg == "close" => {
+                let closed = self
+                    .modal
+                    .update(cx, |modal, cx| modal.close_top(window, cx));
+                if !closed {
+                    self.notice(NoticeLevel::Info, "no modal is open", cx);
+                }
+            }
+            "modal" => self.notice(
+                NoticeLevel::Warning,
+                format!(":modal {arg}: use :modal close"),
+                cx,
+            ),
             _ => {
                 if let Some(reply) = self.controller.run_command(name, arg) {
                     self.await_reply(reply, depth, window, cx);
@@ -652,7 +687,7 @@ impl Session {
                     self.notice(
                         NoticeLevel::Warning,
                         format!(
-                            "unknown command :{command} (use :model, :mode, :clear, :mcp, :plugin, :implement, :research or :q)"
+                            "unknown command :{command} (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research or :q)"
                         ),
                         cx,
                     );
@@ -1286,6 +1321,53 @@ mod tests {
         let model = h.llm.last_request().map(|r| r.model.spec.id);
         let expected = ModelPolicy::default().expand(&alias.unwrap_or_default());
         assert_eq!(model, Some(expected));
+    }
+
+    #[gpui::test]
+    fn plugin_modals_open_over_the_window_and_close(cx: &mut TestAppContext) {
+        use domain::block::CustomNode;
+        use domain::modal::{ModalId, ModalSpec};
+        let (h, cx) = harness(Vec::new(), cx);
+        let id = ModalId::new("cov/report");
+        h.sink.emit(DomainEvent::ModalOpened {
+            spec: ModalSpec {
+                id: id.clone(),
+                plugin: "cov".into(),
+                title: "Report".into(),
+                width: domain::modal::Percent::FULL,
+                height: domain::modal::Percent::FULL,
+                position: domain::modal::ModalPosition::CENTER,
+                content: CustomNode::Markdown {
+                    source: "# Coverage".into(),
+                },
+            },
+        });
+        cx.run_until_parked();
+        let modal = h.session.read_with(cx, |s, _| s.modal().clone());
+        modal.read_with(cx, |m, _| assert_eq!(m.ids(), [id.clone()]));
+        assert!(blocks(&h, cx).is_empty(), "modals are not timeline blocks");
+        // Esc closes it and the input gets the focus back.
+        cx.simulate_keystrokes("escape");
+        modal.read_with(cx, |m, _| assert!(!m.is_open()));
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx));
+        });
+        h.sink.emit(DomainEvent::ModalOpened {
+            spec: ModalSpec {
+                id: id.clone(),
+                plugin: "cov".into(),
+                title: "Report".into(),
+                width: domain::modal::Percent::FULL,
+                height: domain::modal::Percent::FULL,
+                position: domain::modal::ModalPosition::CENTER,
+                content: CustomNode::Text { text: "x".into() },
+            },
+        });
+        cx.run_until_parked();
+        h.session
+            .update_in(cx, |s, window, cx| s.command("modal close", window, cx));
+        modal.read_with(cx, |m, _| assert!(!m.is_open()));
     }
 
     #[gpui::test]

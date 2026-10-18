@@ -90,7 +90,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `:<name> <args>` | A command registered with `app.commands.register`. |
 | `:<dotted.action>` | Runs a builtin action, for example `:picker.files` or `:panel.tree`. |
 
-An unknown command shows `unknown command :x (use :model, :mode, :clear, :mcp, :plugin, :implement, :research or :q)`.
+An unknown command shows `unknown command :x (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research or :q)`.
 
 ### File references with `@`
 
