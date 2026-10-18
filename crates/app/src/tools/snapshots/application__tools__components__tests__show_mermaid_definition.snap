@@ -1,0 +1,31 @@
+---
+source: crates/app/src/tools/components.rs
+expression: definition(ShowMermaidTool)
+---
+{
+  "name": "show_mermaid",
+  "description": "Renders a Mermaid diagram in the user's timeline, with pan and zoom. Use it to explain structure or flow: module dependencies, call sequences, state machines, data models, architecture. If the source does not parse, the user sees it with the error. Returns only a short confirmation: do not repeat the source in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Optional caption shown above the diagram."
+      },
+      "source": {
+        "type": "string",
+        "description": "Mermaid source, starting with the diagram type (`flowchart TD`,\n`sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram`…)."
+      }
+    },
+    "required": [
+      "source"
+    ],
+    "description": "Input of `show_mermaid`.",
+    "title": "ShowMermaid",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

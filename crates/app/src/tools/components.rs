@@ -10,7 +10,9 @@
 //! needs approval.
 
 use async_trait::async_trait;
-use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, TableSpec};
+use domain::block::{
+    BlockKind, Cell, ChartKind, ChartSpec, Column, MermaidSpec, Series, TableSpec,
+};
 use domain::permission::ToolEffect;
 use futures::FutureExt;
 use schemars::JsonSchema;
@@ -185,6 +187,78 @@ impl TypedTool for ShowTableTool {
             .collect::<Vec<_>>()
             .join(", ");
         Ok(show(subject, BlockKind::Table(spec), confirmation))
+    }
+}
+
+/// Confirmation for a titled text component: `"<what> 'title' shown to the
+/// user (N lines)."`.
+fn source_confirmation(what: &str, title: Option<&str>, source: &str) -> String {
+    let title = title.map(|t| format!(" '{t}'")).unwrap_or_default();
+    let lines = count(source.lines().count(), "line", "lines");
+    format!("{what}{title} shown to the user ({lines}).")
+}
+
+/// Subject of a text component: its title, or else its first line.
+fn source_subject(title: Option<&str>, source: &str) -> String {
+    title
+        .or_else(|| source.lines().map(str::trim).find(|line| !line.is_empty()))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Input of `show_mermaid`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowMermaid {
+    /// Optional caption shown above the diagram.
+    pub title: Option<String>,
+    /// Mermaid source, starting with the diagram type (`flowchart TD`,
+    /// `sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram`…).
+    pub source: String,
+}
+
+/// `show_mermaid`: renders a Mermaid diagram.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowMermaidTool;
+
+const SHOW_MERMAID: &str = "show_mermaid";
+
+#[async_trait]
+impl TypedTool for ShowMermaidTool {
+    type Input = ShowMermaid;
+
+    fn name(&self) -> &str {
+        SHOW_MERMAID
+    }
+
+    fn description(&self) -> &str {
+        "Renders a Mermaid diagram in the user's timeline, with pan and zoom. \
+         Use it to explain structure or flow: module dependencies, call \
+         sequences, state machines, data models, architecture. If the source \
+         does not parse, the user sees it with the error. Returns only a short \
+         confirmation: do not repeat the source in your reply."
+    }
+
+    fn effect(&self, _input: &ShowMermaid) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowMermaid,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        if input.source.trim().is_empty() {
+            return Err(invalid(SHOW_MERMAID, "diagram source is empty"));
+        }
+        let title = input.title.as_deref();
+        let confirmation = source_confirmation("Mermaid diagram", title, &input.source);
+        let subject = source_subject(title, &input.source);
+        let spec = MermaidSpec {
+            source: input.source,
+            title: input.title,
+        };
+        Ok(show(subject, BlockKind::Mermaid(spec), confirmation))
     }
 }
 
@@ -377,5 +451,60 @@ mod tests {
             invalid_message(call(ShowTableTool, input).await),
             "table row 1 has 1 cells, expected 2"
         );
+    }
+
+    #[test]
+    fn show_mermaid_definition() {
+        insta::assert_json_snapshot!("show_mermaid_definition", definition(ShowMermaidTool));
+    }
+
+    #[tokio::test]
+    async fn show_mermaid_adds_a_diagram_and_confirms_briefly() {
+        let source = "flowchart TD\n  ui --> app\n  app --> domain";
+        let out = call(
+            ShowMermaidTool,
+            json!({ "title": "Crates", "source": source }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out.text_content(),
+            "Mermaid diagram 'Crates' shown to the user (3 lines)."
+        );
+        assert_eq!(
+            out.block_update,
+            Some(BlockKind::Mermaid(MermaidSpec {
+                source: source.into(),
+                title: Some("Crates".into()),
+            }))
+        );
+
+        let untitled = call(ShowMermaidTool, json!({ "source": "graph LR; a-->b" }))
+            .await
+            .unwrap();
+        assert_eq!(
+            untitled.text_content(),
+            "Mermaid diagram shown to the user (1 line)."
+        );
+    }
+
+    #[tokio::test]
+    async fn show_mermaid_rejects_an_empty_source() {
+        assert_eq!(
+            invalid_message(call(ShowMermaidTool, json!({ "source": " \n" })).await),
+            "diagram source is empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn untitled_components_are_summarized_by_their_first_line() {
+        let prepared = Typed(ShowMermaidTool)
+            .prepare(
+                json!({ "source": "\n  sequenceDiagram\n  a->>b: hi" }),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.subject, "sequenceDiagram");
     }
 }
