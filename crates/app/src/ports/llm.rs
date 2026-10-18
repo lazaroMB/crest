@@ -8,8 +8,10 @@
 //!   adapter must release the underlying connection when that happens and
 //!   must not keep working in the background.
 
+use async_trait::async_trait;
 use domain::conversation::{Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
 use domain::model::{ModelId, ResolvedModel};
+use futures::stream::BoxStream;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -390,6 +392,36 @@ impl LlmError {
     }
 }
 
+/// Stream of events of one model answer. Dropping it cancels the call.
+pub type LlmStream = BoxStream<'static, Result<LlmEvent, LlmError>>;
+
+/// Sends a conversation to a model and streams its answer.
+///
+/// The adapter owns retries with backoff and the walk along the fallback
+/// chain of [`LlmRequest::model`], reporting them as
+/// [`LlmEvent::Retrying`] and [`LlmEvent::ModelFallback`]. When every model
+/// fails it yields [`LlmError::AllModelsFailed`].
+///
+/// Cancellation: drop the future or the stream. No further events are
+/// produced and the HTTP connection is closed.
+#[async_trait]
+pub trait LlmPort: Send + Sync {
+    /// Starts a model call and returns its event stream.
+    ///
+    /// Errors detected before streaming (e.g. [`LlmError::Auth`] when no API
+    /// key is configured) are returned directly; errors during the call
+    /// arrive as `Err` items of the stream, after which it ends.
+    async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError>;
+
+    /// Counts the input tokens `req` would consume, without running it.
+    ///
+    /// The default implementation returns [`LlmError::Unsupported`].
+    async fn count_tokens(&self, req: &LlmRequest) -> Result<u64, LlmError> {
+        let _ = req;
+        Err(LlmError::Unsupported)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +497,22 @@ mod tests {
             err.to_string(),
             "all models failed; last error: provider overloaded"
         );
+    }
+
+    struct NoTokens;
+
+    #[async_trait]
+    impl LlmPort for NoTokens {
+        async fn stream(&self, _req: LlmRequest) -> Result<LlmStream, LlmError> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+    }
+
+    #[tokio::test]
+    async fn count_tokens_defaults_to_unsupported() {
+        let port: std::sync::Arc<dyn LlmPort> = std::sync::Arc::new(NoTokens);
+        let req = LlmRequest::new(resolved(), Vec::new());
+        assert_eq!(port.count_tokens(&req).await, Err(LlmError::Unsupported));
+        assert!(port.stream(req).await.is_ok());
     }
 }
