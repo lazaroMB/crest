@@ -28,6 +28,10 @@ adapter-mcp.workspace = true
 adapter-telemetry.workspace = true
 ui.workspace = true
 clap.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+application = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true
