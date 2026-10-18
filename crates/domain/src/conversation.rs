@@ -339,6 +339,58 @@ impl Turn {
     }
 }
 
+/// A conversation rooted in a workspace, made of consecutive turns.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Session {
+    /// Session id.
+    pub id: SessionId,
+    /// Workspace root as text; the domain does no I/O on it.
+    pub workspace_root: String,
+    /// Human-readable title, if one has been set or generated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Turns in chronological order.
+    #[serde(default)]
+    pub turns: Vec<Turn>,
+    /// Creation time, Unix epoch milliseconds.
+    pub created_at: u64,
+    /// Last modification time, Unix epoch milliseconds.
+    pub updated_at: u64,
+}
+
+impl Session {
+    /// Creates an empty session. `now_ms` is supplied by the caller because
+    /// the domain has no clock.
+    #[must_use]
+    pub fn new(workspace_root: impl Into<String>, now_ms: u64) -> Self {
+        Self {
+            id: SessionId::new(),
+            workspace_root: workspace_root.into(),
+            title: None,
+            turns: Vec::new(),
+            created_at: now_ms,
+            updated_at: now_ms,
+        }
+    }
+
+    /// Appends a turn and bumps `updated_at`.
+    pub fn push_turn(&mut self, turn: Turn, now_ms: u64) {
+        self.turns.push(turn);
+        self.updated_at = now_ms;
+    }
+
+    /// Every message of every turn, in order: the history sent to the model.
+    pub fn history(&self) -> impl Iterator<Item = &Message> + '_ {
+        self.turns.iter().flat_map(|turn| turn.messages.iter())
+    }
+
+    /// Sum of the usage of all turns.
+    #[must_use]
+    pub fn total_usage(&self) -> Usage {
+        self.turns.iter().map(|turn| turn.usage).sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,5 +603,52 @@ mod tests {
     fn turn_round_trip() {
         round_trip(&sample_turn());
         round_trip(&Turn::new(Message::user_text("hola")));
+    }
+
+    #[test]
+    fn session_history_flattens_turns_in_order() {
+        let mut session = Session::new("/home/me/proj", 1_000);
+        let first = sample_turn();
+        let second = Turn::new(Message::user_text("gracias"));
+        session.push_turn(first.clone(), 2_000);
+        session.push_turn(second.clone(), 3_000);
+
+        let ids: Vec<MessageId> = session.history().map(|m| m.id).collect();
+        let expected: Vec<MessageId> = first
+            .messages
+            .iter()
+            .chain(second.messages.iter())
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, expected);
+        assert_eq!(session.created_at, 1_000);
+        assert_eq!(session.updated_at, 3_000);
+    }
+
+    #[test]
+    fn session_total_usage_sums_turns() {
+        let mut session = Session::new("/w", 0);
+        assert_eq!(session.total_usage(), Usage::default());
+        session.push_turn(sample_turn(), 1);
+        session.push_turn(sample_turn(), 2);
+        assert_eq!(session.total_usage(), usage(200, 40, 100, 20));
+    }
+
+    #[test]
+    fn session_round_trip() {
+        let mut session = Session::new("/home/me/proj", 1_000);
+        round_trip(&session);
+        session.title = Some("Buscar main".into());
+        session.push_turn(sample_turn(), 2_000);
+        round_trip(&session);
+    }
+
+    #[test]
+    fn session_json_schema_is_generated() {
+        let schema = serde_json::to_value(schemars::schema_for!(Session)).unwrap();
+        let text = schema.to_string();
+        for name in ["Turn", "Message", "ContentPart", "Usage", "StopReason"] {
+            assert!(text.contains(name), "schema mentions {name}");
+        }
     }
 }
