@@ -283,6 +283,50 @@ mod tests {
     }
 
     #[gpui::test]
+    fn draws_every_block_kind(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let tool = Block::new(BlockKind::ToolCall {
+            tool_use_id: "toolu_1".into(),
+            name: "read_file".into(),
+            summary: "src/lib.rs".into(),
+            input: serde_json::json!({"path": "src/lib.rs"}),
+            status: domain::block::ToolStatus::Succeeded,
+            output: Some("40 lines".into()),
+        });
+        let blocks = [
+            text("# Title\n\n- item `code`"),
+            tool,
+            Block::new(BlockKind::Error {
+                message: "boom".into(),
+                hint: Some("retry".into()),
+            }),
+            Block::new(BlockKind::Thinking {
+                text: "hmm".into(),
+                collapsed: true,
+            }),
+        ];
+        view.update(cx, |view, cx| {
+            view.apply_all(blocks.map(|block| DomainEvent::BlockAdded { block }), cx);
+            view.handle_action(&Action::builtin("block.first"), cx);
+            view.handle_action(&Action::builtin("block.next"), cx);
+            view.handle_action(&Action::builtin("block.toggle"), cx);
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(800.), px(600.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        view.read_with(cx, |view, _| {
+            assert!(view.state().entries()[1].expanded);
+            assert!(
+                view.list.bounds_for_item(3).is_some(),
+                "all four rows laid out"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn actions_move_selection_and_toggle(cx: &mut TestAppContext) {
         let (sink, rx) = RecordingSink::with_channel();
         let view = timeline(cx, rx);
