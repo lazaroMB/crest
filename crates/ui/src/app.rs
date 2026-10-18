@@ -7,11 +7,11 @@
 //! display.
 
 use gpui::{
-    App, AppContext as _, Bounds, Context, IntoElement, KeyBinding, ParentElement as _, Render,
-    SharedString, Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
-    px, size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
+    Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px, size,
 };
-use gpui_component::{Root, Theme};
+use gpui_component::{ActiveTheme as _, Root, Theme, v_flex};
 
 actions!(crest, [Quit]);
 
@@ -172,19 +172,104 @@ fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
-        let view = cx.new(|_| RootView);
+        let view = cx.new(RootView::new);
+        window.focus(&view.focus_handle(cx), cx);
         cx.new(|cx| Root::new(view, window, cx))
     })
     .map(|_| ())
     .map_err(|err| UiError::OpenWindow(err.to_string()))
 }
 
-/// Root view of the main window.
-pub struct RootView;
+/// Root view of the main window: timeline on top (grows), prompt input
+/// below it and the status bar at the bottom.
+///
+/// Each area is a slot that later views fill (`set_timeline`, `set_input`,
+/// `set_status`); an empty slot renders a placeholder box.
+pub struct RootView {
+    focus_handle: FocusHandle,
+    timeline: Option<AnyView>,
+    input: Option<AnyView>,
+    status: Option<AnyView>,
+}
+
+impl RootView {
+    /// Creates the root view with every slot empty.
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            timeline: None,
+            input: None,
+            status: None,
+        }
+    }
+
+    /// Fills the timeline area.
+    pub fn set_timeline(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.timeline = Some(view.into());
+        cx.notify();
+    }
+
+    /// Fills the prompt input area.
+    pub fn set_input(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.input = Some(view.into());
+        cx.notify();
+    }
+
+    /// Fills the status bar area.
+    pub fn set_status(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.status = Some(view.into());
+        cx.notify();
+    }
+}
+
+impl Focusable for RootView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+/// Slot content: the view when present, else placeholder text.
+fn slot(view: &Option<AnyView>, placeholder: &'static str, cx: &App) -> AnyElement {
+    match view {
+        Some(view) => view.clone().into_any_element(),
+        None => div()
+            .text_color(cx.theme().muted_foreground)
+            .child(placeholder)
+            .into_any_element(),
+    }
+}
 
 impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child("crest")
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let border = theme.border;
+        let status_bg = theme.title_bar;
+        v_flex()
+            .id("crest-root")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
+                &self.timeline,
+                "timeline",
+                cx,
+            )))
+            .child(
+                div()
+                    .min_h(px(64.0))
+                    .p_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(slot(&self.input, "input", cx)),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(border)
+                    .bg(status_bg)
+                    .child(slot(&self.status, "status", cx)),
+            )
     }
 }
 
