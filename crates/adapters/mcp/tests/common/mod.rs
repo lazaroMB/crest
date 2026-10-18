@@ -4,8 +4,11 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use application::ports::plugin::{McpServerSpec, McpTransport};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
 
 /// Path of the `echo_server` example, which `cargo test` builds next to the
 /// test binaries (`target/<profile>/examples/`).
@@ -33,4 +36,18 @@ pub fn echo_spec(name: &str) -> McpServerSpec {
             env: BTreeMap::new(),
         },
     }
+}
+
+/// Starts the example server on a free local port; returns it with its URL.
+pub async fn http_server() -> (Child, String) {
+    let mut child = Command::new(echo_server_path())
+        .args(["--http", "127.0.0.1:0"])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut url = String::new();
+    BufReader::new(stdout).read_line(&mut url).await.unwrap();
+    (child, url.trim().to_owned())
 }

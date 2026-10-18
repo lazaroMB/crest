@@ -2,15 +2,25 @@
 //! declare in `init.lua`.
 //!
 //! It offers two tools: `echo` (returns its text) and `add` (sums two
-//! integers). It speaks MCP over stdin/stdout:
+//! integers). It speaks MCP over stdin/stdout, or over streamable HTTP
+//! with `--http <addr>` (it then prints its URL as the first line of
+//! stdout; port `0` picks a free one):
 //!
 //! ```text
 //! cargo run -p adapter-mcp --example echo_server
+//! cargo run -p adapter-mcp --example echo_server -- --http 127.0.0.1:0
 //! ```
+
+use std::convert::Infallible;
+use std::io::Write;
+
+use hyper_util::rt::TokioIo;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{ServerCapabilities, ServerConfig};
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -63,8 +73,41 @@ impl ServerHandler for EchoServer {
     }
 }
 
+/// Serves MCP over streamable HTTP on `addr` until killed.
+async fn serve_http(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "http://{}/mcp", listener.local_addr()?)?;
+    stdout.flush()?;
+    let service: StreamableHttpService<EchoServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            || Ok(EchoServer::new()),
+            Default::default(),
+            StreamableHttpServerConfig::default(),
+        );
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let service = service.clone();
+        tokio::spawn(async move {
+            let handler = hyper::service::service_fn(move |request| {
+                let service = service.clone();
+                async move { Ok::<_, Infallible>(service.handle(request).await) }
+            });
+            let _ = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), handler)
+                .await;
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, addr] = args.as_slice()
+        && flag == "--http"
+    {
+        return serve_http(addr).await;
+    }
     let server = EchoServer::new().serve(rmcp::transport::stdio()).await?;
     server.waiting().await?;
     Ok(())

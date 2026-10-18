@@ -20,9 +20,12 @@ tracing.workspace = true
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }
 # The example server (`examples/echo_server.rs`) is an rmcp server.
-rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+hyper.workspace = true
+hyper-util.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars.workspace = true
 serde.workspace = true
+tokio = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

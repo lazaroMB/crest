@@ -139,6 +139,8 @@ dependencies = [
  "application",
  "async-trait",
  "domain",
+ "hyper",
+ "hyper-util",
  "reqwest",
  "rmcp",
  "schemars",
@@ -6348,15 +6350,19 @@ version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
 dependencies = [
+ "async-trait",
  "base64 0.23.1",
  "bytes",
  "chrono",
  "futures",
  "http",
+ "http-body",
+ "http-body-util",
  "indexmap",
  "pastey 0.2.3",
  "pin-project-lite",
  "process-wrap",
+ "rand 0.10.3",
  "reqwest",
  "rmcp-macros",
  "schemars",
@@ -6367,6 +6373,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
  "uuid",
 ]
