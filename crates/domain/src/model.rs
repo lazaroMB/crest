@@ -348,6 +348,49 @@ impl RoleConfig {
     }
 }
 
+const SONNET: &str = "claude-sonnet-5-5";
+const OPUS: &str = "claude-opus-5-5";
+const HAIKU: &str = "claude-haiku-5-5";
+const FABLE: &str = "claude-fable-5-1";
+
+/// Built-in spec for `role` (level 5 of the resolution order).
+///
+/// These are configuration defaults shipped in the binary; any field can be
+/// overridden from `init.lua`.
+#[must_use]
+pub fn default_spec(role: ModelRole) -> ModelSpec {
+    let thinking = |budget_tokens| ThinkingConfig::Enabled { budget_tokens };
+    match role {
+        ModelRole::Main => ModelSpec::new(SONNET, 16_000)
+            .with_thinking(thinking(8_000))
+            .with_fallbacks([HAIKU]),
+        ModelRole::Plan => ModelSpec::new(OPUS, 32_000)
+            .with_thinking(thinking(16_000))
+            .with_fallbacks([SONNET]),
+        ModelRole::Explore => ModelSpec::new(HAIKU, 8_000),
+        ModelRole::Compact => ModelSpec::new(HAIKU, 4_000),
+        ModelRole::Title => ModelSpec::new(HAIKU, 1_024),
+        ModelRole::Component => ModelSpec::new(SONNET, 16_000).with_fallbacks([HAIKU]),
+        ModelRole::Deep => ModelSpec::new(FABLE, 32_000)
+            .with_thinking(thinking(16_000))
+            .with_fallbacks([OPUS, SONNET]),
+    }
+}
+
+/// Built-in aliases (`opus`, `sonnet`, `haiku`, `fable`).
+#[must_use]
+pub fn default_aliases() -> BTreeMap<String, ModelId> {
+    [
+        ("opus", OPUS),
+        ("sonnet", SONNET),
+        ("haiku", HAIKU),
+        ("fable", FABLE),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), ModelId::from(v)))
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,5 +616,53 @@ mod tests {
             serde_json::from_value::<RoleConfig>(serde_json::json!({})).unwrap(),
             RoleConfig::default()
         );
+    }
+
+    #[test]
+    fn builtin_defaults_table() {
+        let on = |b| ThinkingConfig::Enabled { budget_tokens: b };
+        let off = ThinkingConfig::Disabled;
+        let cases: [(ModelRole, &str, u32, ThinkingConfig, &[&str]); 7] = [
+            (
+                ModelRole::Main,
+                "claude-sonnet-5-5",
+                16_000,
+                on(8_000),
+                &["claude-haiku-5-5"],
+            ),
+            (
+                ModelRole::Plan,
+                "claude-opus-5-5",
+                32_000,
+                on(16_000),
+                &["claude-sonnet-5-5"],
+            ),
+            (ModelRole::Explore, "claude-haiku-5-5", 8_000, off, &[]),
+            (ModelRole::Compact, "claude-haiku-5-5", 4_000, off, &[]),
+            (ModelRole::Title, "claude-haiku-5-5", 1_024, off, &[]),
+            (
+                ModelRole::Component,
+                "claude-sonnet-5-5",
+                16_000,
+                off,
+                &["claude-haiku-5-5"],
+            ),
+            (
+                ModelRole::Deep,
+                "claude-fable-5-1",
+                32_000,
+                on(16_000),
+                &["claude-opus-5-5", "claude-sonnet-5-5"],
+            ),
+        ];
+        for (role, id, max, thinking, fallbacks) in cases {
+            let want = ModelSpec::new(id, max)
+                .with_thinking(thinking)
+                .with_fallbacks(fallbacks.iter().copied());
+            assert_eq!(default_spec(role), want, "{role}");
+        }
+        let aliases = default_aliases();
+        assert_eq!(aliases.get("opus"), Some(&ModelId::from("claude-opus-5-5")));
+        assert_eq!(aliases.len(), 4);
     }
 }
