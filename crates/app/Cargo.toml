@@ -7,8 +7,23 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Exposes the in-memory fakes of every port to other crates' tests.
+testing = []
+
 [dependencies]
+async-trait.workspace = true
 domain.workspace = true
+futures.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
