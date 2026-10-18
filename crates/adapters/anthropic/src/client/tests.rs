@@ -138,6 +138,36 @@ async fn unauthorized_gives_a_clear_error_without_the_key() {
 }
 
 #[tokio::test]
+async fn a_rejected_key_names_where_it_came_from() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(api_error("authentication_error", "invalid x-api-key")),
+        )
+        .mount(&server)
+        .await;
+    let config = || ClientConfig {
+        base_url: format!("{}/", server.uri()),
+        ..ClientConfig::default()
+    };
+    for (source, expected) in [
+        (KeySource::Env, "variable ANTHROPIC_API_KEY"),
+        (KeySource::Keyring, "llavero del sistema"),
+    ] {
+        let key = ApiKey::from(FAKE_KEY.to_owned(), source).unwrap();
+        assert_eq!(key.source(), source);
+        let client = AnthropicClient::new(&key, config()).unwrap();
+        let Err(LlmError::Auth { message }) = client.stream_messages(&body()).await else {
+            panic!("401 must be an Auth error");
+        };
+        assert!(message.contains(expected), "{source:?}: {message}");
+        assert!(message.contains("rechazó"), "{message}");
+        assert!(!message.contains(FAKE_KEY));
+    }
+}
+
+#[tokio::test]
 async fn http_errors_are_typed() {
     let server = MockServer::start().await;
     Mock::given(path("/429"))

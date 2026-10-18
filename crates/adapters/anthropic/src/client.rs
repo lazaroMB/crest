@@ -31,9 +31,43 @@ pub const KEYRING_SERVICE: &str = "crest";
 /// Keyring user (entry name) of the key within [`KEYRING_SERVICE`].
 pub const KEYRING_USER: &str = "ANTHROPIC_API_KEY";
 
+/// Where an [`ApiKey`] came from, so a rejected key can be traced back to
+/// the place the user has to fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeySource {
+    /// The `ANTHROPIC_API_KEY` environment variable.
+    Env,
+    /// The system keyring (service `crest`, entry `ANTHROPIC_API_KEY`).
+    Keyring,
+    /// Given directly by the caller.
+    Explicit,
+}
+
+impl KeySource {
+    /// The message shown when the API rejects a key from this source.
+    #[must_use]
+    pub fn rejected_hint(self) -> String {
+        match self {
+            Self::Env => "Anthropic rechazó la API key de la variable ANTHROPIC_API_KEY \
+                 (401); revisa que sea una key válida (empieza por `sk-ant-`)"
+                .to_owned(),
+            Self::Keyring => format!(
+                "Anthropic rechazó la API key guardada en el llavero del sistema (servicio \
+                 `{KEYRING_SERVICE}`, entrada `{KEYRING_USER}`) (401); guarda la correcta o \
+                 bórrala (en Linux: `secret-tool clear service {KEYRING_SERVICE} username \
+                 {KEYRING_USER}`) y exporta ANTHROPIC_API_KEY"
+            ),
+            Self::Explicit => AUTH_HINT.to_owned(),
+        }
+    }
+}
+
 /// An Anthropic API key. `Debug` and `Display` never show it.
 #[derive(Clone, PartialEq, Eq)]
-pub struct ApiKey(String);
+pub struct ApiKey {
+    key: String,
+    source: KeySource,
+}
 
 impl ApiKey {
     /// Wraps a key; surrounding whitespace is trimmed.
@@ -47,7 +81,29 @@ impl ApiKey {
         if key.is_empty() {
             return Err(auth_error());
         }
-        Ok(Self(key.to_owned()))
+        Ok(Self {
+            key: key.to_owned(),
+            source: KeySource::Explicit,
+        })
+    }
+
+    /// Where the key came from.
+    #[must_use]
+    pub fn source(&self) -> KeySource {
+        self.source
+    }
+
+    fn from(key: String, source: KeySource) -> Result<Self, LlmError> {
+        let mut key = Self::new(key)?;
+        key.source = source;
+        if !key.key.starts_with("sk-ant-") {
+            // Never log the key itself, only that it looks wrong.
+            tracing::warn!(
+                ?source,
+                "the Anthropic API key does not start with `sk-ant-`; it is probably not a key"
+            );
+        }
+        Ok(key)
     }
 
     /// Reads the key from `ANTHROPIC_API_KEY` or, if unset or empty, from
@@ -61,7 +117,7 @@ impl ApiKey {
     /// [`LlmError::Auth`] when neither source has a key.
     pub fn from_env_or_keyring() -> Result<Self, LlmError> {
         if let Ok(key) = std::env::var(API_KEY_ENV)
-            && let Ok(key) = Self::new(key)
+            && let Ok(key) = Self::from(key, KeySource::Env)
         {
             return Ok(key);
         }
@@ -70,7 +126,7 @@ impl ApiKey {
             auth_error()
         })?;
         match entry.get_password() {
-            Ok(key) => Self::new(key),
+            Ok(key) => Self::from(key, KeySource::Keyring),
             Err(err) => {
                 tracing::debug!(error = %err, "no API key in the keyring");
                 Err(auth_error())
@@ -80,7 +136,7 @@ impl ApiKey {
 
     /// The key, for building the request header only.
     fn expose(&self) -> &str {
-        &self.0
+        &self.key
     }
 }
 
@@ -132,6 +188,7 @@ impl Default for ClientConfig {
 pub struct AnthropicClient {
     http: reqwest::Client,
     base_url: String,
+    key_source: KeySource,
 }
 
 impl AnthropicClient {
@@ -167,6 +224,7 @@ impl AnthropicClient {
         Ok(Self {
             http,
             base_url: config.base_url.trim_end_matches('/').to_owned(),
+            key_source: key.source(),
         })
     }
 
@@ -186,7 +244,7 @@ impl AnthropicClient {
             .send()
             .await
             .map_err(network_error)?;
-        let response = check(response).await?;
+        let response = check(response, self.key_source).await?;
         let model = ModelId::new(body.model.clone());
         Ok(Box::pin(llm_events(
             Box::pin(response.bytes_stream()),
@@ -216,7 +274,7 @@ impl AnthropicClient {
         }
         tracing::debug!(%path, "GET");
         let response = self.http.get(url).send().await.map_err(network_error)?;
-        check(response)
+        check(response, self.key_source)
             .await?
             .json()
             .await
@@ -231,7 +289,10 @@ fn network_error(err: reqwest::Error) -> LlmError {
 }
 
 /// Passes 2xx responses through and turns the rest into typed errors.
-async fn check(response: reqwest::Response) -> Result<reqwest::Response, LlmError> {
+async fn check(
+    response: reqwest::Response,
+    key_source: KeySource,
+) -> Result<reqwest::Response, LlmError> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -246,6 +307,13 @@ async fn check(response: reqwest::Response) -> Result<reqwest::Response, LlmErro
     let err = match serde_json::from_str::<ApiErrorBody>(&text) {
         Ok(body) => error::from_api(Some(status.as_u16()), &body.error, retry_after_ms),
         Err(_) => error::from_status(status.as_u16(), text, retry_after_ms),
+    };
+    // Say where the rejected key came from instead of "invalid or missing".
+    let err = match err {
+        LlmError::Auth { message } if message == AUTH_HINT => LlmError::Auth {
+            message: key_source.rejected_hint(),
+        },
+        other => other,
     };
     tracing::warn!(status = status.as_u16(), request_id, error = %err, "Anthropic API error");
     Err(err)
