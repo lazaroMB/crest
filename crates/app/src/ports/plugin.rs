@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use domain::model::{ModelPolicy, RoleConfig};
+use async_trait::async_trait;
+use domain::block::BlockKind;
+use domain::model::{ModelPolicy, ModelRole, RoleConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -209,9 +211,187 @@ impl LoadedConfig {
     }
 }
 
+/// Something a Lua function asks the app to do (`app.send`, `app.cmd`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PluginAction {
+    /// Send a prompt as if the user typed it.
+    Send {
+        /// Prompt text.
+        text: String,
+        /// Role to answer it with; `None` uses `main`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<ModelRole>,
+    },
+    /// Run a built-in command by name (e.g. `clear`).
+    Cmd {
+        /// Command name and arguments.
+        command: String,
+    },
+}
+
+/// What a Lua function returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum PluginOutput {
+    /// Plain data, e.g. a tool result for the model.
+    Value(Value),
+    /// A block to show in the timeline (usually `Custom`).
+    Block(BlockKind),
+    /// Actions requested during the call, in order.
+    Actions(Vec<PluginAction>),
+}
+
+/// Context passed to the hooks of a tool call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HookEvent {
+    /// The tool is about to run.
+    BeforeTool {
+        /// Tool name.
+        name: String,
+        /// Input the model sent.
+        input: Value,
+    },
+    /// The tool finished.
+    AfterTool {
+        /// Tool name.
+        name: String,
+        /// Input it ran with.
+        input: Value,
+        /// Its output.
+        output: Value,
+    },
+}
+
+impl HookEvent {
+    /// Kind of hooks that receive this event.
+    #[must_use]
+    pub fn kind(&self) -> HookKind {
+        match self {
+            Self::BeforeTool { .. } => HookKind::BeforeTool,
+            Self::AfterTool { .. } => HookKind::AfterTool,
+        }
+    }
+}
+
+/// Combined decision of the hooks for one event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum HookOutcome {
+    /// Go on unchanged.
+    Continue,
+    /// Do not run the tool; the reason is passed back to the model.
+    Deny {
+        /// Why, when the hook gave one.
+        reason: Option<String>,
+    },
+    /// Run the tool with this input instead (only for `BeforeTool`).
+    ReplaceInput(Value),
+}
+
+/// Why a call into the Lua host failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PluginError {
+    /// A Lua file does not parse.
+    #[error("{file}{}: syntax error: {message}", line.map(|l| format!(":{l}")).unwrap_or_default())]
+    Syntax {
+        /// File with the error.
+        file: String,
+        /// Line, when known.
+        line: Option<u32>,
+        /// Parser message.
+        message: String,
+    },
+    /// A Lua function raised an error.
+    #[error("lua error: {0}")]
+    Runtime(String),
+    /// A Lua function ran past the instruction limit and was stopped.
+    #[error("lua call exceeded the instruction limit")]
+    InstructionLimit,
+    /// A plugin used a capability (network, shell, ...) it was not granted.
+    #[error("capability `{0}` denied")]
+    CapabilityDenied(String),
+    /// No callback or tool with that id or name.
+    #[error("unknown plugin callback or tool: {0}")]
+    NotFound(String),
+    /// The Lua thread is gone or not started.
+    #[error("lua host unavailable: {0}")]
+    Unavailable(String),
+}
+
+/// The Lua host: loads configs and plugins and runs their functions.
+///
+/// Calls go to the VM thread through a channel and are answered in order.
+/// Dropping a returned future stops waiting for the answer, but the Lua call
+/// itself runs until it returns or hits the instruction limit.
+#[async_trait]
+pub trait PluginHostPort: Send + Sync {
+    /// Loads the global config, the plugins and the workspace config, in that
+    /// order, replacing any previous state of the VM.
+    ///
+    /// Errors in single files are reported in [`LoadedConfig::errors`] and
+    /// loading continues with defaults; `Err` means the host itself failed.
+    async fn load_config(&self, sources: ConfigSources) -> Result<LoadedConfig, PluginError>;
+
+    /// Runs the Lua function `id` (a keymap or command) with `args`.
+    async fn invoke_callback(
+        &self,
+        id: CallbackId,
+        args: Value,
+    ) -> Result<PluginOutput, PluginError>;
+
+    /// Runs the handler of the plugin tool `name` with the model's `input`.
+    async fn call_tool(&self, name: &str, input: Value) -> Result<PluginOutput, PluginError>;
+
+    /// Runs every hook registered for `event`, in order. The first `Deny`
+    /// stops the chain; each `ReplaceInput` feeds the next hook.
+    async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_is_object_safe() {
+        fn assert_dyn(_: Option<std::sync::Arc<dyn PluginHostPort>>) {}
+        assert_dyn(None);
+    }
+
+    #[test]
+    fn syntax_error_mentions_the_line() {
+        let err = PluginError::Syntax {
+            file: "init.lua".into(),
+            line: Some(4),
+            message: "unexpected symbol".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "init.lua:4: syntax error: unexpected symbol"
+        );
+    }
+
+    #[test]
+    fn outputs_round_trip_through_json() {
+        let outputs = [
+            PluginOutput::Value(serde_json::json!({ "ok": true })),
+            PluginOutput::Actions(vec![
+                PluginAction::Send {
+                    text: "review".into(),
+                    role: Some(ModelRole::Plan),
+                },
+                PluginAction::Cmd {
+                    command: "clear".into(),
+                },
+            ]),
+        ];
+        for output in outputs {
+            let json = serde_json::to_string(&output).unwrap();
+            let back: PluginOutput = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, output);
+        }
+    }
 
     #[test]
     fn default_config_is_empty() {
