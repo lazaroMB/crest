@@ -10,6 +10,10 @@ publish.workspace = true
 [dependencies]
 application.workspace = true
 domain.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
