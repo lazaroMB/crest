@@ -1,0 +1,17 @@
+---
+source: crates/domain/src/sysmodel/tests.rs
+expression: render(&trace)
+---
+scenario one_request seed 7 model 49e04bf918a9dbe8 events 12
+      0 client.out sent Req to api
+   1000 api started Req
+   3542 api handled Req: idle → busy
+   3542 api.db sent Query to db
+   4542 db started Query
+   9542 db handled Query: up → up
+   9542 db.out sent Rows to api
+  10542 api started Rows
+  13192 api handled Rows: busy → idle
+  13192 api.out sent Resp to client
+  14192 client started Resp
+  14192 client handled Resp: waiting → done
