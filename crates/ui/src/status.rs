@@ -2,7 +2,8 @@
 //! workspace, plus transient notices (warnings, model fallback, retries).
 //!
 //! [`StatusState`] is the pure model, updated from [`DomainEvent`]s with an
-//! explicit `now` so notice expiry is tested without sleeping.
+//! explicit `now` so notice expiry is tested without sleeping;
+//! [`StatusView`] draws it and clears a notice when its time is up.
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,11 @@ use application::ports::events::{DomainEvent, NoticeLevel};
 use domain::conversation::Usage;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
+use gpui::{
+    App, Context, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task,
+    Window, div,
+};
+use gpui_component::{ActiveTheme as _, h_flex};
 
 use crate::input::mode_label;
 
@@ -210,6 +216,110 @@ impl StatusState {
     }
 }
 
+/// The status bar view.
+pub struct StatusView {
+    state: StatusState,
+    expiry: Option<Task<()>>,
+}
+
+impl StatusView {
+    /// A status bar for `workspace`.
+    pub fn new(workspace: impl Into<String>) -> Self {
+        Self {
+            state: StatusState::new(workspace),
+            expiry: None,
+        }
+    }
+
+    /// The model behind the view.
+    pub fn state(&self) -> &StatusState {
+        &self.state
+    }
+
+    /// Mutable access, e.g. to set the configured model before a turn.
+    pub fn state_mut(&mut self, cx: &mut Context<Self>) -> &mut StatusState {
+        cx.notify();
+        &mut self.state
+    }
+
+    /// Shows the input mode.
+    pub fn set_input_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        if self.state.input_mode() != mode {
+            self.state.set_input_mode(mode);
+            cx.notify();
+        }
+    }
+
+    /// Applies a domain event, scheduling the removal of a new notice.
+    pub fn apply(&mut self, event: &DomainEvent, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let had_notice = self.state.notice(now).cloned();
+        if !self.state.apply(event, now) {
+            return;
+        }
+        if self.state.notice(now).cloned() != had_notice {
+            self.expiry = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(NOTICE_TTL).await;
+                this.update(cx, |this, cx| {
+                    let now = cx.background_executor().now();
+                    if this.state.expire(now) {
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }));
+        }
+        cx.notify();
+    }
+}
+
+fn notice_color(level: NoticeLevel, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    match level {
+        NoticeLevel::Info => theme.info,
+        NoticeLevel::Warning => theme.warning,
+        NoticeLevel::Error => theme.danger,
+    }
+}
+
+impl Render for StatusView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let now = cx.background_executor().now();
+        let [mode, model, permission, cost, workspace] = self.state.segments();
+        let muted = theme.muted_foreground;
+        let sep = || div().text_color(muted).child("│");
+        let mut left = h_flex()
+            .gap_2()
+            .child(div().font_weight(gpui::FontWeight::BOLD).child(mode))
+            .child(sep())
+            .child(SharedString::from(model));
+        if self.state.is_busy() {
+            left = left.child(div().text_color(theme.info).child("●"));
+        }
+        left = left
+            .child(sep())
+            .child(SharedString::from(permission))
+            .child(sep())
+            .child(SharedString::from(cost));
+        let mut right = h_flex().gap_2();
+        if let Some(notice) = self.state.notice(now) {
+            right = right.child(
+                div()
+                    .text_color(notice_color(notice.level, cx))
+                    .child(SharedString::from(notice.message.clone())),
+            );
+        }
+        right = right.child(div().text_color(muted).child(SharedString::from(workspace)));
+        h_flex()
+            .w_full()
+            .justify_between()
+            .text_sm()
+            .child(left)
+            .child(right)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +473,37 @@ mod tests {
             notice,
             Some((NoticeLevel::Error, "turn failed: overloaded".into()))
         );
+    }
+
+    #[gpui::test]
+    fn view_draws_and_clears_the_notice(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, _| StatusView::new("proyecto-ide"));
+        view.update(cx, |view, cx| {
+            view.apply(&started("claude-sonnet-5-5"), cx);
+            view.apply(
+                &DomainEvent::Notice {
+                    level: NoticeLevel::Info,
+                    message: "session saved".into(),
+                },
+                cx,
+            );
+        });
+        cx.draw(
+            gpui::point(gpui::px(0.), gpui::px(0.)),
+            gpui::size(gpui::px(1000.), gpui::px(24.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        view.read_with(cx, |view, _| assert!(view.state.notice.is_some()));
+        cx.executor().advance_clock(NOTICE_TTL);
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert!(view.state.notice.is_none());
+            assert_eq!(
+                view.state().model().map(ModelId::as_str),
+                Some("claude-sonnet-5-5")
+            );
+        });
     }
 
     #[test]
