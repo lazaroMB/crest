@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use application::cost;
-use application::ports::plugin::{AppOptions, McpServerSpec, McpTransport, PluginDiagnostic};
+use application::ports::plugin::{AppOptions, McpServerSpec, PluginDiagnostic};
 use domain::model::{ModelId, ModelRole, ModelSpecPatch, RoleConfig, ThinkingConfig};
 use mlua::{Lua, Table};
 use serde_json::{Map, Value};
@@ -62,7 +62,7 @@ pub(crate) fn read(lua: &Lua, app: &Table, file: &str) -> (Declared, Vec<PluginD
             roles: roles(json(&["models", "roles"], &mut report), &mut report),
             aliases: aliases(json(&["models", "aliases"], &mut report), &mut report),
         },
-        mcp_servers: mcp(json(&["mcp"], &mut report), &mut report),
+        mcp_servers: mcp(&json(&["mcp"], &mut report), &mut report),
         sensitive_paths: match json(&["permissions", "sensitive_paths"], &mut report) {
             Value::Null => None,
             v => strings(&v, "app.permissions.sensitive_paths", &mut report),
@@ -279,49 +279,18 @@ fn thinking(value: &Value) -> Option<ThinkingConfig> {
     }
 }
 
-fn mcp(value: Value, report: &mut Report<'_>) -> Vec<McpServerSpec> {
-    let mut out = Vec::new();
-    let Some(map) = as_map(&value) else {
-        if !value.is_null() {
-            report.push("app.mcp must be a table of servers by name");
-        }
-        return out;
-    };
-    for (name, server) in map {
-        let what = format!("app.mcp.{name}");
-        let command = server.get("command").and_then(Value::as_str);
-        let url = server.get("url").and_then(Value::as_str);
-        let transport = match (command, url) {
-            (Some(command), None) => McpTransport::Stdio {
-                command: command.to_owned(),
-                args: server
-                    .get("args")
-                    .and_then(|a| strings(a, &format!("{what}.args"), report))
-                    .unwrap_or_default(),
-                env: server
-                    .get("env")
-                    .map(|e| string_map(e, &format!("{what}.env"), report))
-                    .unwrap_or_default(),
-            },
-            (None, Some(url)) => McpTransport::Http {
-                url: url.to_owned(),
-                headers: server
-                    .get("headers")
-                    .map(|h| string_map(h, &format!("{what}.headers"), report))
-                    .unwrap_or_default(),
-            },
-            _ => {
-                report.push(format!("{what} needs either `command` or `url`"));
-                continue;
-            }
-        };
-        out.push(McpServerSpec::new(name.clone(), transport));
+fn mcp(value: &Value, report: &mut Report<'_>) -> Vec<McpServerSpec> {
+    let mut problems = Vec::new();
+    let servers = crate::api::mcp::servers(value, &mut problems);
+    for message in problems {
+        report.push(message);
     }
-    out
+    servers
 }
 
 #[cfg(test)]
 mod tests {
+    use application::ports::plugin::McpTransport;
     use serde_json::json;
 
     use super::*;
