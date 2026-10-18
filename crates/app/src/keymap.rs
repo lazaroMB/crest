@@ -4,10 +4,11 @@
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
 //! passed in as an [`Instant`](std::time::Instant) so tests never sleep.
 //!
-//! The types here (`Mode`, [`Key`], [`KeySequence`], `Action`) are the
+//! The types here ([`Mode`], [`Key`], [`KeySequence`], `Action`) are the
 //! keymap's own vocabulary. The Lua host (`app.keymap.set`) and the UI layer
 //! convert their own representations into them.
 
+use std::collections::HashMap;
 use std::fmt;
 
 /// A key without modifiers.
@@ -240,6 +241,137 @@ impl fmt::Display for Key {
     }
 }
 
+/// Editing mode the keymap applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Mode {
+    /// Typing in the prompt.
+    Insert,
+    /// Navigating the timeline.
+    Normal,
+    /// Typing a `:` command.
+    Command,
+}
+
+impl Mode {
+    /// All modes, for mappings that apply everywhere.
+    pub const ALL: [Mode; 3] = [Mode::Insert, Mode::Normal, Mode::Command];
+}
+
+/// Leader used when none is configured (`app.opt.leader`).
+pub const DEFAULT_LEADER: &str = " ";
+
+#[derive(Debug, Clone)]
+struct Node<A> {
+    action: Option<A>,
+    children: HashMap<Key, Node<A>>,
+}
+
+impl<A> Default for Node<A> {
+    fn default() -> Self {
+        Self {
+            action: None,
+            children: HashMap::new(),
+        }
+    }
+}
+
+/// Result of looking up a key sequence in a [`Keymap`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct Lookup<'a, A> {
+    /// Action mapped to exactly this sequence.
+    pub exact: Option<&'a A>,
+    /// Whether some longer mapping starts with this sequence.
+    pub is_prefix: bool,
+}
+
+/// Per-mode trie of `KeySequence -> A`.
+///
+/// `<leader>` is expanded when a mapping is registered, as in Neovim: changing
+/// the leader later does not move existing mappings.
+#[derive(Debug, Clone)]
+pub struct Keymap<A> {
+    leader: String,
+    modes: HashMap<Mode, Node<A>>,
+}
+
+impl<A> Default for Keymap<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A> Keymap<A> {
+    /// An empty keymap with the default leader.
+    pub fn new() -> Self {
+        Self {
+            leader: DEFAULT_LEADER.to_owned(),
+            modes: HashMap::new(),
+        }
+    }
+
+    /// The leader that `<leader>` expands to in future registrations.
+    pub fn leader(&self) -> &str {
+        &self.leader
+    }
+
+    /// Sets the leader (notation, e.g. `" "` or `","`). Validated eagerly.
+    pub fn set_leader(&mut self, leader: &str) -> Result<(), KeyParseError> {
+        parse_inner(leader, None)?;
+        self.leader = leader.to_owned();
+        Ok(())
+    }
+
+    /// Maps `notation` in `mode`, replacing any previous action for it.
+    pub fn set(&mut self, mode: Mode, notation: &str, action: A) -> Result<(), KeyParseError> {
+        let keys = parse_keys(notation, &self.leader)?;
+        self.set_keys(mode, &keys, action);
+        Ok(())
+    }
+
+    /// Maps an already parsed sequence, replacing any previous action.
+    pub fn set_keys(&mut self, mode: Mode, keys: &[Key], action: A) {
+        let mut node = self.modes.entry(mode).or_default();
+        for key in keys {
+            node = node.children.entry(*key).or_default();
+        }
+        node.action = Some(action);
+    }
+
+    /// Removes the mapping for `notation`, returning its action.
+    pub fn del(&mut self, mode: Mode, notation: &str) -> Result<Option<A>, KeyParseError> {
+        let keys = parse_keys(notation, &self.leader)?;
+        Ok(self
+            .modes
+            .get_mut(&mode)
+            .and_then(|root| remove(root, &keys)))
+    }
+
+    /// Looks up `keys` in `mode`.
+    pub fn lookup(&self, mode: Mode, keys: &[Key]) -> Lookup<'_, A> {
+        let node = self.modes.get(&mode).and_then(|root| {
+            keys.iter()
+                .try_fold(root, |node, key| node.children.get(key))
+        });
+        Lookup {
+            exact: node.and_then(|n| n.action.as_ref()),
+            is_prefix: node.is_some_and(|n| !n.children.is_empty()),
+        }
+    }
+}
+
+/// Removes the action at `keys`, pruning nodes left empty.
+fn remove<A>(node: &mut Node<A>, keys: &[Key]) -> Option<A> {
+    let Some((first, rest)) = keys.split_first() else {
+        return node.action.take();
+    };
+    let child = node.children.get_mut(first)?;
+    let removed = remove(child, rest);
+    if child.action.is_none() && child.children.is_empty() {
+        node.children.remove(first);
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +476,51 @@ mod tests {
             let shown: String = keys.iter().map(ToString::to_string).collect();
             assert_eq!(parse_keys(&shown, " "), Ok(keys), "{n}");
         }
+    }
+
+    fn keys(n: &str) -> KeySequence {
+        parse_keys(n, " ").unwrap_or_default()
+    }
+
+    #[test]
+    fn keymap_looks_up_exact_and_prefix() {
+        let mut km = Keymap::new();
+        assert_eq!(km.set(Mode::Normal, "g", 1), Ok(()));
+        assert_eq!(km.set(Mode::Normal, "gg", 2), Ok(()));
+        assert_eq!(km.set(Mode::Normal, "<leader>ff", 3), Ok(()));
+        let g = km.lookup(Mode::Normal, &keys("g"));
+        assert_eq!((g.exact, g.is_prefix), (Some(&1), true));
+        let gg = km.lookup(Mode::Normal, &keys("gg"));
+        assert_eq!((gg.exact, gg.is_prefix), (Some(&2), false));
+        let sp = km.lookup(Mode::Normal, &keys("<Space>f"));
+        assert_eq!((sp.exact, sp.is_prefix), (None, true));
+        assert_eq!(km.lookup(Mode::Normal, &keys("<Space>ff")).exact, Some(&3));
+        let other_mode = km.lookup(Mode::Insert, &keys("g"));
+        assert_eq!((other_mode.exact, other_mode.is_prefix), (None, false));
+    }
+
+    #[test]
+    fn keymap_override_and_delete() {
+        let mut km = Keymap::new();
+        assert_eq!(km.set(Mode::Normal, "j", "a"), Ok(()));
+        assert_eq!(km.set(Mode::Normal, "j", "b"), Ok(()));
+        assert_eq!(km.lookup(Mode::Normal, &keys("j")).exact, Some(&"b"));
+        assert_eq!(km.del(Mode::Normal, "j"), Ok(Some("b")));
+        assert_eq!(km.lookup(Mode::Normal, &keys("j")).exact, None);
+        assert_eq!(km.del(Mode::Normal, "j"), Ok(None));
+    }
+
+    #[test]
+    fn keymap_leader_is_expanded_at_registration() {
+        let mut km = Keymap::new();
+        assert_eq!(km.set_leader(","), Ok(()));
+        assert_eq!(km.set(Mode::Normal, "<leader>m", 1), Ok(()));
+        assert_eq!(km.set_leader(" "), Ok(()));
+        assert_eq!(km.lookup(Mode::Normal, &keys(",m")).exact, Some(&1));
+        assert_eq!(
+            km.set_leader("<leader>"),
+            Err(KeyParseError::LeaderInLeader)
+        );
+        assert_eq!(km.leader(), " ");
     }
 }
