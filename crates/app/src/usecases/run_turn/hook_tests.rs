@@ -113,3 +113,60 @@ async fn without_a_plugin_host_no_hook_runs() {
     h.run("hola").await.unwrap();
     assert_eq!(h.tool_results(), [("echo: a".to_owned(), false)]);
 }
+
+#[tokio::test]
+async fn after_tool_hooks_see_the_input_and_output() {
+    let host = FakePluginHost::new()
+        .on_hook(HookKind::BeforeTool, |_| {
+            Ok(HookOutcome::ReplaceInput(json!({ "text": "fail" })))
+        })
+        .on_hook(HookKind::AfterTool, |_| {
+            Ok(HookOutcome::Deny { reason: None })
+        });
+    let (mut h, host) = harness(echo("a"), host);
+    h.run("hola").await.unwrap();
+
+    // What an after_tool hook returns is ignored.
+    assert_eq!(h.tool_results(), [("echo failed".to_owned(), true)]);
+    assert_eq!(
+        host.invocations()[1],
+        PluginInvocation::Hook(HookEvent::AfterTool {
+            name: "echo".into(),
+            input: json!({ "text": "fail" }),
+            output: json!({ "text": "echo failed", "is_error": true }),
+        })
+    );
+}
+
+#[tokio::test]
+async fn denied_calls_do_not_reach_after_tool_hooks() {
+    let host = FakePluginHost::new().deny_tool("echo", None);
+    let (mut h, host) = harness(echo("a"), host);
+    h.run("hola").await.unwrap();
+    let after = host
+        .invocations()
+        .into_iter()
+        .filter(|i| matches!(i, PluginInvocation::Hook(HookEvent::AfterTool { .. })))
+        .count();
+    assert_eq!(after, 0);
+}
+
+#[tokio::test]
+async fn a_failing_after_hook_is_a_notice_and_keeps_the_result() {
+    let host = FakePluginHost::new().on_hook(HookKind::AfterTool, |_| {
+        Err(PluginError::Runtime("boom".into()))
+    });
+    let (mut h, _) = harness(echo("a"), host);
+    let outcome = h.run("hola").await.unwrap();
+
+    assert_eq!(outcome.stop_reason, StopReason::EndTurn);
+    assert_eq!(h.tool_results(), [("echo: a".to_owned(), false)]);
+    assert!(h.sink.events().contains(&DomainEvent::Notice {
+        level: NoticeLevel::Warning,
+        message: "after_tool hook failed for `echo`: lua error: boom".into(),
+    }));
+    assert_eq!(
+        tool_statuses(&h),
+        [ToolStatus::Running, ToolStatus::Succeeded]
+    );
+}

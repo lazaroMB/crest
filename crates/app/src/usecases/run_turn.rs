@@ -19,8 +19,11 @@
 //! With a plugin host ([`AgentService::with_plugin_host`]) the
 //! `before_tool` hooks run before each call is prepared: `Deny` answers the
 //! model with `denied by hook: <reason>` without asking (status `Denied`)
-//! and `ReplaceInput` prepares the call with the new input. A hook that
-//! fails is reported as a warning `Notice` and the call goes on.
+//! and `ReplaceInput` prepares the call with the new input. After a call
+//! runs, the `after_tool` hooks get its input and output
+//! (`{ text, is_error }`) to observe; calls that were denied do not reach
+//! them. A hook that fails is reported as a warning `Notice` and the turn
+//! goes on.
 //!
 //! Cancelling [`TurnOptions::cancel`] interrupts the turn at any await
 //! point: the model stream or the running tool future is dropped (which
@@ -43,7 +46,7 @@ use domain::conversation::{
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
 use domain::permission::{ActionRequest, Decision};
 use futures::StreamExt;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::ports::approval::ApprovalPort;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
@@ -668,7 +671,7 @@ impl TurnRun<'_> {
         self.emit(DomainEvent::BlockUpdated {
             block: Block {
                 id: block_id,
-                kind: tool_call_kind(&ctx.tool_use_id, name, input, summary),
+                kind: tool_call_kind(&ctx.tool_use_id, name, input.clone(), summary),
             },
         });
         let action = ActionRequest::new(name, effect, prepared.subject.clone());
@@ -679,7 +682,8 @@ impl TurnRun<'_> {
             ),
             Decision::Allow => {
                 let extra = prepared.block.take().map(|kind| self.add_block(kind));
-                self.run_prepared(name, prepared, block_id, extra).await
+                self.run_prepared(name, &input, prepared, block_id, extra)
+                    .await
             }
             Decision::Ask => {
                 let mut extra = prepared.block.take().map(|kind| self.add_block(kind));
@@ -703,7 +707,8 @@ impl TurnRun<'_> {
                         if let Some(block) = &mut extra {
                             self.set_diff_approval(block, ApprovalState::Approved);
                         }
-                        self.run_prepared(name, prepared, block_id, extra).await
+                        self.run_prepared(name, &input, prepared, block_id, extra)
+                            .await
                     }
                     UserVerdict::Rejected(message) => {
                         if let Some(block) = &mut extra {
@@ -737,6 +742,22 @@ impl TurnRun<'_> {
         }
     }
 
+    /// Runs the `after_tool` hooks of a call that ran. They only observe:
+    /// what they return is ignored.
+    async fn after_tool(&self, name: &str, input: &Value, output: &ToolOutput) {
+        let Some(host) = &self.service.plugins else {
+            return;
+        };
+        let event = HookEvent::AfterTool {
+            name: name.to_owned(),
+            input: input.clone(),
+            output: json!({ "text": output.text_content(), "is_error": output.is_error }),
+        };
+        if let Err(err) = host.run_hook(event).await {
+            self.hook_failed("after_tool", name, &err);
+        }
+    }
+
     /// Reports a hook that failed; the turn goes on.
     fn hook_failed(&self, hook: &str, tool: &str, err: &PluginError) {
         self.emit(DomainEvent::Notice {
@@ -765,10 +786,11 @@ impl TurnRun<'_> {
         }
     }
 
-    /// Runs an approved call.
+    /// Runs an approved call, then its `after_tool` hooks.
     async fn run_prepared(
         &self,
         name: &str,
+        input: &Value,
         prepared: PreparedCall,
         block_id: BlockId,
         extra: Option<Block>,
@@ -798,6 +820,7 @@ impl TurnRun<'_> {
             };
             self.emit(event);
         }
+        self.after_tool(name, input, &output).await;
         let status = if output.is_error {
             ToolStatus::Failed
         } else {
