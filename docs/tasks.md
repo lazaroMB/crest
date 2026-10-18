@@ -4,16 +4,16 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 
 | ID | Estado | Depende de | Alcance |
 | --- | --- | --- | --- |
-| T0.1 ★ | en curso | — | raíz, `crates/*/Cargo.toml` |
+| T0.1 ★ | integrada | — | raíz, `crates/*/Cargo.toml` |
 | T0.2 | pendiente | T0.1 | `Makefile` |
 | T0.3 | en curso | — | `scripts/install-deps.sh` |
 | T0.4 | pendiente | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
 | T0.5 | pendiente | T0.2, T0.3, T0.4 | `.github/workflows/` |
-| T1.1 ★ | pendiente | T0.1 | `domain/src/conversation.rs` |
-| T1.2 | pendiente | T0.1 | `domain/src/block.rs` |
-| T1.3 | pendiente | T0.1 | `domain/src/model.rs` |
-| T1.4 | pendiente | T0.1 | `domain/src/workspace.rs` |
-| T1.5 | pendiente | T0.1 | `domain/src/permission.rs` |
+| T1.1 ★ | en curso | T0.1 | `domain/src/conversation.rs` |
+| T1.2 | en curso | T0.1 | `domain/src/block.rs` |
+| T1.3 | en curso | T0.1 | `domain/src/model.rs` |
+| T1.4 | en curso | T0.1 | `domain/src/workspace.rs` |
+| T1.5 | en curso | T0.1 | `domain/src/permission.rs` |
 | T1.6a ★ | pendiente | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
 | T1.6b | pendiente | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
 | T1.6c | pendiente | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
