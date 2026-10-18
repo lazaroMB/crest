@@ -20,11 +20,11 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T1.7a ★ | integrada | T1.6a | `application/src/testing/llm.rs` |
 | T1.7b | integrada | T1.6b | `application/src/testing/fs.rs` |
 | T1.7c | integrada | T1.6c | `application/src/testing/system.rs` |
-| T2.A1 ★ | en curso | T1.7a | `application/src/tools/registry.rs` |
-| T2.A2 ★ | en curso | T2.A1, T1.7c | `application/src/usecases/run_turn.rs` |
-| T2.A3 ★ | en curso | T2.A2, T1.5 | mismo archivo + `approval.rs` |
-| T2.A4 | en curso | T2.A2 | `run_turn.rs` |
-| T2.A5 | en curso | T2.A2 | `application/src/tools/budget.rs` |
+| T2.A1 ★ | integrada | T1.7a | `application/src/tools/registry.rs` |
+| T2.A2 ★ | integrada | T2.A1, T1.7c | `application/src/usecases/run_turn.rs` |
+| T2.A3 ★ | integrada | T2.A2, T1.5 | mismo archivo + `approval.rs` |
+| T2.A4 | integrada | T2.A2 | `run_turn.rs` |
+| T2.A5 | integrada | T2.A2 | `application/src/tools/budget.rs` |
 | T2.B1 ★ | en curso | T1.6a | `adapters/anthropic/src/wire.rs` |
 | T2.B2 ★ | pendiente | T2.B1 | `stream.rs` |
 | T2.B3 | pendiente | T2.B1 | `client.rs` |
@@ -37,24 +37,24 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T2.C3 | en curso | T2.C1 | `files.rs` |
 | T2.C4 | en curso | T2.C1 | `grep.rs` |
 | T2.C5 | en curso | T2.C2, T2.C3 | `find.rs` |
-| T2.D1 | en curso | T1.6b, T1.4 | `adapters/fs/src/guard.rs` |
-| T2.D2 | pendiente | T2.D1 | `read.rs` |
-| T2.D3 | pendiente | T2.D1 | `write.rs` |
-| T2.D4 | pendiente | T1.6b | `adapters/shell/` |
-| T2.E1 | en curso | T1.6c | `adapters/store/migrations/` |
-| T2.E2 | en curso | T2.E1 | `adapters/store/src/session.rs` |
-| T2.F1 | pendiente | T1.6c | `adapters/lua/src/host.rs` |
-| T2.F2 | pendiente | T2.F1 | `sandbox.rs` |
-| T2.F3 | pendiente | T2.F1, T1.3 | `config.rs` |
+| T2.D1 | integrada | T1.6b, T1.4 | `adapters/fs/src/guard.rs` |
+| T2.D2 | integrada | T2.D1 | `read.rs` |
+| T2.D3 | integrada | T2.D1 | `write.rs` |
+| T2.D4 | en curso | T1.6b | `adapters/shell/` |
+| T2.E1 | integrada | T1.6c | `adapters/store/migrations/` |
+| T2.E2 | integrada | T2.E1 | `adapters/store/src/session.rs` |
+| T2.F1 | en curso | T1.6c | `adapters/lua/src/host.rs` |
+| T2.F2 | en curso | T2.F1 | `sandbox.rs` |
+| T2.F3 | en curso | T2.F1, T1.3 | `config.rs` |
 | T2.F4 | integrada | T0.1 | `application/src/keymap.rs` |
 | T2.G1 | pendiente | T1.6c | `adapters/telemetry/` |
 | T2.G2 | pendiente | T2.G1 | mismo crate |
-| T2.H1 ★ | en curso | T0.1 | `ui/src/app.rs` |
-| T2.H2 ★ | pendiente | T2.H1, T1.2, T1.7c | `ui/src/timeline/` |
-| T2.H3 | pendiente | T2.H1, T2.F4 | `ui/src/input.rs` |
-| T2.H4 | pendiente | T2.H1 | `ui/src/status.rs` |
-| T2.I1 | pendiente | T1.1 | `domain/src/research.rs` |
-| T2.I2 | pendiente | T2.I1 | `domain/src/plan.rs` |
+| T2.H1 ★ | integrada | T0.1 | `ui/src/app.rs` |
+| T2.H2 ★ | en curso | T2.H1, T1.2, T1.7c | `ui/src/timeline/` |
+| T2.H3 | en curso | T2.H1, T2.F4 | `ui/src/input.rs` |
+| T2.H4 | en curso | T2.H1 | `ui/src/status.rs` |
+| T2.I1 | en curso | T1.1 | `domain/src/research.rs` |
+| T2.I2 | en curso | T2.I1 | `domain/src/plan.rs` |
 | T3.1 ★ | pendiente | T2.A3, T2.B4, T2.C5, T2.D3, T2.D4 | `crates/bin/` |
 | T3.2 | pendiente | T2.A1, T2.C5, T2.C4, T2.D3 | `application/src/tools/files.rs` |
 | T3.3 ★ | pendiente | T3.1, T2.H2, T2.H3 | `ui/src/session.rs` |
