@@ -1,4 +1,4 @@
-//! Step 5, Verificar hipótesis: once every task is done, runs the plan's
+//! Step 5, Verify hypotheses: once every task is done, runs the plan's
 //! `hypothesis_tests` and `constraint_tests` and shows expected against
 //! obtained in a `Table` and, when there are measurements, a `Chart`.
 
@@ -12,7 +12,7 @@ use crate::flows::implement::node::{ImplementNode, NodeError, StepContext, StepO
 use crate::flows::implement::state::{CheckResult, CheckSubject, EntryKind, Step};
 
 /// What a constraint test is expected to do.
-const PASSES: &str = "pasa (exit 0)";
+const PASSES: &str = "passes (exit 0)";
 
 /// The result of a hypothesis test from its run.
 #[must_use]
@@ -45,7 +45,7 @@ pub fn hypothesis_result(test: &HypothesisTest, run: &CheckRun) -> CheckResult {
             format!("{name}{}{unit}", format_number(value))
         }
         Some(value) => format!("{}{unit} · {}", format_number(value), run.verdict()),
-        None => format!("sin medición · {}", run.verdict()),
+        None => format!("no measurement · {}", run.verdict()),
     };
     result.passed =
         run.passed() && measured.is_some_and(|m| expect.comparison.holds(m, expect.threshold));
@@ -70,11 +70,11 @@ pub fn constraint_result(test: &ConstraintTest, run: &CheckRun) -> CheckResult {
     }
 }
 
-/// Name of a check in tables and charts: `Hipótesis` or the constraint id.
+/// Name of a check in tables and charts: `Hypothesis` or the constraint id.
 #[must_use]
 pub fn check_label(result: &CheckResult) -> String {
     match &result.subject {
-        CheckSubject::Hypothesis => "Hipótesis".to_owned(),
+        CheckSubject::Hypothesis => "Hypothesis".to_owned(),
         CheckSubject::Constraint { id } => id.to_string(),
     }
 }
@@ -82,7 +82,7 @@ pub fn check_label(result: &CheckResult) -> String {
 /// The table of expected against obtained.
 #[must_use]
 pub fn results_table(results: &[CheckResult]) -> TableSpec {
-    let columns = ["Prueba", "Comando", "Esperado", "Obtenido", "Cumple"]
+    let columns = ["Test", "Command", "Expected", "Obtained", "Holds"]
         .into_iter()
         .map(Column::new)
         .collect();
@@ -120,23 +120,23 @@ pub fn results_chart(results: &[CheckResult]) -> Option<ChartSpec> {
         })
         .collect();
     Some(ChartSpec {
-        title: "Esperado contra obtenido".to_owned(),
+        title: "Expected against obtained".to_owned(),
         kind: ChartKind::Bar,
         labels,
         series: vec![
             Series {
-                name: "Esperado".to_owned(),
+                name: "Expected".to_owned(),
                 values: measured.iter().map(|(_, _, t)| *t).collect(),
             },
             Series {
-                name: "Obtenido".to_owned(),
+                name: "Obtained".to_owned(),
                 values: measured.iter().map(|(_, m, _)| *m).collect(),
             },
         ],
     })
 }
 
-/// Step 5, Verificar hipótesis.
+/// Step 5, Verify hypotheses.
 #[derive(Debug, Default)]
 pub struct VerifyPlan;
 
@@ -170,7 +170,7 @@ impl ImplementNode for VerifyPlan {
         if results.is_empty() {
             ctx.log(
                 EntryKind::Note,
-                "El plan no tiene pruebas de hipótesis ni de restricciones.",
+                "The plan has no hypothesis or constraint tests.",
             );
         } else {
             ctx.emit(BlockKind::Table(results_table(&results)))?;
@@ -180,14 +180,14 @@ impl ImplementNode for VerifyPlan {
         }
         for r in &results {
             let (kind, verb) = if r.passed {
-                (EntryKind::Achievement, "se cumple")
+                (EntryKind::Achievement, "holds")
             } else {
-                (EntryKind::Failure, "no se cumple")
+                (EntryKind::Failure, "does not hold")
             };
             ctx.log(
                 kind,
                 format!(
-                    "{} {verb}: `{}` esperaba {} y obtuvo {}.",
+                    "{} {verb}: `{}` expected {} and got {}.",
                     check_label(r),
                     r.command,
                     r.expected,
@@ -262,7 +262,7 @@ mod tests {
             [
                 ("p95 < 20ms", "p95 12.5ms", true),
                 ("< 200 ms", "340ms", false),
-                ("pasa (exit 0)", "falla (exit 101)", false),
+                ("passes (exit 0)", "fails (exit 101)", false),
             ]
         );
         let blocks: Vec<_> = h
@@ -304,10 +304,10 @@ mod tests {
         let test = HypothesisTest {
             kind: TestKind::Command,
             reference: "make check".into(),
-            expect: "sin regresiones".into(),
+            expect: "no regressions".into(),
         };
         let result = hypothesis_result(&test, &run);
-        assert!(result.passed && result.obtained == "pasa");
+        assert!(result.passed && result.obtained == "passes");
         assert!(results_chart(&[result]).is_none());
     }
 }

@@ -75,7 +75,7 @@ impl ImplementNode for FakeStep {
     async fn run(&self, ctx: &mut StepContext) -> Result<StepOutcome, NodeError> {
         self.lock_replies()
             .push(ctx.user_reply().map(str::to_owned));
-        ctx.log(EntryKind::Note, format!("{} ran", self.step.name_es()));
+        ctx.log(EntryKind::Note, format!("{} ran", self.step.name()));
         match self.lock_script().pop_front() {
             Some(Ok(outcome)) => Ok(outcome),
             Some(Err(message)) => Err(NodeError::Failed(message)),

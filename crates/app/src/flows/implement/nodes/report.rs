@@ -1,4 +1,4 @@
-//! Step 6, Reporte y futuro: writes `report.md` in the Spec folder from
+//! Step 6, Report and next steps: writes `report.md` in the Spec folder from
 //! the journal and the results (achievements, failures, deviations from
 //! the plan and ideas for later Specs) and stops at the last gate before
 //! closing the flow.
@@ -20,14 +20,14 @@ use crate::ports::fs::WriteFileRequest;
 /// Name of the report in the Spec folder.
 pub const REPORT_FILE: &str = "report.md";
 
-fn status_es(status: TaskStatus) -> &'static str {
+fn status_name(status: TaskStatus) -> &'static str {
     match status {
-        TaskStatus::Pending => "pendiente",
-        TaskStatus::Implemented => "implementada sin probar",
-        TaskStatus::Passed => "probada, sin commit",
-        TaskStatus::Failed => "con criterios fallando",
-        TaskStatus::Skipped => "saltada",
-        TaskStatus::Committed => "hecha",
+        TaskStatus::Pending => "pending",
+        TaskStatus::Implemented => "implemented, not tested",
+        TaskStatus::Passed => "tested, not committed",
+        TaskStatus::Failed => "checks failing",
+        TaskStatus::Skipped => "skipped",
+        TaskStatus::Committed => "done",
     }
 }
 
@@ -85,12 +85,12 @@ fn ideas(state: &ImplementState) -> Vec<String> {
                 .and_then(|f| f.lines().next())
                 .map(|f| format!(" ({f})"))
                 .unwrap_or_default();
-            ideas.push(format!("- Retomar **{id}** «{title}»{why}."));
+            ideas.push(format!("- Resume **{id}** \"{title}\"{why}."));
         }
     }
     for check in state.checks.iter().filter(|c| !c.passed) {
         ideas.push(format!(
-            "- Investigar por qué {} no se cumple: `{}` esperaba {} y obtuvo {}.",
+            "- Find out why {} does not hold: `{}` expected {} and got {}.",
             check_label(check),
             check.command,
             check.expected,
@@ -104,10 +104,10 @@ fn ideas(state: &ImplementState) -> Vec<String> {
 #[must_use]
 pub fn render_report(state: &ImplementState) -> String {
     let spec = state.plan.as_ref().map_or("?", |p| p.spec.as_str());
-    let mut out = format!("# Reporte de implementación: {spec}\n\n");
+    let mut out = format!("# Implementation report: {spec}\n\n");
     let _ = writeln!(out, "- Plan: `{}`", state.plan_path);
     if let Some(branch) = &state.branch {
-        let _ = writeln!(out, "- Rama: `{branch}`");
+        let _ = writeln!(out, "- Branch: `{branch}`");
     }
     let done = state
         .order
@@ -118,17 +118,15 @@ pub fn render_report(state: &ImplementState) -> String {
                 .is_some_and(|r| r.status == TaskStatus::Committed)
         })
         .count();
-    let _ = writeln!(out, "- Tareas hechas: {done} de {}", state.order.len());
+    let _ = writeln!(out, "- Tasks done: {done} of {}", state.order.len());
     let passed = state.checks.iter().filter(|c| c.passed).count();
     let _ = writeln!(
         out,
-        "- Pruebas de hipótesis y restricciones que se cumplen: {passed} de {}",
+        "- Hypothesis and constraint tests that hold: {passed} of {}",
         state.checks.len()
     );
 
-    out.push_str(
-        "\n## Tareas\n\n| Tarea | Título | Estado | Commit |\n| --- | --- | --- | --- |\n",
-    );
+    out.push_str("\n## Tasks\n\n| Task | Title | Status | Commit |\n| --- | --- | --- | --- |\n");
     for id in &state.order {
         let record: TaskRecord = state.record(id).cloned().unwrap_or_default();
         let title = state.task(id).map(|t| t.title.as_str()).unwrap_or_default();
@@ -136,7 +134,7 @@ pub fn render_report(state: &ImplementState) -> String {
             out,
             "| {id} | {} | {} | {} |",
             cell(title),
-            status_es(record.status),
+            status_name(record.status),
             record
                 .commit
                 .as_deref()
@@ -146,28 +144,30 @@ pub fn render_report(state: &ImplementState) -> String {
 
     section(
         &mut out,
-        "Logros",
+        "Achievements",
         &lines_of(state, EntryKind::Achievement),
-        "Ninguno.",
+        "None.",
     );
     section(
         &mut out,
-        "Fallos",
+        "Failures",
         &lines_of(state, EntryKind::Failure),
-        "Ninguno.",
+        "None.",
     );
     section(
         &mut out,
-        "Desvíos del plan",
+        "Deviations from the plan",
         &lines_of(state, EntryKind::Deviation),
-        "Ninguno: se tocaron solo los archivos de cada tarea y se siguió el orden del plan.",
+        "None: only the files of each task were changed and the plan's order was followed.",
     );
 
-    out.push_str("\n## Verificación\n\n");
+    out.push_str("\n## Verification\n\n");
     if state.checks.is_empty() {
-        out.push_str("El plan no tiene pruebas de hipótesis ni de restricciones.\n");
+        out.push_str("The plan has no hypothesis or constraint tests.\n");
     } else {
-        out.push_str("| Prueba | Comando | Esperado | Obtenido | Cumple |\n| --- | --- | --- | --- | --- |\n");
+        out.push_str(
+            "| Test | Command | Expected | Obtained | Holds |\n| --- | --- | --- | --- | --- |\n",
+        );
         for c in &state.checks {
             let _ = writeln!(
                 out,
@@ -176,34 +176,33 @@ pub fn render_report(state: &ImplementState) -> String {
                 cell(&c.command),
                 cell(&c.expected),
                 cell(&c.obtained),
-                if c.passed { "sí" } else { "no" }
+                if c.passed { "yes" } else { "no" }
             );
         }
     }
 
-    section(
-        &mut out,
-        "Ideas para siguientes Specs",
-        &ideas(state),
-        "Ninguna.",
-    );
+    section(&mut out, "Ideas for later Specs", &ideas(state), "None.");
 
     let notes: Vec<_> = state
         .journal
         .iter()
         .filter(|e| e.step == Step::Report && e.kind == EntryKind::User)
         .map(|e| {
-            let text = e.text.trim_start_matches("Respuesta del usuario:").trim();
+            let text = e
+                .text
+                .trim_start_matches("User reply:")
+                .trim_start_matches("Respuesta del usuario:")
+                .trim();
             format!("- {text}")
         })
         .collect();
     if !notes.is_empty() {
-        section(&mut out, "Notas del usuario", &notes, "");
+        section(&mut out, "User notes", &notes, "");
     }
     out
 }
 
-/// Step 6, Reporte y futuro.
+/// Step 6, Report and next steps.
 #[derive(Debug, Default)]
 pub struct WriteReport;
 
@@ -251,12 +250,13 @@ impl ImplementNode for WriteReport {
             Some(GateChoice::Continue) => return Ok(StepOutcome::Finish),
             Some(GateChoice::Abort) => {
                 return Ok(StepOutcome::Abort {
-                    reason: "el usuario no cerró el reporte".to_owned(),
+                    reason: "the user did not close the report".to_owned(),
                 });
             }
             Some(GateChoice::BackToSpec) => {
                 return Ok(StepOutcome::BackToSpec {
-                    reason: "el usuario pidió volver al Spec tras leer el reporte".to_owned(),
+                    reason: "the user asked to go back to the Spec after reading the report"
+                        .to_owned(),
                 });
             }
             // Notes for the report (the frame logged the answer).
@@ -265,16 +265,16 @@ impl ImplementNode for WriteReport {
         };
         let path = if rewrite {
             let path = Self::write(ctx).await?;
-            ctx.log(EntryKind::Note, format!("Reporte escrito en {path}."));
+            ctx.log(EntryKind::Note, format!("Report written to {path}."));
             path
         } else {
             ctx.state().report_path.clone().unwrap_or_default()
         };
         Ok(StepOutcome::Ask {
             prompt: format!(
-                "Escribí `{path}`. Responde «sí» para cerrar el flujo, escribe notas para \
-                 agregarlas al reporte, o «volver al spec» si el resultado pide replantear \
-                 el Spec."
+                "I wrote `{path}`. Answer \"yes\" to close the flow, write notes to add them \
+                 to the report, or \"back to spec\" if the result calls for rethinking the \
+                 Spec."
             ),
         })
     }
@@ -297,31 +297,31 @@ mod tests {
         r1.commit = Some("abc1234".into());
         let r2 = state.record_mut(&t2);
         r2.status = TaskStatus::Skipped;
-        r2.last_failure = Some("`cargo test t2` → falla (exit 101)".into());
+        r2.last_failure = Some("`cargo test t2` → fails (exit 101)".into());
         let log = [
             (
                 Step::Commit,
                 Some(&t1),
                 EntryKind::Achievement,
-                "Tarea T1 en el commit abc1234",
+                "Task T1 in commit abc1234",
             ),
             (
                 Step::Implement,
                 Some(&t1),
                 EntryKind::Deviation,
-                "write_file cambió Cargo.toml fuera de los archivos de la tarea",
+                "write_file changed Cargo.toml outside the task's files",
             ),
             (
                 Step::Test,
                 Some(&t2),
                 EntryKind::Failure,
-                "los criterios siguen fallando",
+                "the checks still fail",
             ),
             (
                 Step::Implement,
                 Some(&t1),
                 EntryKind::Idea,
-                "medir el arranque en frío",
+                "measure the cold start",
             ),
         ];
         for (step, task, kind, text) in log {
@@ -346,42 +346,39 @@ mod tests {
     fn lists_achievements_failures_deviations_and_ideas() {
         let report = render_report(&finished_state());
         for heading in [
-            "## Logros",
-            "## Fallos",
-            "## Desvíos del plan",
-            "## Verificación",
-            "## Ideas para siguientes Specs",
+            "## Achievements",
+            "## Failures",
+            "## Deviations from the plan",
+            "## Verification",
+            "## Ideas for later Specs",
         ] {
             assert!(report.contains(heading), "{heading}\n{report}");
         }
-        assert!(report.contains("- Tareas hechas: 1 de 2"), "{report}");
+        assert!(report.contains("- Tasks done: 1 of 2"), "{report}");
         assert!(
-            report.contains("| T1 | Hacer T1 | hecha | `abc1234` |"),
+            report.contains("| T1 | Do T1 | done | `abc1234` |"),
+            "{report}"
+        );
+        assert!(report.contains("- Task T1 in commit abc1234"), "{report}");
+        assert!(
+            report.contains("- **T2**: the checks still fail"),
             "{report}"
         );
         assert!(
-            report.contains("- Tarea T1 en el commit abc1234"),
+            report.contains("Cargo.toml outside the task's files"),
+            "{report}"
+        );
+        assert!(report.contains("| Hypothesis | `make bench` | p95 < 20ms | p95 31ms | no |"));
+        assert!(
+            report.contains("- **T1**: measure the cold start"),
             "{report}"
         );
         assert!(
-            report.contains("- **T2**: los criterios siguen fallando"),
+            report.contains("- Resume **T2** \"Do T2\" (`cargo test t2`"),
             "{report}"
         );
         assert!(
-            report.contains("Cargo.toml fuera de los archivos"),
-            "{report}"
-        );
-        assert!(report.contains("| Hipótesis | `make bench` | p95 < 20ms | p95 31ms | no |"));
-        assert!(
-            report.contains("- **T1**: medir el arranque en frío"),
-            "{report}"
-        );
-        assert!(
-            report.contains("- Retomar **T2** «Hacer T2» (`cargo test t2`"),
-            "{report}"
-        );
-        assert!(
-            report.contains("Investigar por qué Hipótesis no se cumple"),
+            report.contains("Find out why Hypothesis does not hold"),
             "{report}"
         );
     }
@@ -390,10 +387,10 @@ mod tests {
     fn empty_sections_say_so() {
         let report = render_report(&loaded_state(&[("T1", &[])]));
         assert!(
-            report.contains("## Desvíos del plan\n\nNinguno"),
+            report.contains("## Deviations from the plan\n\nNone"),
             "{report}"
         );
-        assert!(report.contains("ni de restricciones"), "{report}");
+        assert!(report.contains("or constraint tests"), "{report}");
     }
 
     #[tokio::test]
@@ -401,22 +398,22 @@ mod tests {
         let h = Harness::without_shell([]);
         let mut ctx = h.ctx(Step::Report, finished_state());
         let out = WriteReport::new().run(&mut ctx).await.unwrap();
-        let path = ".crest/specs/0007-cache-de-sesiones/report.md";
+        let path = ".crest/specs/0007-session-cache/report.md";
         assert!(
             matches!(&out, StepOutcome::Ask { prompt } if prompt.contains(path)),
             "{out:?}"
         );
         let written = h.fs.file(path).unwrap();
-        assert!(written.starts_with("# Reporte de implementación: 0007-cache-de-sesiones"));
+        assert!(written.starts_with("# Implementation report: 0007-session-cache"));
         assert_eq!(ctx.state().report_path.as_deref(), Some(path));
 
         let state = ctx.into_state();
-        let mut close = h.ctx(Step::Report, state.clone()).with_reply("sí");
+        let mut close = h.ctx(Step::Report, state.clone()).with_reply("yes");
         assert_eq!(
             WriteReport::new().run(&mut close).await.unwrap(),
             StepOutcome::Finish
         );
-        let mut back = h.ctx(Step::Report, state).with_reply("volver al spec");
+        let mut back = h.ctx(Step::Report, state).with_reply("back to spec");
         assert!(matches!(
             WriteReport::new().run(&mut back).await.unwrap(),
             StepOutcome::BackToSpec { .. }

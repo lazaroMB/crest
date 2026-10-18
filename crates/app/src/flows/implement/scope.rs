@@ -8,7 +8,7 @@
 //! permission mode, and is recorded in the [`TaskScope`] so the step can
 //! write it to the journal. A denied call goes back to the model as an
 //! error. An approved call still goes through the permission policy, like
-//! any write. «Approve always» allows that path for the rest of the task.
+//! any write. "Approve always" allows that path for the rest of the task.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -129,7 +129,7 @@ impl TaskScope {
             subject: path.to_owned(),
             preview: preview.unwrap_or_else(|| ApprovalPreview::Text {
                 text: format!(
-                    "La tarea {} quiere cambiar {path}, que no está entre sus archivos ({}).",
+                    "Task {} wants to change {path}, which is not one of its files ({}).",
                     self.task,
                     files.join(", ")
                 ),
@@ -292,7 +292,7 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
         let approval = Arc::new(ScriptedApproval::new());
         approval.push(ApprovalResponse::Deny {
-            reason: Some("no toques eso".into()),
+            reason: Some("do not touch that".into()),
         });
         approval.push(ApprovalResponse::Approve);
         let s = scope(&approval);
@@ -321,7 +321,7 @@ mod tests {
             touches.iter().map(|t| t.approved).collect::<Vec<_>>(),
             [false, true]
         );
-        assert_eq!(touches[0].reason.as_deref(), Some("no toques eso"));
+        assert_eq!(touches[0].reason.as_deref(), Some("do not touch that"));
         assert_eq!(touches[0].tool, "write_file");
     }
 }

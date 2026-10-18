@@ -2,7 +2,7 @@
 //!
 //! Only the task's files (and the extra files the user allowed) that git
 //! sees changed are staged, so stray changes never leak into the task's
-//! commit. The message is `<tipo>(<scope>): <título>` with a `Task: <id>`
+//! commit. The message is `<type>(<scope>): <title>` with a `Task: <id>`
 //! trailer; the type comes from the title and the scope from the crate of
 //! the first file (its `Cargo.toml`) or its top directory.
 
@@ -133,7 +133,7 @@ fn failure(what: &str, out: &CommandOutput) -> String {
     } else {
         out.stderr.trim()
     };
-    format!("{what} falló: {text}")
+    format!("{what} failed: {text}")
 }
 
 /// Stages the changed files among `files` and commits them with
@@ -211,19 +211,22 @@ impl ImplementNode for CommitTask {
                 GateChoice::Continue | GateChoice::Skip => {
                     ctx.log(
                         EntryKind::Deviation,
-                        format!("Tarea {} sin commit, por decisión del usuario.", task.id),
+                        format!(
+                            "Task {} left without a commit, by the user's decision.",
+                            task.id
+                        ),
                     );
                     ctx.state_mut().advance();
                     return Ok(StepOutcome::GoTo(Step::Implement));
                 }
                 GateChoice::Abort => {
                     return Ok(StepOutcome::Abort {
-                        reason: format!("no se pudo hacer el commit de {}", task.id),
+                        reason: format!("could not commit {}", task.id),
                     });
                 }
                 GateChoice::BackToSpec => {
                     return Ok(StepOutcome::BackToSpec {
-                        reason: format!("no se pudo hacer el commit de {}", task.id),
+                        reason: format!("could not commit {}", task.id),
                     });
                 }
                 GateChoice::Retry | GateChoice::Other(_) => {}
@@ -250,25 +253,22 @@ impl ImplementNode for CommitTask {
                 let head = message.lines().next().unwrap_or_default().to_owned();
                 ctx.log(
                     EntryKind::Achievement,
-                    format!("Tarea {} en el commit {hash}: {head}", task.id),
+                    format!("Task {} in commit {hash}: {head}", task.id),
                 );
             }
             Ok(CommitOutcome::NothingToCommit) => {
                 ctx.log(
                     EntryKind::Deviation,
-                    format!(
-                        "Tarea {}: ninguno de sus archivos cambió; no hay commit.",
-                        task.id
-                    ),
+                    format!("Task {}: none of its files changed; no commit.", task.id),
                 );
             }
             Err(err) => {
-                ctx.log(EntryKind::Failure, format!("Commit de {}: {err}", task.id));
+                ctx.log(EntryKind::Failure, format!("Commit of {}: {err}", task.id));
                 return Ok(StepOutcome::Ask {
                     prompt: format!(
-                        "No pude hacer el commit de la tarea **{}**: {err}. Responde \
-                         «reintentar» cuando lo corrijas, «saltar» para seguir sin commit, \
-                         «abortar» o «volver al spec».",
+                        "I could not commit task **{}**: {err}. Answer \"retry\" once you \
+                         fix it, \"skip\" to go on without a commit, \"abort\", or \
+                         \"back to spec\".",
                         task.id
                     ),
                 });
@@ -292,6 +292,11 @@ mod tests {
     #[test]
     fn types_come_from_the_title() {
         assert_eq!(commit_type("Agregar SessionCache"), "feat");
+        assert_eq!(commit_type("Add SessionCache"), "feat");
+        assert_eq!(commit_type("Fix the parser"), "fix");
+        assert_eq!(commit_type("Move the module"), "refactor");
+        assert_eq!(commit_type("Test the cache"), "test");
+        assert_eq!(commit_type("Document the API"), "docs");
         assert_eq!(commit_type("Corregir el parser"), "fix");
         assert_eq!(commit_type("Mover el módulo"), "refactor");
         assert_eq!(commit_type("Pruebas del caché"), "test");
@@ -338,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_commit_per_task_with_its_id() {
-        let message = "feat(src): Hacer T1\n\nTask: T1";
+        let message = "feat(src): Do T1\n\nTask: T1";
         let shell = Arc::new(
             ScriptedShell::new()
                 .on(
@@ -442,7 +447,7 @@ mod tests {
             eprintln!("git is not available; skipping");
             return;
         }
-        std::fs::write(dir.path().join("README.md"), "hola\n").unwrap();
+        std::fs::write(dir.path().join("README.md"), "hello\n").unwrap();
         for args in [vec!["add", "README.md"], vec!["commit", "-q", "-m", "init"]] {
             assert!(
                 shell
@@ -482,9 +487,9 @@ mod tests {
         assert_eq!(
             log,
             [
-                "feat(src): Hacer T2|T2",
+                "feat(src): Do T2|T2",
                 "src/t2.rs",
-                "feat(src): Hacer T1|T1",
+                "feat(src): Do T1|T1",
                 "src/t1.rs",
                 "init|",
                 "README.md"

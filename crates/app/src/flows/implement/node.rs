@@ -410,7 +410,7 @@ pub(crate) mod tests {
     fn log_writes_the_journal_under_the_step() {
         let sink = Arc::new(RecordingSink::new());
         let mut ctx = StepContext::new(Step::Verify, deps(&sink), ImplementState::new("p"));
-        ctx.log(EntryKind::Achievement, "todo bien");
+        ctx.log(EntryKind::Achievement, "all good");
         let entry = &ctx.state().journal[0];
         assert_eq!(
             (entry.at, entry.step, entry.kind),
@@ -424,10 +424,10 @@ pub(crate) mod tests {
     fn emit_validates_blocks() {
         let sink = Arc::new(RecordingSink::new());
         let ctx =
-            StepContext::new(Step::Load, deps(&sink), ImplementState::new("p")).with_reply("sí");
-        assert_eq!(ctx.user_reply(), Some("sí"));
+            StepContext::new(Step::Load, deps(&sink), ImplementState::new("p")).with_reply("yes");
+        assert_eq!(ctx.user_reply(), Some("yes"));
         ctx.emit(BlockKind::Text {
-            markdown: "hola".into(),
+            markdown: "hello".into(),
         })
         .unwrap();
         let bad = ctx.emit(BlockKind::StageHeader {

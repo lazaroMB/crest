@@ -57,20 +57,20 @@ impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Paso {}/{}: {}",
+            "Step {}/{}: {}",
             self.step.index(),
             Step::total(),
-            self.step.name_es()
+            self.step.name()
         )?;
         if let Some((id, n, total)) = &self.task {
-            write!(f, " · tarea {id} ({n}/{total})")?;
+            write!(f, " · task {id} ({n}/{total})")?;
         }
         match &self.status {
-            FlowStatus::Running { .. } => write!(f, " · en curso"),
-            FlowStatus::WaitingForInput { .. } => write!(f, " · esperando tu respuesta"),
-            FlowStatus::Completed => write!(f, " · flujo terminado"),
-            FlowStatus::Aborted => write!(f, " · flujo abortado"),
-            FlowStatus::BackToSpec { .. } => write!(f, " · de vuelta al Spec"),
+            FlowStatus::Running { .. } => write!(f, " · running"),
+            FlowStatus::WaitingForInput { .. } => write!(f, " · waiting for your answer"),
+            FlowStatus::Completed => write!(f, " · flow finished"),
+            FlowStatus::Aborted => write!(f, " · flow aborted"),
+            FlowStatus::BackToSpec { .. } => write!(f, " · back to the Spec"),
         }
     }
 }
@@ -305,7 +305,7 @@ impl ImplementFlow {
         let step = self.current_step(&session)?;
         let mut state: ImplementState = session.context.get(KEY_STATE).unwrap_or_default();
         let now = self.graph.deps().now();
-        state.log(now, step, None, EntryKind::Note, "Flujo abortado (/abort).");
+        state.log(now, step, None, EntryKind::Note, "Flow aborted (/abort).");
         session.context.set(KEY_STATE, state)?;
         session.context.remove(KEY_GATE);
         session.context.remove(KEY_REPLY);
@@ -350,7 +350,7 @@ mod tests {
 
     fn asking() -> FakeStep {
         FakeStep::new(Step::Load).then(StepOutcome::Ask {
-            prompt: "¿Empezamos?".into(),
+            prompt: "Shall we start?".into(),
         })
     }
 
@@ -382,9 +382,9 @@ mod tests {
         let FlowReply::Position(position) = reply else {
             panic!("{reply:?}")
         };
-        assert!(position.to_string().starts_with("Paso 1/6: Cargar plan"));
+        assert!(position.to_string().starts_with("Step 1/6: Load plan"));
         assert_eq!(
-            flow.handle_line("sí").await.unwrap(),
+            flow.handle_line("yes").await.unwrap(),
             FlowReply::Status(FlowStatus::Completed)
         );
         assert!(matches!(

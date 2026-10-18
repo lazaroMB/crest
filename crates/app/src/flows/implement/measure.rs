@@ -94,7 +94,7 @@ fn leading_number(text: &str) -> Option<(f64, Option<String>, usize)> {
     Some((value, unit, used))
 }
 
-/// Parses a numeric expectation; `None` for prose (`pasa`, `sin errores`).
+/// Parses a numeric expectation; `None` for prose (`passes`, `no errors`).
 #[must_use]
 pub fn parse_expectation(text: &str) -> Option<Expectation> {
     let (at, symbol, comparison) = OPERATORS
@@ -218,7 +218,7 @@ mod tests {
             parse_expectation("errors = 0").unwrap().comparison,
             Comparison::Equal
         );
-        assert_eq!(parse_expectation("pasa"), None);
+        assert_eq!(parse_expectation("passes"), None);
         assert_eq!(parse_expectation("a < b"), None);
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let out = "bench sessions\np50: 4.1ms\np95: 12.5 ms\np99: 30ms\n";
         assert_eq!(find_measurement(&e, out), Some(12.5));
         assert_eq!(find_measurement(&e, "p95=0.018s"), Some(18.0));
-        assert_eq!(find_measurement(&e, "nada"), None);
+        assert_eq!(find_measurement(&e, "nothing"), None);
 
         let e = parse_expectation("< 2 s").unwrap();
         assert_eq!(

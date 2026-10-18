@@ -1,4 +1,4 @@
-//! Step 3, Pruebas y corrección: runs the acceptance checks of the task;
+//! Step 3, Test and fix: runs the acceptance checks of the task;
 //! when they fail, asks the agent to fix them up to [`MAX_FIX_ATTEMPTS`]
 //! times and then stops at a gate: retry (with instructions), go on with
 //! the failures, skip the task, abort or go back to the Spec.
@@ -34,7 +34,7 @@ pub fn fix_prompt(task: &Task, failures: &str, attempt: u32, hint: Option<&str>)
     prompt
 }
 
-/// Step 3, Pruebas y corrección.
+/// Step 3, Test and fix.
 #[derive(Debug, Default)]
 pub struct TestTask;
 
@@ -54,7 +54,7 @@ impl TestTask {
             .map(|r| vec![Cell::Text(r.command.clone()), Cell::Text(r.verdict())])
             .collect();
         ctx.emit(BlockKind::Table(TableSpec {
-            columns: vec![Column::new("Criterio"), Column::new("Resultado")],
+            columns: vec![Column::new("Check"), Column::new("Result")],
             rows,
         }))?;
         Ok(())
@@ -63,7 +63,7 @@ impl TestTask {
     fn stop(task: &Task, failures: &str, why: &str) -> StepOutcome {
         StepOutcome::Ask {
             prompt: format!(
-                "La tarea **{}** ({}) {why}:\n\n{failures}\n\n{PROBLEM_OPTIONS}",
+                "Task **{}** ({}) {why}:\n\n{failures}\n\n{PROBLEM_OPTIONS}",
                 task.id, task.title
             ),
         }
@@ -93,7 +93,7 @@ impl ImplementNode for TestTask {
                     ctx.log(
                         EntryKind::Deviation,
                         format!(
-                            "Tarea {} sigue con criterios fallando, por decisión del usuario.",
+                            "Task {} keeps failing checks, by the user's decision.",
                             task.id
                         ),
                     );
@@ -103,15 +103,12 @@ impl ImplementNode for TestTask {
                 GateChoice::Skip => return Ok(skip_task(ctx)),
                 GateChoice::Abort => {
                     return Ok(StepOutcome::Abort {
-                        reason: format!("los criterios de {} no pasan", task.id),
+                        reason: format!("the checks of {} do not pass", task.id),
                     });
                 }
                 GateChoice::BackToSpec => {
                     return Ok(StepOutcome::BackToSpec {
-                        reason: format!(
-                            "los criterios de aceptación de {} no se pueden cumplir",
-                            task.id
-                        ),
+                        reason: format!("the acceptance checks of {} cannot be met", task.id),
                     });
                 }
             }
@@ -133,7 +130,7 @@ impl ImplementNode for TestTask {
                     ctx.log(
                         EntryKind::Achievement,
                         format!(
-                            "Tarea {}: pasan sus {} criterios de aceptación.",
+                            "Task {}: its {} acceptance checks pass.",
                             task.id,
                             runs.len()
                         ),
@@ -152,15 +149,15 @@ impl ImplementNode for TestTask {
                     ctx.log(
                         EntryKind::Failure,
                         format!(
-                            "Tarea {}: los criterios siguen fallando tras {attempts} \
-                             intentos de corrección.\n\n{failures}",
+                            "Task {}: the checks still fail after {attempts} \
+                             fix attempts.\n\n{failures}",
                             task.id
                         ),
                     );
                     return Ok(Self::stop(
                         &task,
                         &failures,
-                        &format!("agotó sus {MAX_FIX_ATTEMPTS} intentos de corrección"),
+                        &format!("used up its {MAX_FIX_ATTEMPTS} fix attempts"),
                     ));
                 }
             }
@@ -173,7 +170,7 @@ impl ImplementNode for TestTask {
             ctx.log(
                 EntryKind::Note,
                 format!(
-                    "Tarea {}: intento de corrección {attempt}/{MAX_FIX_ATTEMPTS}.",
+                    "Task {}: fix attempt {attempt}/{MAX_FIX_ATTEMPTS}.",
                     task.id
                 ),
             );
@@ -182,12 +179,12 @@ impl ImplementNode for TestTask {
             if let AgentStatus::Blocked(reason) = report.status {
                 ctx.log(
                     EntryKind::Failure,
-                    format!("Tarea {} bloqueada al corregir: {reason}", task.id),
+                    format!("Task {} blocked while fixing: {reason}", task.id),
                 );
                 return Ok(Self::stop(
                     &task,
                     &failures,
-                    &format!("no se puede corregir como dice el plan ({reason})"),
+                    &format!("cannot be fixed as the plan says ({reason})"),
                 ));
             }
         }
@@ -204,7 +201,7 @@ mod tests {
     use crate::testing::llm::ScriptedResponse;
 
     fn fixed() -> ScriptedResponse {
-        ScriptedResponse::text("Corregido.\nSTATUS: done")
+        ScriptedResponse::text("Fixed.\nSTATUS: done")
     }
 
     #[tokio::test]
@@ -255,8 +252,8 @@ mod tests {
         let StepOutcome::Ask { prompt } = out else {
             panic!("{out:?}")
         };
-        assert!(prompt.contains("agotó sus 3 intentos"), "{prompt}");
-        assert!(prompt.contains("«saltar»") && prompt.contains("«volver al spec»"));
+        assert!(prompt.contains("used up its 3 fix attempts"), "{prompt}");
+        assert!(prompt.contains("\"skip\"") && prompt.contains("\"back to spec\""));
         assert_eq!(shell.calls().len(), 4, "one run and three after fixes");
         assert_eq!(h.llm.requests().len(), 3);
         let state = ctx.into_state();
@@ -264,20 +261,20 @@ mod tests {
         assert_eq!(state.entries(EntryKind::Failure).count(), 1);
 
         // Answers at the gate.
-        let mut skip = h.ctx(Step::Test, state.clone()).with_reply("saltar");
+        let mut skip = h.ctx(Step::Test, state.clone()).with_reply("skip");
         assert_eq!(
             TestTask::new().run(&mut skip).await.unwrap(),
             StepOutcome::GoTo(Step::Implement)
         );
         assert_eq!(skip.state().current, 1);
-        let mut go_on = h.ctx(Step::Test, state.clone()).with_reply("continuar");
+        let mut go_on = h.ctx(Step::Test, state.clone()).with_reply("continue");
         assert_eq!(
             TestTask::new().run(&mut go_on).await.unwrap(),
             StepOutcome::Next
         );
         let record = go_on.state().record(&state.order[0]).unwrap().clone();
         assert_eq!(record.status, TaskStatus::Failed);
-        let mut back = h.ctx(Step::Test, state).with_reply("volver al spec");
+        let mut back = h.ctx(Step::Test, state).with_reply("back to spec");
         assert!(matches!(
             TestTask::new().run(&mut back).await.unwrap(),
             StepOutcome::BackToSpec { .. }
@@ -291,15 +288,15 @@ mod tests {
         let mut state = loaded_state(&[("T1", &[])]);
         let id = state.order[0].clone();
         state.record_mut(&id).attempts = 3;
-        state.record_mut(&id).last_failure = Some("`cargo test t1` → falla".into());
-        let mut ctx = h.ctx(Step::Test, state).with_reply("usa un Mutex");
+        state.record_mut(&id).last_failure = Some("`cargo test t1` → fails".into());
+        let mut ctx = h.ctx(Step::Test, state).with_reply("use a Mutex");
         assert_eq!(
             TestTask::new().run(&mut ctx).await.unwrap(),
             StepOutcome::Next
         );
         let prompt = format!("{:?}", h.llm.last_request().unwrap().messages);
         assert!(
-            prompt.contains("Instructions from the user: usa un Mutex"),
+            prompt.contains("Instructions from the user: use a Mutex"),
             "{prompt}"
         );
         assert_eq!(ctx.state().record(&id).unwrap().attempts, 1);

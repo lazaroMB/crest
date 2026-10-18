@@ -58,16 +58,16 @@ impl Step {
         Self::Report,
     ];
 
-    /// Spanish name shown in the timeline.
+    /// Name shown in the timeline.
     #[must_use]
-    pub const fn name_es(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::Load => "Cargar plan",
-            Self::Implement => "Implementar tarea",
-            Self::Test => "Pruebas y corrección",
+            Self::Load => "Load plan",
+            Self::Implement => "Implement task",
+            Self::Test => "Test and fix",
             Self::Commit => "Commit",
-            Self::Verify => "Verificar hipótesis",
-            Self::Report => "Reporte y futuro",
+            Self::Verify => "Verify hypotheses",
+            Self::Report => "Report and next steps",
         }
     }
 
@@ -270,7 +270,7 @@ pub struct CheckResult {
     pub kind: TestKind,
     /// The command line.
     pub command: String,
-    /// What was expected, as written in the plan (or "pasa").
+    /// What was expected, as written in the plan (or "passes").
     pub expected: String,
     /// What was obtained, in words (a measurement or the exit status).
     pub obtained: String,
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn status_round_trips_through_json() {
         let status = FlowStatus::BackToSpec {
-            reason: "la API no existe".into(),
+            reason: "the API does not exist".into(),
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["status"], "back_to_spec");

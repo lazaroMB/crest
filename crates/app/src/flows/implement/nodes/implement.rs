@@ -1,9 +1,9 @@
-//! Step 2, Implementar tarea: the agent implements the current task with
+//! Step 2, Implement task: the agent implements the current task with
 //! the task's role, restricted to its files (see [`run_agent`]).
 //!
 //! When the agent answers `STATUS: blocked`, the plan may not be feasible:
 //! the step stops and asks (retry, go on, skip, abort or back to the Spec)
-//! instead of improvising. With no task left it goes to Verificar.
+//! instead of improvising. With no task left it goes to Verify.
 
 use async_trait::async_trait;
 use domain::plan::Task;
@@ -46,7 +46,7 @@ pub fn task_prompt(spec: &str, task: &Task, extra_files: &[String], hint: Option
     prompt
 }
 
-/// Step 2, Implementar tarea.
+/// Step 2, Implement task.
 #[derive(Debug, Default)]
 pub struct ImplementTask;
 
@@ -76,7 +76,10 @@ impl ImplementNode for ImplementTask {
                 GateChoice::Continue => {
                     ctx.log(
                         EntryKind::Deviation,
-                        format!("Tarea {} bloqueada; el usuario pidió seguir así.", task.id),
+                        format!(
+                            "Task {} blocked; the user asked to go on as it is.",
+                            task.id
+                        ),
                     );
                     ctx.state_mut().record_mut(&task.id).status = TaskStatus::Implemented;
                     return Ok(StepOutcome::Next);
@@ -84,7 +87,7 @@ impl ImplementNode for ImplementTask {
                 GateChoice::Skip => return Ok(skip_task(ctx)),
                 GateChoice::Abort => {
                     return Ok(StepOutcome::Abort {
-                        reason: format!("tarea {} bloqueada", task.id),
+                        reason: format!("task {} blocked", task.id),
                     });
                 }
                 GateChoice::BackToSpec => {
@@ -92,9 +95,9 @@ impl ImplementNode for ImplementTask {
                         .state()
                         .record(&task.id)
                         .and_then(|r| r.last_failure.clone())
-                        .unwrap_or_else(|| "el plan resultó inviable".to_owned());
+                        .unwrap_or_else(|| "the plan turned out to be unworkable".to_owned());
                     return Ok(StepOutcome::BackToSpec {
-                        reason: format!("tarea {}: {why}", task.id),
+                        reason: format!("task {}: {why}", task.id),
                     });
                 }
             }
@@ -119,18 +122,18 @@ impl ImplementNode for ImplementTask {
             AgentStatus::Done => {
                 record.status = TaskStatus::Implemented;
                 record.attempts = 0;
-                ctx.log(EntryKind::Note, format!("Tarea {} implementada.", task.id));
+                ctx.log(EntryKind::Note, format!("Task {} implemented.", task.id));
                 Ok(StepOutcome::Next)
             }
             AgentStatus::Blocked(reason) => {
                 record.last_failure = Some(reason.clone());
                 ctx.log(
                     EntryKind::Failure,
-                    format!("Tarea {} bloqueada: {reason}", task.id),
+                    format!("Task {} blocked: {reason}", task.id),
                 );
                 Ok(StepOutcome::Ask {
                     prompt: format!(
-                        "La tarea **{}** ({}) no se puede hacer como dice el plan: {reason}. \
+                        "Task **{}** ({}) cannot be done as the plan says: {reason}. \
                          {PROBLEM_OPTIONS}",
                         task.id, task.title
                     ),
@@ -151,26 +154,26 @@ mod tests {
 
     #[test]
     fn parses_status_and_ideas() {
-        let report = parse_report("Listo.\nIDEA: cachear X\n**STATUS: done**");
+        let report = parse_report("Done.\nIDEA: cache X\n**STATUS: done**");
         assert_eq!(report.status, AgentStatus::Done);
-        assert_eq!(report.ideas, ["cachear X"]);
-        assert_eq!(report.summary, "Listo.");
-        let blocked = parse_report("No.\nstatus: blocked: no existe la API");
+        assert_eq!(report.ideas, ["cache X"]);
+        assert_eq!(report.summary, "Done.");
+        let blocked = parse_report("No.\nstatus: blocked: the API does not exist");
         assert_eq!(
             blocked.status,
-            AgentStatus::Blocked("no existe la API".into())
+            AgentStatus::Blocked("the API does not exist".into())
         );
-        assert_eq!(parse_report("sin estado").status, AgentStatus::Done);
+        assert_eq!(parse_report("no status").status, AgentStatus::Done);
     }
 
     #[test]
     fn the_prompt_lists_files_and_checks() {
         let state = loaded_state(&[("T1", &[])]);
         let task = state.current_task().unwrap();
-        let prompt = task_prompt("0007", task, &["extra.rs".into()], Some("usa Mutex"));
+        let prompt = task_prompt("0007", task, &["extra.rs".into()], Some("use Mutex"));
         assert!(prompt.contains("- src/t1.rs\n- extra.rs\n"), "{prompt}");
         assert!(prompt.contains("`cargo test t1` (test)"), "{prompt}");
-        assert!(prompt.contains("Instructions from the user: usa Mutex"));
+        assert!(prompt.contains("Instructions from the user: use Mutex"));
     }
 
     #[tokio::test]
@@ -186,7 +189,7 @@ mod tests {
                 "write_file",
                 json!({ "path": "src/t1.rs", "content": "pub fn t1() {}\n" }),
             ),
-            ScriptedResponse::text("Hecho.\nIDEA: medir el arranque\nSTATUS: done"),
+            ScriptedResponse::text("Done.\nIDEA: measure startup\nSTATUS: done"),
         ]);
         h.approve_next();
         let mut ctx = h.ctx(Step::Implement, loaded_state(&[("T1", &[])]));
@@ -215,30 +218,30 @@ mod tests {
     #[tokio::test]
     async fn a_blocked_task_stops_and_can_go_back_to_the_spec() {
         let h = Harness::without_shell([ScriptedResponse::text(
-            "STATUS: blocked: el puerto no tiene ese método",
+            "STATUS: blocked: the port has no such method",
         )]);
         let mut ctx = h.ctx(Step::Implement, loaded_state(&[("T1", &[])]));
         let out = ImplementTask::new().run(&mut ctx).await.unwrap();
         let StepOutcome::Ask { prompt } = out else {
             panic!("{out:?}")
         };
-        assert!(prompt.contains("volver al spec"), "{prompt}");
+        assert!(prompt.contains("back to spec"), "{prompt}");
 
         let state = ctx.into_state();
         let mut again = h
             .ctx(Step::Implement, state.clone())
-            .with_reply("volver al spec");
+            .with_reply("back to spec");
         let out = ImplementTask::new().run(&mut again).await.unwrap();
         assert!(
-            matches!(&out, StepOutcome::BackToSpec { reason } if reason.contains("ese método")),
+            matches!(&out, StepOutcome::BackToSpec { reason } if reason.contains("no such method")),
             "{out:?}"
         );
 
-        let mut skip = h.ctx(Step::Implement, state).with_reply("saltar");
+        let mut skip = h.ctx(Step::Implement, state).with_reply("skip");
         let out = ImplementTask::new().run(&mut skip).await.unwrap();
         assert_eq!(out, StepOutcome::GoTo(Step::Implement));
         assert_eq!(skip.state().current, 1);
-        // No task left: on to Verificar.
+        // No task left: on to Verify.
         let out = ImplementTask::new().run(&mut skip).await.unwrap();
         assert_eq!(out, StepOutcome::GoTo(Step::Verify));
     }

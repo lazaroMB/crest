@@ -1,4 +1,4 @@
-//! The steps after Cargar plan, one file each, and what they share: the
+//! The steps after Load plan, one file each, and what they share: the
 //! agent turn restricted to the task ([`run_agent`]) and skipping a task.
 
 pub mod commit;
@@ -74,7 +74,7 @@ pub fn parse_report(text: &str) -> AgentReport {
                 Some(reason) => {
                     let reason = reason.trim_start_matches([':', '-', '—']).trim();
                     AgentStatus::Blocked(if reason.is_empty() {
-                        "sin razón".to_owned()
+                        "no reason given".to_owned()
                     } else {
                         reason.to_owned()
                     })
@@ -135,15 +135,15 @@ pub async fn run_agent(
     for touch in scope.touches() {
         let text = if touch.approved {
             format!(
-                "{} cambió {} fuera de los archivos de la tarea, con aprobación del usuario.",
+                "{} changed {} outside the task's files, with the user's approval.",
                 touch.tool, touch.path
             )
         } else {
             format!(
-                "{} intentó cambiar {} fuera de los archivos de la tarea; el usuario lo negó ({}).",
+                "{} tried to change {} outside the task's files; the user denied it ({}).",
                 touch.tool,
                 touch.path,
-                touch.reason.as_deref().unwrap_or("sin razón")
+                touch.reason.as_deref().unwrap_or("no reason given")
             )
         };
         ctx.log(EntryKind::Deviation, text);
@@ -167,7 +167,7 @@ pub fn skip_task(ctx: &mut StepContext) -> StepOutcome {
     if let Some(id) = ctx.state().current_task().map(|t| t.id.clone()) {
         ctx.log(
             EntryKind::Deviation,
-            format!("Tarea {id} saltada por el usuario; sus cambios quedan sin commit."),
+            format!("Task {id} skipped by the user; its changes stay uncommitted."),
         );
         ctx.state_mut().record_mut(&id).status = TaskStatus::Skipped;
     }

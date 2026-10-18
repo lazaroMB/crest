@@ -112,18 +112,18 @@ impl CheckRun {
         self.output.as_ref().is_some_and(CommandOutput::success)
     }
 
-    /// "pasa", "falla (exit 1)", "no terminó (timeout)"…
+    /// "passes", "fails (exit 1)", "did not finish (timeout)"…
     #[must_use]
     pub fn verdict(&self) -> String {
         match (&self.output, &self.error) {
-            (Some(out), _) if out.success() => "pasa".to_owned(),
-            (Some(out), _) if out.timed_out => "no terminó (timeout)".to_owned(),
+            (Some(out), _) if out.success() => "passes".to_owned(),
+            (Some(out), _) if out.timed_out => "did not finish (timeout)".to_owned(),
             (Some(out), _) => match out.status {
-                Some(code) => format!("falla (exit {code})"),
-                None => "falla (señal)".to_owned(),
+                Some(code) => format!("fails (exit {code})"),
+                None => "fails (signal)".to_owned(),
             },
-            (None, Some(err)) => format!("no se pudo ejecutar: {err}"),
-            (None, None) => "no se ejecutó".to_owned(),
+            (None, Some(err)) => format!("could not run: {err}"),
+            (None, None) => "did not run".to_owned(),
         }
     }
 
@@ -228,7 +228,7 @@ mod tests {
         );
         assert_eq!(words("echo 'a|b'").1, ["a|b"]);
         assert!(command_request("  ").is_err());
-        assert!(command_request("echo 'abierta").is_err());
+        assert!(command_request("echo 'open").is_err());
     }
 
     #[tokio::test]
@@ -253,12 +253,12 @@ mod tests {
             );
         let run = run_check(&shell, "cargo test").await;
         assert!(!run.passed());
-        assert_eq!(run.verdict(), "falla (exit 101)");
+        assert_eq!(run.verdict(), "fails (exit 101)");
         assert_eq!(
             run.describe(),
-            "`cargo test` → falla (exit 101)\n```\nrunning 1 test\ntest x ... FAILED\n```"
+            "`cargo test` → fails (exit 101)\n```\nrunning 1 test\ntest x ... FAILED\n```"
         );
         let missing = run_check(&shell, "missing").await;
-        assert!(missing.verdict().starts_with("no se pudo ejecutar"));
+        assert!(missing.verdict().starts_with("could not run"));
     }
 }

@@ -128,12 +128,12 @@ impl StepTask {
         let title = match state.current_task().filter(|_| step.is_per_task()) {
             Some(task) => format!(
                 "{} · {} ({}/{})",
-                step.name_es(),
+                step.name(),
                 task.id,
                 state.current + 1,
                 state.order.len()
             ),
-            None => step.name_es().to_owned(),
+            None => step.name().to_owned(),
         };
         self.deps.emit(BlockKind::StageHeader {
             stage: title,
@@ -157,12 +157,8 @@ impl StepTask {
             };
             ctx.remove(KEY_GATE);
             let text = reply.text.trim();
-            let shown = if text.is_empty() { "(vacía)" } else { text };
-            self.log(
-                &ctx,
-                EntryKind::User,
-                &format!("Respuesta del usuario: {shown}"),
-            )?;
+            let shown = if text.is_empty() { "(empty)" } else { text };
+            self.log(&ctx, EntryKind::User, &format!("User reply: {shown}"))?;
             feedback = Some(reply.text);
         }
 
@@ -179,7 +175,7 @@ impl StepTask {
                     Ok(TaskResult::new(None, NextAction::Continue))
                 }
                 None => {
-                    self.log(&ctx, EntryKind::Note, "Flujo terminado.")?;
+                    self.log(&ctx, EntryKind::Note, "Flow finished.")?;
                     self.end(&ctx, FlowStatus::Completed)
                 }
             },
@@ -187,8 +183,8 @@ impl StepTask {
                 if !self.steps.contains(&to) {
                     return Err(NodeError::Failed(format!(
                         "{} asked to go to {}, which is not a step of the graph",
-                        step.name_es(),
-                        to.name_es()
+                        step.name(),
+                        to.name()
                     )));
                 }
                 put(&ctx, KEY_STATUS, FlowStatus::Running { next: to })?;
@@ -196,26 +192,28 @@ impl StepTask {
             }
             StepOutcome::Ask { prompt } => self.wait(&ctx, prompt),
             StepOutcome::Finish => {
-                self.log(&ctx, EntryKind::Note, "Flujo terminado.")?;
+                self.log(&ctx, EntryKind::Note, "Flow finished.")?;
                 self.end(&ctx, FlowStatus::Completed)
             }
             StepOutcome::BackToSpec { reason } => {
                 self.log(
                     &ctx,
                     EntryKind::Deviation,
-                    &format!("El plan resultó inviable; se vuelve al Spec: {reason}"),
+                    &format!(
+                        "The plan turned out to be unworkable; going back to the Spec: {reason}"
+                    ),
                 )?;
                 self.deps.emit(BlockKind::Text {
                     markdown: format!(
-                        "**El plan resultó inviable**: {reason}\n\nEl flujo de implementación \
-                         se detuvo. Vuelve al nodo Spec del flujo investigativo \
-                         (`/back spec`) para corregirlo."
+                        "**The plan turned out to be unworkable**: {reason}\n\nThe implementation \
+                         flow stopped. Go back to the Spec node of the research flow \
+                         (`/back spec`) to fix it."
                     ),
                 })?;
                 self.end(&ctx, FlowStatus::BackToSpec { reason })
             }
             StepOutcome::Abort { reason } => {
-                self.log(&ctx, EntryKind::Note, &format!("Flujo abortado: {reason}"))?;
+                self.log(&ctx, EntryKind::Note, &format!("Flow aborted: {reason}"))?;
                 self.end(&ctx, FlowStatus::Aborted)
             }
         }
@@ -230,11 +228,11 @@ impl Task for StepTask {
 
     async fn run(&self, context: Context) -> graph_flow::Result<TaskResult> {
         self.run_step(context).await.map_err(|error| {
-            let message = format!("{}: {error}", self.step().name_es());
+            let message = format!("{}: {error}", self.step().name());
             // The error block is best effort: it only fails on bad payloads.
             let _ = self.deps.emit(BlockKind::Error {
                 message: message.clone(),
-                hint: Some("Corrige el problema y vuelve a intentarlo.".to_owned()),
+                hint: Some("Fix the problem and try again.".to_owned()),
             });
             GraphError::TaskExecutionFailed(message)
         })
@@ -309,19 +307,19 @@ mod tests {
                 next: Step::Implement
             }
         );
-        assert_eq!(headers(&sink), ["Cargar plan"]);
+        assert_eq!(headers(&sink), ["Load plan"]);
 
         g.execute_session(&mut s).await.unwrap();
         assert_eq!(status(&s), FlowStatus::Completed);
         let state = load_state(&s.context);
-        assert_eq!(state.journal.last().unwrap().text, "Flujo terminado.");
+        assert_eq!(state.journal.last().unwrap().text, "Flow finished.");
     }
 
     #[tokio::test]
     async fn ask_waits_and_reruns_with_the_answer() {
         let sink = Arc::new(RecordingSink::new());
         let load = Arc::new(FakeStep::new(Step::Load).then(StepOutcome::Ask {
-            prompt: "¿Empezamos?".into(),
+            prompt: "Shall we start?".into(),
         }));
         let g = graph(
             vec![Arc::clone(&load), Arc::new(FakeStep::new(Step::Implement))],
@@ -334,7 +332,7 @@ mod tests {
             status(&s),
             FlowStatus::WaitingForInput {
                 step: Step::Load,
-                prompt: "¿Empezamos?".into()
+                prompt: "Shall we start?".into()
             }
         );
         // No answer yet: nothing runs.
@@ -343,16 +341,16 @@ mod tests {
 
         let reply = GateReply {
             step: Step::Load,
-            text: "sí".into(),
+            text: "yes".into(),
         };
         s.context.set(KEY_REPLY, reply).unwrap();
         g.execute_session(&mut s).await.unwrap();
-        assert_eq!(load.replies(), [None, Some("sí".into())]);
+        assert_eq!(load.replies(), [None, Some("yes".into())]);
         assert_eq!(s.current_task_id, Step::Implement.task_id());
         let state = load_state(&s.context);
         assert!(state.journal.iter().any(|e| e.kind == EntryKind::User));
         // One header: the rerun is the same step.
-        assert_eq!(headers(&sink), ["Cargar plan"]);
+        assert_eq!(headers(&sink), ["Load plan"]);
     }
 
     #[tokio::test]
@@ -360,7 +358,7 @@ mod tests {
         let sink = Arc::new(RecordingSink::new());
         let commit = FakeStep::new(Step::Commit).then(StepOutcome::GoTo(Step::Implement));
         let implement = FakeStep::new(Step::Implement).then(StepOutcome::BackToSpec {
-            reason: "la API no existe".into(),
+            reason: "the API does not exist".into(),
         });
         let g = graph(vec![Arc::new(implement), Arc::new(commit)], &sink);
         let mut s = session(Step::Commit);
@@ -371,7 +369,7 @@ mod tests {
         assert_eq!(
             status(&s),
             FlowStatus::BackToSpec {
-                reason: "la API no existe".into()
+                reason: "the API does not exist".into()
             }
         );
         let state = load_state(&s.context);
@@ -383,13 +381,13 @@ mod tests {
         let sink = Arc::new(RecordingSink::new());
         let load = FakeStep::new(Step::Load)
             .then(StepOutcome::GoTo(Step::Report))
-            .then_fail("sin plan");
+            .then_fail("no plan");
         let g = graph(vec![Arc::new(load)], &sink);
         let mut s = session(Step::Load);
         let err = g.execute_session(&mut s).await.unwrap_err();
         assert!(err.to_string().contains("not a step"), "{err}");
         let err = g.execute_session(&mut s).await.unwrap_err();
-        assert!(err.to_string().contains("sin plan"), "{err}");
+        assert!(err.to_string().contains("no plan"), "{err}");
         assert!(sink.events().iter().any(|e| matches!(
             e,
             DomainEvent::BlockAdded { block } if matches!(block.kind, BlockKind::Error { .. })

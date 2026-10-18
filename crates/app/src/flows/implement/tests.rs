@@ -46,7 +46,7 @@ async fn implements_a_plan_task_by_task_and_reports() {
     let mut shell = ScriptedShell::new()
         .on(
             "git",
-            ["switch", "-c", "spec/0007-cache-de-sesiones"],
+            ["switch", "-c", "spec/0007-session-cache"],
             exit(0, ""),
         )
         .on(
@@ -57,7 +57,7 @@ async fn implements_a_plan_task_by_task_and_reports() {
     for id in ["t1", "t2"] {
         let file = format!("src/{id}.rs");
         let upper = id.to_uppercase();
-        let message = format!("feat(src): Hacer {upper}\n\nTask: {upper}");
+        let message = format!("feat(src): Do {upper}\n\nTask: {upper}");
         shell = shell
             .on("cargo", ["test", id], exit(0, "ok"))
             .on("git", git_status(&file), exit(0, &format!("?? {file}\0")))
@@ -102,7 +102,7 @@ async fn implements_a_plan_task_by_task_and_reports() {
         }
     ));
     // On through both tasks to the gate before closing.
-    let status = flow.provide_input("sí").await.unwrap();
+    let status = flow.provide_input("yes").await.unwrap();
     assert!(
         matches!(
             status,
@@ -119,7 +119,7 @@ async fn implements_a_plan_task_by_task_and_reports() {
     );
 
     let state = flow.state().await.unwrap();
-    assert_eq!(state.branch.as_deref(), Some("spec/0007-cache-de-sesiones"));
+    assert_eq!(state.branch.as_deref(), Some("spec/0007-session-cache"));
     for id in &state.order {
         assert_eq!(state.record(id).unwrap().status, TaskStatus::Committed);
     }
@@ -130,5 +130,5 @@ async fn implements_a_plan_task_by_task_and_reports() {
         .count();
     assert_eq!(commits, 2);
     let report = h.fs.file(".crest/specs/0007/report.md").unwrap();
-    assert!(report.contains("- Tareas hechas: 2 de 2"), "{report}");
+    assert!(report.contains("- Tasks done: 2 of 2"), "{report}");
 }

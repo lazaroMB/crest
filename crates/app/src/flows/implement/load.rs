@@ -1,4 +1,4 @@
-//! Step 1, Cargar plan: reads `plan.json`, validates it, orders its tasks
+//! Step 1, Load plan: reads `plan.json`, validates it, orders its tasks
 //! by dependencies and creates the branch of the Spec.
 
 use async_trait::async_trait;
@@ -178,11 +178,11 @@ pub async fn create_branch(
     Err(BranchError::Git(stderr.trim().to_owned()))
 }
 
-/// Step 1, Cargar plan.
+/// Step 1, Load plan.
 ///
 /// Loads and validates `plan.json`, shows the tasks in dependency order
-/// (a table and the Mermaid graph) and stops at the first gate: «sí»
-/// creates the branch `spec/<carpeta>` and starts. A plan that does not
+/// (a table and the Mermaid graph) and stops at the first gate: "yes"
+/// creates the branch `spec/<folder>` and starts. A plan that does not
 /// validate is a problem of the Spec, so the flow offers to go back there.
 #[derive(Debug, Default)]
 pub struct LoadNode;
@@ -213,22 +213,14 @@ impl LoadNode {
                 ]
             })
             .collect();
-        let columns = [
-            "#",
-            "Tarea",
-            "Título",
-            "Depende de",
-            "Archivos",
-            "Rol",
-            "Riesgo",
-        ]
-        .into_iter()
-        .map(Column::new)
-        .collect();
+        let columns = ["#", "Task", "Title", "Depends on", "Files", "Role", "Risk"]
+            .into_iter()
+            .map(Column::new)
+            .collect();
         ctx.emit(BlockKind::Table(TableSpec { columns, rows }))?;
         ctx.emit(BlockKind::Mermaid(MermaidSpec {
             source: plan.to_mermaid(),
-            title: Some(format!("Dependencias de {}", plan.spec)),
+            title: Some(format!("Dependencies of {}", plan.spec)),
         }))?;
         Ok(())
     }
@@ -236,9 +228,9 @@ impl LoadNode {
     fn prompt(plan: &Plan, order: &[TaskId], branch: &str) -> String {
         let order: Vec<_> = order.iter().map(TaskId::as_str).collect();
         format!(
-            "Plan **{}**: {} tareas, en este orden: {}. Las implementaré una a una en la \
-             rama `{branch}`, con un commit por tarea. Responde «sí» para crear la rama y \
-             empezar, «abortar» o «volver al spec» para corregir el plan.",
+            "Plan **{}**: {} tasks, in this order: {}. I will implement them one by one on \
+             branch `{branch}`, with one commit per task. Answer \"yes\" to create the branch \
+             and start, \"abort\", or \"back to spec\" to fix the plan.",
             plan.spec,
             order.len(),
             order.join(" → ")
@@ -270,7 +262,7 @@ impl ImplementNode for LoadNode {
             ctx.log(
                 EntryKind::Note,
                 format!(
-                    "Plan cargado de {path}: {} tareas; orden {}.",
+                    "Plan loaded from {path}: {} tasks; order {}.",
                     ids.len(),
                     ids.join(", ")
                 ),
@@ -288,18 +280,18 @@ impl ImplementNode for LoadNode {
             GateChoice::Continue => {}
             GateChoice::Abort => {
                 return Ok(StepOutcome::Abort {
-                    reason: "el usuario no aprobó el plan".to_owned(),
+                    reason: "the user did not approve the plan".to_owned(),
                 });
             }
             GateChoice::BackToSpec => {
                 return Ok(StepOutcome::BackToSpec {
-                    reason: "el usuario pidió corregir el plan".to_owned(),
+                    reason: "the user asked to fix the plan".to_owned(),
                 });
             }
             GateChoice::Retry | GateChoice::Skip | GateChoice::Other(_) => {
                 return Ok(StepOutcome::Ask {
                     prompt: format!(
-                        "No cambio el plan aquí: para corregirlo, «volver al spec». {}",
+                        "I do not change the plan here: to fix it, \"back to spec\". {}",
                         Self::prompt(&plan, &order, &branch)
                     ),
                 });
@@ -308,8 +300,10 @@ impl ImplementNode for LoadNode {
         match create_branch(ctx.shell().as_ref(), &branch).await {
             Ok(outcome) => {
                 let text = match outcome {
-                    BranchOutcome::Created => format!("Rama `{branch}` creada."),
-                    BranchOutcome::Existing => format!("Rama `{branch}` ya existía; sigo en ella."),
+                    BranchOutcome::Created => format!("Branch `{branch}` created."),
+                    BranchOutcome::Existing => {
+                        format!("Branch `{branch}` already existed; staying on it.")
+                    }
                 };
                 ctx.log(EntryKind::Note, text.clone());
                 ctx.notice(NoticeLevel::Info, text);
@@ -319,12 +313,12 @@ impl ImplementNode for LoadNode {
             Err(err) => {
                 ctx.log(
                     EntryKind::Failure,
-                    format!("No se pudo crear la rama `{branch}`: {err}"),
+                    format!("Could not create branch `{branch}`: {err}"),
                 );
                 Ok(StepOutcome::Ask {
                     prompt: format!(
-                        "No pude crear la rama `{branch}`: {err}. Corrige el repositorio y \
-                         responde «sí» para reintentar, o «abortar»."
+                        "I could not create branch `{branch}`: {err}. Fix the repository and \
+                         answer \"yes\" to retry, or \"abort\"."
                     ),
                 })
             }
@@ -350,8 +344,8 @@ pub(crate) mod tests {
             .map(|(id, deps)| {
                 json!({
                     "id": id,
-                    "title": format!("Hacer {id}"),
-                    "description": format!("Descripción de {id}"),
+                    "title": format!("Do {id}"),
+                    "description": format!("Description of {id}"),
                     "depends_on": deps,
                     "files": [format!("src/{}.rs", id.to_lowercase())],
                     "acceptance": [{ "kind": "test", "ref": format!("cargo test {}", id.to_lowercase()) }],
@@ -360,7 +354,7 @@ pub(crate) mod tests {
                 })
             })
             .collect();
-        json!({ "spec": "0007-cache-de-sesiones", "tasks": tasks }).to_string()
+        json!({ "spec": "0007-session-cache", "tasks": tasks }).to_string()
     }
 
     fn fs_with(json: &str) -> InMemoryFs {
@@ -408,7 +402,7 @@ pub(crate) mod tests {
             .unwrap_err();
         assert!(matches!(err, LoadError::Parse { .. }));
 
-        let err = load_plan(&bad, "otro/plan.json").await.unwrap_err();
+        let err = load_plan(&bad, "other/plan.json").await.unwrap_err();
         assert!(matches!(err, LoadError::Read { .. }));
         let err = load_plan(&bad, "../plan.json").await.unwrap_err();
         assert!(matches!(err, LoadError::Path { .. }));
@@ -417,9 +411,9 @@ pub(crate) mod tests {
     #[test]
     fn branch_names_are_valid_refs() {
         let mut plan = parse_plan("p", &plan_json(&[("T1", &[])])).unwrap().plan;
-        assert_eq!(branch_name(&plan), "spec/0007-cache-de-sesiones");
-        plan.spec = " 0008 caché: ¿rápida?..lock".into();
-        assert_eq!(branch_name(&plan), "spec/0008-caché-rápida");
+        assert_eq!(branch_name(&plan), "spec/0007-session-cache");
+        plan.spec = " 0008 caché: ¿fast?..lock".into();
+        assert_eq!(branch_name(&plan), "spec/0008-caché-fast");
         plan.spec = "~~".into();
         assert_eq!(branch_name(&plan), "spec/plan");
     }
@@ -442,14 +436,14 @@ pub(crate) mod tests {
         let sink = Arc::new(RecordingSink::new());
         let fs = fs_with(&plan_json(&[("T2", &["T1"]), ("T1", &[])]));
         let shell =
-            ScriptedShell::new().on("git", ["switch", "-c", "spec/0007-cache-de-sesiones"], ok());
+            ScriptedShell::new().on("git", ["switch", "-c", "spec/0007-session-cache"], ok());
         let mut first = ctx(fs, shell, &sink);
         let out = LoadNode::new().run(&mut first).await.unwrap();
         let StepOutcome::Ask { prompt } = out else {
             panic!("{out:?}")
         };
         assert!(prompt.contains("T1 → T2"), "{prompt}");
-        assert!(prompt.contains("spec/0007-cache-de-sesiones"), "{prompt}");
+        assert!(prompt.contains("spec/0007-session-cache"), "{prompt}");
         assert_eq!(ids(&first.state().order), ["T1", "T2"]);
         assert_eq!(sink.kinds().len(), 2, "table and mermaid");
 
@@ -457,7 +451,7 @@ pub(crate) mod tests {
         let fs = fs_with("{}");
         let shell = Arc::new(ScriptedShell::new().on(
             "git",
-            ["switch", "-c", "spec/0007-cache-de-sesiones"],
+            ["switch", "-c", "spec/0007-session-cache"],
             ok(),
         ));
         let deps = ImplementDeps::new(
@@ -465,18 +459,18 @@ pub(crate) mod tests {
             Arc::new(fs),
             Arc::clone(&shell) as _,
         );
-        let mut again = StepContext::new(Step::Load, deps.clone(), state.clone()).with_reply("sí");
+        let mut again = StepContext::new(Step::Load, deps.clone(), state.clone()).with_reply("yes");
         assert_eq!(
             LoadNode::new().run(&mut again).await.unwrap(),
             StepOutcome::Next
         );
         assert_eq!(
             again.state().branch.as_deref(),
-            Some("spec/0007-cache-de-sesiones")
+            Some("spec/0007-session-cache")
         );
         assert_eq!(shell.calls().len(), 1);
 
-        let mut back = StepContext::new(Step::Load, deps, state).with_reply("volver al spec");
+        let mut back = StepContext::new(Step::Load, deps, state).with_reply("back to spec");
         assert!(matches!(
             LoadNode::new().run(&mut back).await.unwrap(),
             StepOutcome::BackToSpec { .. }

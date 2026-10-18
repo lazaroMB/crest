@@ -25,9 +25,9 @@ pub const PLAN_FILE: &str = "plan.json";
 /// Folder of the Specs in the workspace.
 pub const SPECS_DIR: &str = ".crest/specs";
 
-/// The six steps of the implementation flow chained in order: Cargar plan,
-/// Implementar tarea, Pruebas y corrección, Commit, Verificar hipótesis
-/// and Reporte y futuro.
+/// The six steps of the implementation flow chained in order: Load plan,
+/// Implement task, Test and fix, Commit, Verify hypotheses
+/// and Report and next steps.
 ///
 /// # Errors
 ///
@@ -47,10 +47,10 @@ pub fn implement_graph(deps: ImplementDeps) -> Result<ImplementGraph, FlowError>
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TargetError {
     /// Nothing was given.
-    #[error("falta la carpeta del Spec o la ruta a plan.json")]
+    #[error("missing the Spec folder or the path to plan.json")]
     Empty,
     /// An absolute path outside the workspace.
-    #[error("{0} está fuera del workspace")]
+    #[error("{0} is outside the workspace")]
     OutsideWorkspace(String),
 }
 
@@ -100,20 +100,19 @@ pub fn plan_path(root: &Path, target: &str) -> Result<String, TargetError> {
 pub fn status_notice(status: &FlowStatus) -> Option<(NoticeLevel, String)> {
     match status {
         FlowStatus::Running { .. } | FlowStatus::WaitingForInput { .. } => None,
-        FlowStatus::Completed => Some((
-            NoticeLevel::Info,
-            "flujo de implementación terminado".to_owned(),
-        )),
+        FlowStatus::Completed => {
+            Some((NoticeLevel::Info, "implementation flow finished".to_owned()))
+        }
         FlowStatus::Aborted => Some((
             NoticeLevel::Warning,
-            "flujo de implementación abortado; su diario queda guardado".to_owned(),
+            "implementation flow aborted; its journal is kept".to_owned(),
         )),
         FlowStatus::BackToSpec { reason } => Some((
             NoticeLevel::Warning,
             format!(
-                "el plan resultó inviable ({reason}); vuelve al nodo Spec del flujo \
-                 investigativo con `:research resume` y luego `/back spec` para corregirlo, \
-                 y vuelve a correr :implement"
+                "the plan turned out to be unworkable ({reason}); go back to the Spec node \
+                 of the research flow with `:research resume` and then `/back spec` to fix \
+                 it, and run :implement again"
             ),
         )),
     }
@@ -248,7 +247,7 @@ mod tests {
         assert_eq!(path("/ws").unwrap(), "plan.json");
         assert_eq!(path("  "), Err(TargetError::Empty));
         assert!(matches!(
-            path("/otro/plan.json"),
+            path("/other/plan.json"),
             Err(TargetError::OutsideWorkspace(_))
         ));
     }
@@ -258,12 +257,12 @@ mod tests {
         let running = FlowStatus::Running { next: Step::Load };
         assert_eq!(status_notice(&running), None);
         let back = FlowStatus::BackToSpec {
-            reason: "falta la API".into(),
+            reason: "the API is missing".into(),
         };
         let (level, text) = status_notice(&back).unwrap();
         assert_eq!(level, NoticeLevel::Warning);
         assert!(
-            text.contains("falta la API")
+            text.contains("the API is missing")
                 && text.contains(":research resume")
                 && text.contains("/back spec"),
             "{text}"
@@ -275,7 +274,7 @@ mod tests {
     async fn opening_the_same_plan_resumes_until_it_finishes() {
         let shell = ScriptedShell::new().on(
             "git",
-            ["switch", "-c", "spec/0007-cache-de-sesiones"],
+            ["switch", "-c", "spec/0007-session-cache"],
             exit(0, ""),
         );
         let h = Harness::new(
@@ -307,7 +306,7 @@ mod tests {
             .unwrap();
         assert!(again.resumed());
         assert_eq!(again.plan_path(), plan);
-        let reply = again.handle_line("abortar").await.unwrap();
+        let reply = again.handle_line("abort").await.unwrap();
         assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
 
         let fresh = ImplementSession::open(h.deps(), storage, plan)
