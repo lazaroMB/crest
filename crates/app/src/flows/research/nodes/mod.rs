@@ -25,7 +25,7 @@ use super::node::ResearchNode;
 pub mod intake;
 
 // T5.5b: Observation
-// pub mod observation;
+pub mod observation;
 
 // T5.5c: Data
 // pub mod data;
@@ -71,7 +71,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Intake => Some(Arc::new(intake::Intake::new())),
 
         // T5.5b: Some(Arc::new(observation::<Type>::new()))
-        Stage::Observation => None,
+        Stage::Observation => Some(Arc::new(observation::Observation::new())),
 
         // T5.5c: Some(Arc::new(data::<Type>::new()))
         Stage::Data => None,
