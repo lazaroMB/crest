@@ -147,6 +147,16 @@ pub enum BlockKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<SourceRef>,
     },
+    /// Marks that the workflow entered a new stage, with progress
+    /// (`index` of `total`, 1-based, e.g. 5/14).
+    StageHeader {
+        /// Stage name.
+        stage: String,
+        /// 1-based position of the stage.
+        index: u32,
+        /// Number of stages.
+        total: u32,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -1005,5 +1015,16 @@ mod tests {
             },
             source: None,
         }));
+    }
+
+    #[test]
+    fn stage_header_roundtrip() {
+        let value = roundtrip(&Block::new(BlockKind::StageHeader {
+            stage: "design".into(),
+            index: 5,
+            total: 14,
+        }));
+        assert_eq!(value["type"], "stage_header");
+        assert_eq!(value["index"], 5);
     }
 }
