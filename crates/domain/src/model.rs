@@ -201,6 +201,41 @@ impl ModelSpec {
     }
 }
 
+/// Prices of one model, in USD per million tokens.
+///
+/// Prices change, so they come from configuration; nothing here hardcodes
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ModelPricing {
+    /// Uncached input tokens.
+    pub input_per_mtok: f64,
+    /// Output tokens (including thinking).
+    pub output_per_mtok: f64,
+    /// Input tokens read from the prompt cache.
+    pub cache_read_per_mtok: f64,
+    /// Input tokens written to the prompt cache.
+    pub cache_write_per_mtok: f64,
+}
+
+impl ModelPricing {
+    /// Cost in USD of one response's usage counts.
+    #[must_use]
+    pub fn cost(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+    ) -> f64 {
+        const PER: f64 = 1_000_000.0;
+        (input_tokens as f64 * self.input_per_mtok
+            + output_tokens as f64 * self.output_per_mtok
+            + cache_read_tokens as f64 * self.cache_read_per_mtok
+            + cache_write_tokens as f64 * self.cache_write_per_mtok)
+            / PER
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +325,31 @@ mod tests {
         let back: ModelSpec = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
         assert_eq!(back, full);
         assert_eq!(full.fallbacks, vec![ModelId::from("a"), ModelId::from("b")]);
+    }
+
+    #[test]
+    fn pricing_cost_table() {
+        let p = ModelPricing {
+            input_per_mtok: 3.0,
+            output_per_mtok: 15.0,
+            cache_read_per_mtok: 0.3,
+            cache_write_per_mtok: 3.75,
+        };
+        let cases: [((u64, u64, u64, u64), f64); 6] = [
+            ((0, 0, 0, 0), 0.0),
+            ((1_000_000, 0, 0, 0), 3.0),
+            ((0, 1_000_000, 0, 0), 15.0),
+            ((0, 0, 1_000_000, 0), 0.3),
+            ((0, 0, 0, 1_000_000), 3.75),
+            ((1000, 500, 2000, 4000), 0.003 + 0.0075 + 0.0006 + 0.015),
+        ];
+        for ((i, o, cr, cw), want) in cases {
+            let got = p.cost(i, o, cr, cw);
+            assert!(
+                (got - want).abs() < 1e-12,
+                "{i},{o},{cr},{cw}: {got} != {want}"
+            );
+        }
+        assert!(ModelPricing::default().cost(9, 9, 9, 9).abs() < f64::EPSILON);
     }
 }
