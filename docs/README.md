@@ -14,3 +14,4 @@ For the project overview, installation and quick start, see the [main README](..
 Research notes:
 
 - [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
+- [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (research and approved design, not implemented yet).
