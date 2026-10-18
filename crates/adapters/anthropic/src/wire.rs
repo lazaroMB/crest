@@ -786,6 +786,78 @@ mod response_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Body of a non-2xx response:
+/// `{"type": "error", "error": {"type": ..., "message": ...}, "request_id": ...}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiErrorBody {
+    /// Always `error`.
+    #[serde(rename = "type", default = "error_kind")]
+    pub kind: String,
+    /// The error itself.
+    pub error: ApiError,
+    /// Request id, useful when reporting problems to Anthropic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+fn error_kind() -> String {
+    "error".to_owned()
+}
+
+/// The `error` object of an error body or of a stream `error` event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{kind}: {message}")]
+pub struct ApiError {
+    /// E.g. `invalid_request_error`, `authentication_error`,
+    /// `rate_limit_error`, `overloaded_error`. Kept as a string because the
+    /// API adds types over time.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Human-readable message.
+    #[serde(default)]
+    pub message: String,
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn parses_error_body() {
+        // From the API errors docs.
+        let raw = r#"{
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "messages: roles must alternate between \"user\" and \"assistant\""
+            },
+            "request_id": "req_011CSHoEeqs5C35K2UUqR7Fy"
+        }"#;
+        let body: ApiErrorBody = serde_json::from_str(raw).unwrap();
+        assert_eq!(body.error.kind, "invalid_request_error");
+        assert_eq!(
+            body.request_id.as_deref(),
+            Some("req_011CSHoEeqs5C35K2UUqR7Fy")
+        );
+        assert_eq!(
+            body.error.to_string(),
+            "invalid_request_error: messages: roles must alternate between \"user\" and \"assistant\""
+        );
+    }
+
+    #[test]
+    fn parses_error_body_without_request_id() {
+        let raw = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let body: ApiErrorBody = serde_json::from_str(raw).unwrap();
+        assert_eq!(body.error.kind, "overloaded_error");
+        assert_eq!(body.request_id, None);
+    }
+}
+
 #[cfg(test)]
 mod request_tests {
     use super::*;
