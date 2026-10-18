@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::analysis;
 use super::hypotheses::{by_priority, status_label};
+use super::spec::record_charts;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::shell::RunCommandRequest;
 
@@ -183,9 +184,15 @@ impl ResearchNode for Experiments {
             .into_iter()
             .map(|e| record(ctx.state_mut(), &runs, e, now))
             .collect();
-        for p in protocols.iter().filter(|p| !p.measurements.is_empty()) {
-            ctx.emit(BlockKind::Chart(chart(p)))?;
+        let charts: Vec<ChartSpec> = protocols
+            .iter()
+            .filter(|p| !p.measurements.is_empty())
+            .map(chart)
+            .collect();
+        for chart in &charts {
+            ctx.emit(BlockKind::Chart(chart.clone()))?;
         }
+        record_charts(ctx, &charts)?;
         ctx.emit(BlockKind::Table(table(&protocols)))?;
         ctx.set_data(KEY_PROTOCOLS, &protocols)?;
 

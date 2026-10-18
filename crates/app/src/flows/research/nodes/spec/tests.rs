@@ -290,3 +290,26 @@ async fn missing_inputs_go_back() {
         assert!(matches!(outcome, NodeOutcome::Back { to, .. } if to == stage));
     }
 }
+
+#[test]
+fn recorded_charts_replace_the_ones_with_their_title() {
+    let deps = NodeDeps::new(
+        Arc::new(ScriptedLlm::new([])),
+        ModelPolicy::default(),
+        Arc::new(RecordingSink::new()),
+    );
+    let ctx = NodeContext::new(Stage::Analysis, deps, "p", ResearchState::default());
+    let chart = |title: &str, value: f64| ChartSpec {
+        title: title.into(),
+        kind: ChartKind::Bar,
+        labels: vec!["a".into()],
+        series: vec![Series {
+            name: "s".into(),
+            values: vec![value],
+        }],
+    };
+    record_charts(&ctx, &[chart("p95", 1.0), chart("commits", 2.0)]).unwrap();
+    record_charts(&ctx, &[chart("p95", 3.0)]).unwrap();
+    let all: Vec<ChartSpec> = ctx.data(CHARTS_KEY).unwrap();
+    assert_eq!(all, [chart("p95", 3.0), chart("commits", 2.0)]);
+}

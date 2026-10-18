@@ -25,6 +25,7 @@ use super::intake::{BRIEF_KEY, IntakeBrief};
 use super::observation::{
     self, ObservationReport, explore_json, has_shell, sources_block, validate_source,
 };
+use super::spec::record_charts;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
 use crate::ports::llm::Citation;
@@ -365,7 +366,9 @@ impl ResearchNode for Data {
 
         let weeks = commits_per_week(&answer.commits);
         if !weeks.is_empty() {
-            ctx.emit(BlockKind::Chart(chart(&weeks)))?;
+            let chart = chart(&weeks);
+            ctx.emit(BlockKind::Chart(chart.clone()))?;
+            record_charts(ctx, &[chart])?;
         }
         let records: Vec<_> = evidence
             .iter()

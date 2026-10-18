@@ -14,6 +14,7 @@ use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, Sourc
 use domain::research::{EvidenceId, ResearchState, Stage};
 use serde::{Deserialize, Serialize};
 
+use super::spec::record_charts;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
 /// Flow data key of the findings (`Vec<Finding>`).
@@ -192,6 +193,7 @@ impl ResearchNode for Analysis {
         for chart in &charts {
             ctx.emit(BlockKind::Chart(chart.clone()))?;
         }
+        record_charts(ctx, &charts)?;
         ctx.set_data(KEY_FINDINGS, &report.findings)?;
 
         let mut cited: Vec<EvidenceId> = Vec::new();
@@ -486,6 +488,8 @@ mod tests {
             panic!("{blocks:?}")
         };
         assert_eq!(chart.series[0].values, [2000.0, 200.0]);
+        let recorded: Vec<ChartSpec> = ctx.data(super::super::spec::CHARTS_KEY).unwrap();
+        assert_eq!(&recorded[0], chart);
 
         let findings: Vec<Finding> = ctx.data(KEY_FINDINGS).unwrap();
         assert_eq!(findings[0].kind, FindingKind::Benchmark);

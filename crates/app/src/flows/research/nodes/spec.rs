@@ -93,6 +93,27 @@ impl Spec {
     }
 }
 
+/// Records `charts` under [`CHARTS_KEY`] so the Spec writes their data
+/// to `evidence/`; a chart with the title of a recorded one replaces it
+/// (a node run again does not duplicate its charts).
+///
+/// # Errors
+///
+/// [`NodeError::Context`] when the flow data cannot be written.
+pub fn record_charts(ctx: &NodeContext, charts: &[ChartSpec]) -> Result<(), NodeError> {
+    if charts.is_empty() {
+        return Ok(());
+    }
+    let mut all: Vec<ChartSpec> = ctx.data(CHARTS_KEY).unwrap_or_default();
+    for chart in charts {
+        match all.iter_mut().find(|c| c.title == chart.title) {
+            Some(old) => *old = chart.clone(),
+            None => all.push(chart.clone()),
+        }
+    }
+    ctx.set_data(CHARTS_KEY, &all)
+}
+
 pub(crate) fn sink_error(e: SpecSinkError) -> NodeError {
     NodeError::Failed(e.to_string())
 }
