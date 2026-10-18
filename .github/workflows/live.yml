@@ -34,6 +34,8 @@ jobs:
         run: |
           bash scripts/install-deps.sh --yes
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Si el runner no traía Rust, rustup lo deja en ~/.cargo/bin.
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
       - name: make test-live
         env:
