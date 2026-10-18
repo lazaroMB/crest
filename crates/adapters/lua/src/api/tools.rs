@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use application::ports::plugin::PluginToolSpec;
+use domain::permission::ToolEffect;
 use mlua::{Function, Lua, Value};
 use serde_json::json;
 
@@ -52,6 +53,7 @@ pub(crate) fn register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Re
                 description: description.unwrap_or_default(),
                 input_schema,
                 plugin: origin.plugin.clone(),
+                effect: ToolEffect::Execute,
             },
             handler,
         });

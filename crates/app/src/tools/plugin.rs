@@ -38,14 +38,13 @@ impl std::fmt::Debug for PluginTool {
 }
 
 impl PluginTool {
-    /// The tool described by `spec`, run through `host`. Its effect is
-    /// [`ToolEffect::Execute`] (a plugin may do anything), so it is approved
-    /// like a command.
+    /// The tool described by `spec`, run through `host`, with the effect
+    /// the spec declares.
     #[must_use]
     pub fn new(spec: PluginToolSpec, host: Arc<dyn PluginHostPort>) -> Self {
         Self {
+            effect: spec.effect,
             spec,
-            effect: ToolEffect::Execute,
             host,
         }
     }
@@ -141,6 +140,7 @@ mod tests {
             description: "Lists tasks.".into(),
             input_schema: json!({ "type": "object", "properties": { "items": { "type": "array" } } }),
             plugin: "todo".into(),
+            effect: ToolEffect::Execute,
         }
     }
 
@@ -171,9 +171,14 @@ mod tests {
         assert_eq!(defs[0].input_schema, spec("x").input_schema);
         let tool = registry.get("todo_list").unwrap();
         assert_eq!(tool.effect(&json!({})), ToolEffect::Execute);
-        let read = PluginTool::new(spec("t"), Arc::new(FakePluginHost::new()))
-            .with_effect(ToolEffect::Read);
+        let declared = PluginToolSpec {
+            effect: ToolEffect::Read,
+            ..spec("t")
+        };
+        let read = PluginTool::new(declared, Arc::new(FakePluginHost::new()));
         assert_eq!(read.effect(&json!({})), ToolEffect::Read);
+        let write = read.with_effect(ToolEffect::Write);
+        assert_eq!(write.effect(&json!({})), ToolEffect::Write);
     }
 
     #[tokio::test]

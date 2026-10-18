@@ -176,6 +176,7 @@ mod tests {
                 description: String::new(),
                 input_schema: json!({ "type": "object" }),
                 plugin: plugin.into(),
+                effect: domain::permission::ToolEffect::Execute,
             },
             handler: CallbackId(handler),
         }

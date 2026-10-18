@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use domain::block::BlockKind;
 use domain::model::{ModelPolicy, ModelRole, RoleConfig};
+use domain::permission::ToolEffect;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -103,6 +104,14 @@ pub struct PluginToolSpec {
     pub input_schema: Value,
     /// Plugin (or config file) that registered it.
     pub plugin: String,
+    /// Side effect of a call, for the permission policy; `execute` (asks
+    /// like a command) when the plugin does not declare one.
+    #[serde(default = "default_tool_effect")]
+    pub effect: ToolEffect,
+}
+
+fn default_tool_effect() -> ToolEffect {
+    ToolEffect::Execute
 }
 
 /// Point of the tool loop where a hook runs.
@@ -408,6 +417,15 @@ mod tests {
     fn missing_fields_deserialize_to_defaults() {
         let config: LoadedConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(config, LoadedConfig::default());
+    }
+
+    #[test]
+    fn tool_effect_defaults_to_execute() {
+        let spec: PluginToolSpec = serde_json::from_value(serde_json::json!({
+            "name": "t", "description": "", "input_schema": {}, "plugin": "p"
+        }))
+        .unwrap();
+        assert_eq!(spec.effect, ToolEffect::Execute);
     }
 
     #[test]
