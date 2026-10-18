@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+dirs.workspace = true
 domain.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
