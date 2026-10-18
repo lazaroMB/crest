@@ -8,13 +8,26 @@
 //! closes; a closed dialog drops the reply, so the request fails with
 //! [`ApprovalError::Cancelled`].
 
+use std::collections::VecDeque;
+
+use application::keymap::KeyCode;
 use application::ports::approval::{
-    ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse,
+    ApprovalError, ApprovalPort, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
+    ApprovalResponse,
 };
 use async_trait::async_trait;
 use domain::permission::{PermissionRule, RuleDecision, RuleMatcher};
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
+use gpui::{
+    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Task, Window, div, px,
+};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+
+use crate::input::key_from_keystroke;
 
 /// The "allow always" rule for `request`: same tool, exactly this subject.
 pub fn allow_always_rule(request: &ApprovalRequest) -> PermissionRule {
@@ -132,6 +145,380 @@ impl ApprovalPort for UiApproval {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Dialog view
+// ---------------------------------------------------------------------------
+
+/// What the dialog reports after it closes a request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalEvent {
+    /// The user answered.
+    Answered {
+        /// Request that was answered.
+        id: ApprovalRequestId,
+        /// The answer sent to the requester.
+        response: ApprovalResponse,
+    },
+    /// The requester stopped waiting before the user answered.
+    Cancelled(ApprovalRequestId),
+}
+
+/// A request on screen or in the queue.
+struct Shown {
+    key: u64,
+    pending: PendingApproval,
+    _cancel: Task<()>,
+}
+
+/// The modal approval dialog. Render it above the rest of the window (as
+/// the last child of a `relative` container): it is empty while nothing is
+/// pending and covers the window otherwise.
+///
+/// Keys while open: `y` approve, `a` approve always, `n` reject with an
+/// optional reason (typed, then `Enter`; `Esc` goes back), `Esc` reject.
+/// Requests that arrive while one is open wait in a queue.
+pub struct ApprovalView {
+    focus_handle: FocusHandle,
+    current: Option<Shown>,
+    queue: VecDeque<Shown>,
+    /// The reason being typed after `n`, if any.
+    reason: Option<String>,
+    restore_focus: Option<FocusHandle>,
+    next_key: u64,
+    _inbox: Task<()>,
+}
+
+impl EventEmitter<ApprovalEvent> for ApprovalView {}
+
+impl ApprovalView {
+    /// A dialog fed by `inbox`.
+    pub fn new(mut inbox: ApprovalInbox, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(pending) = inbox.next().await {
+                if this
+                    .update_in(cx, |this, window, cx| this.push(pending, window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self {
+            focus_handle: cx.focus_handle(),
+            current: None,
+            queue: VecDeque::new(),
+            reason: None,
+            restore_focus: None,
+            next_key: 0,
+            _inbox: task,
+        }
+    }
+
+    /// The request on screen, if any.
+    pub fn current(&self) -> Option<&ApprovalRequest> {
+        self.current.as_ref().map(|shown| shown.pending.request())
+    }
+
+    /// Requests waiting behind the current one.
+    pub fn queued(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Whether the user is typing a rejection reason.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    fn push(&mut self, mut pending: PendingApproval, window: &mut Window, cx: &mut Context<Self>) {
+        if pending.is_cancelled() {
+            return;
+        }
+        let key = self.next_key;
+        self.next_key += 1;
+        let cancellation = pending.cancellation();
+        let cancel = cx.spawn_in(window, async move |this, cx| {
+            cancellation.await;
+            this.update_in(cx, |this, window, cx| this.cancel(key, window, cx))
+                .ok();
+        });
+        let shown = Shown {
+            key,
+            pending,
+            _cancel: cancel,
+        };
+        if self.current.is_some() {
+            self.queue.push_back(shown);
+        } else {
+            self.restore_focus = window.focused(cx);
+            self.show(shown, window, cx);
+        }
+        cx.notify();
+    }
+
+    fn show(&mut self, shown: Shown, window: &mut Window, cx: &mut Context<Self>) {
+        self.current = Some(shown);
+        self.reason = None;
+        window.focus(&self.focus_handle, cx);
+    }
+
+    /// Shows the next queued request, or closes and gives focus back.
+    fn advance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.current = None;
+        self.reason = None;
+        match self.queue.pop_front() {
+            Some(next) => self.show(next, window, cx),
+            None => {
+                if let Some(handle) = self.restore_focus.take() {
+                    window.focus(&handle, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Answers the request on screen. Does nothing when nothing is open.
+    pub fn answer(
+        &mut self,
+        response: ApprovalResponse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(shown) = self.current.take() else {
+            return;
+        };
+        let id = shown.pending.request().id;
+        if shown.pending.respond(response.clone()) {
+            cx.emit(ApprovalEvent::Answered { id, response });
+        } else {
+            cx.emit(ApprovalEvent::Cancelled(id));
+        }
+        self.advance(window, cx);
+    }
+
+    /// Approves the request on screen once.
+    pub fn approve(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.answer(ApprovalResponse::Approve, window, cx);
+    }
+
+    /// Approves the request on screen and remembers the rule.
+    pub fn approve_always(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(request) = self.current() else {
+            return;
+        };
+        let rule = allow_always_rule(request);
+        self.answer(ApprovalResponse::ApproveAlways { rule }, window, cx);
+    }
+
+    /// Rejects the request on screen; an empty reason counts as none.
+    pub fn reject(&mut self, reason: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let reason = reason
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty());
+        self.answer(ApprovalResponse::Deny { reason }, window, cx);
+    }
+
+    fn cancel(&mut self, key: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current.as_ref().is_some_and(|shown| shown.key == key) {
+            if let Some(shown) = self.current.take() {
+                cx.emit(ApprovalEvent::Cancelled(shown.pending.request().id));
+            }
+            self.advance(window, cx);
+        } else if let Some(ix) = self.queue.iter().position(|shown| shown.key == key) {
+            if let Some(shown) = self.queue.remove(ix) {
+                cx.emit(ApprovalEvent::Cancelled(shown.pending.request().id));
+            }
+            cx.notify();
+        }
+    }
+
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current.is_none() {
+            return;
+        }
+        let Some(key) = key_from_keystroke(&event.keystroke) else {
+            return;
+        };
+        if key.mods.ctrl || key.mods.alt || key.mods.cmd {
+            return;
+        }
+        match self.reason.as_mut() {
+            Some(reason) => match key.code {
+                KeyCode::Enter => {
+                    let reason = self.reason.take();
+                    self.reject(reason, window, cx);
+                }
+                KeyCode::Esc => self.reason = None,
+                KeyCode::Backspace => {
+                    reason.pop();
+                }
+                KeyCode::Char(c) => reason.push(c),
+                _ => return,
+            },
+            None => match key.code {
+                KeyCode::Char('y') => self.approve(window, cx),
+                KeyCode::Char('a') => self.approve_always(window, cx),
+                KeyCode::Char('n') => self.reason = Some(String::new()),
+                KeyCode::Esc => self.reject(None, window, cx),
+                _ => return,
+            },
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn render_preview(preview: &ApprovalPreview, cx: &App) -> AnyElement {
+        let theme = cx.theme();
+        match preview {
+            ApprovalPreview::Diff(spec) => v_flex()
+                .gap_1()
+                .child(crate::blocks::diff::render_header(spec, cx))
+                .child(crate::blocks::diff::render_unified(&spec.unified, cx))
+                .into_any_element(),
+            ApprovalPreview::Command { command, args, cwd } => v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(format!("in {cwd}"))),
+                )
+                .child(
+                    div()
+                        .font_family(theme.mono_font_family.clone())
+                        .p_2()
+                        .bg(theme.secondary)
+                        .child(SharedString::from(format!(
+                            "$ {}",
+                            command_line(command, args)
+                        ))),
+                )
+                .into_any_element(),
+            ApprovalPreview::Text { text } => div()
+                .child(SharedString::from(text.clone()))
+                .into_any_element(),
+        }
+    }
+
+    fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(reason) = &self.reason {
+            let theme = cx.theme();
+            return h_flex()
+                .gap_2()
+                .child(div().text_color(theme.muted_foreground).child("Reason:"))
+                .child(
+                    div()
+                        .flex_1()
+                        .px_1()
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(SharedString::from(format!("{reason}▏"))),
+                )
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child("Enter reject · Esc back"),
+                )
+                .into_any_element();
+        }
+        h_flex()
+            .gap_2()
+            .justify_end()
+            .child(
+                Button::new("approval-approve")
+                    .primary()
+                    .label("Approve (y)")
+                    .on_click(cx.listener(|this, _, window, cx| this.approve(window, cx))),
+            )
+            .child(
+                Button::new("approval-always")
+                    .label("Always (a)")
+                    .on_click(cx.listener(|this, _, window, cx| this.approve_always(window, cx))),
+            )
+            .child(
+                Button::new("approval-reject")
+                    .danger()
+                    .label("Reject (n)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.reason = Some(String::new());
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+}
+
+impl Focusable for ApprovalView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for ApprovalView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(shown) = &self.current else {
+            return div().id("approval").into_any_element();
+        };
+        let request = shown.pending.request();
+        let theme = cx.theme();
+        let title = format!("Allow {}?", request.tool);
+        let mut card = v_flex()
+            .w(px(760.))
+            .max_w_full()
+            .gap_2()
+            .p_4()
+            .bg(theme.popover)
+            .text_color(theme.popover_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_md()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::BOLD)
+                            .child(SharedString::from(title)),
+                    )
+                    .child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(SharedString::from(request.subject.clone())),
+                    ),
+            )
+            .child(
+                div()
+                    .id("approval-preview")
+                    .max_h(px(420.))
+                    .overflow_y_scroll()
+                    .child(Self::render_preview(&request.preview, cx)),
+            );
+        if !self.queue.is_empty() {
+            card = card.child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(SharedString::from(format!(
+                        "{} more pending",
+                        self.queue.len()
+                    ))),
+            );
+        }
+        let footer = self.render_footer(cx);
+        div()
+            .id("approval")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key))
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().overlay)
+            .child(card.child(footer))
+            .into_any_element()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use application::ports::approval::{ApprovalPreview, ApprovalRequestId};
@@ -222,5 +609,211 @@ mod tests {
             command_line("git", &args(&["commit", "-m", "it's done", ""])),
             r"git commit -m 'it'\''s done' ''"
         );
+    }
+
+    // -- dialog -------------------------------------------------------------
+
+    use gpui::{Entity, Task, TestAppContext, VisualTestContext};
+
+    type Answer = Task<Result<ApprovalResponse, ApprovalError>>;
+
+    fn dialog(
+        cx: &mut TestAppContext,
+    ) -> (UiApproval, Entity<ApprovalView>, &mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let (port, inbox) = UiApproval::channel();
+        let (view, cx) = cx.add_window_view(|window, cx| ApprovalView::new(inbox, window, cx));
+        (port, view, cx)
+    }
+
+    fn ask(port: &UiApproval, req: ApprovalRequest, cx: &mut VisualTestContext) -> Answer {
+        let port = port.clone();
+        let task = cx.executor().spawn(async move { port.request(req).await });
+        cx.run_until_parked();
+        task
+    }
+
+    fn answered(
+        task: Answer,
+        cx: &mut VisualTestContext,
+    ) -> Result<ApprovalResponse, ApprovalError> {
+        cx.run_until_parked();
+        task.now_or_never().expect("the request was answered")
+    }
+
+    fn diff_request(id: u64) -> ApprovalRequest {
+        ApprovalRequest {
+            id: ApprovalRequestId(id),
+            tool_use_id: ToolUseId::new(format!("toolu_{id}")),
+            tool: "edit_file".into(),
+            effect: ToolEffect::Write,
+            subject: "src/lib.rs".into(),
+            preview: ApprovalPreview::Diff(domain::block::DiffSpec {
+                path: "src/lib.rs".into(),
+                old_text: Some("a\n".into()),
+                new_text: "b\n".into(),
+                unified: "@@ -1 +1 @@\n-a\n+b\n".into(),
+                approval: Some(domain::block::ApprovalState::Pending),
+            }),
+        }
+    }
+
+    #[gpui::test]
+    fn y_approves(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let answer = ask(&port, diff_request(1), cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.current().map(|r| r.id), Some(ApprovalRequestId(1)));
+        });
+        cx.simulate_keystrokes("y");
+        assert_eq!(answered(answer, cx), Ok(ApprovalResponse::Approve));
+        view.read_with(cx, |view, _| assert!(view.current().is_none()));
+    }
+
+    #[gpui::test]
+    fn a_approves_always_with_the_exact_rule(cx: &mut TestAppContext) {
+        let (port, _view, cx) = dialog(cx);
+        let answer = ask(&port, command_request(1), cx);
+        cx.simulate_keystrokes("a");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::ApproveAlways {
+                rule: allow_always_rule(&command_request(1)),
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn n_rejects_with_a_typed_reason(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let answer = ask(&port, command_request(1), cx);
+        cx.simulate_keystrokes("n u s e space x x backspace enter");
+        view.read_with(cx, |view, _| assert!(view.reason().is_none()));
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::Deny {
+                reason: Some("use x".into()),
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn n_then_enter_rejects_without_reason(cx: &mut TestAppContext) {
+        let (port, _view, cx) = dialog(cx);
+        let answer = ask(&port, command_request(1), cx);
+        cx.simulate_keystrokes("n enter");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
+    }
+
+    #[gpui::test]
+    fn escape_rejects_and_backs_out_of_the_reason(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let first = ask(&port, command_request(1), cx);
+        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            answered(first, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
+
+        let second = ask(&port, command_request(2), cx);
+        cx.simulate_keystrokes("n x escape");
+        view.read_with(cx, |view, _| {
+            assert!(view.reason().is_none());
+            assert!(view.current().is_some(), "still open");
+        });
+        cx.simulate_keystrokes("y");
+        assert_eq!(answered(second, cx), Ok(ApprovalResponse::Approve));
+    }
+
+    #[gpui::test]
+    fn queued_requests_are_shown_in_order(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let first = ask(&port, diff_request(1), cx);
+        let second = ask(&port, command_request(2), cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.current().map(|r| r.id), Some(ApprovalRequestId(1)));
+            assert_eq!(view.queued(), 1);
+        });
+        cx.simulate_keystrokes("y");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.current().map(|r| r.id), Some(ApprovalRequestId(2)));
+        });
+        cx.simulate_keystrokes("escape");
+        assert_eq!(answered(first, cx), Ok(ApprovalResponse::Approve));
+        assert_eq!(
+            answered(second, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
+    }
+
+    #[gpui::test]
+    fn dropping_the_request_closes_the_dialog(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = events.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ApprovalEvent, _| {
+                seen.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let answer = ask(&port, diff_request(1), cx);
+        view.read_with(cx, |view, _| assert!(view.current().is_some()));
+        drop(answer);
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| assert!(view.current().is_none()));
+        assert_eq!(
+            *events.borrow(),
+            [ApprovalEvent::Cancelled(ApprovalRequestId(1))]
+        );
+        // Keys no longer answer anything.
+        cx.simulate_keystrokes("y");
+        assert_eq!(events.borrow().len(), 1);
+    }
+
+    #[gpui::test]
+    fn focus_returns_after_answering(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let before = cx.update(|window, cx| {
+            let handle = cx.focus_handle();
+            window.focus(&handle, cx);
+            handle
+        });
+        let answer = ask(&port, command_request(1), cx);
+        cx.update(|window, cx| {
+            assert!(view.read(cx).focus_handle.is_focused(window));
+        });
+        cx.simulate_keystrokes("y");
+        assert_eq!(answered(answer, cx), Ok(ApprovalResponse::Approve));
+        cx.update(|window, _| assert!(before.is_focused(window)));
+    }
+
+    #[gpui::test]
+    fn draws_every_preview(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let text = ApprovalRequest {
+            preview: ApprovalPreview::Text {
+                text: "fetch https://example.com".into(),
+            },
+            ..command_request(3)
+        };
+        let _answers = [
+            ask(&port, diff_request(1), cx),
+            ask(&port, command_request(2), cx),
+            ask(&port, text, cx),
+        ];
+        for keys in ["", "y", "n"] {
+            if !keys.is_empty() {
+                cx.simulate_keystrokes(keys);
+            }
+            cx.draw(
+                gpui::point(gpui::px(0.), gpui::px(0.)),
+                gpui::size(gpui::px(1000.), gpui::px(700.)),
+                |_, _| div().relative().size_full().child(view.clone()),
+            );
+        }
     }
 }
