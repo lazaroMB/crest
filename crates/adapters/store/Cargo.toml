@@ -1,6 +1,6 @@
 [package]
 name = "adapter-store"
-description = "SessionStorePort adapter over SQLite"
+description = "SQLite persistence: chat sessions and graph-flow checkpoints"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
