@@ -133,3 +133,70 @@ fn deep_trees_stop_at_the_depth_limit(cx: &mut TestAppContext) {
     }
     draw(cx, vec![custom(node)]);
 }
+
+/// A 1×1 transparent PNG.
+const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+pub(crate) fn rich_tree() -> CustomNode {
+    use domain::block::{ImageData, ImageFit};
+    CustomNode::Col {
+        children: vec![
+            CustomNode::Image {
+                source: ImageData::Base64 { data: PIXEL.into() },
+                media_type: Some("image/png".into()),
+                alt: Some("pixel".into()),
+                fit: ImageFit::Actual,
+            },
+            CustomNode::Image {
+                source: ImageData::Path {
+                    path: "/nonexistent/plot.png".into(),
+                },
+                media_type: None,
+                alt: None,
+                fit: ImageFit::Contain,
+            },
+            CustomNode::Html {
+                source: "<h2>Report</h2><p>ok <a href=\"https://example.com\">x</a></p>".into(),
+            },
+            CustomNode::Json {
+                value: serde_json::json!({ "a": [1, 2, { "b": null }] }),
+                expand_depth: 3,
+            },
+            CustomNode::Mermaid {
+                source: "graph TD; a-->b".into(),
+            },
+            CustomNode::Diff {
+                unified: "@@ -1 +1 @@\n-a\n+b\n".into(),
+            },
+            CustomNode::Link {
+                text: "docs".into(),
+                url: "https://example.com/docs".into(),
+            },
+        ],
+    }
+}
+
+#[gpui::test]
+fn draws_every_rich_node_and_links_open_the_browser(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    view.update(cx, |view, cx| {
+        view.apply(
+            &DomainEvent::BlockAdded {
+                block: custom(rich_tree()),
+            },
+            cx,
+        );
+    });
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(800.), px(1600.)),
+        |_, _| div().size_full().child(view.clone()),
+    );
+    cx.run_until_parked();
+    let bounds = cx
+        .debug_bounds("custom-link")
+        .unwrap_or_else(|| panic!("link not drawn"));
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+}

@@ -1,15 +1,19 @@
 //! Renderer of the `custom` block kind: the declarative tree a Lua plugin
 //! returned, turned into components recursively.
 //!
-//! Tables, charts and markdown reuse the renderers of their own block
-//! kinds. Those keep GPUI state per block id, so each such node gets an id
-//! derived from the block's and its position in the tree. Nesting past
-//! [`MAX_DEPTH`] is cut with a marker instead of recursing further.
+//! Tables, charts, Mermaid diagrams and markdown reuse the renderers of
+//! their own block kinds; images ([`super::image_view`]) and JSON
+//! ([`super::json`]) have views of their own. Those keep GPUI state per
+//! block id, so each such node gets an id derived from the block's (or the
+//! modal's, see [`render_node`]) and its position in the tree. Links and
+//! links inside markdown and HTML open the browser, and only for `http`,
+//! `https` and `mailto` URLs. Nesting past [`MAX_DEPTH`] is cut with a
+//! marker instead of recursing further.
 
-use domain::block::{Block, BlockId, BlockKind, CustomNode};
+use domain::block::{Block, BlockId, BlockKind, CustomNode, MermaidSpec, is_openable_url};
 use gpui::{
-    AnyElement, App, ElementId, IntoElement as _, ParentElement as _, SharedString, Styled as _,
-    Window, div,
+    AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -134,8 +138,69 @@ impl Walk<'_> {
                 element_id("custom-markdown", self.next_id()),
                 SharedString::from(source.clone()),
             )
+            .on_link_click(open_link)
             .into_any_element(),
+            CustomNode::Html { source } => TextView::html(
+                element_id("custom-html", self.next_id()),
+                SharedString::from(source.clone()),
+            )
+            .on_link_click(open_link)
+            .into_any_element(),
+            CustomNode::Image {
+                source,
+                media_type,
+                alt,
+                fit,
+            } => super::image_view::image_view(
+                self.next_id(),
+                source,
+                media_type.as_deref(),
+                alt.as_deref(),
+                *fit,
+                window,
+                cx,
+            )
+            .into_any_element(),
+            CustomNode::Json {
+                value,
+                expand_depth,
+            } => super::json::json_view(self.next_id(), value, *expand_depth, window, cx)
+                .into_any_element(),
+            CustomNode::Mermaid { source } => {
+                let entry = self.child_entry(BlockKind::Mermaid(MermaidSpec {
+                    source: source.clone(),
+                    title: None,
+                }));
+                super::mermaid::render(&entry, window, cx)
+            }
+            CustomNode::Diff { unified } => super::diff::render_unified(unified, cx),
+            CustomNode::Link { text, url } => {
+                let id = element_id("custom-link", self.next_id());
+                let url = url.clone();
+                div()
+                    .id(id)
+                    .debug_selector(|| "custom-link".to_owned())
+                    .text_color(cx.theme().link)
+                    .cursor_pointer()
+                    .hover(|style| style.underline())
+                    .child(SharedString::from(text.clone()))
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        if is_openable_url(&url) {
+                            cx.open_url(&url);
+                        }
+                    })
+                    .into_any_element()
+            }
         }
+    }
+}
+
+/// Opens a link of markdown or HTML in the browser, when it is `http`,
+/// `https` or `mailto`.
+fn open_link(url: &SharedString, _: &ClickEvent, _: &mut Window, cx: &mut App) {
+    if is_openable_url(url) {
+        cx.open_url(url);
     }
 }
 
@@ -151,6 +216,27 @@ pub fn render_tree(
     cx: &mut App,
 ) -> AnyElement {
     Walk { entry, next: 0 }.node(tree, 1, window, cx)
+}
+
+/// Draws `tree` outside the timeline (a modal): its stateful nodes get ids
+/// derived from `parent`, so they keep their state across frames.
+pub fn render_node(
+    parent: BlockId,
+    tree: &CustomNode,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let entry = TimelineEntry {
+        block: Block {
+            id: parent,
+            kind: BlockKind::Text {
+                markdown: String::new(),
+            },
+        },
+        expanded: true,
+        alt_view: false,
+    };
+    render_tree(&entry, tree, window, cx)
 }
 
 /// Draws the block held by `entry`: the plugin and block name, then the tree.

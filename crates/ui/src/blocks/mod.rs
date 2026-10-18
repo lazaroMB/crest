@@ -10,6 +10,8 @@ pub mod chart;
 pub mod custom;
 pub mod diff;
 pub mod image;
+pub mod image_view;
+pub mod json;
 pub mod markdown;
 pub mod mermaid;
 pub mod sources;
