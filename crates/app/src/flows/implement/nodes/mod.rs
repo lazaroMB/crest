@@ -4,6 +4,7 @@
 pub mod commit;
 pub mod implement;
 pub mod test;
+pub mod verify;
 
 use std::sync::Arc;
 
