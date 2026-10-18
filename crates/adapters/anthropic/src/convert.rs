@@ -1,11 +1,16 @@
 //! Pure conversions between the domain/port types and the wire types.
 
-use application::ports::llm::Citation;
+use application::ports::llm::{Citation, LlmRequest, ServerTool, ToolChoice, ToolDefinition};
 use domain::conversation::{
     ContentPart, Message, Role, StopReason, ToolResultContent, ToolUseId, Usage,
 };
+use domain::model::{ModelId, ThinkingConfig};
 
-use crate::wire::{ImageSource, WireCitation, WireContentBlock, WireMessage, WireRole, WireUsage};
+use crate::wire::{
+    CacheControl, CustomTool, ImageSource, MessagesRequest, ServerToolDef, SystemContent,
+    WireCitation, WireContentBlock, WireMessage, WireRole, WireThinking, WireTool, WireToolChoice,
+    WireUsage,
+};
 
 /// Converts a domain message to its wire form.
 ///
@@ -167,6 +172,222 @@ pub fn stop_reason(reason: &str) -> Option<StopReason> {
         "refusal" => StopReason::Refusal,
         _ => return None,
     })
+}
+
+/// Builds the Messages API body of `req` for one model of its fallback
+/// chain.
+///
+/// - `max_tokens` is [`LlmRequest::effective_max_tokens`].
+/// - System blocks with `cache: true` get a `cache_control` breakpoint.
+/// - Client tools come first; only the last one marked `cache: true` gets
+///   a breakpoint, since one breakpoint already caches every tool before
+///   it. Server tools follow, after the cached prefix.
+/// - Thinking comes from `model.spec.thinking`. `Disabled` omits the
+///   parameter instead of sending `{"type": "disabled"}`: older models then
+///   run without thinking, while models where thinking is always on reject
+///   an explicit `disabled` with a 400.
+/// - `tool_choice` is omitted when it is `auto` (the API default) or when
+///   there are no tools. With thinking on, the API only accepts `auto` and
+///   `none`, so a forced choice (`any`, a named tool) is downgraded to
+///   `auto`; models that reject forced tool use even without thinking are
+///   not handled here.
+/// - `temperature` is never set (rejected by recent models) and
+///   `metadata` is not sent: [`LlmRequest::metadata`] is for local traces.
+#[must_use]
+pub fn messages_request(req: &LlmRequest, model: &ModelId, stream: bool) -> MessagesRequest {
+    let thinking = thinking(req.model.spec.thinking);
+    let has_tools = !req.tools.is_empty() || !req.server_tools.is_empty();
+    let mut out = MessagesRequest::new(
+        model.as_str(),
+        req.effective_max_tokens(),
+        req.messages.iter().map(message).collect(),
+    );
+    out.system = req
+        .system
+        .iter()
+        .map(|block| SystemContent {
+            text: block.text.clone(),
+            cache_control: block.cache.then_some(CacheControl::EPHEMERAL),
+        })
+        .collect();
+    out.tools = tools(&req.tools, &req.server_tools);
+    out.tool_choice = if has_tools {
+        tool_choice(&req.tool_choice, thinking.is_some())
+    } else {
+        None
+    };
+    out.thinking = thinking;
+    out.stream = stream;
+    out
+}
+
+fn tools(custom: &[ToolDefinition], server: &[ServerTool]) -> Vec<WireTool> {
+    let last_cached = custom.iter().rposition(|tool| tool.cache);
+    let custom = custom.iter().enumerate().map(|(i, tool)| {
+        WireTool::Custom(CustomTool {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone(),
+            cache_control: (Some(i) == last_cached).then_some(CacheControl::EPHEMERAL),
+        })
+    });
+    let server = server.iter().map(|tool| {
+        WireTool::Server(match *tool {
+            ServerTool::WebSearch { max_uses } => ServerToolDef::web_search(max_uses),
+            ServerTool::WebFetch { max_uses } => ServerToolDef::web_fetch(max_uses),
+        })
+    });
+    custom.chain(server).collect()
+}
+
+/// Maps the domain thinking config (see [`messages_request`] for why
+/// `Disabled` is omitted).
+#[must_use]
+pub const fn thinking(config: ThinkingConfig) -> Option<WireThinking> {
+    match config {
+        ThinkingConfig::Disabled => None,
+        ThinkingConfig::Enabled { budget_tokens } => Some(WireThinking::Enabled { budget_tokens }),
+        ThinkingConfig::Adaptive => Some(WireThinking::Adaptive),
+    }
+}
+
+fn tool_choice(choice: &ToolChoice, thinking: bool) -> Option<WireToolChoice> {
+    match choice {
+        ToolChoice::Auto => None,
+        ToolChoice::Any | ToolChoice::Tool(_) if thinking => None,
+        ToolChoice::Any => Some(WireToolChoice::Any),
+        ToolChoice::Tool(name) => Some(WireToolChoice::Tool { name: name.clone() }),
+        ToolChoice::None => Some(WireToolChoice::None),
+    }
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+    use application::ports::llm::SystemBlock;
+    use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
+    use serde_json::json;
+
+    fn resolved(spec: ModelSpec) -> ResolvedModel {
+        ResolvedModel {
+            role: ModelRole::Main,
+            spec,
+            source: SpecSource::Default,
+            warnings: vec![],
+        }
+    }
+
+    fn body(req: &LlmRequest, stream: bool) -> serde_json::Value {
+        serde_json::to_value(messages_request(req, &req.model.spec.id, stream)).unwrap()
+    }
+
+    #[test]
+    fn minimal_request() {
+        let req = LlmRequest::new(
+            resolved(ModelSpec::new("claude-haiku-5-5", 4000)),
+            vec![Message::user_text("Hello")],
+        );
+        insta::assert_json_snapshot!(messages_request(&req, &req.model.spec.id, false));
+    }
+
+    #[test]
+    fn request_with_tools_cache_thinking_and_server_tools() {
+        let spec = ModelSpec::new("claude-opus-4-6", 16000)
+            .with_thinking(ThinkingConfig::Enabled {
+                budget_tokens: 8000,
+            })
+            .with_fallbacks(["claude-sonnet-4-6"]);
+        let mut req = LlmRequest::new(resolved(spec), vec![Message::user_text("Find the bug")]);
+        req.system = vec![
+            SystemBlock::cached("You are crest, a coding agent."),
+            SystemBlock::new("Workspace: /tmp/project"),
+        ];
+        // Keys in sorted order so the snapshot does not depend on whether
+        // serde_json's `preserve_order` feature is unified in.
+        let schema = json!({
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "type": "object"
+        });
+        req.tools = vec![
+            ToolDefinition::new("read_file", "Read a file", schema.clone()).cached(),
+            ToolDefinition::new("grep", "Search file contents", schema.clone()).cached(),
+            ToolDefinition::new("shell", "Run a command", schema),
+        ];
+        req.server_tools = vec![
+            ServerTool::WebSearch { max_uses: Some(5) },
+            ServerTool::WebFetch { max_uses: None },
+        ];
+        req.max_tokens = Some(20000);
+        insta::assert_json_snapshot!(messages_request(&req, &req.model.spec.id, true));
+
+        // Same request sent to the fallback model.
+        let fallback = &req.model.spec.fallbacks[0];
+        assert_eq!(
+            messages_request(&req, fallback, true).model,
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn thinking_variants() {
+        assert_eq!(thinking(ThinkingConfig::Disabled), None);
+        assert_eq!(
+            thinking(ThinkingConfig::Adaptive),
+            Some(WireThinking::Adaptive)
+        );
+        assert_eq!(
+            thinking(ThinkingConfig::Enabled {
+                budget_tokens: 2048
+            }),
+            Some(WireThinking::Enabled {
+                budget_tokens: 2048
+            })
+        );
+    }
+
+    #[test]
+    fn tool_choice_rules() {
+        let tool = || ToolDefinition::new("t", "d", json!({"type": "object"}));
+        let mut req = LlmRequest::new(resolved(ModelSpec::new("m", 1024)), vec![]);
+        req.tool_choice = ToolChoice::Tool("t".into());
+        // No tools: tool_choice is never sent.
+        assert_eq!(body(&req, false).get("tool_choice"), None);
+
+        req.tools = vec![tool()];
+        assert_eq!(
+            body(&req, false)["tool_choice"],
+            json!({"type": "tool", "name": "t"})
+        );
+        req.tool_choice = ToolChoice::Any;
+        assert_eq!(body(&req, false)["tool_choice"], json!({"type": "any"}));
+        req.tool_choice = ToolChoice::None;
+        assert_eq!(body(&req, false)["tool_choice"], json!({"type": "none"}));
+        req.tool_choice = ToolChoice::Auto;
+        assert_eq!(body(&req, false).get("tool_choice"), None);
+
+        // With thinking on, forced choices fall back to auto; none stays.
+        req.model.spec.thinking = ThinkingConfig::Adaptive;
+        req.tool_choice = ToolChoice::Any;
+        assert_eq!(body(&req, false).get("tool_choice"), None);
+        req.tool_choice = ToolChoice::Tool("t".into());
+        assert_eq!(body(&req, false).get("tool_choice"), None);
+        req.tool_choice = ToolChoice::None;
+        assert_eq!(body(&req, false)["tool_choice"], json!({"type": "none"}));
+    }
+
+    #[test]
+    fn server_tools_alone_allow_tool_choice() {
+        let mut req = LlmRequest::new(resolved(ModelSpec::new("m", 1024)), vec![]);
+        req.server_tools = vec![ServerTool::WebSearch { max_uses: None }];
+        req.tool_choice = ToolChoice::None;
+        let body = body(&req, false);
+        assert_eq!(
+            body["tools"],
+            json!([{"type": "web_search_20260318", "name": "web_search"}])
+        );
+        assert_eq!(body["tool_choice"], json!({"type": "none"}));
+    }
 }
 
 #[cfg(test)]
