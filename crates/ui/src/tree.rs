@@ -7,10 +7,47 @@
 //! file system: it pings on structural changes and the panel reloads from
 //! the port.
 
+use std::collections::HashSet;
 use std::path::{Component, Path};
 
+use application::ports::search::{TreeNode, TreeNodeKind};
 use futures::channel::mpsc;
+use gpui::SharedString;
+use gpui_component::tree::TreeItem;
 use notify::{EventKind, RecursiveMode, Watcher as _};
+
+/// Suffix of the id of the "N more files" row under a directory cut by
+/// the depth limit.
+const OMITTED_SUFFIX: &str = "/\u{2026}";
+
+/// The rows of the panel for `root`: its children, with directories open
+/// when their id (their path) is in `expanded`.
+pub fn tree_items(root: &TreeNode, expanded: &HashSet<SharedString>) -> Vec<TreeItem> {
+    root.children
+        .iter()
+        .map(|node| tree_item(node, expanded))
+        .collect()
+}
+
+fn tree_item(node: &TreeNode, expanded: &HashSet<SharedString>) -> TreeItem {
+    let id = SharedString::from(node.path.as_str().to_owned());
+    let label = SharedString::from(node.name.clone());
+    if node.kind == TreeNodeKind::File {
+        return TreeItem::new(id, label);
+    }
+    let mut children: Vec<TreeItem> = node
+        .children
+        .iter()
+        .map(|child| tree_item(child, expanded))
+        .collect();
+    if node.omitted_files > 0 {
+        let omitted = format!("{}{OMITTED_SUFFIX}", node.path);
+        children
+            .push(TreeItem::new(omitted, format!("… {} files", node.omitted_files)).disabled(true));
+    }
+    let open = expanded.contains(&id);
+    TreeItem::new(id, label).children(children).expanded(open)
+}
 
 /// Why the workspace cannot be watched.
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +118,8 @@ mod tests {
     use futures::StreamExt as _;
     use notify::event::{AccessKind, CreateKind, DataChange, ModifyKind, RenameMode};
 
+    use domain::workspace::WorkspacePath;
+
     use super::*;
 
     fn event(kind: EventKind, path: &str) -> notify::Event {
@@ -138,5 +177,32 @@ mod tests {
             DirWatcher::new(&missing),
             Err(WatchError::Watch { .. })
         ));
+    }
+
+    // -- items --------------------------------------------------------------
+
+    fn p(path: &str) -> WorkspacePath {
+        WorkspacePath::parse(path).unwrap()
+    }
+
+    fn ids(items: &[TreeItem]) -> Vec<String> {
+        items.iter().map(|item| item.id.to_string()).collect()
+    }
+
+    #[test]
+    fn items_mirror_the_tree_and_its_expansion() {
+        let files = [p("Cargo.toml"), p("src/lib.rs"), p("src/ports/fs.rs")];
+        let root = TreeNode::from_files(&WorkspacePath::root(), &files, 2);
+        let expanded = HashSet::from([SharedString::from("src")]);
+        let items = tree_items(&root, &expanded);
+        assert_eq!(ids(&items), ["src", "Cargo.toml"]);
+        assert!(items[0].is_expanded());
+        assert_eq!(ids(&items[0].children), ["src/ports", "src/lib.rs"]);
+        // `src/ports` is cut by the depth: one disabled "1 files" row.
+        let ports = &items[0].children[0];
+        assert!(!ports.is_expanded());
+        assert_eq!(ports.children.len(), 1);
+        assert!(ports.children[0].is_disabled());
+        assert_eq!(ports.children[0].label.as_ref(), "… 1 files");
     }
 }
