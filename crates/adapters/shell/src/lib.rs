@@ -13,10 +13,15 @@
 //! `unsafe`), so background children never outlive the command nor keep
 //! its pipes open. On timeout the output read so far is returned with
 //! `timed_out` set and no exit status.
+//!
+//! Commands inherit crest's environment minus [`SCRUBBED_ENV_VARS`]: the
+//! credentials crest itself uses (and those of other LLM providers), so a
+//! command the model asks for cannot read or exfiltrate the API key.
 
 mod capture;
 mod group;
 
+use std::ffi::OsString;
 use std::io;
 use std::pin::pin;
 use std::process::Stdio;
@@ -31,6 +36,17 @@ use crate::capture::Capture;
 pub use crate::capture::MAX_CAPTURE_BYTES;
 use crate::group::ProcessGroup;
 
+/// Environment variables removed from the inherited environment: API keys
+/// and tokens of LLM providers, starting with the one crest reads.
+pub const SCRUBBED_ENV_VARS: [&str; 6] = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "MISTRAL_API_KEY",
+];
+
 /// How long the pipes may stay open after the process group was killed on
 /// exit. Only a process that left the group (`setsid`) can hold them past
 /// that; whatever it writes later is not captured.
@@ -41,13 +57,41 @@ const DRAIN_GRACE: Duration = Duration::from_millis(500);
 #[derive(Debug, Clone)]
 pub struct LocalShell {
     root: WorkspaceRoot,
+    /// Environment to inherit instead of crest's own (tests only).
+    inherited_env: Option<Vec<(OsString, OsString)>>,
 }
 
 impl LocalShell {
     /// A shell whose commands run in `root` (already canonicalized when the
     /// workspace was opened).
     pub fn new(root: WorkspaceRoot) -> Self {
-        Self { root }
+        Self {
+            root,
+            inherited_env: None,
+        }
+    }
+
+    /// Uses `env` as the inherited environment, so tests can check the
+    /// scrubbing without touching the process environment.
+    #[cfg(test)]
+    fn with_inherited_env<K, V>(mut self, env: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.inherited_env = Some(env.into_iter().map(|(k, v)| (k.into(), v.into())).collect());
+        self
+    }
+
+    fn environment(&self) -> Vec<(OsString, OsString)> {
+        let inherited = match &self.inherited_env {
+            Some(env) => env.clone(),
+            None => std::env::vars_os().collect(),
+        };
+        inherited
+            .into_iter()
+            .filter(|(key, _)| !SCRUBBED_ENV_VARS.iter().any(|scrubbed| key == scrubbed))
+            .collect()
     }
 
     /// The working directory of every command.
@@ -60,6 +104,8 @@ impl LocalShell {
         command
             .args(&request.args)
             .current_dir(self.root.as_path())
+            .env_clear()
+            .envs(self.environment())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -308,5 +354,32 @@ mod tests {
             wait_until_dead(pid).await,
             "grandchild {pid} survived the drop"
         );
+    }
+
+    #[tokio::test]
+    async fn credentials_are_not_inherited() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = shell(&dir).with_inherited_env([
+            ("ANTHROPIC_API_KEY", "placeholder-not-a-key"),
+            ("OPENAI_API_KEY", "placeholder-not-a-key"),
+            ("CREST_TEST_VAR", "kept"),
+        ]);
+        let out = shell
+            .run(RunCommandRequest::new("env", Vec::<String>::new()))
+            .await
+            .unwrap();
+        assert!(out.success());
+        assert_eq!(out.stdout, "CREST_TEST_VAR=kept\n");
+    }
+
+    #[tokio::test]
+    async fn the_real_environment_is_inherited() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = shell(&dir)
+            .run(RunCommandRequest::new("env", Vec::<String>::new()))
+            .await
+            .unwrap();
+        assert!(out.stdout.lines().any(|line| line.starts_with("PATH=")));
+        assert!(!out.stdout.contains("ANTHROPIC_API_KEY="));
     }
 }
