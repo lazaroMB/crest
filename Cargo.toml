@@ -3,6 +3,14 @@ resolver = "3"
 members = [
     "crates/domain",
     "crates/app",
+    "crates/adapters/anthropic",
+    "crates/adapters/search",
+    "crates/adapters/fs",
+    "crates/adapters/shell",
+    "crates/adapters/store",
+    "crates/adapters/lua",
+    "crates/adapters/mcp",
+    "crates/adapters/telemetry",
 ]
 
 [workspace.package]
@@ -16,6 +24,14 @@ publish = false
 # Internal crates
 domain = { path = "crates/domain" }
 application = { path = "crates/app" }
+adapter-anthropic = { path = "crates/adapters/anthropic" }
+adapter-search = { path = "crates/adapters/search" }
+adapter-fs = { path = "crates/adapters/fs" }
+adapter-shell = { path = "crates/adapters/shell" }
+adapter-store = { path = "crates/adapters/store" }
+adapter-lua = { path = "crates/adapters/lua" }
+adapter-mcp = { path = "crates/adapters/mcp" }
+adapter-telemetry = { path = "crates/adapters/telemetry" }
 
 # Shared external crates
 anyhow = "1.0.104"

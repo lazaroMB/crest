@@ -3,6 +3,70 @@
 version = 4
 
 [[package]]
+name = "adapter-anthropic"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-fs"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-lua"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-mcp"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-search"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-shell"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-store"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
+name = "adapter-telemetry"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+]
+
+[[package]]
 name = "application"
 version = "0.1.0"
 dependencies = [

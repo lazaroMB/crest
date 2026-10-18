@@ -1,0 +1,1 @@
+//! SessionStorePort adapter over SQLite.

@@ -1,0 +1,12 @@
+[package]
+name = "adapter-anthropic"
+description = "LlmPort and ModelCatalogPort adapter over the Anthropic Messages API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+domain.workspace = true

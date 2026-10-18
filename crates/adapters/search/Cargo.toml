@@ -1,0 +1,12 @@
+[package]
+name = "adapter-search"
+description = "FileSearchPort and ContentSearchPort adapter backed by rg and fzf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+domain.workspace = true
