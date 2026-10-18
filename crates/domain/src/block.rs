@@ -108,6 +108,8 @@ pub enum BlockKind {
     },
     /// Tabular data (tool `show_table`).
     Table(TableSpec),
+    /// A chart (tool `show_chart`); the UI can toggle it to a table.
+    Chart(ChartSpec),
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -152,6 +154,33 @@ impl ToolStatus {
 /// Validation failure of a block payload.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum BlockError {
+    /// A chart without series.
+    #[error("chart has no series")]
+    ChartNoSeries,
+    /// A pie chart with other than one series.
+    #[error("pie chart needs exactly one series, got {count}")]
+    PieSeriesCount {
+        /// Number of series given.
+        count: usize,
+    },
+    /// A series whose length differs from the number of labels.
+    #[error("series {series:?} has {actual} values, expected {expected}")]
+    SeriesLength {
+        /// Series name.
+        series: String,
+        /// Number of labels.
+        expected: usize,
+        /// Number of values.
+        actual: usize,
+    },
+    /// A NaN or infinite value in a series.
+    #[error("series {series:?} has a non-finite value at {index}")]
+    NonFiniteValue {
+        /// Series name.
+        series: String,
+        /// Zero-based index of the value.
+        index: usize,
+    },
     /// A table without columns.
     #[error("table has no columns")]
     TableNoColumns,
@@ -246,6 +275,105 @@ pub enum Cell {
     Number(f64),
     /// Text.
     Text(String),
+}
+
+/// A chart: labels on one axis and one or more numeric series.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ChartSpec {
+    /// Chart title.
+    pub title: String,
+    /// How the series are drawn.
+    pub kind: ChartKind,
+    /// Category labels, one per value of each series.
+    pub labels: Vec<String>,
+    /// Data series.
+    pub series: Vec<Series>,
+}
+
+impl ChartSpec {
+    /// Checks that there is at least one series, each with exactly one finite
+    /// value per label, and that a pie chart has a single series.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BlockError`] found.
+    pub fn validate(&self) -> Result<(), BlockError> {
+        if self.series.is_empty() {
+            return Err(BlockError::ChartNoSeries);
+        }
+        if self.kind == ChartKind::Pie && self.series.len() != 1 {
+            return Err(BlockError::PieSeriesCount {
+                count: self.series.len(),
+            });
+        }
+        for series in &self.series {
+            if series.values.len() != self.labels.len() {
+                return Err(BlockError::SeriesLength {
+                    series: series.name.clone(),
+                    expected: self.labels.len(),
+                    actual: series.values.len(),
+                });
+            }
+            if let Some(index) = series.values.iter().position(|v| !v.is_finite()) {
+                return Err(BlockError::NonFiniteValue {
+                    series: series.name.clone(),
+                    index,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The same data as a table: a label column plus one column per series.
+    ///
+    /// Missing values (a series shorter than `labels`) become [`Cell::Null`].
+    #[must_use]
+    pub fn to_table(&self) -> TableSpec {
+        let columns = std::iter::once(Column::new(""))
+            .chain(self.series.iter().map(|s| Column {
+                name: s.name.clone(),
+                align: Some(Align::Right),
+            }))
+            .collect();
+        let rows = self
+            .labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                std::iter::once(Cell::Text(label.clone()))
+                    .chain(
+                        self.series
+                            .iter()
+                            .map(|s| s.values.get(i).map_or(Cell::Null, |v| Cell::Number(*v))),
+                    )
+                    .collect()
+            })
+            .collect();
+        TableSpec { columns, rows }
+    }
+}
+
+/// How a [`ChartSpec`] is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartKind {
+    /// Vertical bars.
+    Bar,
+    /// Lines.
+    Line,
+    /// Filled areas.
+    Area,
+    /// Pie; takes exactly one series.
+    Pie,
+}
+
+/// A named series of values, one per chart label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Series {
+    /// Legend name.
+    pub name: String,
+    /// Values, aligned with the chart labels.
+    pub values: Vec<f64>,
 }
 
 #[cfg(test)]
@@ -393,5 +521,98 @@ mod tests {
                 actual: 1
             })
         );
+    }
+
+    fn chart(kind: ChartKind, labels: &[&str], series: &[(&str, &[f64])]) -> ChartSpec {
+        ChartSpec {
+            title: "t".into(),
+            kind,
+            labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+            series: series
+                .iter()
+                .map(|(name, values)| Series {
+                    name: (*name).to_owned(),
+                    values: values.to_vec(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn chart_block_roundtrip() {
+        let spec = chart(ChartKind::Bar, &["a", "b"], &[("x", &[1.0, 2.0])]);
+        let value = roundtrip(&Block::new(BlockKind::Chart(spec)));
+        assert_eq!(value["type"], "chart");
+        assert_eq!(value["kind"], "bar");
+    }
+
+    #[test]
+    fn chart_accepts_integer_json_values() {
+        let spec: ChartSpec = serde_json::from_value(json!({
+            "title": "t", "kind": "line", "labels": ["a"], "series": [{"name": "x", "values": [3]}]
+        }))
+        .unwrap();
+        assert_eq!(spec.series[0].values, vec![3.0]);
+    }
+
+    #[test]
+    fn chart_validate_accepts_aligned_series() {
+        let spec = chart(
+            ChartKind::Line,
+            &["a", "b"],
+            &[("x", &[1.0, 2.0]), ("y", &[3.0, 4.0])],
+        );
+        assert_eq!(spec.validate(), Ok(()));
+        assert_eq!(
+            chart(ChartKind::Pie, &["a"], &[("x", &[1.0])]).validate(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn chart_validate_rejects_bad_shapes() {
+        assert_eq!(
+            chart(ChartKind::Bar, &["a"], &[]).validate(),
+            Err(BlockError::ChartNoSeries)
+        );
+        assert_eq!(
+            chart(ChartKind::Pie, &["a"], &[("x", &[1.0]), ("y", &[2.0])]).validate(),
+            Err(BlockError::PieSeriesCount { count: 2 })
+        );
+        assert_eq!(
+            chart(ChartKind::Area, &["a", "b"], &[("x", &[1.0])]).validate(),
+            Err(BlockError::SeriesLength {
+                series: "x".into(),
+                expected: 2,
+                actual: 1
+            })
+        );
+        assert_eq!(
+            chart(ChartKind::Bar, &["a", "b"], &[("x", &[1.0, f64::NAN])]).validate(),
+            Err(BlockError::NonFiniteValue {
+                series: "x".into(),
+                index: 1
+            })
+        );
+    }
+
+    #[test]
+    fn chart_to_table_has_label_column_and_one_column_per_series() {
+        let spec = chart(
+            ChartKind::Bar,
+            &["a", "b"],
+            &[("x", &[1.0, 2.0]), ("y", &[3.0])],
+        );
+        let table = spec.to_table();
+        let names: Vec<_> = table.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["", "x", "y"]);
+        assert_eq!(
+            table.rows,
+            vec![
+                vec![Cell::Text("a".into()), Cell::Number(1.0), Cell::Number(3.0)],
+                vec![Cell::Text("b".into()), Cell::Number(2.0), Cell::Null],
+            ]
+        );
+        assert_eq!(table.validate(), Ok(()));
     }
 }
