@@ -105,6 +105,22 @@ impl ResearchSession {
         Ok(self.storage.save(index).await?)
     }
 
+    /// Status of the last flow of the workspace, if there is one.
+    ///
+    /// # Errors
+    ///
+    /// A storage error.
+    pub async fn last_status(&self) -> Result<Option<FlowStatus>, FlowError> {
+        let Some(id) = self.last_flow_id().await? else {
+            return Ok(None);
+        };
+        match ResearchFlow::resume(self.graph.clone(), Arc::clone(&self.storage), id).await {
+            Ok(flow) => Ok(Some(flow.status().await?)),
+            Err(FlowError::SessionNotFound(_) | FlowError::UnknownTask(_)) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
     /// The last flow of the workspace, if it was left running or at a
     /// gate, and where it is.
     ///
@@ -307,6 +323,10 @@ mod tests {
         assert_eq!(reply, FlowReply::Status(FlowStatus::Completed));
         assert!(!reopened.is_active());
         assert!(reopened.pending().await.unwrap().is_none());
+        assert_eq!(
+            reopened.last_status().await.unwrap(),
+            Some(FlowStatus::Completed)
+        );
         // A finished flow reopens for `/back`, e.g. to redo the Spec.
         assert_eq!(reopened.resume().await.unwrap(), FlowStatus::Completed);
         assert!(reopened.is_active());
