@@ -396,6 +396,8 @@ end)
                 mode: KeyMode::Normal,
                 lhs: "<leader>r".into(),
                 action: KeyAction::Builtin("session.resume".into()),
+                description: None,
+                plugin: GLOBAL_NAME.into(),
             }
         );
         assert!(matches!(config.keymaps[1].action, KeyAction::Callback(_)));

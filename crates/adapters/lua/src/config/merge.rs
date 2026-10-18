@@ -180,6 +180,8 @@ mod tests {
             mode: KeyMode::Normal,
             lhs: lhs.into(),
             action: KeyAction::Builtin(action.into()),
+            description: None,
+            plugin: "config".into(),
         }
     }
 
@@ -281,6 +283,8 @@ mod tests {
             c.commands.push(CommandSpec {
                 name: "review".into(),
                 callback: CallbackId(1),
+                description: None,
+                plugin: "config".into(),
             });
             c.tools.push(tool("todo", "config", 2));
             d.mcp_servers.push(McpServerSpec::new(
@@ -296,6 +300,8 @@ mod tests {
             c.commands.push(CommandSpec {
                 name: "review".into(),
                 callback: CallbackId(3),
+                description: None,
+                plugin: "config".into(),
             });
             c.tools.push(tool("todo", "workspace", 4));
             d.mcp_servers.push(McpServerSpec::new(

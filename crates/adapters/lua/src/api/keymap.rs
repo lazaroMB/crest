@@ -2,9 +2,12 @@
 //!
 //! ```lua
 //! app.keymap.set("n", "<leader>r", "session.resume")
-//! app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end)
-//! app.commands.register("review", function(args) ... end)
+//! app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end, { desc = "Clear" })
+//! app.commands.register("review", function(args) ... end, { desc = "Review the changes" })
 //! ```
+//!
+//! The optional last table (Neovim style) takes `desc`, the description the
+//! help shows next to the mapping or the command.
 //!
 //! A keymap's action is a built-in action by name or a Lua function; a
 //! command (`:review args`) is a function receiving the arguments as a
@@ -130,54 +133,96 @@ fn key_modes(value: &Value) -> Result<Vec<KeyMode>, String> {
         .collect()
 }
 
+/// The `desc` of an optional options table (`{ desc = "..." }`).
+fn description(what: &str, opts: &Value) -> Result<Option<String>, String> {
+    let table = match opts {
+        Value::Nil => return Ok(None),
+        Value::Table(table) => table,
+        other => {
+            return Err(format!(
+                "{what}: the options must be a table, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    match table.get::<Value>("desc").map_err(|e| e.to_string())? {
+        Value::Nil => Ok(None),
+        Value::String(s) => {
+            let desc = s.to_str().map_err(|e| e.to_string())?.trim().to_owned();
+            Ok((!desc.is_empty()).then_some(desc))
+        }
+        other => Err(format!(
+            "{what}: desc must be a string, got {}",
+            other.type_name()
+        )),
+    }
+}
+
 fn keymap_set(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
     let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, (mode, lhs, action): (Value, Value, Value)| {
-        let parsed = (|| {
-            let modes = key_modes(&mode)?;
-            let Value::String(lhs) = lhs else {
-                return Err("keymap.set: the key sequence must be a string".to_owned());
-            };
-            let lhs = lhs.to_str().map_err(|e| e.to_string())?.to_owned();
-            let action = match action {
-                Value::String(s) => {
-                    KeyAction::Builtin(s.to_str().map_err(|e| e.to_string())?.to_owned())
-                }
-                Value::Function(f) => {
-                    KeyAction::Callback(callbacks::register(lua, f).map_err(|e| e.to_string())?)
-                }
-                other => {
-                    return Err(format!(
-                        "keymap.set: the action must be a string or a function, got {}",
-                        other.type_name()
-                    ));
-                }
-            };
-            Ok(modes
-                .into_iter()
-                .map(|mode| KeymapSpec {
-                    mode,
-                    lhs: lhs.clone(),
-                    action: action.clone(),
-                })
-                .collect::<Vec<_>>())
-        })();
-        match parsed {
-            Ok(specs) => lock(&sink).keymaps.extend(specs),
-            Err(message) => report(lua, &sink, &origin, message),
-        }
-        Ok(())
-    })
+    lua.create_function(
+        move |lua, (mode, lhs, action, opts): (Value, Value, Value, Value)| {
+            let parsed = (|| {
+                let modes = key_modes(&mode)?;
+                let description = description("keymap.set", &opts)?;
+                let Value::String(lhs) = lhs else {
+                    return Err("keymap.set: the key sequence must be a string".to_owned());
+                };
+                let lhs = lhs.to_str().map_err(|e| e.to_string())?.to_owned();
+                let action = match action {
+                    Value::String(s) => {
+                        KeyAction::Builtin(s.to_str().map_err(|e| e.to_string())?.to_owned())
+                    }
+                    Value::Function(f) => {
+                        KeyAction::Callback(callbacks::register(lua, f).map_err(|e| e.to_string())?)
+                    }
+                    other => {
+                        return Err(format!(
+                            "keymap.set: the action must be a string or a function, got {}",
+                            other.type_name()
+                        ));
+                    }
+                };
+                Ok(modes
+                    .into_iter()
+                    .map(|mode| KeymapSpec {
+                        mode,
+                        lhs: lhs.clone(),
+                        action: action.clone(),
+                        description: description.clone(),
+                        plugin: origin.plugin.clone(),
+                    })
+                    .collect::<Vec<_>>())
+            })();
+            match parsed {
+                Ok(specs) => lock(&sink).keymaps.extend(specs),
+                Err(message) => report(lua, &sink, &origin, message),
+            }
+            Ok(())
+        },
+    )
 }
 
 fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
     let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, (name, f): (Value, Value)| {
+    lua.create_function(move |lua, (name, f, opts): (Value, Value, Value)| {
         match (name, f) {
             (Value::String(name), Value::Function(f)) => {
+                let description = match description("commands.register", &opts) {
+                    Ok(description) => description,
+                    Err(message) => {
+                        report(lua, &sink, &origin, message);
+                        return Ok(());
+                    }
+                };
                 let name = name.to_str()?.trim_start_matches('/').to_owned();
                 let callback = callbacks::register(lua, f)?;
-                lock(&sink).commands.push(CommandSpec { name, callback });
+                lock(&sink).commands.push(CommandSpec {
+                    name,
+                    callback,
+                    description,
+                    plugin: origin.plugin.clone(),
+                });
             }
             _ => report(
                 lua,

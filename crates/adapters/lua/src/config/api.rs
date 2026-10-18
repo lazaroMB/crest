@@ -202,7 +202,7 @@ mod tests {
         run(
             &lua,
             &phase,
-            r#"app.keymap.set("n", "<leader>r", "session.resume")
+            r#"app.keymap.set("n", "<leader>r", "session.resume", { desc = "Resume" })
                app.keymap.set({ "n", "i" }, "<C-x>", function() end)"#,
         );
         let got = phase.take();
@@ -213,12 +213,53 @@ mod tests {
                 mode: KeyMode::Normal,
                 lhs: "<leader>r".into(),
                 action: KeyAction::Builtin("session.resume".into()),
+                description: Some("Resume".into()),
+                plugin: "config".into(),
             }
         );
+        assert_eq!(got.keymaps[1].description, None);
         assert_eq!(got.keymaps[1].mode, KeyMode::Normal);
         assert_eq!(got.keymaps[2].mode, KeyMode::Insert);
         assert!(matches!(got.keymaps[1].action, KeyAction::Callback(_)));
         assert_eq!(got.keymaps[1].action, got.keymaps[2].action);
+    }
+
+    #[test]
+    fn commands_and_keymaps_take_a_desc_option() {
+        let lua = lua();
+        let phase = Phase::new(&lua, "plugins/jira.lua", "jira").unwrap();
+        run(
+            &lua,
+            &phase,
+            r#"app.commands.register("review", function() end, { desc = "Review the changes" })
+               app.commands.register("plain", function() end)
+               app.commands.register("bad", function() end, { desc = 3 })
+               app.keymap.set("n", "x", "help.open", "oops")"#,
+        );
+        let got = phase.take();
+        let commands: Vec<_> = got
+            .commands
+            .iter()
+            .map(|c| (c.name.as_str(), c.description.as_deref(), c.plugin.as_str()))
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                ("review", Some("Review the changes"), "jira"),
+                ("plain", None, "jira")
+            ]
+        );
+        assert!(got.keymaps.is_empty());
+        let messages: Vec<_> = got.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(
+            messages[0].contains("desc must be a string"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1].contains("options must be a table"),
+            "{messages:?}"
+        );
     }
 
     #[test]
