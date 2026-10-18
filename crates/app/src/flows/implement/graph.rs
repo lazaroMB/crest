@@ -112,7 +112,8 @@ pub fn status_notice(status: &FlowStatus) -> Option<(NoticeLevel, String)> {
             NoticeLevel::Warning,
             format!(
                 "el plan resultó inviable ({reason}); vuelve al nodo Spec del flujo \
-                 investigativo con `/back spec` para corregirlo y vuelve a correr :implement"
+                 investigativo con `:research resume` y luego `/back spec` para corregirlo, \
+                 y vuelve a correr :implement"
             ),
         )),
     }
@@ -262,7 +263,9 @@ mod tests {
         let (level, text) = status_notice(&back).unwrap();
         assert_eq!(level, NoticeLevel::Warning);
         assert!(
-            text.contains("falta la API") && text.contains("/back spec"),
+            text.contains("falta la API")
+                && text.contains(":research resume")
+                && text.contains("/back spec"),
             "{text}"
         );
         assert!(status_notice(&FlowStatus::Completed).is_some());
