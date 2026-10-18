@@ -10,3 +10,7 @@ For the project overview, installation and quick start, see the [main README](..
 | [workflows.md](workflows.md) | People using the workflows | The research workflow (14 nodes, gates, `.crest/specs/`) and the implementation workflow (steps, gates, commits, `report.md`). |
 | [architecture.md](architecture.md) | People reading the code | The hexagonal layers, ports and adapters, the loop of a turn, events, threads, persistence and the dependency rules. |
 | [development.md](development.md) | Contributors | Tests and fakes, how to add tools, blocks, adapters or nodes, commit conventions and CI. |
+
+Research notes:
+
+- [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
