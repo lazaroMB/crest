@@ -132,6 +132,11 @@ pub enum BlockKind {
         /// Content to draw.
         tree: CustomNode,
     },
+    /// Sources cited by a workflow node; citations in the text link here.
+    Sources {
+        /// Cited sources, in citation order.
+        sources: Vec<SourceRef>,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -202,6 +207,14 @@ pub enum BlockError {
         series: String,
         /// Zero-based index of the value.
         index: usize,
+    },
+    /// A file source with a line range that is not 1-based or is reversed.
+    #[error("invalid line range {start:?}..={end:?}")]
+    InvalidLineRange {
+        /// First line.
+        start: Option<u32>,
+        /// Last line.
+        end: Option<u32>,
     },
     /// A table without columns.
     #[error("table has no columns")]
@@ -499,6 +512,72 @@ impl CustomNode {
             Self::Chart(spec) => spec.validate(),
             Self::Text { .. } | Self::Code { .. } | Self::Markdown { .. } => Ok(()),
         }
+    }
+}
+
+/// Where a piece of information came from, tagged by `type`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SourceRef {
+    /// A file of the workspace, optionally a 1-based inclusive line range.
+    File {
+        /// Path relative to the workspace.
+        path: String,
+        /// First line.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_start: Option<u32>,
+        /// Last line.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line_end: Option<u32>,
+    },
+    /// A git commit.
+    Commit {
+        /// Commit hash.
+        sha: String,
+        /// First line of the message.
+        summary: String,
+    },
+    /// A web page.
+    Url {
+        /// Address.
+        url: String,
+        /// Page title.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+    /// Output of a shell command.
+    Command {
+        /// Command line.
+        command: String,
+        /// Relevant excerpt of its output.
+        output_excerpt: String,
+    },
+}
+
+impl SourceRef {
+    /// Checks that a file line range is 1-based and not reversed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BlockError::InvalidLineRange`] for a bad range.
+    pub fn validate(&self) -> Result<(), BlockError> {
+        if let Self::File {
+            line_start,
+            line_end,
+            ..
+        } = self
+        {
+            let bad_start = *line_start == Some(0);
+            let reversed = matches!((line_start, line_end), (Some(s), Some(e)) if e < s);
+            let end_only = line_start.is_none() && line_end.is_some();
+            if bad_start || reversed || end_only {
+                return Err(BlockError::InvalidLineRange {
+                    start: *line_start,
+                    end: *line_end,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -831,5 +910,50 @@ mod tests {
             }],
         };
         assert_eq!(bad.validate(), Err(BlockError::TableNoColumns));
+    }
+
+    fn file(start: Option<u32>, end: Option<u32>) -> SourceRef {
+        SourceRef::File {
+            path: "src/main.rs".into(),
+            line_start: start,
+            line_end: end,
+        }
+    }
+
+    #[test]
+    fn sources_block_roundtrip() {
+        let value = roundtrip(&Block::new(BlockKind::Sources {
+            sources: vec![
+                file(Some(3), Some(9)),
+                SourceRef::Commit {
+                    sha: "abc123".into(),
+                    summary: "fix".into(),
+                },
+                SourceRef::Url {
+                    url: "https://example.com".into(),
+                    title: None,
+                },
+                SourceRef::Command {
+                    command: "git log -1".into(),
+                    output_excerpt: "commit abc123".into(),
+                },
+            ],
+        }));
+        assert_eq!(value["type"], "sources");
+        assert_eq!(value["sources"][0]["type"], "file");
+        assert_eq!(value["sources"][3]["type"], "command");
+    }
+
+    #[test]
+    fn source_ref_validates_line_ranges() {
+        assert_eq!(file(None, None).validate(), Ok(()));
+        assert_eq!(file(Some(1), None).validate(), Ok(()));
+        assert_eq!(file(Some(4), Some(4)).validate(), Ok(()));
+        for (start, end) in [(Some(0), None), (Some(5), Some(4)), (None, Some(2))] {
+            assert_eq!(
+                file(start, end).validate(),
+                Err(BlockError::InvalidLineRange { start, end })
+            );
+        }
     }
 }
