@@ -438,3 +438,50 @@ fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContex
         texts(&kinds)
     );
 }
+
+#[gpui::test]
+fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
+    let intake = json!({
+        "kind": "bug",
+        "restated": "`add` resta en vez de sumar.",
+        "questions": []
+    });
+    let script = vec![
+        ScriptedResponse::text(intake.to_string()),
+        ScriptedResponse::text("Respuesta del chat."),
+    ];
+    let (w, cx) = open(script, cx);
+
+    cx.simulate_keystrokes("escape :");
+    cx.simulate_input("research add(2, 2) devuelve 0");
+    cx.simulate_keystrokes("enter");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !has_text(&w, cx, "seguir con Observación") {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the Intake gate: {:?}",
+            texts(&blocks(&w, cx))
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(has_text(&w, cx, "`add` resta en vez de sumar."));
+
+    // While the flow is active the line goes to it, not to the model.
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("/abort");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the abort", |s, _| !s.is_running());
+    assert_eq!(w.llm.requests().len(), 1);
+
+    // Once aborted, the chat answers turns again.
+    cx.simulate_input("y ahora?");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the chat turn", |s, _| !s.is_running());
+    assert!(
+        has_text(&w, cx, "Respuesta del chat."),
+        "{:?}",
+        texts(&blocks(&w, cx))
+    );
+    assert_eq!(w.llm.remaining(), 0);
+}
