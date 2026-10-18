@@ -31,6 +31,7 @@ use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::task::{TaskPorts, TaskTool};
 use application::usecases::approval::lock_permissions;
+use application::usecases::compact::CompactionPolicy;
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use domain::conversation::Session;
 use domain::model::ModelRole;
@@ -295,7 +296,8 @@ pub async fn build_app(
         telemetry,
     };
     let mut service = AgentService::new(deps, tools, policy, permissions)
-        .with_system_prompt(system_prompt(&root));
+        .with_system_prompt(system_prompt(&root))
+        .with_compaction(CompactionPolicy::default());
     if let Some(host) = plugins {
         service = service.with_plugin_host(host);
     }
