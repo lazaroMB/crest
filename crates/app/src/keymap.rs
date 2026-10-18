@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// A key without modifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -385,16 +385,26 @@ pub enum Feed<A> {
     NoMatch(Vec<Key>),
 }
 
+/// Default `timeoutlen`: how long a prefix waits for the next key.
+pub const DEFAULT_TIMEOUTLEN: Duration = Duration::from_millis(1000);
+
 /// Stateful resolver of key presses against a [`Keymap`].
 ///
 /// [`feed`](Self::feed) returns a list because one key can settle several
 /// things at once: with `g` mapped, typing `g` then `x` fires `g` and then
 /// reports `x` as unmatched.
+///
+/// When the pending keys sit unresolved for `timeoutlen`, [`tick`](Self::tick)
+/// settles them: an exact mapping that is also a prefix (`g` with `gg`
+/// mapped) fires, otherwise the keys come back as [`Feed::NoMatch`]. The host
+/// schedules a call to `tick` at [`deadline`](Self::deadline).
 #[derive(Debug, Clone)]
 pub struct KeySequencer<A> {
     keymap: Keymap<A>,
     mode: Mode,
     pending: Vec<Key>,
+    last_key_at: Option<Instant>,
+    timeoutlen: Duration,
 }
 
 impl<A: Clone> KeySequencer<A> {
@@ -404,6 +414,26 @@ impl<A: Clone> KeySequencer<A> {
             keymap,
             mode,
             pending: Vec::new(),
+            last_key_at: None,
+            timeoutlen: DEFAULT_TIMEOUTLEN,
+        }
+    }
+
+    /// How long a prefix waits for the next key.
+    pub fn timeoutlen(&self) -> Duration {
+        self.timeoutlen
+    }
+
+    /// Sets `timeoutlen`.
+    pub fn set_timeoutlen(&mut self, timeoutlen: Duration) {
+        self.timeoutlen = timeoutlen;
+    }
+
+    /// When the pending keys time out, if any are pending.
+    pub fn deadline(&self) -> Option<Instant> {
+        match (self.pending.is_empty(), self.last_key_at) {
+            (false, Some(at)) => Some(at + self.timeoutlen),
+            _ => None,
         }
     }
 
@@ -438,19 +468,33 @@ impl<A: Clone> KeySequencer<A> {
     /// Drops pending keys without resolving them.
     pub fn reset(&mut self) {
         self.pending.clear();
+        self.last_key_at = None;
     }
 
-    /// Feeds one key press received at `now`.
+    /// Feeds one key press received at `now`. Pending keys that already
+    /// timed out are settled first, as if [`tick`](Self::tick) had run.
     pub fn feed(&mut self, key: Key, now: Instant) -> Vec<Feed<A>> {
-        let _ = now;
+        let mut out = self.tick(now);
         self.pending.push(key);
-        self.resolve()
+        self.last_key_at = Some(now);
+        out.extend(self.resolve(false));
+        out
+    }
+
+    /// Settles pending keys if `timeoutlen` has elapsed since the last key.
+    /// Returns nothing when there is nothing to settle yet.
+    pub fn tick(&mut self, now: Instant) -> Vec<Feed<A>> {
+        match self.deadline() {
+            Some(deadline) if now >= deadline => self.resolve(true),
+            _ => Vec::new(),
+        }
     }
 
     /// Consumes `pending` as far as possible. Prefers waiting while the whole
     /// buffer is a prefix; otherwise fires the longest exact mapping at the
     /// start, or passes the first key through, and repeats with the rest.
-    fn resolve(&mut self) -> Vec<Feed<A>> {
+    /// With `timed_out` it never waits.
+    fn resolve(&mut self, timed_out: bool) -> Vec<Feed<A>> {
         let mut out = Vec::new();
         while !self.pending.is_empty() {
             let mut best = None;
@@ -465,7 +509,7 @@ impl<A: Clone> KeySequencer<A> {
                 }
                 whole_is_prefix = len == self.pending.len();
             }
-            if whole_is_prefix {
+            if whole_is_prefix && !timed_out {
                 out.push(Feed::Pending);
                 return out;
             }
@@ -483,6 +527,7 @@ impl<A: Clone> KeySequencer<A> {
                 }
             }
         }
+        self.last_key_at = None;
         out
     }
 }
@@ -725,5 +770,66 @@ mod tests {
         let t = Instant::now();
         assert_eq!(seq.keymap_mut().set(Mode::Normal, "j", "custom"), Ok(()));
         assert_eq!(seq.feed(Key::char('j'), t), vec![Feed::Matched("custom")]);
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn timeout_fires_short_mapping_that_is_also_prefix() {
+        let mut seq = sequencer();
+        assert_eq!(seq.keymap_mut().set(Mode::Normal, "g", "g"), Ok(()));
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
+        assert_eq!(seq.deadline(), Some(t + DEFAULT_TIMEOUTLEN));
+        assert_eq!(seq.tick(t + ms(999)), vec![]);
+        assert_eq!(seq.tick(t + ms(1000)), vec![Feed::Matched("g")]);
+        assert_eq!(seq.deadline(), None);
+        assert_eq!(seq.tick(t + ms(2000)), vec![]);
+        // Within timeoutlen the longer mapping still wins.
+        assert_eq!(seq.feed(Key::char('g'), t + ms(3000)), vec![Feed::Pending]);
+        assert_eq!(
+            seq.feed(Key::char('g'), t + ms(3999)),
+            vec![Feed::Matched("first")]
+        );
+    }
+
+    #[test]
+    fn timeout_without_exact_mapping_drops_prefix() {
+        let mut seq = sequencer();
+        seq.set_timeoutlen(ms(300));
+        let t = Instant::now();
+        assert_eq!(
+            feed_all(&mut seq, "<Space>f", t),
+            vec![Feed::Pending, Feed::Pending]
+        );
+        assert_eq!(seq.tick(t + ms(300)), vec![Feed::NoMatch(keys("<Space>f"))]);
+        assert!(seq.pending().is_empty());
+    }
+
+    #[test]
+    fn timeout_is_measured_from_last_key() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char(' '), t), vec![Feed::Pending]);
+        assert_eq!(seq.feed(Key::char('f'), t + ms(900)), vec![Feed::Pending]);
+        assert_eq!(seq.tick(t + ms(1500)), vec![]);
+        assert_eq!(
+            seq.feed(Key::char('f'), t + ms(1800)),
+            vec![Feed::Matched("files")]
+        );
+    }
+
+    #[test]
+    fn late_key_settles_expired_prefix_first() {
+        let mut seq = sequencer();
+        assert_eq!(seq.keymap_mut().set(Mode::Normal, "g", "g"), Ok(()));
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
+        assert_eq!(
+            seq.feed(Key::char('g'), t + ms(1500)),
+            vec![Feed::Matched("g"), Feed::Pending]
+        );
     }
 }
