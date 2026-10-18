@@ -9,12 +9,13 @@
 //! [`MessageAssembler`](crate::ports::llm::MessageAssembler) for real.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use domain::conversation::{StopReason, ToolUseId, Usage};
 use domain::model::ModelId;
-use futures::stream;
+use futures::{StreamExt, stream};
 
 use crate::ports::llm::{LlmError, LlmEvent, LlmPort, LlmRequest, LlmStream};
 
@@ -58,6 +59,18 @@ pub struct ScriptedResponse {
     stop_reason: Option<StopReason>,
     usage: Option<Usage>,
     model: Option<ModelId>,
+    raw: Option<Vec<LlmEvent>>,
+    open_error: Option<LlmError>,
+    cut: Option<Cut>,
+}
+
+/// How a scripted stream ends early.
+#[derive(Debug, Clone, PartialEq)]
+enum Cut {
+    /// Yields `after` events, then `error`, then ends.
+    Fail { after: usize, error: LlmError },
+    /// Yields `after` events and then never yields again.
+    Hang { after: usize },
 }
 
 impl ScriptedResponse {
@@ -69,7 +82,44 @@ impl ScriptedResponse {
             stop_reason: None,
             usage: None,
             model: None,
+            raw: None,
+            open_error: None,
+            cut: None,
         }
+    }
+
+    /// An answer streamed exactly as `events`, with no generated framing;
+    /// for retries, fallbacks or protocol violations.
+    #[must_use]
+    pub fn events(events: Vec<LlmEvent>) -> Self {
+        Self {
+            raw: Some(events),
+            ..Self::empty()
+        }
+    }
+
+    /// A call that fails before streaming: `stream` returns `error`.
+    #[must_use]
+    pub fn open_error(error: LlmError) -> Self {
+        Self {
+            open_error: Some(error),
+            ..Self::empty()
+        }
+    }
+
+    /// The stream yields its first `after` events, then `error`, then ends.
+    #[must_use]
+    pub fn fail_after(mut self, after: usize, error: LlmError) -> Self {
+        self.cut = Some(Cut::Fail { after, error });
+        self
+    }
+
+    /// The stream yields its first `after` events and then stays pending
+    /// forever, to test cancellation by dropping it.
+    #[must_use]
+    pub fn hang_after(mut self, after: usize) -> Self {
+        self.cut = Some(Cut::Hang { after });
+        self
     }
 
     /// An answer made of one text block.
@@ -175,7 +225,13 @@ impl ScriptedResponse {
 
     /// The events a real adapter would stream for this answer to `req`.
     #[must_use]
+    ///
+    /// Answers built with [`events`](Self::events) return those events
+    /// unchanged. Early cuts (`fail_after`, `hang_after`) are not applied.
     pub fn events_for(&self, req: &LlmRequest) -> Vec<LlmEvent> {
+        if let Some(raw) = &self.raw {
+            return raw.clone();
+        }
         let model = self
             .model
             .clone()
@@ -287,12 +343,15 @@ fn estimate_input_tokens(req: &LlmRequest) -> u64 {
 /// of a FIFO queue and records every request it receives.
 ///
 /// Streams are plain in-memory streams: no timers, no runtime needed.
+/// [`open_streams`](Self::open_streams) counts the streams not dropped
+/// yet, to check that a cancelled turn really drops its stream.
 /// When the queue is empty `stream` fails with
 /// [`LlmError::InvalidRequest`] mentioning `script exhausted`.
 #[derive(Debug, Default)]
 pub struct ScriptedLlm {
     script: Mutex<VecDeque<ScriptedResponse>>,
     requests: Mutex<Vec<LlmRequest>>,
+    open: Arc<AtomicUsize>,
 }
 
 impl ScriptedLlm {
@@ -302,6 +361,7 @@ impl ScriptedLlm {
         Self {
             script: Mutex::new(script.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
+            open: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -327,6 +387,12 @@ impl ScriptedLlm {
     pub fn remaining(&self) -> usize {
         lock(&self.script).len()
     }
+
+    /// Streams returned and not dropped yet.
+    #[must_use]
+    pub fn open_streams(&self) -> usize {
+        self.open.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -341,8 +407,50 @@ impl LlmPort for ScriptedLlm {
                     lock(&self.requests).len()
                 ),
             })?;
-        let events = response.events_for(&req).into_iter().map(Ok);
-        Ok(Box::pin(stream::iter(events)))
+        if let Some(error) = response.open_error {
+            return Err(error);
+        }
+        let mut events: Vec<_> = response.events_for(&req).into_iter().map(Ok).collect();
+        let hang = match response.cut {
+            None => false,
+            Some(Cut::Fail { after, error }) => {
+                events.truncate(after);
+                events.push(Err(error));
+                false
+            }
+            Some(Cut::Hang { after }) => {
+                events.truncate(after);
+                true
+            }
+        };
+        let events = stream::iter(events);
+        let inner: LlmStream = if hang {
+            Box::pin(events.chain(stream::pending()))
+        } else {
+            Box::pin(events)
+        };
+        let guard = OpenGuard::new(Arc::clone(&self.open));
+        Ok(Box::pin(inner.map(move |item| {
+            let _alive = &guard;
+            item
+        })))
+    }
+}
+
+/// Counts a stream as open from creation until it is dropped.
+#[derive(Debug)]
+struct OpenGuard(Arc<AtomicUsize>);
+
+impl OpenGuard {
+    fn new(open: Arc<AtomicUsize>) -> Self {
+        open.fetch_add(1, Ordering::SeqCst);
+        Self(open)
+    }
+}
+
+impl Drop for OpenGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -358,7 +466,7 @@ mod tests {
     use crate::ports::llm::{AssembledMessage, MessageAssembler};
     use domain::conversation::{ContentPart, Message, Role};
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
-    use futures::StreamExt;
+    use futures::FutureExt;
     use serde_json::json;
 
     fn model() -> ResolvedModel {
@@ -556,5 +664,75 @@ mod tests {
             "{err}"
         );
         assert_eq!(llm.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn error_in_the_middle_of_the_stream() {
+        let llm = ScriptedLlm::new([ScriptedResponse::text("Hola, mundo")
+            .fail_after(3, LlmError::Network("connection reset".into()))]);
+        let items: Vec<_> = llm.stream(request("hola")).await.unwrap().collect().await;
+        assert_eq!(items.len(), 4);
+        assert!(items[..3].iter().all(Result::is_ok));
+        assert!(matches!(items[2], Ok(LlmEvent::TextDelta { .. })));
+        assert_eq!(items[3], Err(LlmError::Network("connection reset".into())));
+
+        llm.push(ScriptedResponse::text("x").fail_after(0, LlmError::Overloaded));
+        assert_eq!(
+            run(&llm, request("otra")).await.err(),
+            Some(LlmError::Overloaded)
+        );
+    }
+
+    #[tokio::test]
+    async fn error_opening_the_stream() {
+        let llm = ScriptedLlm::new([
+            ScriptedResponse::open_error(LlmError::Auth {
+                message: "set ANTHROPIC_API_KEY".into(),
+            }),
+            ScriptedResponse::text("ok"),
+        ]);
+        assert!(matches!(
+            llm.stream(request("hola")).await.err(),
+            Some(LlmError::Auth { .. })
+        ));
+        assert_eq!(llm.open_streams(), 0);
+        let out = run(&llm, request("hola")).await.unwrap();
+        assert_eq!(out.message.content, vec![ContentPart::text("ok")]);
+        assert_eq!(llm.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn raw_events_are_streamed_unchanged() {
+        let events = vec![
+            LlmEvent::Retrying {
+                attempt: 1,
+                delay_ms: 500,
+                reason: LlmError::Overloaded,
+            },
+            LlmEvent::MessageStart {
+                model: ModelId::new("claude-haiku-5-5"),
+            },
+            LlmEvent::MessageStop {
+                stop_reason: StopReason::Refusal,
+            },
+        ];
+        let llm = ScriptedLlm::new([ScriptedResponse::events(events.clone())]);
+        let got: Vec<_> = llm.stream(request("hola")).await.unwrap().collect().await;
+        assert_eq!(got, events.into_iter().map(Ok).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn hanging_stream_is_released_on_drop() {
+        let llm = ScriptedLlm::new([ScriptedResponse::text("Hola, mundo").hang_after(2)]);
+        let mut stream = llm.stream(request("hola")).await.unwrap();
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(LlmEvent::MessageStart { .. }))
+        ));
+        assert!(matches!(stream.next().await, Some(Ok(LlmEvent::Usage(_)))));
+        assert!(stream.next().now_or_never().is_none(), "stream must hang");
+        assert_eq!(llm.open_streams(), 1);
+        drop(stream);
+        assert_eq!(llm.open_streams(), 0);
     }
 }
