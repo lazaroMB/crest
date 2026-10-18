@@ -167,6 +167,18 @@ pub struct Plan {
 /// Why a plan cannot be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
+    /// The plan has no tasks.
+    #[error("the plan has no tasks")]
+    NoTasks,
+    /// The `spec` field is empty.
+    #[error("the plan does not name its spec")]
+    EmptySpec,
+    /// A task has an empty or blank id.
+    #[error("task #{position} has an empty id")]
+    EmptyTaskId {
+        /// 1-based position of the task in `tasks`.
+        position: usize,
+    },
     /// Two tasks share an id.
     #[error("task id `{id}` is used by more than one task")]
     DuplicateTaskId {
@@ -180,6 +192,24 @@ pub enum PlanError {
         task: TaskId,
         /// The missing id.
         dependency: TaskId,
+    },
+    /// A task lists no files, so it could not touch anything.
+    #[error("task `{task}` lists no files")]
+    NoFiles {
+        /// The task.
+        task: TaskId,
+    },
+    /// A task lists an empty or blank file path.
+    #[error("task `{task}` lists an empty file path")]
+    EmptyFilePath {
+        /// The task.
+        task: TaskId,
+    },
+    /// A constraint test names a constraint the research did not define.
+    #[error("constraint test refers to unknown constraint `{constraint}`")]
+    UnknownConstraint {
+        /// The missing constraint.
+        constraint: ConstraintId,
     },
     /// The dependencies form a cycle.
     #[error("tasks form a dependency cycle: {}", join_ids(path))]
@@ -198,6 +228,80 @@ fn join_ids(ids: &[TaskId]) -> String {
 }
 
 impl Plan {
+    /// Checks everything the flows rely on: a named spec, at least one
+    /// task, non-empty unique ids, known dependencies without cycles and
+    /// at least one non-empty file per task. Constraint ids are already
+    /// well formed by type; [`Plan::check_constraints`] checks that they
+    /// exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns every problem found, in a stable order.
+    pub fn validate(&self) -> Result<(), Vec<PlanError>> {
+        let mut errors = Vec::new();
+        if self.spec.trim().is_empty() {
+            errors.push(PlanError::EmptySpec);
+        }
+        if self.tasks.is_empty() {
+            errors.push(PlanError::NoTasks);
+        }
+        for (i, task) in self.tasks.iter().enumerate() {
+            if task.id.as_str().trim().is_empty() {
+                errors.push(PlanError::EmptyTaskId { position: i + 1 });
+            }
+        }
+        let duplicates = self.duplicate_ids();
+        let unique = duplicates.is_empty();
+        errors.extend(
+            duplicates
+                .into_iter()
+                .map(|id| PlanError::DuplicateTaskId { id }),
+        );
+        errors.extend(self.unknown_dependencies());
+        for task in &self.tasks {
+            if task.files.is_empty() {
+                errors.push(PlanError::NoFiles {
+                    task: task.id.clone(),
+                });
+            } else if task.files.iter().any(|f| f.trim().is_empty()) {
+                errors.push(PlanError::EmptyFilePath {
+                    task: task.id.clone(),
+                });
+            }
+        }
+        if unique && let Err(path) = self.order_ignoring_unknown() {
+            errors.push(PlanError::Cycle { path });
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Checks that every constraint test names one of `known`.
+    ///
+    /// # Errors
+    ///
+    /// Returns one [`PlanError::UnknownConstraint`] per missing id, without
+    /// repeats, in the order the tests list them.
+    pub fn check_constraints(&self, known: &[ConstraintId]) -> Result<(), Vec<PlanError>> {
+        let mut missing: Vec<ConstraintId> = Vec::new();
+        for test in &self.constraint_tests {
+            if !known.contains(&test.constraint) && !missing.contains(&test.constraint) {
+                missing.push(test.constraint);
+            }
+        }
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(missing
+                .into_iter()
+                .map(|constraint| PlanError::UnknownConstraint { constraint })
+                .collect())
+        }
+    }
+
     /// The tasks in an order that runs every dependency first; ties are
     /// broken by task id, so the order is stable.
     ///
@@ -493,5 +597,69 @@ mod tests {
             unknown.topological_order().unwrap_err().to_string(),
             "task `T1` depends on unknown task `T9`"
         );
+    }
+
+    #[test]
+    fn the_documented_example_is_valid() {
+        let plan: Plan = serde_json::from_str(PLAN_EXAMPLE).unwrap();
+        assert_eq!(plan.validate(), Ok(()));
+        let c2 = "C2".parse().unwrap();
+        assert_eq!(plan.check_constraints(&[c2]), Ok(()));
+        assert_eq!(
+            plan.check_constraints(&[]),
+            Err(vec![PlanError::UnknownConstraint { constraint: c2 }])
+        );
+    }
+
+    #[test]
+    fn a_plan_with_a_cycle_is_rejected() {
+        let mut value: serde_json::Value = serde_json::from_str(PLAN_EXAMPLE).unwrap();
+        let mut second = value["tasks"][0].clone();
+        second["id"] = json!("T2");
+        second["depends_on"] = json!(["T1"]);
+        value["tasks"][0]["depends_on"] = json!(["T2"]);
+        value["tasks"].as_array_mut().unwrap().push(second);
+        let plan: Plan = serde_json::from_value(value).unwrap();
+        let path = vec![TaskId::new("T1"), TaskId::new("T2"), TaskId::new("T1")];
+        assert_eq!(plan.validate(), Err(vec![PlanError::Cycle { path }]));
+    }
+
+    #[test]
+    fn validation_reports_every_problem() {
+        let mut no_files = task("T2", &["T9"]);
+        no_files.files.clear();
+        let mut blank_file = task("T3", &[]);
+        blank_file.files.push("  ".into());
+        let p = Plan {
+            spec: " ".into(),
+            ..plan(vec![
+                task("", &[]),
+                task("T1", &[]),
+                task("T1", &[]),
+                no_files,
+                blank_file,
+            ])
+        };
+        assert_eq!(
+            p.validate(),
+            Err(vec![
+                PlanError::EmptySpec,
+                PlanError::EmptyTaskId { position: 1 },
+                PlanError::DuplicateTaskId {
+                    id: TaskId::new("T1")
+                },
+                PlanError::UnknownDependency {
+                    task: TaskId::new("T2"),
+                    dependency: TaskId::new("T9"),
+                },
+                PlanError::NoFiles {
+                    task: TaskId::new("T2")
+                },
+                PlanError::EmptyFilePath {
+                    task: TaskId::new("T3")
+                },
+            ])
+        );
+        assert_eq!(plan(vec![]).validate(), Err(vec![PlanError::NoTasks]));
     }
 }
