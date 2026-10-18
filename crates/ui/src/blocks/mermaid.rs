@@ -1,6 +1,7 @@
 //! Renderer of the `mermaid` block kind; placeholder until its task lands.
 
 pub mod diagram;
+pub mod paint;
 
 use gpui::{AnyElement, App, Window};
 
