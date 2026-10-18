@@ -652,7 +652,7 @@ impl Session {
                     self.notice(
                         NoticeLevel::Warning,
                         format!(
-                            "comando desconocido :{command} (usa :model, :mode, :clear, :mcp o :q)"
+                            "comando desconocido :{command} (usa :model, :mode, :clear, :mcp, :implement o :q)"
                         ),
                         cx,
                     );

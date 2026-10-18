@@ -327,3 +327,114 @@ fn keymaps_and_commands_of_init_lua_run_their_actions(cx: &mut TestAppContext) {
         ]
     );
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// A git repository in the workspace with the Spec `0001-suma` and its
+/// one-task plan, committed on `main`.
+fn spec_repository(workspace: &std::path::Path) {
+    let spec = workspace.join(".crest/specs/0001-suma");
+    std::fs::create_dir_all(&spec).unwrap();
+    std::fs::write(spec.join("spec.md"), "# Suma\n").unwrap();
+    let plan = json!({
+        "spec": "0001-suma",
+        "tasks": [{
+            "id": "T1",
+            "title": "Corregir add",
+            "description": "`add` resta.",
+            "depends_on": [],
+            "files": ["src/lib.rs"],
+            "acceptance": [{ "kind": "test", "ref": "grep -q 'a + b' src/lib.rs" }],
+            "risk": "low"
+        }]
+    });
+    std::fs::write(spec.join("plan.json"), plan.to_string()).unwrap();
+    git(workspace, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "crest test"),
+        ("user.email", "crest@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(workspace, &["config", key, value]);
+    }
+    git(workspace, &["add", "-A"]);
+    git(workspace, &["commit", "-q", "-m", "inicial"]);
+}
+
+fn has_text(w: &Window_, cx: &mut VisualTestContext, needle: &str) -> bool {
+    texts(&blocks(w, cx)).iter().any(|t| t.contains(needle))
+}
+
+#[gpui::test]
+fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContext) {
+    let script = vec![
+        ScriptedResponse::tool_use(
+            "toolu_1",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "a - b", "new": "a + b" }),
+        ),
+        ScriptedResponse::text("Corregido.\nSTATUS: done"),
+    ];
+    let (w, cx) = open(script, cx);
+    spec_repository(&w.workspace);
+
+    cx.simulate_keystrokes("escape :");
+    cx.simulate_input("implement 0001-suma");
+    cx.simulate_keystrokes("enter");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !has_text(&w, cx, "Responde «sí» para crear la rama") {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the plan gate"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // The answer goes to the flow, not to the model.
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("sí");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the approval of the edit", |s, cx| {
+        s.approval().read(cx).current().is_some()
+    });
+    cx.simulate_keystrokes("y");
+    wait_until(&w, cx, "the report gate", |s, _| !s.is_running());
+    assert!(
+        has_text(&w, cx, "report.md"),
+        "{:?}",
+        texts(&blocks(&w, cx))
+    );
+
+    cx.simulate_input("sí");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the end of the flow", |s, _| !s.is_running());
+
+    assert_eq!(w.llm.remaining(), 0);
+    let log = git(
+        &w.workspace,
+        &["log", "--format=%B", "main..spec/0001-suma"],
+    );
+    assert!(log.starts_with("fix(src): Corregir add\n"), "{log}");
+    assert!(log.contains("Task: T1"), "{log}");
+    assert!(
+        w.workspace
+            .join(".crest/specs/0001-suma/report.md")
+            .exists()
+    );
+    let kinds = blocks(&w, cx);
+    assert!(
+        texts(&kinds).contains(&"> sí\n".to_owned()),
+        "{:?}",
+        texts(&kinds)
+    );
+}

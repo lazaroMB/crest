@@ -194,6 +194,12 @@ impl App {
         self.events.emit(event);
     }
 
+    /// The sink of the front end (recording the saved timeline).
+    #[must_use]
+    pub fn events(&self) -> Arc<dyn EventSink> {
+        Arc::clone(&self.events)
+    }
+
     /// Emits a warning to the front end.
     pub fn warn(&self, message: impl Into<String>) {
         self.emit(DomainEvent::Notice {

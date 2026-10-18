@@ -12,6 +12,11 @@
 //! - The domain events go back through [`ChannelSink`], a futures channel
 //!   that the session consumes on GPUI's executor.
 //!
+//! `:implement <ruta>` opens the implementation flow of a Spec on the
+//! runtime ([`UiController::run_command`]); while it waits at a gate,
+//! every line sent from the input answers it instead of starting a turn,
+//! until the flow stops.
+//!
 //! When the agent cannot start (no API key) the window still opens: the
 //! error is the first block of the timeline and every prompt answers with
 //! it ([`UnavailableController`]).
@@ -21,6 +26,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use adapter_search::RipgrepSearch;
+use application::flows::implement::flow::{FlowError, FlowReply};
+use application::flows::implement::graph::{ImplementSession, status_notice};
+use application::flows::implement::state::FlowStatus;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::plugin::{
     CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
@@ -33,6 +41,7 @@ use application::usecases::approval::lock_permissions;
 use application::usecases::run_turn::SharedPermissions;
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind};
+use domain::conversation::StopReason;
 use domain::model::{ModelId, ModelPolicy, ResolveRequest};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspaceRoot;
@@ -139,6 +148,93 @@ pub struct UiController {
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
     mcp: Arc<McpTrust>,
+    events: Arc<dyn EventSink>,
+    flow: ActiveFlow,
+}
+
+/// The implementation flow the chat drives, if one is active.
+type ActiveFlow = Arc<tokio::sync::Mutex<Option<ImplementSession>>>;
+
+/// Keeps `session` active while it waits at a gate; a stopped (or failed)
+/// flow gives the notice that says what it means.
+fn settle(
+    active: &mut Option<ImplementSession>,
+    session: ImplementSession,
+    result: Result<FlowStatus, FlowError>,
+) -> Option<(NoticeLevel, String)> {
+    match result {
+        Ok(status) if !status.is_finished() => {
+            *active = Some(session);
+            None
+        }
+        Ok(status) => status_notice(&status),
+        // The step already showed its error; the flow stays stored at its
+        // last checkpoint.
+        Err(err) => Some((
+            NoticeLevel::Warning,
+            format!(
+                "el flujo de implementación se detuvo: {err}; `:implement {}` lo reanuda",
+                session.plan_path()
+            ),
+        )),
+    }
+}
+
+/// `:implement <target>`: opens the flow of `target` and runs it to its
+/// first gate.
+async fn start_implementation(
+    app: Arc<tokio::sync::Mutex<App>>,
+    flow: ActiveFlow,
+    target: String,
+) -> Reply {
+    let mut active = flow.lock().await;
+    if let Some(session) = active.as_ref() {
+        return Reply::Notice(
+            NoticeLevel::Warning,
+            format!(
+                "ya hay un flujo de implementación activo ({}); respóndelo o escribe /abort",
+                session.plan_path()
+            ),
+        );
+    }
+    let opened = app.lock().await.open_implementation(&target).await;
+    let session = match opened {
+        Ok(session) => session,
+        Err(err) => return Reply::Notice(NoticeLevel::Warning, format!(":implement: {err:#}")),
+    };
+    let resumed = session.resumed().then(|| {
+        format!(
+            "flujo de implementación de {} reanudado",
+            session.plan_path()
+        )
+    });
+    let result = session.run().await;
+    match settle(&mut active, session, result) {
+        Some((level, message)) => Reply::Notice(level, message),
+        None => resumed.map_or(Reply::Done, |m| Reply::Notice(NoticeLevel::Info, m)),
+    }
+}
+
+/// Answers the gate of the active flow with `line`; the flow stays active
+/// while it waits at another gate.
+async fn answer_gate(active: &mut Option<ImplementSession>, line: &str, events: &dyn EventSink) {
+    let Some(session) = active.take() else {
+        return;
+    };
+    let result = match session.handle_line(line).await {
+        Ok(FlowReply::Status(status)) => Ok(status),
+        Ok(FlowReply::Position(position)) => {
+            events.emit(DomainEvent::Notice {
+                level: NoticeLevel::Info,
+                message: position.to_string(),
+            });
+            session.status().await
+        }
+        Err(err) => Err(err),
+    };
+    if let Some((level, message)) = settle(active, session, result) {
+        events.emit(DomainEvent::Notice { level, message });
+    }
 }
 
 /// What `:mcp trust <name>` needs.
@@ -175,6 +271,7 @@ impl UiController {
             workspace: app.workspace.as_path().to_path_buf(),
             store: app.mcp_trust_path.clone(),
         });
+        let events = app.events();
         let commands = app
             .commands
             .iter()
@@ -188,6 +285,8 @@ impl UiController {
             plugins,
             commands,
             mcp,
+            events,
+            flow: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -234,8 +333,22 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let (tx, rx) = oneshot::channel();
-        let app = Arc::clone(&self.app);
+        let (app, flow, events) = (
+            Arc::clone(&self.app),
+            Arc::clone(&self.flow),
+            Arc::clone(&self.events),
+        );
         self.handle.spawn(async move {
+            let mut active = flow.lock().await;
+            if active.is_some() {
+                events.emit(DomainEvent::BlockAdded {
+                    block: prompt_block(&request.prompt),
+                });
+                answer_gate(&mut active, &request.prompt, events.as_ref()).await;
+                tx.send(TurnEnd::Finished(StopReason::EndTurn)).ok();
+                return;
+            }
+            drop(active);
             let mut app = app.lock().await;
             tx.send(run_turn(&mut app, request).await).ok();
         });
@@ -286,6 +399,22 @@ impl SessionController for UiController {
     }
 
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+        if name == "implement" {
+            let start = start_implementation(
+                Arc::clone(&self.app),
+                Arc::clone(&self.flow),
+                args.to_owned(),
+            );
+            let task = self.handle.spawn(start);
+            return Some(
+                task.map(|joined| {
+                    joined.unwrap_or_else(|err| {
+                        Reply::Notice(NoticeLevel::Warning, format!(":implement: {err}"))
+                    })
+                })
+                .boxed(),
+            );
+        }
         if name == "mcp" {
             // Reads and writes the store file: off GPUI's thread.
             let (mcp, args) = (Arc::clone(&self.mcp), args.to_owned());
