@@ -28,7 +28,10 @@
 //!   in the next prompt. A file cited by a block (`Sources`) does the same.
 //! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
 //!   `:clear` (a new, empty session; not while a turn runs), `:modal close`
-//!   (closes the front plugin modal) and `:q`.
+//!   (closes the front plugin modal), `:help [section|search]` and `:q`
+//!   (see [`BUILTIN_COMMANDS`](crate::commands::BUILTIN_COMMANDS)).
+//! - `?` in normal mode, `F1` in any mode (`help.open`) and `:help` open
+//!   the help modal with what [`SessionController::help`] reports.
 //! - Any other `:name args` goes to [`SessionController::run_command`]
 //!   (commands of `init.lua`, `:mcp`, `:plugin`, `:implement`, `:research`,
 //!   `:simulate`); a name
@@ -47,8 +50,9 @@ use application::ports::events::{DomainEvent, NoticeLevel};
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
-use domain::block::{Block, BlockKind};
+use domain::block::{Block, BlockKind, CustomNode};
 use domain::conversation::StopReason;
+use domain::modal::{ModalPosition, ModalSpec, Percent};
 use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspacePath;
@@ -65,6 +69,10 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use crate::app::RootView;
 use crate::approval::{ApprovalInbox, ApprovalView};
 use crate::blocks::sources::{BlockEvent, block_events};
+use crate::commands::unknown_command_hint;
+use crate::help::{
+    HELP_ACTION, HelpSnapshot, HelpView, LocalHelp, Section, help_modal_id, parse_help_arg,
+};
 use crate::input::{InputEvent, InputView};
 use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
@@ -168,6 +176,14 @@ pub trait SessionController: Send + Sync {
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
         let _ = (name, args);
         None
+    }
+
+    /// What the help shows beyond what the UI knows by itself (its builtin
+    /// commands, its keymap and the models of [`models`](Self::models)):
+    /// the controller's commands, tools, plugins, MCP servers, flags and
+    /// paths. Rows it leaves empty are filled in by the session.
+    fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
+        futures::future::ready(HelpSnapshot::default()).boxed()
     }
 }
 
@@ -666,6 +682,7 @@ impl Session {
                 Err(err) => self.notice(NoticeLevel::Warning, format!(":mode: {err}"), cx),
             },
             "clear" => self.clear(window, cx),
+            "help" | "h" => self.open_help(arg, window, cx),
             "modal" if arg == "close" => {
                 let closed = self
                     .modal
@@ -685,13 +702,7 @@ impl Session {
                 } else if name.contains('.') {
                     self.action(&Action::Builtin(name.to_owned()), window, cx);
                 } else {
-                    self.notice(
-                        NoticeLevel::Warning,
-                        format!(
-                            "unknown command :{command} (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research, :simulate or :q)"
-                        ),
-                        cx,
-                    );
+                    self.notice(NoticeLevel::Warning, unknown_command_hint(command), cx);
                 }
             }
         }
@@ -817,12 +828,65 @@ impl Session {
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
             MODEL_ACTION => self.open_menu(window, cx),
+            HELP_ACTION => self.open_help("", window, cx),
             _ => self.notice(
                 NoticeLevel::Info,
                 format!("the action {action:?} does nothing yet"),
                 cx,
             ),
         }
+    }
+
+    /// Opens the help modal: `arg` names a section or is a search (`:help
+    /// tools`, `:help jira`). The controller's part arrives first.
+    pub fn open_help(&mut self, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (section, query) = parse_help_arg(arg);
+        let snapshot = self.controller.help();
+        cx.spawn_in(window, async move |this, cx| {
+            let snapshot = snapshot.await;
+            this.update_in(cx, |this, window, cx| {
+                this.show_help(snapshot, section, &query, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_help(
+        &mut self,
+        snapshot: HelpSnapshot,
+        section: Option<Section>,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keymap = self.input.read(cx).keymap().clone();
+        let models = self.controller.models();
+        let snapshot = snapshot.complete(&LocalHelp {
+            keymap: &keymap,
+            models: &models,
+            permission_mode: self.controller.permission_mode(),
+            turn_override: self.model_override.as_deref(),
+        });
+        let view = cx.new(|cx| HelpView::new(snapshot, section, query, window, cx));
+        let focus = view.focus_handle(cx);
+        let size = Percent::new(90.0).unwrap_or(Percent::FULL);
+        let spec = ModalSpec {
+            id: help_modal_id(),
+            plugin: "crest".into(),
+            title: "Help".into(),
+            width: size,
+            height: size,
+            position: ModalPosition::CENTER,
+            content: CustomNode::Text {
+                text: String::new(),
+            },
+        };
+        self.modal.update(cx, |modal, cx| {
+            modal.open_view(spec, view.into(), window, cx)
+        });
+        // Keys reach the help first; Esc still bubbles up to the host.
+        window.focus(&focus, cx);
     }
 
     /// Opens the model menu with the focus on it.
@@ -1468,6 +1532,135 @@ mod tests {
         cx.run_until_parked();
         let text = h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx));
         assert_eq!(text, "@src/lib.rs:7 ");
+    }
+
+    fn help_view(h: &Harness, cx: &mut VisualTestContext) -> Option<Entity<HelpView>> {
+        let modal = h.session.read_with(cx, |s, _| s.modal().clone());
+        modal.read_with(cx, |m, _| {
+            m.view(&help_modal_id())
+                .and_then(|view| view.clone().downcast::<HelpView>().ok())
+        })
+    }
+
+    #[gpui::test]
+    fn question_mark_opens_the_help_and_esc_closes_it(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("escape ?");
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect("the help is open");
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.section(), Section::Commands);
+            let names: Vec<_> = v
+                .snapshot()
+                .commands
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            assert!(names.contains(&"help".to_owned()), "{names:?}");
+            assert!(v.snapshot().keys.iter().any(|k| k.keys == "?"));
+            assert!(
+                v.snapshot()
+                    .models
+                    .iter()
+                    .any(|m| m.name == "permission mode" && m.value == "ask")
+            );
+        });
+        cx.update(|window, cx| {
+            assert!(
+                view.focus_handle(cx).contains_focused(window, cx),
+                "the help has the focus"
+            );
+        });
+        // Number keys switch tabs; Tab goes on.
+        cx.simulate_keystrokes("2");
+        view.read_with(cx, |v, _| assert_eq!(v.section(), Section::Keys));
+        cx.simulate_keystrokes("8 tab");
+        view.read_with(cx, |v, _| assert_eq!(v.section(), Section::Commands));
+        cx.simulate_keystrokes("j j");
+        view.read_with(cx, |v, _| assert_eq!(v.selected(), 2));
+        cx.simulate_keystrokes("k y");
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some(":model"));
+
+        cx.simulate_keystrokes("escape");
+        assert!(help_view(&h, cx).is_none(), "Esc closes it");
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "the focus is back");
+        });
+    }
+
+    #[gpui::test]
+    fn f1_opens_the_help_from_insert_mode_and_typing_filters(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("f1");
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect("F1 opens the help");
+        cx.simulate_keystrokes("/");
+        cx.update(|window, cx| assert!(view.read(cx).is_searching(window, cx)));
+        cx.simulate_input("picker");
+        cx.run_until_parked();
+        view.read_with(cx, |v, cx| {
+            assert_eq!(v.query(cx), "picker");
+            let f = v.filtered();
+            assert_eq!(f.commands.len(), 0);
+            assert_eq!(f.keys.len(), 2, "picker.files and picker.grep");
+            // The search moved to the section with matches.
+            assert_eq!(v.section(), Section::Keys);
+        });
+        // Down moves while typing; Enter goes back to the list.
+        cx.simulate_keystrokes("down enter");
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.selected(), 1);
+            assert!(!v.is_searching(window, cx));
+        });
+        cx.simulate_keystrokes("escape");
+        assert!(help_view(&h, cx).is_none());
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(
+                s.input().read(cx).mode(),
+                Mode::Insert,
+                "still in insert mode"
+            );
+            assert!(!s.modal().read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    fn help_command_opens_a_section_or_a_search(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("escape :");
+        cx.simulate_input("help models");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect(":help opens the help");
+        view.read_with(cx, |v, _| assert_eq!(v.section(), Section::Models));
+        cx.simulate_keystrokes("escape");
+        h.session
+            .update_in(cx, |s, window, cx| s.command("help clear", window, cx));
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect("a search opens it too");
+        view.read_with(cx, |v, cx| {
+            assert_eq!(v.query(cx), "clear");
+            assert_eq!(v.section(), Section::Commands);
+            let rows = v.rows();
+            assert!(rows.iter().any(|r| r.copy == ":clear"), "{rows:?}");
+        });
+    }
+
+    #[gpui::test]
+    fn an_unknown_command_points_to_the_help(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("escape :");
+        cx.simulate_input("frobnicate");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, cx| {
+            let state = s.status().read(cx).state();
+            let notice = state.notice(Instant::now()).map(|n| n.message.clone());
+            assert_eq!(notice, Some(unknown_command_hint("frobnicate")));
+        });
     }
 
     #[test]
