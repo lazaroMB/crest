@@ -9,6 +9,7 @@
 //! `kill_on_drop(true)`), and must enforce [`DEFAULT_SEARCH_TIMEOUT`] (or a
 //! configured value) on every search, failing with [`SearchError::Timeout`].
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -191,6 +192,110 @@ pub struct TreeNode {
     pub omitted_files: usize,
 }
 
+impl TreeNode {
+    /// Builds the tree of `base` from a flat file listing (as `rg --files`
+    /// prints it), expanding `depth` levels below `base`. Paths not under
+    /// `base` are ignored. Only files appear in a listing, so directories
+    /// are inferred from their contents and empty ones are not shown.
+    pub fn from_files<'a>(
+        base: &WorkspacePath,
+        files: impl IntoIterator<Item = &'a WorkspacePath>,
+        depth: usize,
+    ) -> Self {
+        let base_len = base.components().count();
+        let mut root = Builder::default();
+        for file in files {
+            let mut components = file.components();
+            if !base.is_root() && !components.by_ref().take(base_len).eq(base.components()) {
+                continue;
+            }
+            let rest: Vec<&str> = components.collect();
+            if !rest.is_empty() {
+                root.insert(&rest);
+            }
+        }
+        let name = base.file_name().unwrap_or(".").to_owned();
+        root.build(name, base.clone(), TreeNodeKind::Dir, depth)
+    }
+}
+
+#[derive(Default)]
+struct Builder {
+    is_file: bool,
+    files_below: usize,
+    children: BTreeMap<String, Builder>,
+}
+
+impl Builder {
+    fn insert(&mut self, rest: &[&str]) {
+        self.files_below += 1;
+        if let Some((first, tail)) = rest.split_first() {
+            let child = self.children.entry((*first).to_owned()).or_default();
+            if tail.is_empty() {
+                child.is_file = true;
+            } else {
+                child.insert(tail);
+            }
+        }
+    }
+
+    fn build(
+        self,
+        name: String,
+        path: WorkspacePath,
+        kind: TreeNodeKind,
+        depth: usize,
+    ) -> TreeNode {
+        if kind == TreeNodeKind::File {
+            return TreeNode {
+                name,
+                path,
+                kind,
+                children: Vec::new(),
+                omitted_files: 0,
+            };
+        }
+        if depth == 0 {
+            return TreeNode {
+                name,
+                path,
+                kind,
+                children: Vec::new(),
+                omitted_files: self.files_below,
+            };
+        }
+        let mut children: Vec<TreeNode> = self
+            .children
+            .into_iter()
+            .filter_map(|(child_name, child)| {
+                let child_path = join(&path, &child_name)?;
+                let child_kind = if child.is_file && child.children.is_empty() {
+                    TreeNodeKind::File
+                } else {
+                    TreeNodeKind::Dir
+                };
+                Some(child.build(child_name, child_path, child_kind, depth - 1))
+            })
+            .collect();
+        children.sort_by_key(|c| (c.kind == TreeNodeKind::File, c.name.clone()));
+        TreeNode {
+            name,
+            path,
+            kind,
+            children,
+            omitted_files: 0,
+        }
+    }
+}
+
+fn join(base: &WorkspacePath, name: &str) -> Option<WorkspacePath> {
+    if base.is_root() {
+        WorkspacePath::parse(name).ok()
+    } else {
+        WorkspacePath::parse(&format!("{base}/{name}")).ok()
+    }
+}
+
 /// Finds files by name. Implemented with `rg --files` and `fzf --filter`;
 /// also used by the UI file picker so the user sees the agent's results.
 ///
@@ -208,7 +313,8 @@ pub trait FileSearchPort: Send + Sync {
     async fn find_file(&self, request: FindFileRequest) -> Result<FileList, SearchError>;
 
     /// Returns the directory tree under `request.path` (the root when
-    /// `None`) expanded `request.depth` levels, built from the file listing.
+    /// `None`) expanded `request.depth` levels, built from the file listing
+    /// (see [`TreeNode::from_files`]).
     async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError>;
 }
 
@@ -250,5 +356,36 @@ mod tests {
 
         let all = FileList::from_matches(vec![p("a")], 2);
         assert!(!all.truncated);
+    }
+
+    #[test]
+    fn tree_from_files_expands_to_depth() {
+        let files = [
+            p("Cargo.toml"),
+            p("src/lib.rs"),
+            p("src/ports/fs.rs"),
+            p("src/ports/shell.rs"),
+        ];
+        let tree = TreeNode::from_files(&WorkspacePath::root(), &files, 2);
+
+        assert_eq!(tree.name, ".");
+        let names: Vec<_> = tree.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["src", "Cargo.toml"]);
+
+        let src = &tree.children[0];
+        assert_eq!(src.kind, TreeNodeKind::Dir);
+        assert_eq!(src.children[0].path, p("src/ports"));
+        assert!(src.children[0].children.is_empty());
+        assert_eq!(src.children[0].omitted_files, 2);
+        assert_eq!(src.children[1].kind, TreeNodeKind::File);
+    }
+
+    #[test]
+    fn tree_from_files_starts_at_base() {
+        let files = [p("src/a.rs"), p("srcx/b.rs"), p("docs/c.md")];
+        let tree = TreeNode::from_files(&p("src"), &files, 3);
+        assert_eq!(tree.name, "src");
+        assert_eq!(tree.children.len(), 1);
+        assert_eq!(tree.children[0].path, p("src/a.rs"));
     }
 }
