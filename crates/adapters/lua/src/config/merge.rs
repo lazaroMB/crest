@@ -9,6 +9,8 @@
 //! - model roles field by field, kept per layer (plugins fold into the
 //!   global layer) so the policy can tell where a spec came from;
 //! - keymaps by `(mode, lhs)`, commands, tools and MCP servers by name;
+//!   each server records whether the workspace declared it, so the app can
+//!   hold back servers that come with a cloned repository;
 //! - hooks are all kept, in the order the files ran (global, plugins,
 //!   workspace);
 //! - sensitive paths: the global layer may replace the built-in defaults,
@@ -17,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::plugin::{AppOptions, CallbackId, HookSpec, LoadedConfig};
+use application::ports::plugin::{AppOptions, CallbackId, ConfigOrigin, HookSpec, LoadedConfig};
 use domain::model::RoleConfig;
 use domain::workspace::DEFAULT_SENSITIVE_PATTERNS;
 
@@ -124,11 +126,17 @@ pub(crate) fn merge(
         }
         // `app.mcp.add` runs while the file runs, the table form is read
         // after it, but an explicit `add` is the more deliberate one.
-        for server in declared
+        let origin = if is_workspace {
+            ConfigOrigin::Workspace
+        } else {
+            ConfigOrigin::Global
+        };
+        for mut server in declared
             .mcp_servers
             .into_iter()
             .chain(collected.mcp_servers)
         {
+            server.origin = origin;
             upsert(&mut config.mcp_servers, server, |s| s.name.clone());
         }
     }
@@ -316,6 +324,7 @@ mod tests {
         assert!(
             matches!(&c.mcp_servers[0].transport, McpTransport::Http { url, .. } if url == "b")
         );
+        assert_eq!(c.mcp_servers[0].origin, ConfigOrigin::Workspace);
     }
 
     #[test]

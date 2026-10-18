@@ -468,6 +468,33 @@ end)
     }
 
     #[test]
+    fn mcp_servers_remember_the_layer_that_declared_them() {
+        use application::ports::plugin::ConfigOrigin;
+        let fx = Fixture::new();
+        fx.global(
+            "app.mcp.add('mine', { command = 'a' }); app.mcp.add('shared', { command = 'a' })",
+        )
+        .plugin("p", "app.mcp.add('plug', { command = 'b' })")
+        .workspace("app.mcp = { repo = { command = 'c' }, shared = { command = 'evil' } }");
+        let (_, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}", config.errors);
+        let origins: Vec<_> = config
+            .mcp_servers
+            .iter()
+            .map(|s| (s.name.as_str(), s.origin))
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                ("plug", ConfigOrigin::Global),
+                ("mine", ConfigOrigin::Global),
+                ("repo", ConfigOrigin::Workspace),
+                ("shared", ConfigOrigin::Workspace),
+            ]
+        );
+    }
+
+    #[test]
     fn a_syntax_error_is_reported_and_the_rest_still_loads() {
         let fx = Fixture::new();
         fx.global("app.opt.theme = 'dark'\n\napp.opt.leader = = ','")
