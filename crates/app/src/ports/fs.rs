@@ -63,6 +63,24 @@ pub enum FsError {
         /// The pattern that denied it.
         pattern: String,
     },
+    /// `old` of an edit is empty, so it cannot locate a single place.
+    #[error("the text to replace is empty")]
+    EmptyOld,
+    /// `old` of an edit does not occur in the file.
+    #[error("the text to replace was not found in the file")]
+    OldNotFound,
+    /// `old` of an edit occurs more than once; it must be unique.
+    #[error("the text to replace occurs {count} times; include more context to make it unique")]
+    OldNotUnique {
+        /// How many (non-overlapping) occurrences were found.
+        count: usize,
+    },
+    /// The file changed between preparing a change and applying it.
+    #[error("{path} changed since the edit was prepared; prepare it again")]
+    Stale {
+        /// The file that changed.
+        path: WorkspacePath,
+    },
     /// Any other I/O failure, as its rendered message.
     #[error("file system error: {0}")]
     Io(String),
@@ -176,6 +194,120 @@ impl FileContent {
     }
 }
 
+/// Input of the `edit_file` tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EditFileRequest {
+    /// File to edit; it must exist.
+    pub path: WorkspacePath,
+    /// Exact text to replace; it must occur exactly once in the file.
+    pub old: String,
+    /// Replacement text.
+    pub new: String,
+}
+
+/// Input of the `write_file` tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WriteFileRequest {
+    /// File to create or overwrite; missing parent directories are created.
+    pub path: WorkspacePath,
+    /// Full new content of the file.
+    pub content: String,
+}
+
+/// Replaces the single occurrence of `old` in `text` with `new`.
+///
+/// This is the exact-match rule of `edit_file`: empty `old` fails with
+/// [`FsError::EmptyOld`], no occurrence with [`FsError::OldNotFound`] and
+/// several (counted without overlap) with [`FsError::OldNotUnique`].
+pub fn replace_unique(text: &str, old: &str, new: &str) -> Result<String, FsError> {
+    if old.is_empty() {
+        return Err(FsError::EmptyOld);
+    }
+    match text.matches(old).count() {
+        0 => Err(FsError::OldNotFound),
+        1 => Ok(text.replacen(old, new, 1)),
+        count => Err(FsError::OldNotUnique { count }),
+    }
+}
+
+/// The outcome of a change, shown in the approval dialog and the timeline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChange {
+    /// The changed file.
+    pub path: WorkspacePath,
+    /// Unified diff from the old content (empty for new files) to the new.
+    pub diff_unified: String,
+    /// Whether the file did not exist before.
+    pub created: bool,
+}
+
+/// A change computed but not yet written, produced by
+/// [`FileSystemPort::prepare_edit`] or [`FileSystemPort::prepare_write`].
+///
+/// Edits happen in two phases so that approval sits between them: the use
+/// case prepares the change, shows [`PendingChange::diff_unified`] to the
+/// user and only then calls [`FileSystemPort::apply`]. The original content
+/// is kept so `apply` can detect that the file changed meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingChange {
+    path: WorkspacePath,
+    original: Option<String>,
+    new_content: String,
+    diff_unified: String,
+}
+
+impl PendingChange {
+    /// A change of `path` from `original` (`None` when the file does not
+    /// exist) to `new_content`, with its precomputed unified diff.
+    pub fn new(
+        path: WorkspacePath,
+        original: Option<String>,
+        new_content: String,
+        diff_unified: String,
+    ) -> Self {
+        Self {
+            path,
+            original,
+            new_content,
+            diff_unified,
+        }
+    }
+
+    /// The file to change.
+    pub fn path(&self) -> &WorkspacePath {
+        &self.path
+    }
+
+    /// The content seen when preparing, or `None` if the file did not exist.
+    pub fn original(&self) -> Option<&str> {
+        self.original.as_deref()
+    }
+
+    /// The content to write.
+    pub fn new_content(&self) -> &str {
+        &self.new_content
+    }
+
+    /// Unified diff from [`Self::original`] to [`Self::new_content`].
+    pub fn diff_unified(&self) -> &str {
+        &self.diff_unified
+    }
+
+    /// Whether applying it creates the file.
+    pub fn creates(&self) -> bool {
+        self.original.is_none()
+    }
+
+    /// The [`FileChange`] reported once this change is applied.
+    pub fn to_change(&self) -> FileChange {
+        FileChange {
+            path: self.path.clone(),
+            diff_unified: self.diff_unified.clone(),
+            created: self.creates(),
+        }
+    }
+}
+
 /// Reads and writes files inside one workspace, enforcing its guards.
 #[async_trait]
 pub trait FileSystemPort: Send + Sync {
@@ -192,6 +324,22 @@ pub trait FileSystemPort: Send + Sync {
     /// Whether `path` exists (as a file or directory) inside the workspace.
     /// Paths that resolve outside the root fail instead of returning false.
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError>;
+
+    /// Computes the edit described by `request` (see [`replace_unique`])
+    /// without writing it. Fails with [`FsError::NotFound`] when the file
+    /// does not exist and with [`FsError::SensitivePath`] for denied paths.
+    async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError>;
+
+    /// Computes the creation or overwrite described by `request` without
+    /// writing it; the diff is against the current content when the file
+    /// exists. Fails with [`FsError::SensitivePath`] for denied paths.
+    async fn prepare_write(&self, request: WriteFileRequest) -> Result<PendingChange, FsError>;
+
+    /// Writes a prepared change, after re-checking the workspace guards.
+    /// Fails with [`FsError::Stale`] when the file no longer matches
+    /// [`PendingChange::original`] (or now exists for a creation), so an
+    /// approval never applies to content the user did not see.
+    async fn apply(&self, change: PendingChange) -> Result<FileChange, FsError>;
 }
 
 #[cfg(test)]
@@ -237,6 +385,37 @@ mod tests {
         assert_eq!(
             content.render_numbered(),
             "     2\tb\n[showing lines 2-2 of 3; continue with offset=3]\n"
+        );
+    }
+
+    #[test]
+    fn replace_unique_requires_a_single_match() {
+        assert_eq!(replace_unique("a b c", "b", "x"), Ok("a x c".to_owned()));
+        assert_eq!(replace_unique("a b c", "", "x"), Err(FsError::EmptyOld));
+        assert_eq!(replace_unique("a b c", "z", "x"), Err(FsError::OldNotFound));
+        assert_eq!(
+            replace_unique("aaa", "aa", "x"),
+            Ok("xa".to_owned()),
+            "occurrences are counted without overlap"
+        );
+        assert_eq!(
+            replace_unique("b b", "b", "x"),
+            Err(FsError::OldNotUnique { count: 2 })
+        );
+    }
+
+    #[test]
+    fn pending_change_reports_creation() {
+        let path = WorkspacePath::parse("new.txt").unwrap();
+        let pending = PendingChange::new(path.clone(), None, "hi\n".into(), "+hi\n".into());
+        assert!(pending.creates());
+        assert_eq!(
+            pending.to_change(),
+            FileChange {
+                path,
+                diff_unified: "+hi\n".into(),
+                created: true
+            }
         );
     }
 }
