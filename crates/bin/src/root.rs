@@ -24,7 +24,7 @@ use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
-    AppOptions, CommandSpec, ConfigSources, KeymapSpec, PluginHostPort,
+    AppOptions, CommandSpec, ConfigSources, KeymapSpec, McpServerSpec, PluginHostPort,
 };
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
@@ -163,6 +163,10 @@ pub struct App {
     pub commands: Vec<CommandSpec>,
     /// Options of `app.opt`.
     pub options: AppOptions,
+    /// MCP servers declared in the config, started or not.
+    pub mcp_specs: Vec<McpServerSpec>,
+    /// Store of approved workspace MCP servers, if there is one.
+    pub mcp_trust_path: Option<PathBuf>,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -364,6 +368,7 @@ pub async fn build_app(
             .or_else(mcp::default_trust_path),
         trust_now: config.trust_mcp.clone(),
     };
+    let mcp_trust_path = trust.store.clone();
     let (mcp, mcp_warnings) = mcp::start(
         loaded.mcp_servers.clone(),
         root.as_path(),
@@ -452,6 +457,8 @@ pub async fn build_app(
         keymaps: loaded.keymaps,
         commands: loaded.commands,
         options: loaded.options,
+        mcp_specs: loaded.mcp_servers,
+        mcp_trust_path,
         models,
         events,
         timeline,

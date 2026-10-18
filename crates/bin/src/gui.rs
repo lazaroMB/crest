@@ -17,11 +17,14 @@
 //! it ([`UnavailableController`]).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use adapter_search::RipgrepSearch;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::ports::plugin::{CallbackId, PluginError, PluginHostPort, PluginOutput};
+use application::ports::plugin::{
+    CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
+};
 use application::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest, GrepResult,
     ListFilesRequest, SearchError, TreeNode, TreeRequest,
@@ -135,6 +138,29 @@ pub struct UiController {
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
+    mcp: Arc<McpTrust>,
+}
+
+/// What `:mcp trust <name>` needs.
+struct McpTrust {
+    specs: Vec<McpServerSpec>,
+    workspace: PathBuf,
+    store: Option<PathBuf>,
+}
+
+impl McpTrust {
+    /// `:mcp <args>`.
+    fn run(&self, args: &str) -> Reply {
+        let mut words = args.split_whitespace();
+        let (Some("trust"), Some(name), None) = (words.next(), words.next(), words.next()) else {
+            return Reply::Notice(NoticeLevel::Warning, "uso: :mcp trust <nombre>".into());
+        };
+        match crate::mcp::trust_declared(&self.specs, &self.workspace, self.store.as_deref(), name)
+        {
+            Ok(message) => Reply::Notice(NoticeLevel::Info, message),
+            Err(message) => Reply::Notice(NoticeLevel::Warning, format!(":mcp trust: {message}")),
+        }
+    }
 }
 
 impl UiController {
@@ -144,6 +170,11 @@ impl UiController {
         let permissions = Arc::clone(app.permissions());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
+        let mcp = Arc::new(McpTrust {
+            specs: app.mcp_specs.clone(),
+            workspace: app.workspace.as_path().to_path_buf(),
+            store: app.mcp_trust_path.clone(),
+        });
         let commands = app
             .commands
             .iter()
@@ -156,6 +187,7 @@ impl UiController {
             models,
             plugins,
             commands,
+            mcp,
         }
     }
 }
@@ -254,6 +286,19 @@ impl SessionController for UiController {
     }
 
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+        if name == "mcp" {
+            // Reads and writes the store file: off GPUI's thread.
+            let (mcp, args) = (Arc::clone(&self.mcp), args.to_owned());
+            let task = self.handle.spawn_blocking(move || mcp.run(&args));
+            return Some(
+                task.map(|joined| {
+                    joined.unwrap_or_else(|err| {
+                        Reply::Notice(NoticeLevel::Warning, format!(":mcp: {err}"))
+                    })
+                })
+                .boxed(),
+            );
+        }
         let id = self.commands.get(name)?;
         Some(self.run_callback(id.0, serde_json::Value::String(args.to_owned())))
     }
@@ -501,6 +546,37 @@ mod tests {
             matches!(&block.kind, BlockKind::Error { message, .. } if message.contains("boom")),
             "{block:?}"
         );
+    }
+
+    #[test]
+    fn mcp_trust_saves_the_approval_or_explains_the_usage() {
+        use application::ports::plugin::{ConfigOrigin, McpTransport};
+        let dir = tempfile::tempdir().unwrap();
+        let spec = McpServerSpec {
+            origin: ConfigOrigin::Workspace,
+            ..McpServerSpec::new(
+                "git",
+                McpTransport::Stdio {
+                    command: "mcp-git".into(),
+                    args: Vec::new(),
+                    env: std::collections::BTreeMap::new(),
+                },
+            )
+        };
+        let trust = McpTrust {
+            specs: vec![spec],
+            workspace: dir.path().to_path_buf(),
+            store: Some(dir.path().join("trust.json")),
+        };
+        assert!(matches!(
+            trust.run("trust git"),
+            Reply::Notice(NoticeLevel::Info, _)
+        ));
+        assert!(dir.path().join("trust.json").exists());
+        let Reply::Notice(NoticeLevel::Warning, usage) = trust.run("list") else {
+            panic!("a usage warning");
+        };
+        assert!(usage.contains(":mcp trust"), "{usage}");
     }
 
     #[test]

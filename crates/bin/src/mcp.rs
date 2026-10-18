@@ -180,6 +180,49 @@ pub fn pending_warning(spec: &McpServerSpec) -> String {
     )
 }
 
+/// Approves the workspace server `name` of `specs` (`:mcp trust <name>`)
+/// and saves it to the store at `path`, as `--trust-mcp` does. The server
+/// starts the next time crest opens the workspace. Returns what to tell
+/// the user.
+///
+/// # Errors
+///
+/// The workspace declares no server by that name, there is no store, or
+/// the store cannot be read or written.
+pub fn trust_declared(
+    specs: &[McpServerSpec],
+    workspace: &Path,
+    path: Option<&Path>,
+    name: &str,
+) -> Result<String, String> {
+    let Some(spec) = specs.iter().find(|s| s.name == name) else {
+        return Err(format!(
+            "el workspace no declara un servidor MCP `{name}` (ni la config global)"
+        ));
+    };
+    if spec.origin == ConfigOrigin::Global {
+        return Ok(format!(
+            "el servidor MCP `{name}` es de la config global: no necesita aprobación"
+        ));
+    }
+    let path = path.ok_or_else(|| {
+        "no hay dónde guardar la aprobación (sin directorio de datos); usa --trust-mcp".to_owned()
+    })?;
+    let mut store = TrustStore::load(path)
+        .map_err(|e| format!("no puedo leer los servidores MCP aprobados: {e}"))?;
+    if store.is_trusted(workspace, spec) {
+        return Ok(format!("el servidor MCP `{name}` ya estaba aprobado"));
+    }
+    store.trust(workspace, spec);
+    store
+        .save(path)
+        .map_err(|e| format!("no puedo guardar la aprobación en {}: {e}", path.display()))?;
+    Ok(format!(
+        "servidor MCP `{name}` aprobado para este workspace; arrancará la próxima vez que \
+         abras crest"
+    ))
+}
+
 /// How long startup waits for the servers before going on without the
 /// slow ones.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -385,6 +428,27 @@ mod tests {
         assert_eq!(got.start, [specs[0].clone()]);
         assert_eq!(got.pending, [specs[1].clone()]);
         assert!(got.newly_trusted.is_empty());
+    }
+
+    #[test]
+    fn trusting_a_declared_server_saves_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trust.json");
+        let ws = Path::new("/ws");
+        let specs = [
+            stdio("git", "mcp-git", ConfigOrigin::Workspace),
+            stdio("docs", "mcp-docs", ConfigOrigin::Global),
+        ];
+        let said = trust_declared(&specs, ws, Some(&path), "git").unwrap();
+        assert!(said.contains("próxima vez"), "{said}");
+        let store = TrustStore::load(&path).unwrap();
+        assert!(store.is_trusted(ws, &specs[0]));
+        let again = trust_declared(&specs, ws, Some(&path), "git").unwrap();
+        assert!(again.contains("ya estaba"), "{again}");
+        let global = trust_declared(&specs, ws, Some(&path), "docs").unwrap();
+        assert!(global.contains("global"), "{global}");
+        assert!(trust_declared(&specs, ws, Some(&path), "nope").is_err());
+        assert!(trust_declared(&specs, ws, None, "git").is_err());
     }
 
     #[test]
