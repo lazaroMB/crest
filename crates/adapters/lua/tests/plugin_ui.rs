@@ -14,7 +14,7 @@ local app = require("app")
 
 app.tools.register({
   name = "todo_list",
-  description = "Muestra tareas pendientes del proyecto",
+  description = "Shows the project's pending tasks",
   schema = { type = "object", properties = { items = { type = "array" } } },
   effect = "read",
   handler = function(input)

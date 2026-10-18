@@ -14,7 +14,7 @@ local app = require("app")
 
 app.tools.register({
   name = "todo_list",
-  description = "Muestra tareas pendientes del proyecto",
+  description = "Shows the project's pending tasks",
   schema = { type = "object", properties = { items = { type = "array" } } },
   effect = "read",
   handler = function(input)
@@ -75,7 +75,7 @@ async fn the_model_calls_a_lua_tool_and_gets_what_it_returned() {
         .iter()
         .find(|t| t.name == "todo_list")
         .unwrap();
-    assert_eq!(todo.description, "Muestra tareas pendientes del proyecto");
+    assert_eq!(todo.description, "Shows the project's pending tasks");
     assert_eq!(todo.input_schema["properties"]["items"]["type"], "array");
 }
 

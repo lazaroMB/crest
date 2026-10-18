@@ -292,12 +292,12 @@ app.keymap.set("n", "<leader>r", "session.resume")
 app.keymap.set("n", "<leader>x", function() app.cmd("clear") end)
 
 app.commands.register("review", function(args)
-  app.send("Revisa los cambios sin commitear y lista riesgos", { role = "plan" })
+  app.send("Review the uncommitted changes and list the risks", { role = "plan" })
 end)
 
 app.tools.register({
   name = "todo_list",
-  description = "Muestra tareas pendientes del proyecto",
+  description = "Shows the project's pending tasks",
   schema = { type = "object", properties = { items = { type = "array" } } },
   handler = function(input)
     return app.ui.block("todo", app.ui.list(input.items))
@@ -361,7 +361,7 @@ end)
         assert_eq!(
             vm.invoke(config.commands[0].callback, &json!("")).unwrap(),
             PluginOutput::Actions(vec![PluginAction::Send {
-                text: "Revisa los cambios sin commitear y lista riesgos".into(),
+                text: "Review the uncommitted changes and list the risks".into(),
                 role: Some(ModelRole::Plan),
             }])
         );
