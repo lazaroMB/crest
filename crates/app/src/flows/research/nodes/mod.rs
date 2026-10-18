@@ -86,7 +86,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Experiments => Some(Arc::new(experiments::Experiments::new())),
 
         // T5.6: Some(Arc::new(define::<Type>::new()))
-        Stage::Definition => None,
+        Stage::Definition => Some(Arc::new(define::Definition::new())),
 
         // T5.7a: Some(Arc::new(research::<Type>::new()))
         Stage::Research => None,
