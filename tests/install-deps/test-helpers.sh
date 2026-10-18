@@ -69,5 +69,31 @@ check "opensuse" eq "$(pkg_mgr_for_distro opensuse-tumbleweed)" zypper
 check "void" eq "$(pkg_mgr_for_distro void)" xbps
 check "desconocida" eq "$(pkg_mgr_for_distro plan9)" ""
 
+# packages_for: sin duplicados y vacío para lo que el gestor no provee
+PKG_MGR=apk
+check "apk deduplica xkbcommon" eq "$(packages_for 'xkbcommon xkbcommon-x11 cc')" "libxkbcommon-dev build-base"
+PKG_MGR=apt
+check "apt" eq "$(packages_for 'rg curl x11-xcb')" "ripgrep curl ca-certificates libx11-xcb-dev"
+check "rust no es un paquete" eq "$(packages_for 'rust clippy')" ""
+PKG_MGR=brew
+check "brew sin cc" eq "$(packages_for 'cc clang pkg-config')" "pkgconf"
+
+# install_packages: en bloque y, si falla, uno por uno reportando los que fallan
+INSTALLED=''
+pm_refresh() { :; }
+pm_install() {
+    case " $* " in *" no-existe "*) return 1 ;; esac
+    INSTALLED="$INSTALLED $*"
+}
+info() { :; }
+warn() { :; }
+err() { :; }
+PKG_MGR=apt
+install_packages "a b c"
+check "bloque" eq "$INSTALLED" " a b c"
+INSTALLED=''
+check "uno por uno falla" not install_packages "a no-existe c"
+check "uno por uno instala el resto" eq "$INSTALLED" " a c"
+
 echo "$PASSES ok, $FAILS fallos"
 [ "$FAILS" = 0 ]

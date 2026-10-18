@@ -391,17 +391,233 @@ run_checks() {
     fi
 }
 
+# --- paquetes por gestor ----------------------------------------------------
+
+# pkg_names GESTOR ID: paquetes que proveen ID (vacío si el gestor no lo
+# provee; p. ej. Rust, que va por rustup). Los IDs son los de MISSING más
+# curl, tar y gzip, que hacen falta para descargar rg, fzf y rustup.
+pkg_names() {
+    case $1 in
+        apt) case $2 in
+            cc) echo build-essential ;;
+            pkg-config | cmake | clang | git | jq | fzf | tar | gzip) echo "$2" ;;
+            rg) echo ripgrep ;;
+            curl) echo "curl ca-certificates" ;;
+            xkbcommon) echo libxkbcommon-dev ;;
+            xkbcommon-x11) echo libxkbcommon-x11-dev ;;
+            wayland-client) echo libwayland-dev ;;
+            xcb) echo libxcb1-dev ;;
+            x11-xcb) echo libx11-xcb-dev ;;
+            fontconfig) echo libfontconfig-dev ;;
+            freetype2) echo libfreetype-dev ;;
+            vulkan) echo libvulkan-dev ;;
+            vulkan-driver) echo mesa-vulkan-drivers ;;
+        esac ;;
+        dnf | yum) case $2 in
+            cc) echo "gcc gcc-c++ make" ;;
+            pkg-config) if [ "$1" = dnf ]; then echo pkgconf-pkg-config; else echo pkgconfig; fi ;;
+            cmake | clang | git | jq | fzf | curl | tar | gzip) echo "$2" ;;
+            rg) echo ripgrep ;;
+            xkbcommon) echo libxkbcommon-devel ;;
+            xkbcommon-x11) echo libxkbcommon-x11-devel ;;
+            wayland-client) echo wayland-devel ;;
+            xcb) echo libxcb-devel ;;
+            x11-xcb) echo libX11-devel ;;
+            fontconfig) echo fontconfig-devel ;;
+            freetype2) echo freetype-devel ;;
+            vulkan) echo vulkan-loader-devel ;;
+            vulkan-driver) echo mesa-vulkan-drivers ;;
+        esac ;;
+        pacman) case $2 in
+            cc) echo base-devel ;;
+            pkg-config) echo pkgconf ;;
+            cmake | clang | git | jq | fzf | curl | tar | gzip | fontconfig | freetype2) echo "$2" ;;
+            rg) echo ripgrep ;;
+            xkbcommon) echo libxkbcommon ;;
+            xkbcommon-x11) echo libxkbcommon-x11 ;;
+            wayland-client) echo wayland ;;
+            xcb) echo libxcb ;;
+            x11-xcb) echo libx11 ;;
+            vulkan) echo vulkan-icd-loader ;;
+            # El driver depende de la GPU (vulkan-radeon, vulkan-intel, nvidia-utils).
+        esac ;;
+        zypper) case $2 in
+            cc) echo "gcc gcc-c++ make" ;;
+            pkg-config | cmake | clang | git | jq | fzf | curl | tar | gzip) echo "$2" ;;
+            rg) echo ripgrep ;;
+            xkbcommon) echo libxkbcommon-devel ;;
+            xkbcommon-x11) echo libxkbcommon-x11-devel ;;
+            wayland-client) echo wayland-devel ;;
+            xcb) echo libxcb-devel ;;
+            x11-xcb) echo libX11-devel ;;
+            fontconfig) echo fontconfig-devel ;;
+            freetype2) echo freetype2-devel ;;
+            vulkan) echo vulkan-devel ;;
+        esac ;;
+        apk) case $2 in
+            cc) echo build-base ;;
+            pkg-config) echo pkgconf ;;
+            cmake | clang | git | jq | fzf | curl | tar | gzip) echo "$2" ;;
+            rg) echo ripgrep ;;
+            xkbcommon | xkbcommon-x11) echo libxkbcommon-dev ;;
+            wayland-client) echo wayland-dev ;;
+            xcb) echo libxcb-dev ;;
+            x11-xcb) echo libx11-dev ;;
+            fontconfig) echo fontconfig-dev ;;
+            freetype2) echo freetype-dev ;;
+            vulkan) echo vulkan-loader-dev ;;
+        esac ;;
+        xbps) case $2 in
+            cc) echo base-devel ;;
+            pkg-config | cmake | clang | git | jq | fzf | curl | tar | gzip) echo "$2" ;;
+            rg) echo ripgrep ;;
+            xkbcommon | xkbcommon-x11) echo libxkbcommon-devel ;;
+            wayland-client) echo wayland-devel ;;
+            xcb) echo libxcb-devel ;;
+            x11-xcb) echo libX11-devel ;;
+            fontconfig) echo fontconfig-devel ;;
+            freetype2) echo freetype-devel ;;
+            vulkan) echo vulkan-loader-devel ;;
+        esac ;;
+        brew) case $2 in
+            # cc y clang vienen con las Command Line Tools.
+            cmake | git | jq | fzf | curl) echo "$2" ;;
+            pkg-config) echo pkgconf ;;
+            rg) echo ripgrep ;;
+        esac ;;
+    esac
+}
+
+# Paquetes (sin repetir) del gestor actual para la lista de IDs $1.
+packages_for() {
+    local id p pkgs=''
+    for id in $1; do
+        for p in $(pkg_names "$PKG_MGR" "$id"); do
+            pkgs=$(list_add "$pkgs" "$p")
+        done
+    done
+    printf '%s\n' "$pkgs"
+}
+
+as_root() {
+    if [ -n "$SUDO" ]; then
+        # shellcheck disable=SC2086 # SUDO puede ser "sudo -n"
+        $SUDO "$@"
+    else
+        "$@"
+    fi
+}
+
+# Actualiza los índices del gestor si hace falta antes de instalar.
+pm_refresh() {
+    case $PKG_MGR in
+        apt) as_root apt-get update ;;
+        apk) as_root apk update ;;
+        xbps) as_root xbps-install -S ;;
+        pacman)
+            # Sin bases sincronizadas (imagen recién creada) -Sy solo dejaría
+            # una actualización parcial; Arch exige -Syu.
+            if [ -z "$(ls /var/lib/pacman/sync 2>/dev/null)" ]; then
+                as_root pacman -Syu --noconfirm
+            fi
+            ;;
+    esac
+}
+
+pm_install() {
+    case $PKG_MGR in
+        apt) as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
+        dnf | yum) as_root "$PKG_MGR" install -y "$@" ;;
+        pacman) as_root pacman -S --needed --noconfirm "$@" ;;
+        zypper) as_root zypper --non-interactive install --no-recommends "$@" ;;
+        apk) as_root apk add "$@" ;;
+        xbps) as_root xbps-install -y "$@" ;;
+        brew) brew install "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Instala la lista $1 en bloque; si falla (p. ej. un nombre que no existe en
+# esta versión de la distro), reintenta uno por uno y reporta los que fallan.
+install_packages() {
+    local pkgs=$1 p failed=''
+    [ -n "$pkgs" ] || return 0
+    info "Instalando con $PKG_MGR: $pkgs"
+    pm_refresh || warn "no se pudieron actualizar los índices de $PKG_MGR"
+    # shellcheck disable=SC2086 # lista de paquetes separada por espacios
+    if pm_install $pkgs; then
+        return 0
+    fi
+    warn "la instalación en bloque falló; reintentando paquete por paquete"
+    for p in $pkgs; do
+        pm_install "$p" || failed=$(list_add "$failed" "$p")
+    done
+    if [ -n "$failed" ]; then
+        err "no se pudieron instalar: $failed"
+        return 1
+    fi
+}
+
+# confirm PREGUNTA: éxito si el usuario acepta (o con --yes).
+confirm() {
+    local ans
+    [ "$OPT_YES" = 1 ] && return 0
+    if [ ! -t 0 ]; then
+        err "no hay terminal para confirmar; usa --yes para instalar sin preguntar"
+        return 1
+    fi
+    printf '%s [s/N] ' "$1"
+    read -r ans || return 1
+    case $ans in
+        s | S | si | sí | Si | Sí | y | Y | yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Resume lo que falta. Éxito si no falta nada.
 print_summary() {
+    local pkgs
     if [ -z "$MISSING" ]; then
         info "${C_GREEN}Todas las dependencias están presentes.${C_RESET}"
         return 0
     fi
     err "faltan $(list_count "$MISSING") dependencias: $MISSING"
+    pkgs=$(packages_for "$MISSING")
+    if [ -n "$pkgs" ]; then
+        printf 'Paquetes de %s que las proveen: %s\n' "$PKG_MGR" "$pkgs"
+    fi
     printf 'Para instalarlas: %s%s%s\n' "$0" \
         "$([ "$OPT_DEV" = 1 ] && printf ' --dev')" \
         "$([ "$OPT_NO_RUST" = 1 ] && printf ' --no-rust')"
     return 1
+}
+
+# Herramientas que el propio instalador necesita para descargar.
+bootstrap_ids() {
+    local ids='' c
+    for c in curl tar gzip; do
+        have "$c" || ids=$(list_add "$ids" "$c")
+    done
+    printf '%s\n' "$ids"
+}
+
+run_install() {
+    local ids pkgs id
+    ids=$MISSING
+    [ "$PLATFORM" = linux ] && [ "$VULKAN_DRIVER" = 0 ] && ids=$(list_add "$ids" vulkan-driver)
+    for id in $(bootstrap_ids); do ids=$(list_add "$ids" "$id"); done
+    pkgs=$(packages_for "$ids")
+    if [ -z "$MISSING" ] && [ -z "$pkgs" ]; then
+        return 0
+    fi
+    if [ "$PKG_MGR" = none ] && [ -n "$ids" ]; then
+        warn "no se encontró un gestor de paquetes soportado; instala a mano: $ids"
+    fi
+    info "Plan de instalación"
+    [ -n "$pkgs" ] && printf '  paquetes (%s): %s\n' "$PKG_MGR" "$pkgs"
+    confirm "¿Continuar?" || die "instalación cancelada"
+    [ -n "$pkgs" ] && setup_sudo
+    install_packages "$pkgs" || true
 }
 
 main() {
@@ -419,6 +635,13 @@ main() {
     fi
     # Desde la raíz del repo, para que rustup aplique su rust-toolchain.toml.
     cd "$(dirname "$0")/.." || die "no se puede entrar a la raíz del repo"
+    run_checks
+    if [ "$OPT_CHECK" = 1 ]; then
+        print_summary
+        return
+    fi
+    run_install
+    echo
     run_checks
     print_summary
 }
