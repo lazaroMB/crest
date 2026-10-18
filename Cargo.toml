@@ -101,3 +101,10 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+
+# Release binary (`make release`, release.yml). Thin LTO and stripped symbols
+# shrink the binary without the build time of fat LTO or codegen-units = 1.
+# Debug and test profiles are untouched.
+[profile.release]
+lto = "thin"
+strip = "symbols"
