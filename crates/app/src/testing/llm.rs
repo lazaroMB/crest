@@ -8,6 +8,9 @@
 //! and `MessageStop`. Consumers therefore exercise
 //! [`MessageAssembler`](crate::ports::llm::MessageAssembler) for real.
 
+use crate::ports::mcp::{
+    McpContent, McpError, McpPort, McpServerState, McpServerStatus, McpTool, McpToolResult,
+};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -504,6 +507,196 @@ impl ModelCatalogPort for FakeModelCatalog {
     }
 }
 
+/// Handler of a [`FakeMcp`] tool: computes the result from the input.
+pub type McpHandler =
+    Arc<dyn Fn(serde_json::Value) -> Result<McpToolResult, McpError> + Send + Sync>;
+
+/// A call received by [`FakeMcp`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct McpCall {
+    /// Server name.
+    pub server: String,
+    /// Unqualified tool name.
+    pub name: String,
+    /// Input sent.
+    pub input: serde_json::Value,
+}
+
+/// A server of [`FakeMcp`] with its tools.
+struct FakeServer {
+    name: String,
+    /// Explicit state; `None` means ready with all its tools.
+    state: Option<McpServerState>,
+    tools: Vec<(McpTool, McpHandler)>,
+}
+
+/// [`McpPort`] with tools registered per server, answered by closures.
+///
+/// Servers are reported in registration order. A server is `Ready` unless
+/// another state was set with
+/// [`with_server_state`](Self::with_server_state); tools of servers that
+/// are not ready are not listed and calling them fails with
+/// [`McpError::Unavailable`].
+#[derive(Default)]
+pub struct FakeMcp {
+    servers: Vec<FakeServer>,
+    calls: Mutex<Vec<McpCall>>,
+}
+
+impl std::fmt::Debug for FakeMcp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tools: Vec<String> = self
+            .servers
+            .iter()
+            .flat_map(|server| server.tools.iter().map(|(tool, _)| tool.qualified_name()))
+            .collect();
+        f.debug_struct("FakeMcp").field("tools", &tools).finish()
+    }
+}
+
+impl FakeMcp {
+    /// A fake with no servers.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers `name` on `server` (created if new), answered by `handler`.
+    /// The tool accepts any object as input.
+    #[must_use]
+    pub fn with_tool(
+        mut self,
+        server: &str,
+        name: &str,
+        description: &str,
+        handler: impl Fn(serde_json::Value) -> Result<McpToolResult, McpError> + Send + Sync + 'static,
+    ) -> Self {
+        let tool = McpTool {
+            server: server.to_owned(),
+            name: name.to_owned(),
+            description: description.to_owned(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        };
+        self.server_mut(server)
+            .tools
+            .push((tool, Arc::new(handler)));
+        self
+    }
+
+    /// Registers a tool that always answers with `text`.
+    #[must_use]
+    pub fn with_text_tool(self, server: &str, name: &str, text: &str) -> Self {
+        let text = text.to_owned();
+        self.with_tool(server, name, "Fake MCP tool", move |_| {
+            Ok(text_result(text.clone()))
+        })
+    }
+
+    /// Sets the state of `server` (created if new).
+    #[must_use]
+    pub fn with_server_state(mut self, server: &str, state: McpServerState) -> Self {
+        self.server_mut(server).state = Some(state);
+        self
+    }
+
+    /// Every call received so far, oldest first.
+    #[must_use]
+    pub fn calls(&self) -> Vec<McpCall> {
+        lock(&self.calls).clone()
+    }
+
+    fn server_mut(&mut self, name: &str) -> &mut FakeServer {
+        let index = match self.servers.iter().position(|s| s.name == name) {
+            Some(index) => index,
+            None => {
+                self.servers.push(FakeServer {
+                    name: name.to_owned(),
+                    state: None,
+                    tools: Vec::new(),
+                });
+                self.servers.len() - 1
+            }
+        };
+        &mut self.servers[index]
+    }
+}
+
+impl FakeServer {
+    fn state(&self) -> McpServerState {
+        self.state.clone().unwrap_or(McpServerState::Ready {
+            tool_count: self.tools.len(),
+        })
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(self.state(), McpServerState::Ready { .. })
+    }
+}
+
+/// A successful MCP result with one text item.
+#[must_use]
+pub fn text_result(text: impl Into<String>) -> McpToolResult {
+    McpToolResult {
+        content: vec![McpContent::Text { text: text.into() }],
+        is_error: false,
+    }
+}
+
+#[async_trait]
+impl McpPort for FakeMcp {
+    async fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
+        Ok(self
+            .servers
+            .iter()
+            .filter(|server| server.is_ready())
+            .flat_map(|server| server.tools.iter().map(|(tool, _)| tool.clone()))
+            .collect())
+    }
+
+    async fn call_tool(
+        &self,
+        server: &str,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<McpToolResult, McpError> {
+        lock(&self.calls).push(McpCall {
+            server: server.to_owned(),
+            name: name.to_owned(),
+            input: input.clone(),
+        });
+        let found = self
+            .servers
+            .iter()
+            .find(|s| s.name == server)
+            .ok_or_else(|| McpError::UnknownServer(server.to_owned()))?;
+        if !found.is_ready() {
+            return Err(McpError::Unavailable {
+                server: server.to_owned(),
+                message: format!("{:?}", found.state()),
+            });
+        }
+        let (_, handler) = found
+            .tools
+            .iter()
+            .find(|(tool, _)| tool.name == name)
+            .ok_or_else(|| McpError::UnknownTool {
+                server: server.to_owned(),
+                name: name.to_owned(),
+            })?;
+        handler(input)
+    }
+
+    async fn servers(&self) -> Vec<McpServerStatus> {
+        self.servers
+            .iter()
+            .map(|server| McpServerStatus {
+                name: server.name.clone(),
+                state: server.state(),
+            })
+            .collect()
+    }
+}
+
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
 /// recorded state from the others.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -806,5 +999,84 @@ mod tests {
             failing.list_models().await,
             Err(LlmError::Network("offline".into()))
         );
+    }
+
+    fn fake_mcp() -> FakeMcp {
+        FakeMcp::new()
+            .with_tool("github", "create_issue", "Opens an issue", |input| {
+                Ok(text_result(format!("created {}", input["title"])))
+            })
+            .with_text_tool("github", "whoami", "lazaro")
+            .with_text_tool("jira", "search", "nothing")
+            .with_server_state(
+                "jira",
+                McpServerState::Failed {
+                    message: "exit 1".into(),
+                },
+            )
+    }
+
+    #[tokio::test]
+    async fn fake_mcp_lists_ready_tools_and_routes_calls() {
+        let mcp = Arc::new(fake_mcp());
+        let port: Arc<dyn McpPort> = mcp.clone();
+        let names: Vec<String> = port
+            .list_tools()
+            .await
+            .unwrap()
+            .iter()
+            .map(McpTool::qualified_name)
+            .collect();
+        assert_eq!(names, ["mcp__github__create_issue", "mcp__github__whoami"]);
+
+        let result = port
+            .call_tool("github", "create_issue", json!({ "title": "bug" }))
+            .await
+            .unwrap();
+        assert_eq!(result, text_result("created \"bug\""));
+        assert_eq!(
+            mcp.calls(),
+            [McpCall {
+                server: "github".into(),
+                name: "create_issue".into(),
+                input: json!({ "title": "bug" }),
+            }]
+        );
+
+        let states: Vec<McpServerState> =
+            port.servers().await.into_iter().map(|s| s.state).collect();
+        assert_eq!(
+            states,
+            [
+                McpServerState::Ready { tool_count: 2 },
+                McpServerState::Failed {
+                    message: "exit 1".into()
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn fake_mcp_errors_are_typed() {
+        let mcp = fake_mcp();
+        let call = |server: &'static str, name: &'static str| {
+            mcp.call_tool(server, name, serde_json::Value::Null)
+        };
+        assert_eq!(
+            call("gitlab", "x").await,
+            Err(McpError::UnknownServer("gitlab".into()))
+        );
+        assert_eq!(
+            call("github", "delete_repo").await,
+            Err(McpError::UnknownTool {
+                server: "github".into(),
+                name: "delete_repo".into(),
+            })
+        );
+        assert!(matches!(
+            call("jira", "search").await,
+            Err(McpError::Unavailable { ref server, .. }) if server == "jira"
+        ));
+        assert_eq!(mcp.calls().len(), 3);
     }
 }
