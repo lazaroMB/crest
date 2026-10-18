@@ -1237,6 +1237,12 @@ mod tests {
         ];
         let (h, cx) = harness(script, cx);
         send("primero", cx);
+        // The turn runs on another thread: wait until it has taken its
+        // answer, or Ctrl+C could land before the model is ever called.
+        let llm = h.llm.clone();
+        wait_until(&h, cx, "the first turn to reach the model", move |_, _| {
+            llm.remaining() == 1
+        });
         send("segundo", cx);
         h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 1));
         // Ctrl+C drops the queue with the turn.
