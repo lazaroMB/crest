@@ -22,7 +22,7 @@ use domain::research::Stage;
 use super::node::ResearchNode;
 
 // T5.5a: Intake
-// pub mod intake;
+pub mod intake;
 
 // T5.5b: Observation
 // pub mod observation;
@@ -68,7 +68,7 @@ use super::node::ResearchNode;
 pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
     match stage {
         // T5.5a: Some(Arc::new(intake::<Type>::new()))
-        Stage::Intake => None,
+        Stage::Intake => Some(Arc::new(intake::Intake::new())),
 
         // T5.5b: Some(Arc::new(observation::<Type>::new()))
         Stage::Observation => None,
