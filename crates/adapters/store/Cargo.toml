@@ -12,6 +12,7 @@ application.workspace = true
 async-trait.workspace = true
 dirs.workspace = true
 domain.workspace = true
+graph-flow.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
