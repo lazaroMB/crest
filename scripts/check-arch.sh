@@ -12,10 +12,20 @@
 #      (o la variable de entorno CHECK_ARCH_MANIFEST)
 # Reglas de dependencias internas (crates con path dentro del workspace):
 #   domain -> ninguna; app -> domain; adapter, ui -> app, domain; bin -> todas.
+# domain y app tampoco pueden usar crates de I/O (ver IO_CRATES).
 #
 # Sale con 0 si todo cumple, 1 si hay alguna violación, 2 si hay un error de uso.
 # Requiere cargo y jq. Compatible con bash 3.2.
 set -euo pipefail
+set -f # sin globbing de rutas: IO_CRATES contiene patrones como opentelemetry*
+
+# Crates de I/O prohibidos en [dependencies] y [build-dependencies] de domain y
+# app (se compara el nombre del paquete; admite globs). En [dev-dependencies] sí
+# se permiten: los tests pueden usar un runtime o un fs real sin que el código
+# de producción quede acoplado a ellos. futures, async-trait, tracing (fachada)
+# y similar son puros y están permitidos.
+IO_CRATES="tokio reqwest reqwest-eventsource hyper gpui gpui-component mlua
+rusqlite sqlx rmcp notify keyring opentelemetry* tracing-opentelemetry"
 
 manifest="${CHECK_ARCH_MANIFEST:-}"
 
@@ -132,6 +142,37 @@ while IFS="$(printf '\t')" read -r name dir dep dep_dir kind; do
     fi
 done <<EOF
 $path_deps
+EOF
+
+is_io_crate() {
+    local pattern
+    for pattern in $IO_CRATES; do
+        # shellcheck disable=SC2254 # el patrón es un glob a propósito
+        case "$1" in
+            $pattern) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Una línea por dependencia no-dev: crate<TAB>dir<TAB>dep<TAB>tipo.
+non_dev_deps="$(printf '%s' "$metadata" | jq -r '
+    .packages[] | .name as $n | (.manifest_path | sub("/Cargo.toml$"; "")) as $d
+    | .dependencies[] | select(.kind != "dev")
+    | [$n, $d, .name, (.kind // "normal")] | @tsv')"
+
+while IFS="$(printf '\t')" read -r name dir dep kind; do
+    [ -n "$name" ] || continue
+    from="$(layer_of "$dir")"
+    case "$from" in
+        domain | app) ;;
+        *) continue ;;
+    esac
+    if is_io_crate "$dep"; then
+        fail "crate $name (capa $from) depende del crate de I/O $dep [$kind]: prohibido"
+    fi
+done <<EOF
+$non_dev_deps
 EOF
 
 if [ "$errors" -gt 0 ]; then
