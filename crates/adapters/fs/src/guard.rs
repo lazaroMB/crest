@@ -141,6 +141,34 @@ impl WorkspaceGuard {
     /// name linking to `.env` is denied too.
     pub async fn resolve_readable(&self, input: &str) -> Result<(WorkspacePath, PathBuf), FsError> {
         let (path, canonical) = self.resolve_existing(input).await?;
+        self.check_resolved(path, canonical)
+    }
+
+    /// Blocking form of [`Self::resolve_readable`], for callers outside an
+    /// async runtime (an event sink, the Lua thread). A dangling symlink
+    /// is reported as [`FsError::NotFound`] wherever it points.
+    pub fn resolve_readable_blocking(
+        &self,
+        input: &str,
+    ) -> Result<(WorkspacePath, PathBuf), FsError> {
+        let path = self.root.resolve(input)?;
+        let joined = self.root.join(&path);
+        let canonical = match std::fs::canonicalize(&joined) {
+            Ok(canonical) => canonical,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(FsError::NotFound { path }),
+            Err(e) => return Err(io_error(&joined, &e)),
+        };
+        self.ensure_inside(input, &canonical)?;
+        self.check_resolved(path, canonical)
+    }
+
+    /// The sensitive-path checks of a resolved path: the name asked for and
+    /// the symlink-resolved one.
+    fn check_resolved(
+        &self,
+        path: WorkspacePath,
+        canonical: PathBuf,
+    ) -> Result<(WorkspacePath, PathBuf), FsError> {
         self.check_readable(&path)?;
         if let Some(real) = self.relative(&canonical)
             && real != path
@@ -480,6 +508,30 @@ mod tests {
             Err(FsError::SensitivePath { pattern, .. }) => Some(pattern),
             _ => None,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blocking_readable_checks_root_symlinks_and_rules() {
+        let f = fixture();
+        std::fs::write(f.ws.join("plot.png"), "png").unwrap();
+        std::fs::write(f.ws.join(".env"), "KEY=x").unwrap();
+        std::os::unix::fs::symlink(f.outside.join("secret"), f.ws.join("escape.png")).unwrap();
+        std::os::unix::fs::symlink(f.ws.join(".env"), f.ws.join("innocent.png")).unwrap();
+
+        let (path, canonical) = f.guard.resolve_readable_blocking("plot.png").unwrap();
+        assert_eq!(path.as_str(), "plot.png");
+        assert_eq!(canonical, f.ws.join("plot.png"));
+        assert!(is_outside(
+            f.guard.resolve_readable_blocking("../outside/secret")
+        ));
+        assert!(is_outside(f.guard.resolve_readable_blocking("escape.png")));
+        assert!(sensitive(f.guard.resolve_readable_blocking(".env")).is_some());
+        assert!(sensitive(f.guard.resolve_readable_blocking("innocent.png")).is_some());
+        assert!(matches!(
+            f.guard.resolve_readable_blocking("missing.png"),
+            Err(FsError::NotFound { .. })
+        ));
     }
 
     #[tokio::test]
