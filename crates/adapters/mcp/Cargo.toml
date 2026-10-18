@@ -9,7 +9,13 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+async-trait.workspace = true
 domain.workspace = true
+reqwest.workspace = true
+rmcp.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
