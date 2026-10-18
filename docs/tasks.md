@@ -7,19 +7,19 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T0.1 ★ | integrada | — | raíz, `crates/*/Cargo.toml` |
 | T0.2 | integrada | T0.1 | `Makefile` |
 | T0.3 | en curso | — | `scripts/install-deps.sh` |
-| T0.4 | en curso | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
+| T0.4 | integrada | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
 | T0.5 | pendiente | T0.2, T0.3, T0.4 | `.github/workflows/` |
 | T1.1 ★ | integrada | T0.1 | `domain/src/conversation.rs` |
 | T1.2 | integrada | T0.1 | `domain/src/block.rs` |
 | T1.3 | integrada | T0.1 | `domain/src/model.rs` |
 | T1.4 | integrada | T0.1 | `domain/src/workspace.rs` |
 | T1.5 | integrada | T0.1 | `domain/src/permission.rs` |
-| T1.6a ★ | en curso | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
-| T1.6b | en curso | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
-| T1.6c | en curso | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
-| T1.7a ★ | pendiente | T1.6a | `application/src/testing/llm.rs` |
-| T1.7b | pendiente | T1.6b | `application/src/testing/fs.rs` |
-| T1.7c | pendiente | T1.6c | `application/src/testing/system.rs` |
+| T1.6a ★ | integrada | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
+| T1.6b | integrada | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
+| T1.6c | integrada | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
+| T1.7a ★ | en curso | T1.6a | `application/src/testing/llm.rs` |
+| T1.7b | en curso | T1.6b | `application/src/testing/fs.rs` |
+| T1.7c | en curso | T1.6c | `application/src/testing/system.rs` |
 | T2.A1 ★ | pendiente | T1.7a | `application/src/tools/registry.rs` |
 | T2.A2 ★ | pendiente | T2.A1, T1.7c | `application/src/usecases/run_turn.rs` |
 | T2.A3 ★ | pendiente | T2.A2, T1.5 | mismo archivo + `approval.rs` |
@@ -32,7 +32,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T2.B5 | pendiente | T2.B3 | `catalog.rs` |
 | T2.B6 | pendiente | T2.B2 | `wire.rs`, `request.rs` |
 | T2.B7 | pendiente | T2.B4 | `tests/live.rs` |
-| T2.C1 | pendiente | T1.6b | `adapters/search/src/process.rs` |
+| T2.C1 | en curso | T1.6b | `adapters/search/src/process.rs` |
 | T2.C2 | pendiente | T2.C1 | `detect.rs` |
 | T2.C3 | pendiente | T2.C1 | `files.rs` |
 | T2.C4 | pendiente | T2.C1 | `grep.rs` |
@@ -46,7 +46,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T2.F1 | pendiente | T1.6c | `adapters/lua/src/host.rs` |
 | T2.F2 | pendiente | T2.F1 | `sandbox.rs` |
 | T2.F3 | pendiente | T2.F1, T1.3 | `config.rs` |
-| T2.F4 | pendiente | T0.1 | `application/src/keymap.rs` |
+| T2.F4 | integrada | T0.1 | `application/src/keymap.rs` |
 | T2.G1 | pendiente | T1.6c | `adapters/telemetry/` |
 | T2.G2 | pendiente | T2.G1 | mismo crate |
 | T2.H1 ★ | en curso | T0.1 | `ui/src/app.rs` |
