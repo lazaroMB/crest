@@ -10,12 +10,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use application::ports::plugin::{
-    CallbackId, CommandSpec, HookSpec, KeyAction, KeyMode, KeymapSpec, McpServerSpec,
-    PluginDiagnostic, PluginToolSpec,
+    CallbackId, CommandSpec, HookSpec, KeymapSpec, McpServerSpec, PluginDiagnostic, PluginToolSpec,
 };
-use mlua::{Function, Lua, Table, Value};
-
-use crate::callbacks;
+use mlua::{Function, Lua, Table};
 
 /// Builds a phase's environment: globals readable through `__index`, its own
 /// `app` and a `require` that returns that `app`.
@@ -108,12 +105,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     app.set("mcp", crate::api::mcp::table(lua, sink, origin)?)?;
     app.set("plugins", lua.create_table()?)?;
 
-    let keymap = lua.create_table()?;
-    keymap.set("set", keymap_set(lua, sink, origin)?)?;
-    app.set("keymap", keymap)?;
-    let commands = lua.create_table()?;
-    commands.set("register", commands_register(lua, sink, origin)?)?;
-    app.set("commands", commands)?;
+    crate::api::keymap::install(lua, &app, sink, origin)?;
     let tools = lua.create_table()?;
     tools.set("register", crate::api::tools::register(lua, sink, origin)?)?;
     app.set("tools", tools)?;
@@ -138,104 +130,13 @@ pub(crate) fn report(lua: &Lua, sink: &Sink, origin: &Origin, message: String) {
     });
 }
 
-fn key_mode(name: &str) -> Option<KeyMode> {
-    match name {
-        "i" | "insert" => Some(KeyMode::Insert),
-        "n" | "normal" => Some(KeyMode::Normal),
-        "c" | "command" => Some(KeyMode::Command),
-        _ => None,
-    }
-}
-
-fn key_modes(value: &Value) -> Result<Vec<KeyMode>, String> {
-    let names: Vec<String> = match value {
-        Value::String(s) => vec![s.to_str().map_err(|e| e.to_string())?.to_owned()],
-        Value::Table(t) => t
-            .sequence_values::<String>()
-            .collect::<mlua::Result<_>>()
-            .map_err(|e| e.to_string())?,
-        other => {
-            return Err(format!(
-                "mode must be a string or a list, got {}",
-                other.type_name()
-            ));
-        }
-    };
-    names
-        .iter()
-        .map(|n| {
-            key_mode(n).ok_or_else(|| format!("unknown mode `{n}` (use \"n\", \"i\" or \"c\")"))
-        })
-        .collect()
-}
-
-fn keymap_set(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
-    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, (mode, lhs, action): (Value, Value, Value)| {
-        let parsed = (|| {
-            let modes = key_modes(&mode)?;
-            let Value::String(lhs) = lhs else {
-                return Err("keymap.set: the key sequence must be a string".to_owned());
-            };
-            let lhs = lhs.to_str().map_err(|e| e.to_string())?.to_owned();
-            let action = match action {
-                Value::String(s) => {
-                    KeyAction::Builtin(s.to_str().map_err(|e| e.to_string())?.to_owned())
-                }
-                Value::Function(f) => {
-                    KeyAction::Callback(callbacks::register(lua, f).map_err(|e| e.to_string())?)
-                }
-                other => {
-                    return Err(format!(
-                        "keymap.set: the action must be a string or a function, got {}",
-                        other.type_name()
-                    ));
-                }
-            };
-            Ok(modes
-                .into_iter()
-                .map(|mode| KeymapSpec {
-                    mode,
-                    lhs: lhs.clone(),
-                    action: action.clone(),
-                })
-                .collect::<Vec<_>>())
-        })();
-        match parsed {
-            Ok(specs) => lock(&sink).keymaps.extend(specs),
-            Err(message) => report(lua, &sink, &origin, message),
-        }
-        Ok(())
-    })
-}
-
-fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
-    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, (name, f): (Value, Value)| {
-        match (name, f) {
-            (Value::String(name), Value::Function(f)) => {
-                let name = name.to_str()?.trim_start_matches('/').to_owned();
-                let callback = callbacks::register(lua, f)?;
-                lock(&sink).commands.push(CommandSpec { name, callback });
-            }
-            _ => report(
-                lua,
-                &sink,
-                &origin,
-                "commands.register expects a name and a function".into(),
-            ),
-        }
-        Ok(())
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use application::ports::plugin::HookKind;
+    use application::ports::plugin::{HookKind, KeyAction, KeyMode};
     use serde_json::json;
 
     use super::*;
-    use crate::callbacks::CallbackIds;
+    use crate::callbacks::{self, CallbackIds};
     use crate::sandbox;
 
     fn lua() -> Lua {
