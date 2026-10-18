@@ -82,6 +82,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `:model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. With no argument it goes back to the default model. |
 | `:mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `:clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
+| `:modal close` | Closes the front [plugin modal](#plugin-modals). |
 | `:mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
 | `:plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
 | `:plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
@@ -178,6 +179,22 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Error | API, tool or config failures | Message and suggested action. |
 
 `t` only has an effect on Chart, Markdown and Mermaid. `y` copies the content of the selected block.
+
+### Plugin modals
+
+Plugins can open modal windows over the session ([plugins.md](plugins.md#appmodal-modal-windows)): a report, a gallery of screenshots, a table with a chart, a JSON document. Each has a header with its title, the plugin that opened it and a close button, and its content scrolls in both directions when it does not fit. A modal never covers the whole window: at least 20 px stay free on every side.
+
+| Key or action | Effect |
+| --- | --- |
+| `Esc` | Closes the front modal (the one opened last). |
+| Click on the dimmed area, or the `✕` button | Same. |
+| `:modal close` | Same, from the command line. |
+| Wheel, or the scrollbars | Scrolls the content. |
+| Images: `fit`, `1:1`, `−`, `+` | Fit to the width, natural size, zoom. When zoomed, drag pans and `Ctrl`/`Cmd` + wheel zooms; with the image focused (click), `+`/`-`, `1` and `0` do the same. |
+| JSON: click a row | Opens or closes that branch. |
+| Links | Open in your browser. |
+
+The focus goes back to where it was when the last modal closes. An approval dialog opened while a modal is up appears above it. Modals are not saved with the session.
 
 ### Cost
 

@@ -55,7 +55,7 @@ flowchart TB
 | `adapter-lua` | `crates/adapters/lua` | `mlua` host (Lua 5.4) on its own thread, with the sandbox, config loading and merging, and the `app` API. |
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |
 | `adapter-telemetry` | `crates/adapters/telemetry` | `tracing` spans and, with the `langfuse` feature, OTLP export to Langfuse. |
-| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers and approval dialog. |
+| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog and plugin modals. |
 | `crest` | `crates/bin` | Composition root: CLI, adapter construction, window or headless. |
 
 ## Ports and adapters
@@ -172,6 +172,7 @@ The use cases draw nothing: they emit `DomainEvent` (`ports/events.rs`) through 
 | `ModeChanged { mode }` | Permission mode (the window emits it when it changes). |
 | `TurnFinished { stop_reason }` / `TurnFailed { error }` | End of the turn. |
 | `Notice { level, message }` | Notice for the status bar. |
+| `ModalOpened { spec }` / `ModalUpdated { id, content }` / `ModalClosed { id }` | A plugin modal (`app.modal.*`), pushed by the Lua host. |
 
 ```mermaid
 flowchart LR
@@ -183,6 +184,8 @@ flowchart LR
 ```
 
 In the window, a single GPUI task consumes the channel. It batches the events already queued and applies them in order to `TimelineState`, which is a pure model tested without a window, and to the status bar. `TimelineSink` applies the same events to another `TimelineState`, which is the one saved with the session.
+
+The Lua host has the front end's sink too (`HostOptions::events`), so `app.modal.*` emit modal events directly from the `crest-lua` thread; they skip `TimelineSink` (modals are not saved) and the session hands them to the `ModalHost` overlay. Before any sink sees them, `ImageGuardSink` (`crates/bin/src/images.rs`) checks every image path in modals and `Custom` blocks with the workspace guard (inside the workspace, not sensitive) and replaces rejected images with a text node. `modal_bounds` (`domain::modal`) is the pure geometry rule the overlay draws with.
 
 ## Threads
 

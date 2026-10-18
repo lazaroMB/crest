@@ -7,6 +7,7 @@ A plugin is an `init.lua` that uses the `app` table to add things to crest:
 - `:` commands;
 - key mappings;
 - `Custom` blocks in the timeline;
+- [modal windows](#appmodal-modal-windows) over crest's window, with images, tables, charts, JSON, diagrams and documents;
 - MCP servers;
 - HTTP requests, programs and secrets, through [capabilities](#capabilities) the user approves.
 
@@ -69,6 +70,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.cmd(name)` | `string → nil` | Inside a keymap or command callback. |
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
+| `app.modal.open(def)`, `app.modal.update(id, node)`, `app.modal.close(id)` | see [below](#appmodal-modal-windows) | Anywhere: handlers, commands, keymaps, hooks. |
 | `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
 | `app.http.request(opts)`, `app.http.get(url, opts)`, `app.http.post(url, opts)` | → response table | Inside handlers and callbacks, with a `network:` capability. |
 | `app.shell.run(program, args, opts)` | → result table | Inside handlers and callbacks, with a `shell:` capability. |
@@ -205,10 +207,133 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | `app.ui.table({ columns = ..., rows = ... })` | table | `columns` is a non-empty list of names or of `{ name = "x", align = "left" \| "center" \| "right" }`. `rows` is a list of rows, and each row is a list of scalar cells (string, number, boolean). Every row must have one cell per column. |
 | `app.ui.chart({ title, kind, labels, series })` | chart | `kind` is `"bar"` (default), `"line"`, `"area"` or `"pie"`. `labels` is a list of strings and `series` is `{ { name = "x", values = { 1, 2 } }, ... }`. At least one series is required, each series has one finite value per label, and `pie` takes exactly one series. |
 | `app.ui.code(lang, src)` | highlighted code | `lang` can be `nil`. |
-| `app.ui.markdown(src)` | rendered markdown | |
+| `app.ui.markdown(src)` | rendered markdown | Links open in the browser (`http`, `https` and `mailto` only). |
+| `app.ui.image(path)` or `app.ui.image{ path = ..., data = ..., media_type = ..., alt = ..., fit = ... }` | picture | Give `path` (a file of the workspace) **or** `data` (base64, which needs `media_type`, e.g. `"image/png"`). PNG, JPEG, GIF and WebP (animated too), SVG, BMP, TIFF and ICO. `fit` is `"contain"` (default: natural size, scaled down to the width) or `"actual"` (1:1). A toolbar switches between fit, 1:1 and zoom; when zoomed, drag pans and `Ctrl`/`Cmd` + wheel zooms. See the [security notes](#modal-security) about paths. |
+| `app.ui.html(src)` | basic HTML | Headings, paragraphs, lists, tables, links, emphasis and code. No CSS layout, no scripts, no forms: it is not a browser. |
+| `app.ui.json(value [, { expand = n }])` | collapsible JSON tree | `value` is any Lua value. The first `n` levels start open (default 1). Click a row to open or close it. |
+| `app.ui.mermaid(src)` | Mermaid diagram | Pan and zoom like the Mermaid block. |
+| `app.ui.link(text, url)` or `app.ui.link(url)` | link | Opens the URL in your browser. Only `http`, `https` and `mailto` are accepted. |
+| `app.ui.diff(unified)` | colored diff | A unified diff (`@@`, `+`, `-` lines). |
+| `app.ui.csv(text [, { header = true, delimiter = "," }])` | table | Parses CSV (quotes, `""`, quoted newlines, `\r\n`) into a table node. Numbers become numbers (so they sort as such), empty cells nulls; short rows are padded. `header = false` names the columns `column 1`, `column 2`... Use `delimiter = "\t"` for TSV. |
 | `app.ui.block(name, node)` | the `Custom` block | Validates the whole tree and wraps it as the plugin's block. It must be **returned** from the handler. |
 
 An invalid argument (a table row of a different width, a series of a different length...) raises a Lua error prefixed with `app.ui.<function>:`, and the tool fails with that message. If you nest deeper than the window draws, the excess is cut off with a marker.
+
+### `app.modal`: modal windows
+
+A plugin can open windows over crest's window and fill them with the same nodes as `app.ui`: images, tables, charts, JSON, diagrams, documents. They are pushed at once from any plugin code (tool handlers, `:` commands, keymaps, hooks), so a tool can open a report and keep updating it while it works.
+
+```lua
+local id = app.modal.open{
+  id = "coverage",              -- optional; opening an id that is open replaces that modal
+  title = "Coverage report",    -- optional; default: the plugin's name
+  width = "60%", height = 80,   -- percent of the window: a number or "NN%"; default 70 × 70
+  position = "top-right",       -- optional; default "center"
+  content = app.ui.col{ app.ui.image{ path = "target/cov.png" }, app.ui.markdown("# Summary") },
+}
+app.modal.update(id, app.ui.table{ columns = { "file", "%" }, rows = rows })  -- replaces the content
+app.modal.close(id)
+```
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| `app.modal.open(def)` | the id (string) | Without `id` one is made up (`modal-1`, `modal-2`...). `content` is required: a node or a string. |
+| `app.modal.update(id, node)` | nothing | Does nothing if that modal is not open (the user may have closed it). |
+| `app.modal.close(id)` | nothing | Same. |
+
+Ids belong to the plugin: two plugins can both use `"report"` without touching each other's modal. Bad arguments raise a Lua error prefixed with `app.modal.<function>:` (an invalid size, an unknown or contradictory position, an invalid tree), and nothing is shown.
+
+**Geometry.** Sizes are percentages of crest's window, and the content always scrolls (both ways) when it is larger than the modal:
+
+- A modal never covers the whole window: a **20 px margin** stays free on every side, so `100%` is the window minus 40 px in each direction.
+- The size is that percentage of the room inside the margins.
+- `position` pins the modal to the margin of one or two sides: `top`, `bottom`, `left`, `right`, or a combination of one vertical and one horizontal anchor (`top-left`, `top-right`, `bottom-left`, `bottom-right`; `right-top` and `"top right"` work too). On an axis without an anchor the modal is centered. `left-right` and `top-bottom` are errors.
+- The modal follows the window when it is resized.
+
+```text
+┌───────────────────────── crest window ─────────────────────────┐
+│                         20 px margin                           │
+│   ┌──────────────── room for modals (100%) ────────────────┐   │
+│   │ top-left                top                  top-right │   │
+│   │                                                        │   │
+│   │ left                   center                    right │   │
+│   │                                                        │   │
+│   │ bottom-left            bottom             bottom-right │   │
+│   └────────────────────────────────────────────────────────┘   │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+In the window, the modal has a header with its title and the plugin, and a close button. `Esc` closes the front modal, as do a click on the dimmed area around it and `:modal close`. In headless mode there is no window: crest prints ``modal `<title>` opened (only visible in the window)`` and ignores updates.
+
+<a id="modal-security"></a>**Security.** An image `path` (in a modal or a `Custom` block) is checked before the window reads it, with the same rules as the file tools: it must resolve, following symlinks, inside the workspace, and must not match `app.permissions.sensitive_paths` (`.env`, `.git/`, keys...). A rejected image is replaced with a text node such as `[image unavailable: .env: ...]`. Images inside HTML or markdown cannot read local files. Links only open `http`, `https` and `mailto` URLs. Web pages cannot be embedded: link to them instead (see [research/rich-content-modals.md](research/rich-content-modals.md)).
+
+#### Example: an image gallery
+
+```lua
+app.commands.register("shots", function()
+  local items = {}
+  for _, name in ipairs({ "login.png", "settings.png", "error.png" }) do
+    items[#items + 1] = app.ui.col{ app.ui.text(name), app.ui.image{ path = "screenshots/" .. name } }
+  end
+  app.modal.open{ id = "shots", title = "Screenshots", width = 90, height = 90, content = app.ui.col(items) }
+end)
+```
+
+#### Example: a CSV table and a chart
+
+```lua
+app.plugin{ name = "bench", capabilities = { "shell:cat" } }
+app.tools.register({
+  name = "bench_report",
+  description = "Shows the benchmark results",
+  effect = "read",
+  handler = function()
+    local csv = app.shell.run("cat", { "target/bench.csv" }).stdout
+    local labels, values = {}, {}
+    for name, ms in csv:gmatch("\n([^,\n]+),([%d.]+)") do
+      labels[#labels + 1] = name
+      values[#values + 1] = tonumber(ms)
+    end
+    app.modal.open{
+      id = "bench", title = "Benchmarks", width = "70%", position = "right",
+      content = app.ui.col{
+        app.ui.chart{ title = "ms per run", kind = "bar", labels = labels, series = { { name = "ms", values = values } } },
+        app.ui.csv(csv),
+      },
+    }
+    return "the results are on screen"
+  end,
+})
+```
+
+#### Example: a JSON inspector
+
+```lua
+app.on("after_tool", function(ev)
+  if ev.name == "fetch_url" then
+    app.modal.open{
+      id = "last-fetch", title = "Last fetch_url", width = 40, height = 60, position = "bottom-right",
+      content = app.ui.json(ev, { expand = 2 }),
+    }
+  end
+end)
+```
+
+#### Example: a report with markdown and a diagram
+
+```lua
+app.commands.register("arch", function()
+  app.modal.open{
+    id = "arch", title = "Architecture",
+    content = app.ui.col{
+      app.ui.markdown("# Layers\n\nThe domain knows nothing about I/O. See [the docs](https://example.com/arch)."),
+      app.ui.mermaid("graph TD; bin --> ui; bin --> adapters; ui --> application; adapters --> application; application --> domain"),
+      app.ui.link("Open the full document", "https://example.com/arch"),
+    },
+  }
+end)
+```
 
 ### `app.mcp`: MCP servers
 
