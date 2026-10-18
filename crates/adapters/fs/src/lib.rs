@@ -6,12 +6,13 @@
 //!
 //! Layout: `read_file` lives in `read.rs` (task T2.D2) and the two-phase
 //! `edit_file`/`write_file` (`prepare_edit`, `prepare_write`, `apply`) in
-//! `write.rs` (task T2.D3). Until those land, the corresponding methods
-//! fail with [`FsError::Io`] naming the pending task. Every one of them must
+//! `write.rs` (task T2.D3). Until the latter lands, its methods fail with
+//! [`FsError::Io`] naming the pending task. Every one of them must
 //! go through the guard: [`WorkspaceGuard::resolve_readable`] for reads and
 //! [`WorkspaceGuard::resolve_for_write`] for writes, re-checked in `apply`.
 
 pub mod guard;
+mod read;
 
 use application::ports::fs::{
     EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
@@ -50,8 +51,8 @@ impl FileSystemPort for LocalFs {
         self.guard.root()
     }
 
-    async fn read_file(&self, _request: ReadFileRequest) -> Result<FileContent, FsError> {
-        Err(not_implemented("T2.D2"))
+    async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
+        read::read_file(&self.guard, &request).await
     }
 
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
