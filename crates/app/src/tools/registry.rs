@@ -20,6 +20,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use super::budget::ResultBudget;
 use crate::ports::approval::ApprovalPreview;
 use crate::ports::llm::ToolDefinition;
 
@@ -298,10 +299,12 @@ fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// The tools offered to the model, by name.
+/// The tools offered to the model, by name, and the budget their results
+/// are truncated to.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
+    budget: ResultBudget,
 }
 
 impl ToolRegistry {
@@ -309,6 +312,19 @@ impl ToolRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns the same registry truncating results to `budget`.
+    #[must_use]
+    pub fn with_budget(mut self, budget: ResultBudget) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    /// Budget applied to every tool result.
+    #[must_use]
+    pub fn budget(&self) -> ResultBudget {
+        self.budget
     }
 
     /// Adds `tool`.
@@ -388,7 +404,8 @@ impl ToolRegistry {
         tool.prepare(input, ctx).await
     }
 
-    /// Prepares and runs a call to `name` without asking for approval.
+    /// Prepares and runs a call to `name` without asking for approval,
+    /// truncating its output to the [`budget`](Self::budget).
     ///
     /// # Errors
     ///
@@ -399,7 +416,8 @@ impl ToolRegistry {
         input: Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        self.prepare(name, input, ctx).await?.run.await
+        let output = self.prepare(name, input, ctx).await?.run.await?;
+        Ok(self.budget.apply(output))
     }
 }
 
@@ -407,6 +425,7 @@ impl fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ToolRegistry")
             .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .field("budget", &self.budget)
             .finish()
     }
 }
@@ -522,6 +541,16 @@ mod tests {
             Err(RegisterError::InvalidName("bad name".into()))
         );
         assert_eq!(registry.names().collect::<Vec<_>>(), ["echo"]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_truncates_to_the_budget() {
+        let registry = registry().with_budget(ResultBudget::new(1));
+        let out = registry
+            .dispatch("echo", json!({ "text": "uno\ndos" }), &ctx())
+            .await
+            .unwrap();
+        assert!(out.text_content().starts_with("uno\n[1 líneas más"));
     }
 
     #[test]

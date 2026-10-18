@@ -720,7 +720,8 @@ impl TurnRun<'_> {
             output: None,
         });
         let started = Instant::now();
-        let mut output = prepared.run.await.unwrap_or_else(ToolOutput::from);
+        let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
+        let mut output = self.service.tools.budget().apply(output);
         self.service.deps.telemetry.tool_call(ToolCallRecord {
             parent: self.span,
             name: name.to_owned(),

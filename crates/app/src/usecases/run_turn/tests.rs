@@ -401,3 +401,24 @@ fn run_turn_future_is_send() {
         .run_turn(&mut h.session, "hola", TurnOptions::default());
     assert_send(&fut);
 }
+
+#[tokio::test]
+async fn tool_results_are_truncated_to_the_budget() {
+    let long = (1..=50).map(|i| format!("línea {i}")).collect::<Vec<_>>();
+    let mut h = Harness::with(
+        vec![
+            ScriptedResponse::tool_use("toolu_1", "echo", json!({ "text": long.join("\n") })),
+            ScriptedResponse::text("ok"),
+        ],
+        PermissionMode::Ask,
+        |tools| {
+            *tools = std::mem::take(tools).with_budget(crate::tools::budget::ResultBudget::new(10));
+        },
+    );
+    h.run("hola").await.unwrap();
+    let (text, is_error) = &h.tool_results()[0];
+    assert!(!is_error);
+    assert!(text.starts_with("echo: línea 1\nlínea 2\n"), "{text}");
+    assert!(text.contains("líneas más omitidas"), "{text}");
+    assert!(text.len() < 200, "{text}");
+}
