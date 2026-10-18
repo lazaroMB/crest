@@ -4,8 +4,9 @@
 //! visible change of a turn (new block, streamed text, tool status, usage,
 //! warnings) has a [`DomainEvent`].
 
-use domain::block::{Block, BlockId, ToolStatus};
+use domain::block::{Block, BlockId, CustomNode, ToolStatus};
 use domain::conversation::{SessionId, StopReason, TurnId, Usage};
+use domain::modal::{ModalId, ModalSpec};
 use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
 use serde::{Deserialize, Serialize};
@@ -130,6 +131,35 @@ pub enum DomainEvent {
         /// Text to show.
         message: String,
     },
+    /// A plugin opened a modal, or replaced the one with the same id.
+    ModalOpened {
+        /// What to show and where.
+        spec: ModalSpec,
+    },
+    /// A plugin replaced the content of an open modal.
+    ModalUpdated {
+        /// The modal.
+        id: ModalId,
+        /// Its new content.
+        content: CustomNode,
+    },
+    /// A plugin closed a modal.
+    ModalClosed {
+        /// The modal.
+        id: ModalId,
+    },
+}
+
+impl DomainEvent {
+    /// Whether this event is about a plugin modal; those are not part of
+    /// the saved timeline.
+    #[must_use]
+    pub fn is_modal(&self) -> bool {
+        matches!(
+            self,
+            Self::ModalOpened { .. } | Self::ModalUpdated { .. } | Self::ModalClosed { .. }
+        )
+    }
 }
 
 /// Receives the domain events of the use cases.
@@ -218,10 +248,32 @@ mod tests {
                 level: NoticeLevel::Warning,
                 message: "unknown model".into(),
             },
+            DomainEvent::ModalOpened {
+                spec: ModalSpec {
+                    id: ModalId::new("p/coverage"),
+                    plugin: "p".into(),
+                    title: "Coverage".into(),
+                    width: "60%".parse().unwrap(),
+                    height: domain::modal::Percent::FULL,
+                    position: "top-right".parse().unwrap(),
+                    content: CustomNode::Text { text: "x".into() },
+                },
+            },
+            DomainEvent::ModalUpdated {
+                id: ModalId::new("p/coverage"),
+                content: CustomNode::Markdown {
+                    source: "# hi".into(),
+                },
+            },
+            DomainEvent::ModalClosed {
+                id: ModalId::new("p/coverage"),
+            },
         ];
         for event in &events {
             round_trip(event);
         }
+        let modal = events.iter().filter(|e| e.is_modal()).count();
+        assert_eq!(modal, 3);
     }
 
     #[test]
