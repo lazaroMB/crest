@@ -146,6 +146,7 @@ dependencies = [
  "application",
  "domain",
  "rusqlite",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
 ]
