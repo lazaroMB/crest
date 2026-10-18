@@ -113,12 +113,18 @@ impl ActionRequest {
 pub enum DenyReason {
     /// The policy is in plan (read-only) mode.
     PlanMode,
+    /// A user rule denies it.
+    Rule {
+        /// The rule that matched.
+        rule: PermissionRule,
+    },
 }
 
 impl fmt::Display for DenyReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PlanMode => f.write_str("plan mode is read-only"),
+            Self::Rule { rule } => write!(f, "denied by a rule for `{}`", rule.tool),
         }
     }
 }
@@ -223,13 +229,27 @@ impl PermissionRule {
 pub struct PermissionPolicy {
     /// Current mode.
     pub mode: PermissionMode,
+    /// User rules, in the order they were added.
+    #[serde(default)]
+    pub rules: Vec<PermissionRule>,
 }
 
 impl PermissionPolicy {
     /// A policy in `mode`.
     #[must_use]
     pub const fn new(mode: PermissionMode) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            rules: Vec::new(),
+        }
+    }
+
+    /// Adds `rule` ("allow always" or a denial), ignoring exact duplicates.
+    /// Persisting it per workspace is the caller's job.
+    pub fn remember(&mut self, rule: PermissionRule) {
+        if !self.rules.contains(&rule) {
+            self.rules.push(rule);
+        }
     }
 
     /// Advances to the next mode (`<leader>p`) and returns it.
@@ -239,9 +259,27 @@ impl PermissionPolicy {
     }
 
     /// Decides what to do with `request`.
+    ///
+    /// Priority: a matching `Deny` rule always wins (even for reads); then
+    /// the mode decides, except that a matching `AllowAlways` rule turns an
+    /// `Ask` into `Allow`. `AllowAlways` never lifts a mode denial.
     #[must_use]
     pub fn decide(&self, request: &ActionRequest) -> Decision {
-        mode_decision(self.mode, request.effect)
+        let mut matching = self.rules.iter().filter(|rule| rule.applies_to(request));
+        if let Some(rule) = matching
+            .clone()
+            .find(|rule| rule.decision == RuleDecision::Deny)
+        {
+            return Decision::Deny {
+                reason: DenyReason::Rule { rule: rule.clone() },
+            };
+        }
+        match mode_decision(self.mode, request.effect) {
+            Decision::Ask if matching.any(|rule| rule.decision == RuleDecision::AllowAlways) => {
+                Decision::Allow
+            }
+            decision => decision,
+        }
     }
 }
 
@@ -431,5 +469,123 @@ mod tests {
             serde_json::from_value::<RuleMatcher>(any).unwrap(),
             RuleMatcher::Any
         );
+    }
+
+    #[test]
+    fn rule_priority_table() {
+        use Decision::{Allow, Ask};
+        use PermissionMode as M;
+        use ToolEffect as E;
+        let allow_cargo_test = PermissionRule::new(
+            "run_command",
+            RuleMatcher::Prefix("cargo test".into()),
+            RuleDecision::AllowAlways,
+        );
+        let deny_rm = PermissionRule::new(
+            "run_command",
+            RuleMatcher::Prefix("rm".into()),
+            RuleDecision::Deny,
+        );
+        let allow_all_commands =
+            PermissionRule::new("run_command", RuleMatcher::Any, RuleDecision::AllowAlways);
+        let allow_src = PermissionRule::new(
+            ANY_TOOL,
+            RuleMatcher::Prefix("src/".into()),
+            RuleDecision::AllowAlways,
+        );
+        let deny_env = PermissionRule::new(
+            ANY_TOOL,
+            RuleMatcher::Exact(".env".into()),
+            RuleDecision::Deny,
+        );
+        let deny = |rule: &PermissionRule| Decision::Deny {
+            reason: DenyReason::Rule { rule: rule.clone() },
+        };
+        let rules = vec![
+            allow_cargo_test.clone(),
+            allow_all_commands.clone(),
+            deny_rm.clone(),
+            allow_src,
+            deny_env.clone(),
+        ];
+
+        let cases = [
+            // AllowAlways turns Ask into Allow.
+            (
+                M::Ask,
+                "run_command",
+                E::Execute,
+                "cargo test -p domain",
+                Allow,
+            ),
+            (M::AutoEdit, "run_command", E::Execute, "cargo test", Allow),
+            (M::Ask, "edit_file", E::Write, "src/lib.rs", Allow),
+            // No matching rule: the mode decides.
+            (M::Ask, "edit_file", E::Write, "docs/PLAN.md", Ask),
+            (M::AutoEdit, "edit_file", E::Write, "docs/PLAN.md", Allow),
+            (M::Ask, "web_fetch", E::Network, "https://example.com", Ask),
+            // Deny wins over a matching AllowAlways, in every mode.
+            (
+                M::Ask,
+                "run_command",
+                E::Execute,
+                "rm -rf target",
+                deny(&deny_rm),
+            ),
+            (
+                M::AutoEdit,
+                "run_command",
+                E::Execute,
+                "rm -rf target",
+                deny(&deny_rm),
+            ),
+            (
+                M::Plan,
+                "run_command",
+                E::Execute,
+                "rm -rf target",
+                deny(&deny_rm),
+            ),
+            // Deny also applies to reads.
+            (M::Ask, "read_file", E::Read, ".env", deny(&deny_env)),
+            (M::Ask, "read_file", E::Read, "src/lib.rs", Allow),
+            // AllowAlways never lifts the plan-mode denial.
+            (M::Plan, "run_command", E::Execute, "cargo test", PLAN_DENY),
+            (M::Plan, "edit_file", E::Write, "src/lib.rs", PLAN_DENY),
+        ];
+        for (mode, tool, effect, subject, expected) in cases {
+            let policy = PermissionPolicy {
+                mode,
+                rules: rules.clone(),
+            };
+            let request = ActionRequest::new(tool, effect, subject);
+            assert_eq!(policy.decide(&request), expected, "{mode} / {request:?}");
+        }
+    }
+
+    #[test]
+    fn remember_allow_always_skips_future_asks() {
+        let mut policy = PermissionPolicy::new(PermissionMode::Ask);
+        let request = ActionRequest::new("run_command", ToolEffect::Execute, "cargo test");
+        assert_eq!(policy.decide(&request), Decision::Ask);
+
+        let rule = PermissionRule::new(
+            "run_command",
+            RuleMatcher::Exact("cargo test".into()),
+            RuleDecision::AllowAlways,
+        );
+        policy.remember(rule.clone());
+        policy.remember(rule);
+        assert_eq!(policy.rules.len(), 1, "duplicates are ignored");
+        assert_eq!(policy.decide(&request), Decision::Allow);
+        let other = ActionRequest::new("run_command", ToolEffect::Execute, "cargo build");
+        assert_eq!(policy.decide(&other), Decision::Ask);
+    }
+
+    #[test]
+    fn policy_deserializes_without_rules() {
+        let policy: PermissionPolicy =
+            serde_json::from_value(serde_json::json!({ "mode": "auto-edit" })).unwrap();
+        assert_eq!(policy, PermissionPolicy::new(PermissionMode::AutoEdit));
     }
 }
