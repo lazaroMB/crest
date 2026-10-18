@@ -204,6 +204,8 @@ pub struct SessionParts {
     pub keymap: Keymap<Action>,
     /// Wait for the next key of a sequence (`app.opt.timeoutlen`).
     pub timeoutlen: Option<Duration>,
+    /// Timeline of a resumed session, shown before any event.
+    pub history: Vec<Block>,
 }
 
 impl SessionParts {
@@ -226,6 +228,7 @@ impl SessionParts {
             model: None,
             keymap: default_keymap(),
             timeoutlen: None,
+            history: Vec::new(),
         }
     }
 }
@@ -307,8 +310,16 @@ impl Session {
             model,
             keymap,
             timeoutlen,
+            history,
         } = parts;
-        let timeline = cx.new(TimelineView::new);
+        let timeline = cx.new(|cx| {
+            let mut timeline = TimelineView::new(cx);
+            let restored = history
+                .into_iter()
+                .map(|block| DomainEvent::BlockAdded { block });
+            timeline.apply_all(restored, cx);
+            timeline
+        });
         let status = cx.new(|_| StatusView::new(workspace_label));
         let mode = controller.permission_mode();
         status.update(cx, |status, cx| {
@@ -1023,6 +1034,14 @@ mod tests {
         script: Vec<ScriptedResponse>,
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_with(script, Vec::new(), cx)
+    }
+
+    fn harness_with(
+        script: Vec<ScriptedResponse>,
+        history: Vec<Block>,
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs = Arc::new(
@@ -1065,6 +1084,7 @@ mod tests {
             .keymap
             .set(Mode::Normal, "<leader>x", Action::Callback(7))
             .unwrap();
+        parts.history = history;
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
         let (_host, cx) = cx.add_window_view(move |window, cx| {
@@ -1282,6 +1302,27 @@ mod tests {
             assert_eq!(s.model_override(), Some("opus"));
         });
         assert!(blocks(&h, cx).is_empty(), ":clear empties the timeline");
+    }
+
+    #[gpui::test]
+    fn a_resumed_history_is_shown_before_new_blocks(cx: &mut TestAppContext) {
+        let (h, cx) = harness_with(
+            vec![ScriptedResponse::text("sigo")],
+            vec![
+                prompt_block("antes"),
+                Block::new(BlockKind::Text {
+                    markdown: "respuesta".into(),
+                }),
+            ],
+            cx,
+        );
+        send("después", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).collect::<Vec<_>>(),
+            ["> antes\n", "respuesta", "> después\n", "sigo"]
+        );
     }
 
     #[gpui::test]
