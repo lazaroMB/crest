@@ -17,8 +17,14 @@ pub mod stage;
 pub mod table;
 pub mod thinking;
 
-use domain::block::BlockKind;
-use gpui::{AnyElement, App, IntoElement as _, ParentElement as _, Styled as _, Window, div};
+use std::any::TypeId;
+use std::collections::HashMap;
+
+use domain::block::{BlockId, BlockKind};
+use gpui::{
+    AnyElement, AnyEntity, App, AppContext as _, Context, Entity, Global, IntoElement as _,
+    ParentElement as _, Styled as _, Window, div,
+};
 use gpui_component::ActiveTheme as _;
 
 use crate::timeline::TimelineEntry;
@@ -50,4 +56,57 @@ pub(crate) fn placeholder(entry: &TimelineEntry, cx: &App) -> AnyElement {
         .text_color(cx.theme().muted_foreground)
         .child(format!("[{}]", kind_name(&entry.block.kind)))
         .into_any_element()
+}
+
+/// Entities that block renderers keep across frames, by block and type.
+///
+/// The timeline list drops off-screen rows, so state kept in element state
+/// (`use_keyed_state`) would reset when a block scrolls away; this map
+/// keeps it for the life of the app. Blocks are never removed from a
+/// session, so neither are their entries.
+#[derive(Default)]
+struct BlockStates(HashMap<(BlockId, TypeId), AnyEntity>);
+
+impl Global for BlockStates {}
+
+/// The `T` entity of block `id`, created with `init` on first use.
+pub(crate) fn block_state<T: 'static>(
+    id: BlockId,
+    window: &mut Window,
+    cx: &mut App,
+    init: impl FnOnce(&mut Window, &mut Context<T>) -> T,
+) -> Entity<T> {
+    let key = (id, TypeId::of::<T>());
+    let existing = cx.default_global::<BlockStates>().0.get(&key).cloned();
+    if let Some(entity) = existing.and_then(|any| any.downcast::<T>().ok()) {
+        return entity;
+    }
+    let entity = cx.new(|cx| init(window, cx));
+    cx.default_global::<BlockStates>()
+        .0
+        .insert(key, entity.clone().into_any());
+    entity
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    struct Counter(u32);
+
+    #[gpui::test]
+    fn block_state_is_created_once_per_block(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (a, b) = (BlockId::new(), BlockId::new());
+        let first = cx.update(|window, cx| block_state(a, window, cx, |_, _| Counter(1)));
+        first.update(cx, |counter, _| counter.0 = 7);
+        let again = cx.update(|window, cx| block_state(a, window, cx, |_, _| Counter(1)));
+        let other = cx.update(|window, cx| block_state(b, window, cx, |_, _| Counter(2)));
+        assert_eq!(first, again);
+        cx.update(|_, cx| {
+            assert_eq!(again.read(cx).0, 7);
+            assert_eq!(other.read(cx).0, 2);
+        });
+    }
 }
