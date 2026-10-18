@@ -4,9 +4,9 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 
 | ID | Estado | Depende de | Alcance |
 | --- | --- | --- | --- |
-| T0.1 ★ | pendiente | — | raíz, `crates/*/Cargo.toml` |
+| T0.1 ★ | en curso | — | raíz, `crates/*/Cargo.toml` |
 | T0.2 | pendiente | T0.1 | `Makefile` |
-| T0.3 | pendiente | — | `scripts/install-deps.sh` |
+| T0.3 | en curso | — | `scripts/install-deps.sh` |
 | T0.4 | pendiente | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
 | T0.5 | pendiente | T0.2, T0.3, T0.4 | `.github/workflows/` |
 | T1.1 ★ | pendiente | T0.1 | `domain/src/conversation.rs` |
