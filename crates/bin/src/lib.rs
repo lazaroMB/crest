@@ -5,6 +5,7 @@
 
 pub mod args;
 pub mod headless;
+pub mod mcp;
 pub mod root;
 pub mod startup;
 pub mod telemetry;
