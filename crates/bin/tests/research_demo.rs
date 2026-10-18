@@ -7,10 +7,10 @@
 //! in `evidence/`, Mermaid diagrams and cited sources), `plan.json`,
 //! `plan.md`, `journal.md` and `sources.json`. On the way:
 //!
-//! - the app is closed while node 6 (Experimentos) runs, and reopening it
+//! - the app is closed while node 6 (Experiments) runs, and reopening it
 //!   says so and `resume` continues at node 6;
 //! - the critical review rejects a Spec with a claim without evidence and
-//!   sends the flow back to Datos, the stage that collects evidence;
+//!   sends the flow back to Data, the stage that collects evidence;
 //! - Prototipo is skipped with `/skip`.
 
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
@@ -69,7 +69,7 @@ fn intake() -> ScriptedResponse {
     }))
 }
 
-/// Observación: reads `src/lib.rs`, then reports.
+/// Observation: reads `src/lib.rs`, then reports.
 fn observation() -> Vec<ScriptedResponse> {
     vec![
         ScriptedResponse::tool_use("obs1", "read_file", json!({ "path": "src/lib.rs" })),
@@ -104,7 +104,7 @@ fn analysis() -> ScriptedResponse {
         "charts": [{
             "title": "add(2, 2)",
             "kind": "bar",
-            "labels": ["esperado", "obtenido"],
+            "labels": ["expected", "obtained"],
             "series": [{ "name": "resultado", "values": [4.0, 0.0] }],
             "evidence_ids": ["E1"]
         }]
@@ -124,7 +124,7 @@ fn hypotheses(keep: bool) -> ScriptedResponse {
     text(json!({ "effect": "add devuelve la resta", "hypotheses": [h] }))
 }
 
-/// Experimentos: runs `sh test.sh` (approved on stdin), then reports.
+/// Experiments: runs `sh test.sh` (approved on stdin), then reports.
 fn experiments() -> Vec<ScriptedResponse> {
     vec![
         ScriptedResponse::tool_use(
@@ -141,8 +141,8 @@ fn experiments() -> Vec<ScriptedResponse> {
                 "result": "supported",
                 "observation": "test.sh imprime add(2, 2) = 0",
                 "measurements": [
-                    { "label": "esperado", "value": 4.0, "unit": "" },
-                    { "label": "obtenido", "value": 0.0, "unit": "" }
+                    { "label": "expected", "value": 4.0, "unit": "" },
+                    { "label": "obtained", "value": 0.0, "unit": "" }
                 ]
             }]
         })),
@@ -248,7 +248,7 @@ fn review_without_gaps() -> ScriptedResponse {
 }
 
 /// Until the app is closed during node 6: Intake to Hipótesis, then the
-/// first call of Experimentos never answers.
+/// first call of Experiments never answers.
 fn script_before_closing() -> Vec<ScriptedResponse> {
     let mut script = vec![intake()];
     script.extend(observation());
@@ -257,8 +257,8 @@ fn script_before_closing() -> Vec<ScriptedResponse> {
     script
 }
 
-/// After reopening: Experimentos to the review that rejects the Spec,
-/// the second pass from Datos, and the review that approves it.
+/// After reopening: Experiments to the review that rejects the Spec,
+/// the second pass from Data, and the review that approves it.
 fn script_after_reopening() -> Vec<ScriptedResponse> {
     let sound = "La función `add` resta en vez de sumar [E1] y test.sh lo confirma [E2].";
     let mut script = experiments();
@@ -270,9 +270,9 @@ fn script_after_reopening() -> Vec<ScriptedResponse> {
         spec(&format!("{sound}\n\n{UNCITED}")),
         plan(),
     ]);
-    // The review rejects without asking the model; back at Datos.
+    // The review rejects without asking the model; back at Data.
     script.extend([data(), analysis(), hypotheses(true)]);
-    // H1 already has a result: Experimentos runs no agent turn.
+    // H1 already has a result: Experiments runs no agent turn.
     script.extend(definition());
     script.extend(research());
     script.extend([brainstorm(), modeling(), spec(sound), plan()]);
@@ -367,7 +367,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
     }
     drop(app);
     let first = output.text();
-    assert!(first.contains("Experimentos"), "{first}");
+    assert!(first.contains("Experiments"), "{first}");
 
     // 2. Reopening says a flow is pending at node 6 and resumes it there.
     let answers = "y\nsí\nsí\n/skip\nsí\nsí\nsí\n/skip\nsí\n";
@@ -386,7 +386,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
     assert!(
         serde_json::to_string(&first_resumed.messages)
             .unwrap()
-            .contains("Experimentos"),
+            .contains("Experiments"),
         "the first call after reopening is node 6"
     );
     assert!(out.contains("Allow run_command"), "{out}");
@@ -397,7 +397,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
         "{out}"
     );
     assert!(out.contains("run_command"), "{out}");
-    assert!(out.contains("Revisión: 1 huecos"), "{out}");
+    assert!(out.contains("Review: 1 gaps"), "{out}");
 
     // 3. The folder of the Spec.
     let folder = spec_folder(&ws.root);
@@ -415,7 +415,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
         spec_md.contains("[E1]") && spec_md.contains("[E2]"),
         "{spec_md}"
     );
-    assert!(spec_md.contains("## 10. Fuentes"), "{spec_md}");
+    assert!(spec_md.contains("## 10. Sources"), "{spec_md}");
     assert!(spec_md.contains("`src/lib.rs:1-3`"), "{spec_md}");
     assert!(!spec_md.contains(UNCITED), "{spec_md}");
     let chart = spec_md
@@ -428,7 +428,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
     let csv = read(&folder.join(&chart));
     assert!(csv.starts_with("label,"), "{csv}");
     assert!(
-        csv.contains("esperado,4") && csv.contains("obtenido,0"),
+        csv.contains("expected,4") && csv.contains("obtained,0"),
         "{csv}"
     );
 
@@ -440,12 +440,12 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
     assert_eq!(sources.len(), 2, "{sources:?}");
 
     // 4. The review rejected the uncited claim and sent the flow back to
-    //    Datos, as the journal tells.
+    //    Data, as the journal tells.
     let journal = read(&folder.join("journal.md"));
-    assert!(journal.contains("Regreso a Datos"), "{journal}");
+    assert!(journal.contains("Back to Data"), "{journal}");
     assert!(journal.contains(UNCITED), "{journal}");
-    assert!(journal.contains("Etapa saltada (/skip)"), "{journal}");
-    assert!(read(&folder.join("review.md")).contains("sin huecos") || out.contains("sin huecos"));
+    assert!(journal.contains("Stage skipped (/skip)"), "{journal}");
+    assert!(read(&folder.join("review.md")).contains("No major gaps") || out.contains("no gaps"));
 
     // 5. With the flow finished the chat is the chat again.
     assert!(!app.research.as_ref().unwrap().is_active());

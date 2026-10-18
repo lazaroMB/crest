@@ -391,7 +391,7 @@ fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContex
     cx.simulate_input("implement 0001-suma");
     cx.simulate_keystrokes("enter");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !has_text(&w, cx, "Responde «sí» para crear la rama") {
+    while !has_text(&w, cx, "Answer \"yes\" to create the branch") {
         assert!(
             Instant::now() < deadline,
             "timed out waiting for the plan gate"
@@ -456,7 +456,7 @@ fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
     cx.simulate_input("research add(2, 2) devuelve 0");
     cx.simulate_keystrokes("enter");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !has_text(&w, cx, "seguir con Observación") {
+    while !has_text(&w, cx, "go on to Observation") {
         assert!(
             Instant::now() < deadline,
             "timed out waiting for the Intake gate: {:?}",

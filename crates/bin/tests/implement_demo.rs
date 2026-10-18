@@ -249,10 +249,10 @@ async fn implements_the_spec_end_to_end() {
     assert_eq!(demo.file("calc.sh"), with_mul);
 
     // Tests with a retry: the first run fails, the fix passes.
-    assert!(out.contains("== Cargar plan (1/6) =="), "{out}");
+    assert!(out.contains("== Load plan (1/6) =="), "{out}");
     assert!(out.contains("T1 → T2"), "{out}");
-    assert!(out.contains("sh tests/add.sh | falla (exit 1)"), "{out}");
-    assert!(out.contains("sh tests/add.sh | pasa"), "{out}");
+    assert!(out.contains("sh tests/add.sh | fails (exit 1)"), "{out}");
+    assert!(out.contains("sh tests/add.sh | passes"), "{out}");
     // README.md asked and was approved.
     assert!(
         out.contains("Allow write_file README.md? [y]es / [a]lways / [n]o: y\n"),
@@ -260,25 +260,25 @@ async fn implements_the_spec_end_to_end() {
     );
     // Verification: expected against obtained.
     assert!(
-        out.contains("Prueba | Comando | Esperado | Obtenido | Cumple"),
+        out.contains("Test | Command | Expected | Obtained | Holds"),
         "{out}"
     );
     assert!(
-        out.contains("Hipótesis | sh bench.sh | p95 < 20ms | p95 4ms | yes"),
+        out.contains("Hypothesis | sh bench.sh | p95 < 20ms | p95 4ms | yes"),
         "{out}"
     );
     assert!(
-        out.contains("C1 | sh tests/add.sh | pasa (exit 0) | pasa | yes"),
+        out.contains("C1 | sh tests/add.sh | passes (exit 0) | passes | yes"),
         "{out}"
     );
-    assert!(out.contains("flujo de implementación terminado"), "{out}");
+    assert!(out.contains("implementation flow finished"), "{out}");
 
     // report.md in the Spec folder, with the deviation from the journal.
     let report = demo.file(&format!(".crest/specs/{SPEC}/report.md"));
-    assert!(report.contains("- Tareas hechas: 2 de 2"), "{report}");
+    assert!(report.contains("- Tasks done: 2 of 2"), "{report}");
     assert!(report.contains("README.md"), "{report}");
     assert!(report.contains("agregar la división"), "{report}");
-    assert!(report.contains("| Hipótesis |"), "{report}");
+    assert!(report.contains("| Hypothesis |"), "{report}");
 
     // The flow was checkpointed in SQLite: opening the plan again finds the
     // finished flow and starts a new one.
@@ -299,13 +299,13 @@ async fn a_task_that_exhausts_its_retries_stops_and_asks() {
         script.push(write(&format!("toolu_{n}"), "calc.sh", WRONG_FIX));
         script.push(ScriptedResponse::text("Listo.\nSTATUS: done"));
     }
-    let demo = demo("sí\nvolver al spec\n", script).await;
+    let demo = demo("yes\nback to spec\n", script).await;
     let exit = demo.run(SPEC).await;
     let out = demo.output.text();
     assert_eq!(exit, Exit::TurnFailed, "{out}");
 
-    assert_eq!(out.matches("sh tests/add.sh | falla (exit 1)").count(), 4);
-    assert!(out.contains("agotó sus 3 intentos de corrección"), "{out}");
+    assert_eq!(out.matches("sh tests/add.sh | fails (exit 1)").count(), 4);
+    assert!(out.contains("used up its 3 fix attempts"), "{out}");
     assert!(out.contains("add 2 3 = 6, esperaba 5"), "{out}");
     assert!(out.contains("/back spec"), "{out}");
     // Nothing was committed.
