@@ -1344,7 +1344,7 @@ mod tests {
         });
         cx.run_until_parked();
         let modal = h.session.read_with(cx, |s, _| s.modal().clone());
-        modal.read_with(cx, |m, _| assert_eq!(m.ids(), [id.clone()]));
+        modal.read_with(cx, |m, _| assert_eq!(m.ids(), std::slice::from_ref(&id)));
         assert!(blocks(&h, cx).is_empty(), "modals are not timeline blocks");
         // Esc closes it and the input gets the focus back.
         cx.simulate_keystrokes("escape");

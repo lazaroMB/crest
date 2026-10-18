@@ -22,7 +22,7 @@ fn text(s: &str) -> CustomNode {
 
 fn host(cx: &mut TestAppContext) -> (Entity<ModalHost>, &mut VisualTestContext) {
     cx.update(gpui_component::init);
-    cx.add_window_view(|window, cx| ModalHost::new(window, cx))
+    cx.add_window_view(ModalHost::new)
 }
 
 fn apply(host: &Entity<ModalHost>, event: DomainEvent, cx: &mut VisualTestContext) {
@@ -139,7 +139,9 @@ fn update_replaces_and_reopen_brings_to_front(cx: &mut TestAppContext) {
     });
     draw(&host, cx);
     apply(&host, DomainEvent::ModalClosed { id: b.clone() }, cx);
-    host.read_with(cx, |host, _| assert_eq!(host.ids(), [a.clone()]));
+    host.read_with(cx, |host, _| {
+        assert_eq!(host.ids(), std::slice::from_ref(&a))
+    });
 }
 
 #[gpui::test]

@@ -139,7 +139,7 @@ impl ImageView {
 
     /// Moves the zoomed image by `delta`.
     pub fn pan_by(&mut self, delta: Point<Pixels>, cx: &mut Context<Self>) {
-        self.offset = self.offset + delta;
+        self.offset += delta;
         cx.notify();
     }
 
