@@ -6,3 +6,4 @@ pub mod blocks;
 pub mod input;
 pub mod status;
 pub mod timeline;
+pub mod tree;
