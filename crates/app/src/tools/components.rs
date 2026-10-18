@@ -1,5 +1,7 @@
 //! Component tools: the model calls them to show rich blocks in the
-//! timeline (`show_chart`, …).
+//! timeline (`show_chart`, `show_table`, `show_mermaid`, `show_markdown`).
+//! [`register_component_tools`] adds them all and [`COMPONENT_TOOLS_PROMPT`]
+//! tells the model when to use each.
 //!
 //! Each input is plain JSON validated against a schema derived with
 //! `schemars` and then by the block's own `validate()`; a bad input comes
@@ -18,7 +20,9 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
+use super::registry::{
+    PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
+};
 
 /// An input error for the model to fix.
 fn invalid(tool: &str, message: impl Into<String>) -> ToolError {
@@ -318,13 +322,49 @@ impl TypedTool for ShowMarkdownTool {
     }
 }
 
+/// System prompt section explaining when to use each component tool.
+pub const COMPONENT_TOOLS_PROMPT: &str = "\
+# Showing results
+
+The timeline can show rich components. Use them when they make a result \
+easier to read than prose:
+
+- `show_chart`: quantities across categories or over time (sizes by file \
+type, durations per run, commits per week). `bar` compares categories, \
+`line`/`area` show trends, `pie` shows parts of a whole with one series.
+- `show_table`: records with several attributes or exact values the user \
+will scan, sort or compare (largest files, failing tests with their errors).
+- `show_mermaid`: structure and flow (module dependencies, call sequences, \
+state machines, data models).
+- `show_markdown`: a long, self-contained document worth reading on its own \
+(a report, a plan, a review). Short answers go in your normal reply.
+
+Gather the data first with the other tools; never invent numbers. Each \
+component tool returns only a short confirmation because the user already \
+sees the component: do not repeat its data, add a sentence or two with the \
+insight instead. If a call fails with an input error, fix the input and \
+call it again.";
+
+/// Registers `show_chart`, `show_table`, `show_mermaid` and
+/// `show_markdown`.
+///
+/// # Errors
+///
+/// [`RegisterError::Duplicate`] when one of them is already registered.
+pub fn register_component_tools(registry: &mut ToolRegistry) -> Result<(), RegisterError> {
+    registry.register_typed(ShowChartTool)?;
+    registry.register_typed(ShowTableTool)?;
+    registry.register_typed(ShowMermaidTool)?;
+    registry.register_typed(ShowMarkdownTool)
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::tools::registry::{Tool, ToolRegistry, Typed};
+    use crate::tools::registry::{Tool, Typed};
     use domain::block::Align;
 
     fn ctx() -> ToolContext {
@@ -596,6 +636,26 @@ mod tests {
         assert_eq!(
             invalid_message(call(ShowMarkdownTool, json!({ "source": "" })).await),
             "document source is empty"
+        );
+    }
+
+    #[test]
+    fn registers_the_four_component_tools() {
+        let mut registry = ToolRegistry::new();
+        register_component_tools(&mut registry).unwrap();
+        assert_eq!(
+            registry.names().collect::<Vec<_>>(),
+            ["show_chart", "show_markdown", "show_mermaid", "show_table"]
+        );
+        for name in registry.names() {
+            assert!(
+                COMPONENT_TOOLS_PROMPT.contains(&format!("`{name}`")),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            register_component_tools(&mut registry),
+            Err(RegisterError::Duplicate("show_chart".into()))
         );
     }
 }
