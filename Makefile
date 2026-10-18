@@ -75,19 +75,16 @@ deps-dev: ## Instala dependencias y herramientas de desarrollo (--dev)
 doctor: ## Verifica las dependencias sin instalar nada (--check)
 	$(BASH) $(SCRIPTS)/install-deps.sh --check
 
-# TEMPORAL: mientras scripts/check-arch.sh (T0.4) no exista, `arch` solo
-# avisa y sale con 0. Quitar la rama del aviso cuando T0.4 se integre.
 .PHONY: arch
 arch: ## Reglas de la arquitectura hexagonal (scripts/check-arch.sh)
-	@if [ -f $(SCRIPTS)/check-arch.sh ]; then \
-		echo "$(BASH) $(SCRIPTS)/check-arch.sh"; \
-		$(BASH) $(SCRIPTS)/check-arch.sh; \
-	else \
-		echo "aviso: $(SCRIPTS)/check-arch.sh no existe todavía; se omite arch" >&2; \
-	fi
+	$(BASH) $(SCRIPTS)/check-arch.sh
+
+.PHONY: test-arch
+test-arch: ## Tests de scripts/check-arch.sh
+	$(BASH) tests/arch/run.sh
 
 .PHONY: check
-check: fmt-check lint test arch ## Lo que debe pasar para cerrar una fase
+check: fmt-check lint test arch test-arch ## Lo que debe pasar para cerrar una fase
 
 .PHONY: ci
 ci: doctor check ## doctor + check
