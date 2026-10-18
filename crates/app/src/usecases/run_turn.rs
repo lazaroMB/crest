@@ -39,8 +39,9 @@
 //! token when nothing was reported yet). Past the threshold, the oldest
 //! finished turns are summarized by the `compact` role (see
 //! [`super::compact`]) and the call goes on with the shorter history; an
-//! `Info` `Notice` reports it. A failed summary is a warning `Notice`, not
-//! an error.
+//! `Info` `Notice` reports it. If the model still answers
+//! [`LlmError::ContextTooLong`], the history is compacted and the call
+//! retried once. A failed summary is a warning `Notice`, not an error.
 //!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
@@ -428,7 +429,15 @@ impl TurnRun<'_> {
             if self.compact_if_needed().await {
                 return Ok(StopReason::Interrupted);
             }
-            let answer = self.call_model().await?;
+            let answer = match self.call_model().await {
+                Err(TurnError::Llm(LlmError::ContextTooLong)) => {
+                    match self.compact_after_overflow().await? {
+                        Some(answer) => answer,
+                        None => return Ok(StopReason::Interrupted),
+                    }
+                }
+                other => other?,
+            };
             let Answer {
                 assembled,
                 blocks,
@@ -586,6 +595,19 @@ impl TurnRun<'_> {
             return false;
         }
         matches!(self.compact(policy).await, Compaction::Interrupted)
+    }
+
+    /// The model said the prompt is too long: compacts and retries once.
+    /// `None` when the turn was cancelled meanwhile.
+    async fn compact_after_overflow(&mut self) -> Result<Option<Answer>, TurnError> {
+        let Some(policy) = self.service.compaction else {
+            return Err(LlmError::ContextTooLong.into());
+        };
+        match self.compact(policy).await {
+            Compaction::Done => self.call_model().await.map(Some),
+            Compaction::Skipped => Err(LlmError::ContextTooLong.into()),
+            Compaction::Interrupted => Ok(None),
+        }
     }
 
     /// Replaces the oldest finished turns of the session by a summary made

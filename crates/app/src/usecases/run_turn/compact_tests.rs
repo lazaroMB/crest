@@ -202,6 +202,63 @@ async fn past_the_threshold_the_history_is_compacted_and_the_turn_goes_on() {
 }
 
 #[tokio::test]
+async fn a_context_too_long_error_compacts_and_retries_once() {
+    let mut h = harness(
+        vec![
+            ScriptedResponse::open_error(LlmError::ContextTooLong),
+            ScriptedResponse::text("resumen"),
+            ScriptedResponse::text("ok"),
+        ],
+        vec![text_turn("a", "b"), text_turn("c", "d")],
+    );
+    let outcome = h.run("hola").await.unwrap();
+    assert_eq!(outcome.stop_reason, StopReason::EndTurn);
+    let requests = h.llm.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1].model.role, ModelRole::Compact);
+    let sent = &requests[2].messages;
+    assert_eq!(sent.len(), 2 + 2 + 1);
+    assert!(summary_text(&sent[0]).unwrap().starts_with(SUMMARY_PREFIX));
+    assert_eq!(h.session.turns.len(), 3);
+}
+
+#[tokio::test]
+async fn context_too_long_twice_fails_the_turn() {
+    let mut h = harness(
+        vec![
+            ScriptedResponse::open_error(LlmError::ContextTooLong),
+            ScriptedResponse::text("resumen"),
+            ScriptedResponse::open_error(LlmError::ContextTooLong),
+        ],
+        vec![text_turn("a", "b"), text_turn("c", "d")],
+    );
+    let err = h.run("hola").await.unwrap_err();
+    assert_eq!(err, TurnError::Llm(LlmError::ContextTooLong));
+    assert_eq!(h.llm.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn context_too_long_with_nothing_to_compact_fails_the_turn() {
+    let mut h = harness(
+        vec![ScriptedResponse::open_error(LlmError::ContextTooLong)],
+        vec![text_turn("a", "b")],
+    );
+    let err = h.run("hola").await.unwrap_err();
+    assert_eq!(err, TurnError::Llm(LlmError::ContextTooLong));
+    assert_eq!(h.llm.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn without_a_policy_context_too_long_is_not_retried() {
+    let mut h = Harness::new(vec![ScriptedResponse::open_error(LlmError::ContextTooLong)]);
+    h.session.push_turn(text_turn("a", "b"), 1);
+    h.session.push_turn(text_turn("c", "d"), 1);
+    let err = h.run("hola").await.unwrap_err();
+    assert_eq!(err, TurnError::Llm(LlmError::ContextTooLong));
+    assert_eq!(h.llm.requests().len(), 1);
+}
+
+#[tokio::test]
 async fn under_the_threshold_nothing_is_compacted() {
     let old = vec![
         text_turn("a", "b"),
