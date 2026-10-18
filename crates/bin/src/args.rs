@@ -25,8 +25,19 @@ pub struct Args {
     /// En headless, implementa el plan de un Spec: su carpeta (o su nombre
     /// en `.crest/specs/`) o la ruta a su `plan.json`. Las compuertas se
     /// responden por stdin.
-    #[arg(long, value_name = "RUTA", requires = "headless")]
+    #[arg(
+        long,
+        value_name = "RUTA",
+        requires = "headless",
+        conflicts_with = "research"
+    )]
     pub implement: Option<String>,
+
+    /// En headless, corre el flujo investigativo sobre este problema hasta
+    /// escribir su Spec (`resume` retoma el flujo pendiente). Las compuertas
+    /// se responden por stdin.
+    #[arg(long, value_name = "PROBLEMA", requires = "headless")]
+    pub research: Option<String>,
 
     /// Modelo del turno: alias (`opus`), rol (`plan`) o id completo.
     #[arg(long, value_name = "ALIAS|ID")]
@@ -63,6 +74,8 @@ pub enum HeadlessRun<'a> {
     Prompt(&'a str),
     /// The implementation flow of the plan named by the target.
     Implement(&'a str),
+    /// The research flow of the problem (`resume`: the pending one).
+    Research(&'a str),
 }
 
 impl Args {
@@ -74,14 +87,21 @@ impl Args {
     /// or both.
     pub fn headless_run(&self) -> Option<Result<HeadlessRun<'_>, &'static str>> {
         let prompt = self.headless.as_deref()?;
-        Some(
-            match (prompt.trim().is_empty(), self.implement.as_deref()) {
-                (false, None) => Ok(HeadlessRun::Prompt(prompt)),
-                (true, Some(target)) => Ok(HeadlessRun::Implement(target)),
-                (true, None) => Err("--headless necesita un prompt o --implement <ruta>"),
-                (false, Some(_)) => Err("--headless lleva un prompt o --implement, no ambos"),
-            },
-        )
+        let flow = match (self.implement.as_deref(), self.research.as_deref()) {
+            (Some(target), _) => Some(HeadlessRun::Implement(target)),
+            (None, Some(problem)) => Some(HeadlessRun::Research(problem)),
+            (None, None) => None,
+        };
+        Some(match (prompt.trim().is_empty(), flow) {
+            (false, None) => Ok(HeadlessRun::Prompt(prompt)),
+            (true, Some(flow)) => Ok(flow),
+            (true, None) => {
+                Err("--headless necesita un prompt, --implement <ruta> o --research <problema>")
+            }
+            (false, Some(_)) => {
+                Err("--headless lleva un prompt o un flujo (--implement, --research), no ambos")
+            }
+        })
     }
 
     /// The workspace given on the command line, if any.
@@ -161,6 +181,19 @@ mod tests {
         assert!(both.headless_run().unwrap().is_err());
         assert!(parse(&["--implement", "x"]).is_err());
         assert_eq!(parse(&[]).unwrap().headless_run(), None);
+    }
+
+    #[test]
+    fn research_runs_headless_without_a_prompt() {
+        let args = parse(&["--headless", "--research", "add suma mal"]).unwrap();
+        assert_eq!(
+            args.headless_run(),
+            Some(Ok(HeadlessRun::Research("add suma mal")))
+        );
+        assert!(parse(&["--research", "x"]).is_err());
+        assert!(parse(&["--headless", "--research", "x", "--implement", "y"]).is_err());
+        let both = parse(&["--headless", "hola", "--research", "x"]).unwrap();
+        assert!(both.headless_run().unwrap().is_err());
     }
 
     #[test]

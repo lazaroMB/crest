@@ -35,6 +35,9 @@ fn main() -> ExitCode {
         Some(Ok(HeadlessRun::Implement(target))) => runtime
             .block_on(headless::implement::run(&args, target))
             .code(),
+        Some(Ok(HeadlessRun::Research(problem))) => runtime
+            .block_on(headless::research::run(&args, problem))
+            .code(),
         Some(Err(message)) => {
             eprintln!("error: {message}");
             2
