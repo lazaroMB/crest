@@ -43,6 +43,11 @@
 //! [`LlmError::ContextTooLong`], the history is compacted and the call
 //! retried once. A failed summary is a warning `Notice`, not an error.
 //!
+//! With a [`CostTracker`] ([`AgentService::with_cost_tracker`]) every
+//! answer, the summaries of compaction included, is priced and
+//! `UsageUpdated` carries the session's cost; without a price for the
+//! model it stays `None`.
+//!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::HashMap;
@@ -53,11 +58,12 @@ use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
 use domain::conversation::{
     ContentPart, Message, Role, Session, SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
 };
-use domain::model::{ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
+use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
 use domain::permission::{ActionRequest, Decision};
 use futures::StreamExt;
 use serde_json::{Value, json};
 
+use crate::cost::CostTracker;
 use crate::ports::approval::ApprovalPort;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{
@@ -179,6 +185,7 @@ pub struct AgentService {
     gate: ApprovalGate,
     plugins: Option<Arc<dyn PluginHostPort>>,
     compaction: Option<CompactionPolicy>,
+    cost: Option<Arc<CostTracker>>,
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
@@ -215,6 +222,7 @@ impl AgentService {
             gate: ApprovalGate::new(Arc::clone(&deps.approval), permissions),
             plugins: None,
             compaction: None,
+            cost: None,
             deps,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
@@ -242,6 +250,14 @@ impl AgentService {
     #[must_use]
     pub fn with_compaction(mut self, policy: CompactionPolicy) -> Self {
         self.compaction = Some(policy);
+        self
+    }
+
+    /// Prices every answer with `tracker` and reports the session's cost
+    /// in `UsageUpdated`.
+    #[must_use]
+    pub fn with_cost_tracker(mut self, tracker: impl Into<Arc<CostTracker>>) -> Self {
+        self.cost = Some(tracker.into());
         self
     }
 
@@ -550,12 +566,13 @@ impl TurnRun<'_> {
         };
         self.service.deps.telemetry.llm_call(LlmCallRecord {
             parent: self.span,
-            model,
+            model: model.clone(),
             usage,
             latency_ms: elapsed_ms(started),
             error,
         });
         let answer = result?;
+        let cost_usd = self.record_cost(&model, &usage);
         let usage = answer.assembled.usage;
         let tokens = context_tokens(&usage).saturating_add(usage.output_tokens);
         if tokens > 0 {
@@ -568,9 +585,17 @@ impl TurnRun<'_> {
         self.emit(DomainEvent::UsageUpdated {
             turn: self.turn.usage,
             session: self.session.total_usage() + self.turn.usage,
-            cost_usd: None,
+            cost_usd,
         });
         Ok(answer)
+    }
+
+    /// Adds the cost of one answer; the session's cost when it is known.
+    fn record_cost(&self, model: &ModelId, usage: &Usage) -> Option<f64> {
+        self.service
+            .cost
+            .as_ref()?
+            .record(self.session_id(), model, usage)
     }
 
     /// Estimated tokens of the next request.
@@ -627,17 +652,20 @@ impl TurnRun<'_> {
         let Ok(result) = self.cancel.run(call).await else {
             return Compaction::Interrupted;
         };
+        let answered_by = result
+            .as_ref()
+            .ok()
+            .and_then(|summary| summary.model.clone())
+            .unwrap_or_else(|| model.spec.id.clone());
+        let usage = result.as_ref().map(|s| s.usage).unwrap_or_default();
         self.service.deps.telemetry.llm_call(LlmCallRecord {
             parent: self.span,
-            model: result
-                .as_ref()
-                .ok()
-                .and_then(|summary| summary.model.clone())
-                .unwrap_or_else(|| model.spec.id.clone()),
-            usage: result.as_ref().map(|s| s.usage).unwrap_or_default(),
+            model: answered_by.clone(),
+            usage,
             latency_ms: elapsed_ms(started),
             error: result.as_ref().err().map(ToString::to_string),
         });
+        let cost_usd = self.record_cost(&answered_by, &usage);
         let summary = match result {
             Ok(summary) => summary,
             Err(err) => {
@@ -658,7 +686,7 @@ impl TurnRun<'_> {
         self.emit(DomainEvent::UsageUpdated {
             turn: self.turn.usage,
             session: self.session.total_usage() + self.turn.usage,
-            cost_usd: None,
+            cost_usd,
         });
         Compaction::Done
     }
@@ -1027,6 +1055,8 @@ mod approval_tests;
 mod cancel_tests;
 #[cfg(test)]
 mod compact_tests;
+#[cfg(test)]
+mod cost_tests;
 #[cfg(test)]
 mod hook_tests;
 #[cfg(test)]
