@@ -7,6 +7,19 @@
 
 use std::fmt;
 
+use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
+use tracing::Subscriber;
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::{LevelFilter, Targets};
+use tracing_subscriber::registry::LookupSpan;
+
+use crate::TARGET;
+
 /// Langfuse Cloud, used when `LANGFUSE_HOST` is unset.
 pub const DEFAULT_HOST: &str = "https://cloud.langfuse.com";
 
@@ -75,6 +88,91 @@ pub enum LangfuseError {
     /// One of the two keys is set and the other is not.
     #[error("{0} is not set")]
     MissingVar(&'static str),
+    /// The exporter needs a Tokio runtime to send batches.
+    #[error("the Langfuse exporter must be started inside a Tokio runtime")]
+    NoRuntime,
+    /// The OTLP exporter could not be built.
+    #[error("cannot build the Langfuse exporter: {0}")]
+    Exporter(#[from] opentelemetry_langfuse::Error),
+    /// Flushing or shutting down the exporter failed.
+    #[error("Langfuse export failed: {0}")]
+    Export(#[from] opentelemetry_sdk::error::OTelSdkError),
+}
+
+/// A running Langfuse exporter; spans reach it through [`Self::layer`].
+///
+/// Spans are sent in batches from a Tokio task. Call [`Self::shutdown`]
+/// before exiting to send the last batch.
+pub struct LangfuseExporter {
+    provider: SdkTracerProvider,
+}
+
+impl fmt::Debug for LangfuseExporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LangfuseExporter").finish_non_exhaustive()
+    }
+}
+
+/// Builds the Langfuse exporter. Must run inside a Tokio runtime.
+///
+/// Building sends nothing: the first request goes out with the first
+/// batch of finished spans.
+///
+/// # Errors
+///
+/// [`LangfuseError::NoRuntime`] outside Tokio, [`LangfuseError::Exporter`]
+/// when the exporter cannot be built.
+pub fn init_langfuse(config: &LangfuseConfig) -> Result<LangfuseExporter, LangfuseError> {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return Err(LangfuseError::NoRuntime);
+    }
+    let exporter = opentelemetry_langfuse::ExporterBuilder::new()
+        .with_host(&config.host)
+        .with_basic_auth(&config.public_key, &config.secret_key)
+        .build()?;
+    let provider = SdkTracerProvider::builder()
+        .with_span_processor(BatchSpanProcessor::builder(exporter, Tokio).build())
+        .with_resource(
+            Resource::builder()
+                .with_service_name("crest")
+                .with_attributes([KeyValue::new("service.version", env!("CARGO_PKG_VERSION"))])
+                .build(),
+        )
+        .build();
+    Ok(LangfuseExporter { provider })
+}
+
+impl LangfuseExporter {
+    /// Layer that exports the spans of [`crate::TracingTelemetry`] (target
+    /// [`TARGET`], level info and above) and ignores everything else.
+    pub fn layer<S>(&self) -> impl Layer<S> + Send + Sync + 'static
+    where
+        S: Subscriber + for<'a> LookupSpan<'a> + Send + Sync + 'static,
+    {
+        tracing_opentelemetry::layer()
+            .with_tracer(self.provider.tracer("crest"))
+            .with_location(false)
+            .with_threads(false)
+            .with_filter(Targets::new().with_target(TARGET, LevelFilter::INFO))
+    }
+
+    /// Sends the spans finished so far.
+    ///
+    /// # Errors
+    ///
+    /// When the export fails.
+    pub fn force_flush(&self) -> Result<(), LangfuseError> {
+        Ok(self.provider.force_flush()?)
+    }
+
+    /// Sends the remaining spans and stops the exporter.
+    ///
+    /// # Errors
+    ///
+    /// When the last export fails.
+    pub fn shutdown(self) -> Result<(), LangfuseError> {
+        Ok(self.provider.shutdown()?)
+    }
 }
 
 #[cfg(test)]

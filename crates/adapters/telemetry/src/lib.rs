@@ -8,9 +8,15 @@
 //! [`init_subscriber`] installs the global subscriber: human-readable logs
 //! to stderr or a file, filtered by the `CREST_LOG` variable.
 //!
-//! With the `langfuse` feature, [`LangfuseConfig`] reads the Langfuse
-//! project from `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY` and
-//! `LANGFUSE_SECRET_KEY`.
+//! With the `langfuse` feature, `init_langfuse` builds an OTLP exporter
+//! to Langfuse whose layer goes into [`init_subscriber_with`]:
+//!
+//! ```ignore
+//! let langfuse = init_langfuse(&LangfuseConfig::from_env()?.unwrap())?;
+//! init_subscriber_with(&SubscriberOptions::default(), langfuse.layer())?;
+//! // ... at exit:
+//! langfuse.shutdown()?;
+//! ```
 
 #[cfg(feature = "langfuse")]
 mod langfuse;
@@ -18,7 +24,7 @@ mod spans;
 mod subscriber;
 
 #[cfg(feature = "langfuse")]
-pub use langfuse::{DEFAULT_HOST, LangfuseConfig, LangfuseError};
+pub use langfuse::{DEFAULT_HOST, LangfuseConfig, LangfuseError, LangfuseExporter, init_langfuse};
 pub use spans::{TARGET, TracingTelemetry};
 pub use subscriber::{
     LOG_ENV, LogOutput, SubscriberError, SubscriberOptions, init_subscriber, init_subscriber_with,
