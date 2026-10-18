@@ -27,6 +27,7 @@ use crate::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit, GrepRequest,
     ListFilesRequest, SearchError, TreeNode, TreeNodeKind, TreeRequest,
 };
+use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellPort};
 
 /// Tokens kept free below the registry budget for the notes the tools add
 /// after a cut, so the registry's own truncation never cuts them again.
@@ -622,6 +623,102 @@ impl TypedTool for WriteFileTool {
     }
 }
 
+const RUN_COMMAND_DESCRIPTION: &str = "\
+Runs a program in the workspace root and returns its exit code, stdout and stderr.
+- `command` is the program and `args` its arguments, one per element. No shell is involved: \
+pipes, redirections, `&&`, globs and variables are not interpreted.
+- Use it to build, test, format or inspect history (`git log`, `git blame`, `git diff`, \
+`git status`, `git show` run without approval). Other commands may need the user's approval.
+- Prefer `grep`, `find_file`, `list_files`, `tree` and `read_file` over `rg`, `find`, `ls` \
+or `cat`, and `edit_file`/`write_file` over commands that modify files.
+- The process is killed after `timeout_s` seconds (default 120). Long output is cut; a \
+non-zero exit code is reported in the result, not as a failure of the tool.";
+
+/// `run_command`: a program run without a shell in the workspace root.
+pub struct RunCommandTool {
+    shell: Arc<dyn ShellPort>,
+    budget: ResultBudget,
+}
+
+impl RunCommandTool {
+    /// The tool over `shell`, cutting results to `budget`.
+    #[must_use]
+    pub fn new(shell: Arc<dyn ShellPort>, budget: ResultBudget) -> Self {
+        Self { shell, budget }
+    }
+}
+
+fn render_command_output(
+    request: &RunCommandRequest,
+    output: &CommandOutput,
+    budget: ResultBudget,
+) -> String {
+    let mut out = match output.status {
+        _ if output.timed_out => format!(
+            "timed out after {}s; the process was killed",
+            request.timeout_s
+        ),
+        Some(code) => format!("exit code: {code}"),
+        None => "killed by a signal".to_owned(),
+    };
+    // Each stream gets half of the budget, so stderr is never crowded out.
+    let half = ResultBudget::new(inner_budget(budget).max_tokens / 2);
+    for (name, text) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+        let text = text.trim_end_matches('\n');
+        if !text.is_empty() {
+            let _ = write!(out, "\n--- {name} ---\n{}", half.truncate_text(text));
+        }
+    }
+    if output.stdout.trim().is_empty() && output.stderr.trim().is_empty() {
+        out.push_str("\n(no output)");
+    }
+    if output.truncated {
+        out.push_str("\n[output was cut to the size limit of the shell]");
+    }
+    out
+}
+
+#[async_trait]
+impl TypedTool for RunCommandTool {
+    type Input = RunCommandRequest;
+
+    fn name(&self) -> &str {
+        "run_command"
+    }
+
+    fn description(&self) -> &str {
+        RUN_COMMAND_DESCRIPTION
+    }
+
+    /// As [`ShellPort::classify`] declares it: [`ToolEffect::Read`] for
+    /// read-only git commands, [`ToolEffect::Execute`] otherwise.
+    fn effect(&self, input: &RunCommandRequest) -> ToolEffect {
+        self.shell.classify(input)
+    }
+
+    async fn prepare(
+        &self,
+        input: RunCommandRequest,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let subject = input.display();
+        let preview = ApprovalPreview::Command {
+            command: input.command.clone(),
+            args: input.args.clone(),
+            cwd: ".".to_owned(),
+        };
+        let shell = Arc::clone(&self.shell);
+        let budget = self.budget;
+        let run = async move {
+            Ok(match shell.run(input.clone()).await {
+                Ok(output) => ToolOutput::text(render_command_output(&input, &output, budget)),
+                Err(err) => ToolOutput::error(err.to_string()),
+            })
+        };
+        Ok(PreparedCall::new(subject, run.boxed()).with_preview(preview))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -629,7 +726,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::testing::fs::{InMemoryFs, unified_diff};
+    use crate::ports::shell::ShellError;
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, unified_diff};
     use crate::tools::registry::{Tool, Typed};
 
     fn ctx() -> ToolContext {
@@ -925,5 +1023,103 @@ mod tests {
             matches!(&err, ToolError::Execution(m) if m.contains("denied")),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn run_command_previews_the_command_and_reports_its_output() {
+        let shell = Arc::new(ScriptedShell::new().on(
+            "cargo",
+            ["test", "-p", "my crate"],
+            CommandOutput {
+                status: Some(101),
+                stdout: "running 1 test\n".into(),
+                stderr: "error: test failed\n".into(),
+                ..CommandOutput::default()
+            },
+        ));
+        let tool = Typed(RunCommandTool::new(
+            Arc::clone(&shell) as Arc<dyn ShellPort>,
+            budget(),
+        ));
+        let input = json!({ "command": "cargo", "args": ["test", "-p", "my crate"] });
+        assert_eq!(tool.effect(&input), ToolEffect::Execute);
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "cargo test -p 'my crate'");
+        assert_eq!(
+            prepared.preview,
+            Some(ApprovalPreview::Command {
+                command: "cargo".into(),
+                args: vec!["test".into(), "-p".into(), "my crate".into()],
+                cwd: ".".into(),
+            })
+        );
+        let out = prepared.run.await.unwrap();
+        assert!(!out.is_error);
+        assert_eq!(
+            out.text_content(),
+            "exit code: 101\n--- stdout ---\nrunning 1 test\n--- stderr ---\nerror: test failed"
+        );
+        assert_eq!(shell.calls()[0].timeout_s, 120);
+    }
+
+    #[tokio::test]
+    async fn run_command_reads_git_history_without_approval() {
+        let tool = Typed(RunCommandTool::new(
+            Arc::new(ScriptedShell::new()),
+            budget(),
+        ));
+        let read = json!({ "command": "git", "args": ["log", "--oneline"] });
+        assert_eq!(tool.effect(&read), ToolEffect::Read);
+        let write = json!({ "command": "git", "args": ["commit", "-m", "x"] });
+        assert_eq!(tool.effect(&write), ToolEffect::Execute);
+    }
+
+    #[tokio::test]
+    async fn run_command_reports_timeouts_and_errors() {
+        let shell = ScriptedShell::new()
+            .on(
+                "sleep",
+                ["9"],
+                CommandOutput {
+                    timed_out: true,
+                    ..CommandOutput::default()
+                },
+            )
+            .on_error(
+                "nope",
+                Vec::<String>::new(),
+                ShellError::NotFound {
+                    command: "nope".into(),
+                },
+            );
+        let tool = Typed(RunCommandTool::new(Arc::new(shell), budget()));
+        let input = json!({ "command": "sleep", "args": ["9"], "timeout_s": 1 });
+        let (_, out) = call(&tool, input).await;
+        assert_eq!(
+            out.text_content(),
+            "timed out after 1s; the process was killed\n(no output)"
+        );
+        let (_, out) = call(&tool, json!({ "command": "nope" })).await;
+        assert!(out.is_error);
+        assert_eq!(out.text_content(), "command not found: nope");
+    }
+
+    #[tokio::test]
+    async fn run_command_cuts_each_stream_to_half_the_budget() {
+        let stdout: String = (0..200).map(|i| format!("line {i}\n")).collect();
+        let shell = ScriptedShell::new().with_default(CommandOutput {
+            status: Some(0),
+            stdout,
+            stderr: "warning: x\n".into(),
+            ..CommandOutput::default()
+        });
+        let tool = Typed(RunCommandTool::new(
+            Arc::new(shell),
+            ResultBudget::new(NOTE_RESERVE_TOKENS + 40),
+        ));
+        let (_, out) = call(&tool, json!({ "command": "make" })).await;
+        let text = out.text_content();
+        assert!(text.contains("líneas más omitidas"), "{text}");
+        assert!(text.ends_with("--- stderr ---\nwarning: x"), "{text}");
     }
 }
