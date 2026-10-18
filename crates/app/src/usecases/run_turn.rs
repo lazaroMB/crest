@@ -46,7 +46,13 @@
 //! With a [`CostTracker`] ([`AgentService::with_cost_tracker`]) every
 //! answer, the summaries of compaction included, is priced and
 //! `UsageUpdated` carries the session's cost; without a price for the
-//! model it stays `None`.
+//! model it stays `None`. With a spending cap, before each model call
+//! (compaction included) a session that reached it pauses: a warning
+//! `Notice` reports it and the [`ApprovalPort`] is asked (tool
+//! `spend_cap`). "Approve" raises the cap by its amount, "approve always"
+//! lifts it for the session, and a denial (or a failed request) ends the
+//! turn with [`StopReason::Interrupted`] and a warning `Notice`; the
+//! history is left ready to be sent again.
 //!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
@@ -64,7 +70,7 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 
 use crate::cost::CostTracker;
-use crate::ports::approval::ApprovalPort;
+use crate::ports::approval::{ApprovalPort, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
@@ -442,6 +448,9 @@ impl TurnRun<'_> {
                     limit: self.service.max_iterations,
                 });
             }
+            if !self.spending_allowed().await {
+                return Ok(StopReason::Interrupted);
+            }
             if self.compact_if_needed().await {
                 return Ok(StopReason::Interrupted);
             }
@@ -588,6 +597,39 @@ impl TurnRun<'_> {
             cost_usd,
         });
         Ok(answer)
+    }
+
+    /// Whether the next model call may spend: when the session reached
+    /// its cap, asks the user to go on.
+    async fn spending_allowed(&self) -> bool {
+        let Some(tracker) = &self.service.cost else {
+            return true;
+        };
+        let session = self.session_id();
+        let Some(reached) = tracker.cap_reached(session) else {
+            return true;
+        };
+        let amounts = format!("${:.2} de ${:.2}", reached.spent, reached.cap);
+        self.emit(DomainEvent::Notice {
+            level: NoticeLevel::Warning,
+            message: format!("tope de gasto alcanzado ({amounts}); esperando confirmación"),
+        });
+        let asked = self.service.deps.approval.request(tracker.request(reached));
+        let Ok(answer) = self.cancel.run(asked).await else {
+            return false;
+        };
+        match answer {
+            Ok(ApprovalResponse::Approve) => tracker.raise_cap(session),
+            Ok(ApprovalResponse::ApproveAlways { .. }) => tracker.lift_cap(session),
+            Ok(ApprovalResponse::Deny { .. }) | Err(_) => {
+                self.emit(DomainEvent::Notice {
+                    level: NoticeLevel::Warning,
+                    message: format!("turno detenido por el tope de gasto ({amounts})"),
+                });
+                return false;
+            }
+        }
+        true
     }
 
     /// Adds the cost of one answer; the session's cost when it is known.
