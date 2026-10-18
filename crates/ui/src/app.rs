@@ -2,7 +2,8 @@
 //! app-wide key bindings.
 //!
 //! The window opens in fullscreen (`WindowBounds::Fullscreen`), which GPUI
-//! implements on macOS, X11 and Wayland. A compositor that refuses the
+//! implements on macOS, X11 and Wayland (on X11 it is requested after the
+//! first frame; see `open_main_window`). A compositor that refuses the
 //! request leaves the window at its restore bounds, centered on the primary
 //! display.
 
@@ -162,8 +163,17 @@ fn bind_app_keys(cx: &mut App) {
 
 fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
     let restore = Bounds::centered(None, size(px(RESTORE_SIZE.0), px(RESTORE_SIZE.1)), cx);
+    // GPUI asks X11 window managers for fullscreen before mapping the
+    // window, and they ignore that request; on X11 the window opens
+    // windowed and asks again once it has drawn its first frame.
+    let x11 = cx.compositor_name() == "X11";
+    let window_bounds = if x11 {
+        WindowBounds::Windowed(restore)
+    } else {
+        WindowBounds::Fullscreen(restore)
+    };
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Fullscreen(restore)),
+        window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
             title: Some(SharedString::from(title)),
             ..Default::default()
@@ -174,6 +184,9 @@ fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
     cx.open_window(options, |window, cx| {
         let view = cx.new(RootView::new);
         window.focus(&view.focus_handle(cx), cx);
+        if x11 {
+            window.on_next_frame(|window, _| window.toggle_fullscreen());
+        }
         cx.new(|cx| Root::new(view, window, cx))
     })
     .map(|_| ())
