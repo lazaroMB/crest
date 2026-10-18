@@ -9,6 +9,7 @@ What sets it apart:
 - **Search with `rg` and `fzf`.** The agent's tools and the window's pickers use the same processes, so you see what the model sees.
 - **Config and plugins in Lua**, with Neovim-style modal key bindings (insert, normal and command). From Lua you can add tools, hooks, commands, blocks and modal windows (images with zoom, tables, charts, JSON trees, Mermaid, diffs, markdown and simple HTML), all inside a sandbox with instruction and memory limits. Plugins that need to call an API or a command-line program declare `network:` and `shell:` capabilities, which stay off until you approve them (`--trust-plugin`, `:plugin trust`).
 - **Guided workflows.** The *research* workflow (X-Workflow, 14 nodes) goes from a problem to a Spec with its plan. The *implementation* workflow runs that plan task by task, with one commit per task and a final report.
+- **Simulate a solution before building it.** `:simulate <spec>` turns a Spec into an executable model (assertions derived from its test protocol first, then the model from its diagrams), runs every scenario deterministically and opens a 3D circuit-board view where messages travel between components, with a timeline, failure markers and a state inspector. The verdicts become evidence in the Spec, and `board.html` shares the replay without crest.
 - **Hexagonal architecture.** The domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, and `make arch` verifies it.
 
 ## The screen
@@ -101,6 +102,7 @@ To research a problem and then implement the fix:
 ```text
 :research the add() tests fail with negative numbers
 …answer `yes` (or `sí`) at each gate…
+:simulate 0001-<slug>      # optional: check the solution on a board first
 :implement 0001-<slug>
 ```
 
@@ -111,7 +113,7 @@ To research a problem and then implement the fix:
 | [docs/usage.md](docs/usage.md) | Window, modes, every key binding and `:` command, approvals, blocks, the full CLI, headless mode, sessions, MCP and plugin trust. |
 | [docs/configuration.md](docs/configuration.md) | Paths, precedence, API key, `app.opt`, models by role, permissions, environment variables, Langfuse and a full `init.lua`. |
 | [docs/plugins.md](docs/plugins.md) | How to write Lua plugins: sandbox, the `app` table, tools, hooks, `Custom` blocks, MCP, capabilities (HTTP, programs, secrets) and examples. |
-| [docs/workflows.md](docs/workflows.md) | The research workflow (14 nodes, gates, Specs) and the implementation workflow (steps, gates, commits, report). |
+| [docs/workflows.md](docs/workflows.md) | The research workflow (14 nodes, gates, Specs), simulating a solution (model, scenarios, board) and the implementation workflow (steps, gates, commits, report). |
 | [docs/architecture.md](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, events, threads and persistence. |
 | [docs/development.md](docs/development.md) | Tests, fakes and how to add tools, blocks, adapters or nodes; commit conventions and CI. |
 
@@ -120,11 +122,11 @@ To research a problem and then implement the fix:
 ```mermaid
 flowchart TB
     bin["crates/bin · crest<br/>composition root: CLI, window or headless"]
-    ui["crates/ui<br/>GPUI: timeline, blocks, modal input"]
+    ui["crates/ui<br/>GPUI: timeline, blocks, modal input, 3D board"]
     subgraph adapters["crates/adapters"]
         direction LR
         anthropic["anthropic"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"]
-        store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"]
+        store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"] --- export["export<br/>board.html"]
     end
     app["crates/app · application<br/>ports, use cases, tools, workflows"]
     domain["crates/domain<br/>pure types and rules"]
@@ -149,7 +151,8 @@ rust-toolchain.toml     stable toolchain with rustfmt and clippy
 crates/
   domain/               pure types and rules
   app/                  `application`: ports, use cases, tools, workflows, fakes
-  adapters/             anthropic, search, fs, shell, store, lua, mcp, telemetry
+  adapters/             anthropic, search, fs, shell, store, lua, mcp, telemetry, export
+                        (export/vendor/three/ holds the inlined three.js, MIT)
   ui/                   GPUI views (plus runnable examples/)
   bin/                  the `crest` binary and end-to-end integration tests
 scripts/
@@ -224,6 +227,7 @@ All 11 phases of the original plan are implemented and `make check` passes on Li
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
 - `:mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run. (`:plugin trust`, by contrast, takes effect at once.)
 - Plugin capabilities cover HTTP(S) to listed hosts and listed programs; there is no file-system capability, and a slow `app.http` or `app.shell.run` call holds the Lua VM (other hooks wait) until it finishes or times out.
+- Simulation (MVP): flat state machines, FIFO queues and timers as self-messages; no latency percentiles, load generators, fault toggles in the board, GIF/video export or re-simulation inside `board.html` yet, and the board has only a dark theme. See [docs/research/solution-simulator.md](docs/research/solution-simulator.md).
 - Plugin modals draw images, documents, tables and diagrams natively, but cannot embed web pages (links open the browser), PDFs, 3D models or a terminal yet; images larger than the GPU's texture limit (often 8192 or 16384 px) fail to draw. See [docs/research/rich-content-modals.md](docs/research/rich-content-modals.md) for the roadmap.
 - Langfuse export requires building with `--features langfuse`; the `make release` binaries do not include it.
 - The macOS binaries from `release.yml` are not signed or notarized.

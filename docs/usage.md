@@ -88,10 +88,11 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `:plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
 | `:implement <spec>` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
 | `:research <problem>`, `:research resume`, `:research` | Starts, resumes or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
+| `:simulate <spec>` | Simulates the solution of a Spec (its folder, its number or its path) and opens its board in a full-size modal ([workflows.md](workflows.md#simulating-a-solution)). The verdicts land in the timeline. |
 | `:<name> <args>` | A command registered with `app.commands.register`. |
 | `:<dotted.action>` | Runs a builtin action, for example `:picker.files` or `:panel.tree`. |
 
-An unknown command shows `unknown command :x (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research or :q)`.
+An unknown command shows `unknown command :x (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research, :simulate or :q)`.
 
 ### File references with `@`
 
@@ -196,6 +197,25 @@ Plugins can open modal windows over the session ([plugins.md](plugins.md#appmoda
 
 The focus goes back to where it was when the last modal closes. An approval dialog opened while a modal is up appears above it. Modals are not saved with the session.
 
+### Simulation board
+
+`:simulate <spec>` (or the agent's `simulate_solution` tool) opens the board of a simulated Spec in a modal at 100%. The board is drawn in real 3D by an offscreen GPU renderer; on a machine without a usable GPU adapter it falls back, automatically, to a 2.5D vector drawing (the header says which one: `3D · <adapter>` or `2.5D · <reason>`; `CREST_RENDER3D=off` forces the fallback).
+
+| Key or action | Effect |
+| --- | --- |
+| Drag | Orbits (leaves the isometric preset for perspective). In the 2.5D fallback, pans. |
+| Right-drag, middle-drag or `Shift`-drag | Pans. |
+| Wheel, `+` / `-` | Zooms. |
+| `i`, or the `iso` button | Back to the isometric preset (orthographic, 30°). |
+| Click a chip | Inspects it: state, variables, queue and its machine as a state diagram with the current state lit. |
+| `Space`, `▶` / `⏸` | Plays or pauses the scenario (at `1×` a whole scenario lasts 10 s). |
+| `←` / `→`, `⏮` / `⏭` | Previous / next event. |
+| `−` / `+` next to the speed | Slower / faster (0.1× to 4×). |
+| Click or drag the bar | Scrubs; the red marks are failed assertions. |
+| A failed check on the right | Jumps to its counterexample. |
+| Scenario buttons, seed `−` / `+` | Shows another scenario; re-runs this one with another seed. |
+| `Esc` | Closes the board. |
+
 ### Cost
 
 The bar shows the accumulated cost of the session:
@@ -216,9 +236,10 @@ crest [OPTIONS] [DIR]
 | --- | --- | --- |
 | `[DIR]` | directory | Workspace to open. Defaults to the current directory. |
 | `--workspace <DIR>` | directory | Same as `[DIR]`. The two cannot be combined. |
-| `--headless [<PROMPT>]` | text | Runs one turn with that prompt in the terminal, without a window. Without a prompt, it goes with `--implement` or `--research`. |
+| `--headless [<PROMPT>]` | text | Runs one turn with that prompt in the terminal, without a window. Without a prompt, it goes with `--implement`, `--research` or `--simulate`. |
 | `--implement <RUTA>` | Spec or `plan.json` | In headless mode, runs the implementation workflow. Requires `--headless` and cannot be combined with `--research`. |
 | `--research <PROBLEMA>` | text or `resume` | In headless mode, runs the research workflow. Requires `--headless`. |
+| `--simulate <SPEC>` | Spec folder, number or path | In headless mode, simulates the Spec's solution: prints every scenario's verdict and the path of its `board.html`. Requires `--headless`; cannot be combined with `--implement` or `--research`. |
 | `--model <ALIAS\|ID>` | alias, role or id | Model override for **every** turn of this run (like `:model`, but permanent). |
 | `--mode <MODE>` | `ask`, `auto-edit`, `plan` | Initial permission mode. Defaults to `ask`. |
 | `--yes` | — | In headless mode, approves every action without asking. Does not answer workflow gates. Requires `--headless`. |
@@ -240,6 +261,7 @@ crest --headless "and the second failure?" --continue
 crest --headless --research "add() gets negative numbers wrong"
 crest --headless --research resume
 crest --headless --implement 0001-negative-add
+crest --headless --simulate 0001-negative-add
 crest --trust-mcp tickets --trust-mcp docs
 crest --trust-plugin jira --trust-plugin jsonq
 ```
@@ -253,12 +275,12 @@ make run-headless PROMPT="list the project's TODOs" WORKSPACE=~/src/api
 
 ### Exit codes
 
-| Code | Window | Headless (turn) | Headless (workflows) |
-| --- | --- | --- | --- |
-| 0 | Closed normally. | The turn finished. | The workflow completed. |
-| 1 | The window could not open. | The turn failed (model error, more than 50 model calls in one turn). | Aborted, sent back to the Spec, a step error, or stdin closed at a gate. |
-| 2 | The workspace cannot be opened. | Unusable config (workspace, missing API key) or invalid arguments. | The workflow could not be opened (target, database) or invalid arguments. |
-| 130 | — | Interrupted with `Ctrl+C`. | — (see below) |
+| Code | Window | Headless (turn) | Headless (workflows) | Headless (`--simulate`) |
+| --- | --- | --- | --- | --- |
+| 0 | Closed normally. | The turn finished. | The workflow completed. | Every scenario passed. |
+| 1 | The window could not open. | The turn failed (model error, more than 50 model calls in one turn). | Aborted, sent back to the Spec, a step error, or stdin closed at a gate. | A scenario failed, or no simulation (unknown Spec, no valid model). |
+| 2 | The workspace cannot be opened. | Unusable config (workspace, missing API key) or invalid arguments. | The workflow could not be opened (target, database) or invalid arguments. | Unusable config or invalid arguments. |
+| 130 | — | Interrupted with `Ctrl+C`. | — (see below) | — |
 
 ## Headless mode
 
@@ -324,6 +346,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `run_command` | `command`, `args[]`, `timeout_s` (120). No shell, at the workspace root. | execute (read for some `git` commands) |
 | `show_chart`, `show_table`, `show_mermaid`, `show_markdown` | the block's data | read |
 | `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls) that returns a summary | read |
+| `simulate_solution` | `spec`: a folder of `.crest/specs/`, its number or its path. Simulates the solution of that Spec, records the results in its folder and opens the board in the window; returns the verdicts | write |
 | `mcp__<server>__<tool>` | the server's schema | the server's `effect` (execute by default) |
 | plugin tools | their `schema` | their `effect` (execute by default) |
 

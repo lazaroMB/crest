@@ -16,7 +16,7 @@ flowchart TB
         headless["headless/ · HeadlessSink, StdinApproval"]
     end
     subgraph ui["crates/ui · GPUI"]
-        session["Session, Timeline, Input, Status, Picker, Tree, Approval"]
+        session["Session, Timeline, Input, Status, Picker, Tree, Approval, ModalHost, SysBoard, render3d"]
     end
     subgraph adapters["crates/adapters/*"]
         anthropic["anthropic"]
@@ -27,11 +27,12 @@ flowchart TB
         lua["lua (mlua)"]
         mcp["mcp (rmcp)"]
         telemetry["telemetry"]
+        export["export (board.html)"]
     end
     subgraph app["crates/app · application"]
         ports["ports/*"]
-        usecases["usecases/ · run_turn, compact, resume"]
-        tools["tools/ · registry, files, components, task, mcp, plugin"]
+        usecases["usecases/ · run_turn, compact, resume, simulate"]
+        tools["tools/ · registry, files, components, task, simulate, mcp, plugin"]
         flows["flows/ · research, implement"]
         keymap["keymap.rs, cost.rs"]
     end
@@ -45,7 +46,7 @@ flowchart TB
 
 | Crate (package) | Path | Contents |
 | --- | --- | --- |
-| `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`) and the `plan.json` schema. No tokio, no I/O. |
+| `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`), the `plan.json` schema and `sysmodel` (the `crest.sysmodel/v1` model, its expression language, lint, the deterministic simulator, traces, the assertion checker, the board layout and its renderer-agnostic 3D scene). No tokio, no I/O. |
 | `application` | `crates/app` | Ports (async traits), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, the keymap parser, cost, the graph-flow workflows and the fakes (`testing`, behind the `testing` feature). |
 | `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, retries and model fallback, the `GET /v1/models` catalog and server tools (web search and fetch). |
 | `adapter-search` | `crates/adapters/search` | `rg --files`, `rg --json` and `fzf --filter` as processes without a shell. Includes version detection. |
@@ -54,8 +55,9 @@ flowchart TB
 | `adapter-store` | `crates/adapters/store` | SQLite (embedded `rusqlite`): sessions and graph-flow's `SessionStorage`. |
 | `adapter-lua` | `crates/adapters/lua` | `mlua` host (Lua 5.4) on its own thread, with the sandbox, config loading and merging, and the `app` API. |
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |
+| `adapter-export` | `crates/adapters/export` | `SimExport`: the self-contained `board.html` replay of a simulated board, with three.js r160 vendored in `vendor/three/` (MIT) and inlined. |
 | `adapter-telemetry` | `crates/adapters/telemetry` | `tracing` spans and, with the `langfuse` feature, OTLP export to Langfuse. |
-| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog and plugin modals. |
+| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog, plugin modals, the simulation board (`sysboard/`) and its offscreen wgpu renderer (`render3d/`). |
 | `crest` | `crates/bin` | Composition root: CLI, adapter construction, window or headless. |
 
 ## Ports and adapters
@@ -73,6 +75,7 @@ flowchart TB
 | `EventSink` | `ports/events.rs` | `emit(DomainEvent)` | `crest::gui::ChannelSink`, `crest::headless::HeadlessSink`. Both are wrapped in a `TimelineSink` (bin), which records the timeline that gets saved. | `system::RecordingSink` |
 | `SessionStorePort` | `ports/store.rs` | `save`, `load`, `latest_for_workspace`, `list`, `delete` | `adapter_store::SqliteSessionStore` | `system::InMemorySessionStore` |
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
+| `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |
 | `SessionStorage` (graph-flow trait) | — | — | `adapter_store::SqliteFlowStorage` | graph-flow's in-memory storage |
 
@@ -173,6 +176,7 @@ The use cases draw nothing: they emit `DomainEvent` (`ports/events.rs`) through 
 | `TurnFinished { stop_reason }` / `TurnFailed { error }` | End of the turn. |
 | `Notice { level, message }` | Notice for the status bar. |
 | `ModalOpened { spec }` / `ModalUpdated { id, content }` / `ModalClosed { id }` | A plugin modal (`app.modal.*`), pushed by the Lua host. |
+| `SimulationReady { board }` | A simulated Spec (`:simulate`, `simulate_solution`): the window opens its board in a full-size modal. Like the modal events, it is not saved with the timeline. |
 
 ```mermaid
 flowchart LR
@@ -238,7 +242,7 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 3. Sensitive paths, `RipgrepSearch` and the `rg` and `fzf` checks.
 4. API key, `AnthropicLlm` and catalog validation (5 s at most).
 5. `SqliteSessionStore`.
-6. `ToolRegistry`: file tools, component tools, `task`, plugin tools and MCP tools (with trust-based admission).
+6. `ToolRegistry`: file tools, component tools, `task`, `simulate_solution` (over the `Simulator`, which `:simulate` and `--simulate` share), plugin tools and MCP tools (with trust-based admission).
 7. Session resume, `AgentService` with compaction, hooks and `CostTracker`.
 8. `SqliteFlowStorage`, `ResearchSession` and `ImplementDeps`.
 

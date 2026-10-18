@@ -7,11 +7,11 @@ For the project overview, installation and quick start, see the [main README](..
 | [usage.md](usage.md) | People using crest | The window, the modes, the key bindings, the `:` commands, approvals, blocks, the CLI, headless mode, sessions and MCP servers. |
 | [configuration.md](configuration.md) | People configuring crest | `init.lua` paths and precedence, the API key, `app.opt`, models by role, permissions, environment variables, Langfuse and a full example. |
 | [plugins.md](plugins.md) | People writing plugins | The Lua sandbox, the `app` table (keymaps, commands, tools, hooks, `app.ui`, `app.modal`, MCP), diagnostics and step-by-step examples. |
-| [workflows.md](workflows.md) | People using the workflows | The research workflow (14 nodes, gates, `.crest/specs/`) and the implementation workflow (steps, gates, commits, `report.md`). |
+| [workflows.md](workflows.md) | People using the workflows | The research workflow (14 nodes, gates, `.crest/specs/`), simulating a solution (`:simulate`, the board, `simulation/`) and the implementation workflow (steps, gates, commits, `report.md`). |
 | [architecture.md](architecture.md) | People reading the code | The hexagonal layers, ports and adapters, the loop of a turn, events, threads, persistence and the dependency rules. |
 | [development.md](development.md) | Contributors | Tests and fakes, how to add tools, blocks, adapters or nodes, commit conventions and CI. |
 
 Research notes:
 
 - [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
-- [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (research and approved design, not implemented yet).
+- [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (implemented as an MVP; see its status section).

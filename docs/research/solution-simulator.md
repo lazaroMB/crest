@@ -1,6 +1,45 @@
 # Research: an isometric "motherboard" view and an executable simulation of each solution
 
-Status: research and proposal, not implemented. October 2026.
+Status: **implemented (MVP)**, October 2026. How to use it: [workflows.md](../workflows.md#simulating-a-solution).
+
+## Implementation status (MVP)
+
+What exists, by layer:
+
+- `domain::sysmodel`: the `crest.sysmodel/v1` types and JSON Schema (unknown fields rejected, closed
+  enums), the expression language (hand-written parser and evaluator, static type check), lint with
+  structured issues, the deterministic simulator (`(time, seq)` queue, integer microseconds,
+  SplitMix64 per scenario, capacity and FIFO queues, latencies, faults, timers as self-messages),
+  traces with checkpoints, the checker (`always`, `never`, `eventually … within`, `count`, `path`,
+  invariants) with counterexamples, grid auto-layout with Manhattan trace routing and the
+  renderer-agnostic scene with per-instant frames. A golden test pins a trace.
+- `application`: the `simulate_solution` use case and tool (assertions first in their own call,
+  frozen and restored if the model changes them; schema, lint and dry run with up to 2 repair rounds;
+  Evidence per scenario in `sources.json` and a journal section), the `SimExport` port and the
+  `SimulationReady` event.
+- `ui`: `render3d/` (own wgpu 29 device, offscreen MSAA scene pass, edge outlines from normals and
+  depth, bloom, ACES composite, readback into a `RenderImage`, rendered only when the frame key
+  changes; isometric preset plus orbit/zoom/pan; CPU picking) and `sysboard/` in a full-size modal
+  (timeline with play/pause/speed/step/scrub and failure markers, state inspector with the machine as
+  a Mermaid diagram, scenario picker and seed), with the 2.5D vector fallback when no adapter exists.
+  On an RTX 4070 (Vulkan) a 900×670 frame costs about 1.3 ms of GPU time and 0.3 ms of readback.
+- `adapter-export`: `board.html` with three.js r160 inlined, replaying the recorded traces with the
+  same geometry; deep links (`#scenario=…&t=…&chip=…`).
+- `crest`: `:simulate <spec>`, `crest --headless --simulate <spec>` (exit 0 only if every scenario
+  passes) and the tool's registration; the research flow's closing message suggests `:simulate`.
+
+Left for later:
+
+- Latency percentiles and load generators; fault toggles and input editing in the board (only the
+  seed can be changed there); sweeps across seeds and latency ranges.
+- WASM re-simulation inside `board.html` (v1 replays only); GIF/MP4 export.
+- Hierarchical and parallel states, retries; bounded exhaustive exploration ("P-lite").
+- Lint that compares the model with the black-box diagram node by node (today components only have
+  to cite something); repairing on failing assertions is deliberately not done.
+- A light theme for the board; sharing `render3d/` with the 3D model viewer of rich-content modals;
+  a compact preview block in the timeline; exporters to Quint or Structurizr.
+
+The original research follows.
 
 ## Decisions (October 2026)
 

@@ -1,9 +1,11 @@
-# Workflows: research and implementation
+# Workflows: research, simulation and implementation
 
 crest ships two guided workflows that run inside the chat:
 
 - The **research workflow** follows the stages of the [Hashlabs X-Workflow](https://www.hashlabs.com/guides/en/methodology/X-Workflow.html). It starts from a problem described in natural language and ends in a **Spec** with its implementation plan.
 - The **implementation workflow** takes a Spec's `plan.json` and runs it task by task, with one commit per task.
+
+Between the two, on demand, you can **simulate a solution** ([below](#simulating-a-solution)): crest turns the Spec into an executable model, runs its scenarios and shows the result on a 3D board, before anything is implemented.
 
 Both are built with [graph-flow](https://crates.io/crates/graph-flow). Every step is a checkpoint in SQLite, in `~/.local/share/crest/sessions.db`. At **gates**, the workflow stops and waits for your answer in the same chat input (in the window) or on stdin (in headless mode).
 
@@ -130,6 +132,7 @@ One folder is created per problem definition. The files are written without aski
 ```text
 .crest/specs/0007-session-cache/
   spec.md        Spec for people (10 sections)
+  simulation/    written by :simulate (see Simulating a solution)
   plan.md        readable plan, generated from plan.json (do not edit by hand)
   plan.json      plan consumed by the implementation workflow
   journal.md     research journal (rewritten by the Plan node)
@@ -325,3 +328,45 @@ If the plan turns out not to be viable, because you answered "back to spec" or b
    3. `:implement <spec>` starts the implementation again.
 
 In headless mode, leaving through "back to spec" or "abort" exits with code 1.
+
+## Simulating a solution
+
+A simulation validates the solution of a Spec **before** implementing it, and gives a picture of it that is easy to share. It is optional and on demand, not a stage of the research workflow: when the research workflow finishes, its last message suggests `:simulate <spec>`.
+
+| Where | Command |
+| --- | --- |
+| Window | `:simulate <spec>`: the board opens in a full-size modal and the verdicts land in the timeline ([usage.md](usage.md#simulation-board) lists the keys). |
+| Terminal | `crest --headless --simulate <spec>`: prints the verdicts and the path of `board.html`; exits with 0 only when every scenario passes. |
+| Chat | Ask the agent ("simulate the session-cache Spec"); it calls the `simulate_solution` tool, which writes into the Spec folder (a `write` action: in `ask` mode it asks first). |
+
+`<spec>` is a folder of `.crest/specs/` (`0007-session-cache`), its number (`7`), a unique part of its name or its path.
+
+### What happens
+
+1. **Read the Spec.** `spec.md` gives the title, the black-box diagram (`flowchart`), the sequence and state diagrams, the design sections and the test protocol (with its `T1`, `T2`... items); `sources.json` the known evidence.
+2. **Assertions first, frozen.** A call of its own (role `plan`) turns the test protocol into scenarios with their assertions, before any model exists, and names the components of the black box. These assertions are frozen.
+3. **The model.** A second call writes an executable model in the `crest.sysmodel/v1` format from the diagrams: components (client, service, queue, db, cache, lb, external, timer) with ports, capacity, latency, integer variables and a flat state machine; connections; the scenarios with their inputs (injections, repeats, faults). Whatever assertions the model writes, the frozen ones are put back; any change is reported ("frozen assertions restored") and written to the journal.
+4. **Validation and repair.** The model is checked against the JSON Schema (unknown fields and values are rejected), linted (references resolve, message types match across connections, guards use declared variables, states are reachable, emitted messages have handlers, components cite the Spec) and dry-run. Errors go back to the model in up to **2 repair rounds**. Failing assertions are **not** repaired: they are findings.
+5. **Run.** Every scenario runs in a deterministic simulator: a virtual clock in integer microseconds, events ordered by time and sequence, random latencies drawn from the scenario's seed. Same model and seed, same trace. The checks are `always`, `never`, `eventually … within`, `count` (handled, ignored, rejected or dropped messages at a component) and `path` (the components a request visits, as in a sequence diagram), plus the model's invariants after every event. A failure comes with a counterexample: the event, its time and the state of every component.
+6. **Record.** In the Spec folder:
+
+```text
+.crest/specs/0007-session-cache/
+  simulation/
+    sysmodel.json        the model (crest.sysmodel/v1)
+    assertions.json      the frozen scenarios and assertions
+    traces/<scenario>.json  the run: every event, checkpoints of the state, the verdicts
+    board.html           self-contained replay (three.js inlined, no network)
+  sources.json           + one evidence record per scenario (model hash, seed, trace hash, verdicts)
+  journal.md             + a "Simulation" section
+```
+
+### The board
+
+The board is an isometric circuit board of the solution: components are chips (colour by kind, the state glowing on top), connections are traces, messages are glowing packets that move along them, and queued messages stack on their chip. In the window it is drawn by crest's own offscreen GPU renderer (lit bevelled chips, edge outlines, bloom; isometric preset plus orbit, zoom and pan); without a GPU adapter it falls back to a 2.5D drawing. The timeline plays, steps from event to event and scrubs, with a red mark at each failed assertion; clicking a chip shows its state, variables, queue and machine.
+
+`board.html` replays the recorded runs with the same geometry and controls in any browser, offline; a link such as `board.html#scenario=burst&t=0.4&chip=api` opens a scenario at a moment with a chip inspected.
+
+### Reading the result
+
+A simulation is a **behavioural sketch**: it proves that the design is consistent with its own assertions, not that the real system behaves so. Latencies are guesses unless the model cites evidence for them. A passing scenario is evidence that the design holds under those inputs; a failing one shows where it breaks, with the state that breaks it. Lint warnings (for example a test-protocol item no scenario covers) are listed with the verdicts.
