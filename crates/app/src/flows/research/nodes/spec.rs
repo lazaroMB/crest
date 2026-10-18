@@ -1,7 +1,7 @@
 //! Node 12, Spec: writes one folder per problem statement in
 //! `.crest/specs/NNNN-<slug>/` with `spec.md` (the ten sections of the
 //! template), `journal.md`, `sources.json` and the CSV of the charts in
-//! `evidence/`.
+//! `evidence/`, which the sources of `spec.md` link to.
 //!
 //! The model fills the sections through the forced tool `submit_spec`;
 //! the constraints table and the sources are rendered from the state.
@@ -23,7 +23,9 @@ use domain::block::{BlockKind, ChartSpec};
 use domain::research::{ResearchState, Stage};
 use serde::{Deserialize, Serialize};
 
-use self::render::{SpecAnswer, citation_problems, cited_evidence, folder_number, slug};
+use self::render::{
+    SpecAnswer, chart_file, charts_section, citation_problems, cited_evidence, folder_number, slug,
+};
 use self::sink::{MemorySpecSink, SpecSink, SpecSinkError};
 use self::structured::{ask_valid, submit_tool};
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
@@ -152,6 +154,7 @@ impl ResearchNode for Spec {
             .max()
             .unwrap_or(0)
             + 1;
+        let charts: Vec<ChartSpec> = ctx.data(CHARTS_KEY).unwrap_or_default();
         let tool = submit_tool::<SpecAnswer>("submit_spec", TOOL_DESCRIPTION)?;
         let statements = ctx.state().problem_statements.clone();
         let mut drafts = Vec::with_capacity(statements.len());
@@ -181,6 +184,7 @@ impl ResearchNode for Spec {
                 }
             })
             .await?;
+            let spec_md = spec_md + &charts_section(&charts);
             let folder = reused.map_or_else(
                 || format!("{number}-{}", slug(&answer.title)),
                 |d| d.folder.clone(),
@@ -192,7 +196,6 @@ impl ResearchNode for Spec {
                 spec_md,
             });
         }
-        let charts: Vec<ChartSpec> = ctx.data(CHARTS_KEY).unwrap_or_default();
         for draft in &drafts {
             let cited = cited_evidence(&draft.spec_md, ctx.state()).len();
             ctx.log(format!(
@@ -231,8 +234,7 @@ impl Spec {
             .await
             .map_err(sink_error)?;
         for (i, chart) in charts.iter().enumerate() {
-            let file = format!("evidence/chart-{}-{}.csv", i + 1, slug(&chart.title));
-            sink.write(folder, &file, &render::chart_csv(chart))
+            sink.write(folder, &chart_file(i, chart), &render::chart_csv(chart))
                 .await
                 .map_err(sink_error)?;
         }

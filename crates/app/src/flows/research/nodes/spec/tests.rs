@@ -167,6 +167,10 @@ async fn writes_the_spec_folder_with_ten_sections_and_known_citations() {
             .as_deref(),
         Some("label,p95\n100,10\n500,500\n")
     );
+    assert!(
+        md.contains("### Gráficas\n\n- **Latencia**: datos en [`evidence/chart-1-latencia.csv`](evidence/chart-1-latencia.csv)"),
+        "{md}"
+    );
 
     let kinds = blocks(&events);
     assert!(

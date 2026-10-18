@@ -399,6 +399,30 @@ fn utc(ms: u64) -> String {
     )
 }
 
+/// Path in the Spec folder of the CSV of the `index`-th chart (0-based).
+#[must_use]
+pub fn chart_file(index: usize, chart: &ChartSpec) -> String {
+    format!("evidence/chart-{}-{}.csv", index + 1, slug(&chart.title))
+}
+
+/// The "Gráficas" part of the sources of `spec.md`: one link per chart to
+/// its CSV in `evidence/`. Empty without charts.
+#[must_use]
+pub fn charts_section(charts: &[ChartSpec]) -> String {
+    if charts.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n### Gráficas\n\n");
+    for (i, chart) in charts.iter().enumerate() {
+        let file = chart_file(i, chart);
+        out.push_str(&format!(
+            "- **{}**: datos en [`{file}`]({file})\n",
+            one_line(&chart.title)
+        ));
+    }
+    out
+}
+
 /// Data of `chart` as CSV: a label column and one column per series.
 #[must_use]
 pub fn chart_csv(chart: &ChartSpec) -> String {
