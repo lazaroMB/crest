@@ -14,12 +14,15 @@ pub(crate) fn to_lua(lua: &Lua, value: &Value) -> mlua::Result<mlua::Value> {
 }
 
 /// Converts a Lua value into JSON. Functions and other values JSON cannot
-/// represent are skipped; `nil` becomes `null`.
+/// represent are skipped; `nil` becomes `null`. Keys are sorted, so the
+/// result does not depend on Lua's table order.
 pub(crate) fn to_json(lua: &Lua, value: mlua::Value) -> mlua::Result<Value> {
     if value.is_nil() {
         return Ok(Value::Null);
     }
-    let options = mlua::serde::de::Options::new().deny_unsupported_types(false);
+    let options = mlua::serde::de::Options::new()
+        .deny_unsupported_types(false)
+        .sort_keys(true);
     lua.from_value_with(value, options)
 }
 

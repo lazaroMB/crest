@@ -8,8 +8,8 @@
 //! `getenv`/`tmpname`/`setlocale`. `os.getenv` is removed because the
 //! environment holds secrets such as the API key. `print` goes to the log.
 //!
-//! `require(name)` only resolves modules the host registers with
-//! [`set_module`], such as `app`.
+//! The global `require` refuses every module; each config file gets its own
+//! `require` that only returns its `app` table.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -18,9 +18,6 @@ use application::ports::plugin::PluginError;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Variadic, VmState};
 
 use crate::convert;
-
-/// Registry table with the modules `require` can return.
-const MODULES: &str = "crest.modules";
 
 /// Instructions between two checks of the budget.
 const CHECK_EVERY: u32 = 10_000;
@@ -88,25 +85,14 @@ fn restrict(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    lua.set_named_registry_value(MODULES, lua.create_table()?)?;
     globals.raw_set("require", lua.create_function(require)?)?;
     Ok(())
 }
 
-fn require(lua: &Lua, name: String) -> mlua::Result<mlua::Value> {
-    let modules: Table = lua.named_registry_value(MODULES)?;
-    match modules.raw_get::<mlua::Value>(name.as_str())? {
-        mlua::Value::Nil => Err(mlua::Error::runtime(format!(
-            "module '{name}' not found (only host modules such as 'app' can be required)"
-        ))),
-        module => Ok(module),
-    }
-}
-
-/// Makes `require(name)` return `module`.
-pub(crate) fn set_module(lua: &Lua, name: &str, module: impl mlua::IntoLua) -> mlua::Result<()> {
-    let modules: Table = lua.named_registry_value(MODULES)?;
-    modules.raw_set(name, module)
+fn require(_: &Lua, name: String) -> mlua::Result<()> {
+    Err(mlua::Error::runtime(format!(
+        "module '{name}' not found (only require(\"app\") is available)"
+    )))
 }
 
 /// Wraps the functions that catch errors so they re-raise the limit error.
@@ -266,13 +252,8 @@ mod tests {
     }
 
     #[test]
-    fn require_only_returns_host_modules() {
+    fn require_cannot_load_files_or_modules() {
         let lua = lua();
-        let app = lua.create_table().unwrap();
-        app.set("name", "crest").unwrap();
-        set_module(&lua, "app", app).unwrap();
-        let name: String = lua.load("return require('app').name").eval().unwrap();
-        assert_eq!(name, "crest");
         let err = lua
             .load("return require('/etc/passwd')")
             .exec()
