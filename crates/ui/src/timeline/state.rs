@@ -49,6 +49,7 @@ pub enum TimelineChange {
 pub struct TimelineState {
     entries: Vec<TimelineEntry>,
     index: HashMap<BlockId, usize>,
+    selected: Option<usize>,
 }
 
 impl TimelineState {
@@ -130,6 +131,66 @@ impl TimelineState {
             }),
             _ => TimelineChange::None,
         }
+    }
+
+    /// Index of the selected block, the target of normal-mode actions.
+    pub fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
+    /// The selected block.
+    pub fn selected_entry(&self) -> Option<&TimelineEntry> {
+        self.selected.and_then(|ix| self.entries.get(ix))
+    }
+
+    /// Selects the next block (`j`); with nothing selected, the last one.
+    /// Returns the new selection.
+    pub fn select_next(&mut self) -> Option<usize> {
+        let next = match self.selected {
+            Some(ix) => ix + 1,
+            None => self.len().saturating_sub(1),
+        };
+        self.select(next)
+    }
+
+    /// Selects the previous block (`k`); with nothing selected, the last one.
+    pub fn select_prev(&mut self) -> Option<usize> {
+        let prev = match self.selected {
+            Some(ix) => ix.saturating_sub(1),
+            None => self.len().saturating_sub(1),
+        };
+        self.select(prev)
+    }
+
+    /// Selects the first block (`gg`).
+    pub fn select_first(&mut self) -> Option<usize> {
+        self.select(0)
+    }
+
+    /// Selects the last block (`G`).
+    pub fn select_last(&mut self) -> Option<usize> {
+        self.select(self.len().saturating_sub(1))
+    }
+
+    /// Selects block `ix`, clamped to the last one; nothing on an empty
+    /// timeline.
+    pub fn select(&mut self, ix: usize) -> Option<usize> {
+        self.selected = (!self.is_empty()).then(|| ix.min(self.len() - 1));
+        self.selected
+    }
+
+    /// Drops the selection.
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+    }
+
+    /// Expands or collapses the selected block (`Enter`). Returns its index
+    /// when there was one.
+    pub fn toggle_selected(&mut self) -> Option<usize> {
+        let ix = self.selected?;
+        let entry = self.entries.get_mut(ix)?;
+        entry.expanded = !entry.expanded;
+        Some(ix)
     }
 
     fn upsert(&mut self, block: Block) -> TimelineChange {
@@ -303,6 +364,65 @@ mod tests {
         assert_eq!(*status, ToolStatus::Succeeded);
         assert_eq!(output.as_deref(), Some("3 matches"));
         assert!(!state.entries()[0].expanded);
+    }
+
+    fn with_blocks(n: usize) -> TimelineState {
+        let mut state = TimelineState::new();
+        for i in 0..n {
+            state.apply(&added(&text(&i.to_string())));
+        }
+        state
+    }
+
+    #[test]
+    fn selection_moves_and_clamps() {
+        let mut state = with_blocks(3);
+        assert_eq!(state.selected(), None);
+        assert_eq!(
+            state.select_next(),
+            Some(2),
+            "j without selection picks the last"
+        );
+        assert_eq!(state.select_next(), Some(2), "clamped at the end");
+        assert_eq!(state.select_prev(), Some(1));
+        assert_eq!(state.select_first(), Some(0));
+        assert_eq!(state.select_prev(), Some(0), "clamped at the start");
+        assert_eq!(state.select_last(), Some(2));
+        assert_eq!(
+            state.selected_entry().map(|e| e.block.id),
+            state.get(2).map(|e| e.block.id)
+        );
+    }
+
+    #[test]
+    fn selection_on_empty_timeline_is_none() {
+        let mut state = TimelineState::new();
+        assert_eq!(state.select_next(), None);
+        assert_eq!(state.select_last(), None);
+        assert_eq!(state.select_first(), None);
+        assert_eq!(state.toggle_selected(), None);
+    }
+
+    #[test]
+    fn selection_survives_new_blocks() {
+        let mut state = with_blocks(2);
+        state.select_first();
+        state.apply(&added(&text("new")));
+        assert_eq!(state.selected(), Some(0));
+        assert_eq!(state.select_last(), Some(2));
+    }
+
+    #[test]
+    fn toggle_flips_expansion_of_selected_block() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&text("a")));
+        state.apply(&added(&tool("read_file")));
+        state.select_last();
+        assert_eq!(state.toggle_selected(), Some(1));
+        assert!(state.entries()[1].expanded);
+        assert!(state.entries()[0].expanded, "others untouched");
+        state.toggle_selected();
+        assert!(!state.entries()[1].expanded);
     }
 
     #[test]
