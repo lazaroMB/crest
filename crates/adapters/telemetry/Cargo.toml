@@ -7,15 +7,34 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Export the spans to Langfuse over OTLP/HTTP.
+langfuse = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-langfuse",
+    "dep:tracing-opentelemetry",
+    "dep:tokio",
+]
+
 [dependencies]
 application.workspace = true
 domain.workspace = true
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-langfuse = { workspace = true, optional = true }
 thiserror.workspace = true
+tokio = { workspace = true, optional = true }
 tracing.workspace = true
+tracing-opentelemetry = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true
