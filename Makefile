@@ -10,6 +10,7 @@ PACKAGE   ?= crest
 WORKSPACE ?= .
 PREFIX    ?= $(HOME)/.local
 SCRIPTS   ?= scripts
+BASH      ?= bash
 
 .DEFAULT_GOAL := help
 
@@ -60,3 +61,33 @@ endif
 .PHONY: test-live
 test-live: ## Tests contra la API real (ignorados; requiere ANTHROPIC_API_KEY)
 	ANTHROPIC_LIVE_TEST=1 $(CARGO) test --workspace -- --ignored live
+
+# scripts/install-deps.sh lo escribe T0.3.
+.PHONY: deps
+deps: ## Instala las dependencias externas (scripts/install-deps.sh)
+	$(BASH) $(SCRIPTS)/install-deps.sh
+
+.PHONY: deps-dev
+deps-dev: ## Instala dependencias y herramientas de desarrollo (--dev)
+	$(BASH) $(SCRIPTS)/install-deps.sh --dev
+
+.PHONY: doctor
+doctor: ## Verifica las dependencias sin instalar nada (--check)
+	$(BASH) $(SCRIPTS)/install-deps.sh --check
+
+# TEMPORAL: mientras scripts/check-arch.sh (T0.4) no exista, `arch` solo
+# avisa y sale con 0. Quitar la rama del aviso cuando T0.4 se integre.
+.PHONY: arch
+arch: ## Reglas de la arquitectura hexagonal (scripts/check-arch.sh)
+	@if [ -f $(SCRIPTS)/check-arch.sh ]; then \
+		echo "$(BASH) $(SCRIPTS)/check-arch.sh"; \
+		$(BASH) $(SCRIPTS)/check-arch.sh; \
+	else \
+		echo "aviso: $(SCRIPTS)/check-arch.sh no existe todavía; se omite arch" >&2; \
+	fi
+
+.PHONY: check
+check: fmt-check lint test arch ## Lo que debe pasar para cerrar una fase
+
+.PHONY: ci
+ci: doctor check ## doctor + check
