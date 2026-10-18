@@ -1,6 +1,6 @@
-# Tests contra la API real de Anthropic. Solo manual (workflow_dispatch): no
-# corre en push ni en pull_request. Necesita el secreto ANTHROPIC_API_KEY del
-# repositorio; la clave solo llega por variable de entorno.
+# Tests against the real Anthropic API. Manual only (workflow_dispatch): it
+# does not run on push or pull_request. Needs the repository secret
+# ANTHROPIC_API_KEY; the key only arrives through an environment variable.
 
 name: Live API tests
 
@@ -30,11 +30,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: |
           bash scripts/install-deps.sh --yes
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # Si el runner no traía Rust, rustup lo deja en ~/.cargo/bin.
+          # If the runner had no Rust, rustup puts it in ~/.cargo/bin.
           echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
       - name: make test-live

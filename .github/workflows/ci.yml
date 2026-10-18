@@ -1,17 +1,17 @@
-# CI de crest: `make ci` (doctor + check) en Linux y macOS.
+# crest CI: `make ci` (doctor + check) on Linux and macOS.
 #
-# Acciones fijadas por SHA de commit (con la versión en el comentario): un tag
-# se puede mover, un SHA no. Dependabot o Renovate pueden actualizarlos.
+# Actions pinned by commit SHA (with the version in the comment): a tag can
+# move, a SHA cannot. Dependabot or Renovate can update them.
 #
-# macOS: la imagen macos-15 trae Xcode completo seleccionado, con lo que
-# install-deps.sh encuentra las Command Line Tools y el compilador Metal sin
-# instalar nada de la App Store. GPUI se compila con `runtime_shaders`, así
-# que el build no invoca Metal; solo `make doctor` lo verifica. Si una imagen
-# futura trae Xcode 26+ sin el Metal toolchain, el paso "Metal toolchain" lo
-# descarga.
+# macOS: the macos-15 image ships with the full Xcode selected, so
+# install-deps.sh finds the Command Line Tools and the Metal compiler without
+# installing anything from the App Store. GPUI is built with `runtime_shaders`,
+# so the build does not invoke Metal; only `make doctor` checks it. If a future
+# image ships Xcode 26+ without the Metal toolchain, the "Metal toolchain" step
+# downloads it.
 #
-# Los tests de GPUI usan el TestAppContext de `test-support`, que no abre
-# ventanas: no hace falta display (ni xvfb-run) en Linux.
+# The GPUI tests use the TestAppContext from `test-support`, which opens no
+# windows: no display (or xvfb-run) is needed on Linux.
 
 name: CI
 
@@ -31,7 +31,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Sin info de depuración: target/ mucho más chico (GPUI es grande) y cache más liviana.
+  # No debug info: a much smaller target/ (GPUI is big) and a lighter cache.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
   RUST_BACKTRACE: "1"
@@ -48,8 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Antes de install-deps: restaura también ~/.cargo/bin (cache-bin), así
-      # cargo-insta y cargo-nextest no se recompilan en cada ejecución.
+      # Before install-deps: also restores ~/.cargo/bin (cache-bin), so
+      # cargo-insta and cargo-nextest are not rebuilt on every run.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: "true"
@@ -62,12 +62,12 @@ jobs:
             xcodebuild -downloadComponent MetalToolchain
           fi
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: |
           bash scripts/install-deps.sh --yes --dev
-          # rg y fzf pueden quedar en ~/.local/bin si el paquete es viejo.
+          # rg and fzf may end up in ~/.local/bin if the package is too old.
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # Si el runner no traía Rust, rustup lo deja en ~/.cargo/bin.
+          # If the runner had no Rust, rustup puts it in ~/.cargo/bin.
           echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
       - name: make ci
@@ -84,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # En una imagen limpia --check debe salir con 1, listar lo que falta y
-      # no colgarse; el script lo verifica con docker (preinstalado en el runner).
-      - name: install-deps.sh --check en ${{ matrix.image }}
+      # On a clean image --check must exit 1, list what is missing and not
+      # hang; the script checks it with docker (preinstalled on the runner).
+      - name: install-deps.sh --check on ${{ matrix.image }}
         run: bash tests/install-deps/run-containers.sh "${{ matrix.image }}"

@@ -1,23 +1,23 @@
-# Release de crest: tarballs para Linux y macOS.
+# crest release: tarballs for Linux and macOS.
 #
-# Con un tag v* compila, empaqueta y publica una GitHub Release con los
-# tarballs y sus checksums. Con workflow_dispatch solo deja los artefactos
-# en la ejecución (sin release), útil para probar el pipeline.
+# On a v* tag it builds, packages and publishes a GitHub Release with the
+# tarballs and their checksums. On workflow_dispatch it only leaves the
+# artifacts on the run (no release), handy to test the pipeline.
 #
-# Mismas convenciones que ci.yml: acciones fijadas por SHA de commit (con la
-# versión en el comentario), rust-cache y scripts/install-deps.sh.
+# Same conventions as ci.yml: actions pinned by commit SHA (with the version
+# in the comment), rust-cache and scripts/install-deps.sh.
 #
-# Linux se compila en ubuntu-22.04 y no en 24.04: el binario enlaza la glibc
-# del runner, y la 2.35 de 22.04 cubre más distros (Ubuntu 22.04+, Debian 12+,
-# Fedora 36+, RHEL 9 y derivadas) que la 2.39 de 24.04. install-deps.sh ya
-# soporta 22.04 (baja rg y fzf oficiales porque los de la distro son viejos).
-# Cuando GitHub retire esa imagen, pasar a la LTS siguiente y actualizar la
-# glibc mínima en scripts/package.sh.
+# Linux builds on ubuntu-22.04, not 24.04: the binary links the runner's
+# glibc, and 22.04's 2.35 covers more distros (Ubuntu 22.04+, Debian 12+,
+# Fedora 36+, RHEL 9 and derivatives) than 24.04's 2.39. install-deps.sh
+# already supports 22.04 (it downloads the official rg and fzf because the
+# distro ones are too old). When GitHub retires that image, move to the next
+# LTS and update the minimum glibc in scripts/package.sh.
 #
-# macOS: ambos binarios salen de macos-15 (arm64); x86_64 se compila cruzado
-# con `rustup target add`. Los binarios NO van firmados ni notarizados: eso
-# requiere un Developer ID y secretos del repo, y queda fuera de alcance. El
-# README del tarball explica cómo quitar la cuarentena de Gatekeeper.
+# macOS: both binaries come from macos-15 (arm64); x86_64 is cross-compiled
+# with `rustup target add`. The binaries are NOT signed or notarized: that
+# needs a Developer ID and repo secrets, and is out of scope. The tarball's
+# README explains how to remove the Gatekeeper quarantine.
 
 name: Release
 
@@ -37,7 +37,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
-  # Mínimo de macOS del binario (el de Rust para aarch64; sube el de x86_64).
+  # Minimum macOS for the binary (Rust's for aarch64; raises x86_64's).
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
@@ -62,8 +62,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Igual que en ci.yml: install-deps.sh verifica el compilador Metal en
-      # macOS aunque el build (runtime_shaders) no lo use.
+      # Same as in ci.yml: install-deps.sh checks the Metal compiler on macOS
+      # even though the build (runtime_shaders) does not use it.
       - name: Metal toolchain
         if: runner.os == 'macOS'
         run: |
@@ -72,23 +72,23 @@ jobs:
             xcodebuild -downloadComponent MetalToolchain
           fi
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: |
           bash scripts/install-deps.sh --yes
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
-      - name: Target de Rust
+      - name: Rust target
         run: rustup target add "${{ matrix.target }}"
 
-      # Un tag v1.2.3 debe coincidir con la versión del workspace.
-      - name: Versión
+      # A v1.2.3 tag must match the workspace version.
+      - name: Version
         id: version
         run: |
           pkgid="$(cargo pkgid -p crest)"
           version="${pkgid##*[#@]}"
           if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
-            echo "::error::el tag ${GITHUB_REF_NAME} no coincide con la versión ${version} de Cargo.toml"
+            echo "::error::tag ${GITHUB_REF_NAME} does not match version ${version} in Cargo.toml"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -96,7 +96,7 @@ jobs:
       - name: cargo build --release
         run: cargo build --release --locked --target "${{ matrix.target }}" -p crest
 
-      - name: Empaquetar
+      - name: Package
         run: |
           bash scripts/package.sh --target "${{ matrix.target }}" \
             --version "${{ steps.version.outputs.version }}" --out dist
@@ -138,8 +138,8 @@ jobs:
           cat ./*.sha256 > SHA256SUMS
           sha256sum -c SHA256SUMS
 
-      # Un tag con guion (v0.2.0-rc.1) se publica como prerelease.
-      - name: Crear la release
+      # A tag with a hyphen (v0.2.0-rc.1) is published as a prerelease.
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
