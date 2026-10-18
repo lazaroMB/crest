@@ -200,16 +200,16 @@ pub const PACKET_Y: f32 = 0.35;
 pub const PACKET_RADIUS: f32 = 0.28;
 
 const fn kind_style(kind: ComponentKind) -> (Rgb, f32) {
-    // Base colour and height.
+    // Base colour (dark: the state glows on top) and height.
     match kind {
-        ComponentKind::Client => ([0.20, 0.36, 0.62], 0.9),
-        ComponentKind::Service => ([0.16, 0.20, 0.27], 1.1),
-        ComponentKind::Queue => ([0.42, 0.30, 0.10], 0.8),
-        ComponentKind::Db => ([0.10, 0.34, 0.30], 1.6),
-        ComponentKind::Cache => ([0.38, 0.14, 0.40], 1.0),
-        ComponentKind::Lb => ([0.30, 0.32, 0.12], 0.7),
-        ComponentKind::External => ([0.30, 0.30, 0.32], 1.0),
-        ComponentKind::Timer => ([0.36, 0.20, 0.12], 0.6),
+        ComponentKind::Client => ([0.06, 0.12, 0.24], 0.9),
+        ComponentKind::Service => ([0.05, 0.07, 0.10], 1.1),
+        ComponentKind::Queue => ([0.18, 0.12, 0.03], 0.8),
+        ComponentKind::Db => ([0.03, 0.13, 0.11], 1.6),
+        ComponentKind::Cache => ([0.15, 0.04, 0.16], 1.0),
+        ComponentKind::Lb => ([0.11, 0.12, 0.03], 0.7),
+        ComponentKind::External => ([0.10, 0.10, 0.11], 1.0),
+        ComponentKind::Timer => ([0.14, 0.07, 0.03], 0.6),
     }
 }
 
@@ -317,7 +317,7 @@ pub fn build_scene(model: &SysModel, layout: &Layout) -> Scene {
         board: Slab {
             min: [lo[0] - margin, -0.4, lo[1] - margin],
             max: [hi[0] + margin, 0.0, hi[1] + margin],
-            material: Material::matte([0.03, 0.12, 0.08]),
+            material: Material::matte([0.010, 0.045, 0.030]),
         },
         chips,
         ribbons,
