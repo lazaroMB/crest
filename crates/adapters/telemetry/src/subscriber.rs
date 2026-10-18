@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use tracing::Subscriber;
 use tracing_subscriber::filter::{EnvFilter, ParseError};
 use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::layer::{Identity, Layer, SubscriberExt};
+use tracing_subscriber::layer::{Identity, Layer, Layered, SubscriberExt};
 use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
 use tracing_subscriber::{Registry, fmt};
 
@@ -80,8 +80,10 @@ pub fn init_subscriber(opts: &SubscriberOptions) -> Result<(), SubscriberError> 
     init_subscriber_with(opts, Identity::new())
 }
 
-/// Like [`init_subscriber`], with an extra layer below the log (for
-/// example an OpenTelemetry exporter). The filter applies to it too.
+/// Like [`init_subscriber`], with an extra layer next to the log (for
+/// example an OpenTelemetry exporter). `CREST_LOG` only filters the log:
+/// the extra layer brings its own filter, so exporting traces does not
+/// depend on how verbose the log is.
 ///
 /// # Errors
 ///
@@ -106,33 +108,20 @@ where
     L: Layer<Registry> + Send + Sync + 'static,
 {
     let filter = parse_filter(env, &opts.default_filter)?;
-    let (stderr, file) = match &opts.output {
-        LogOutput::Stderr => (
-            Some(
-                fmt::layer()
-                    .with_writer(io::stderr)
-                    .with_span_events(FmtSpan::CLOSE),
-            ),
-            None,
-        ),
-        LogOutput::File(path) => {
-            let file = open_log(path)?;
-            (
-                None,
-                Some(
-                    fmt::layer()
-                        .with_writer(Mutex::new(file))
-                        .with_ansi(false)
-                        .with_span_events(FmtSpan::CLOSE),
-                ),
-            )
-        }
+    let log: Box<dyn Layer<Layered<L, Registry>> + Send + Sync> = match &opts.output {
+        LogOutput::Stderr => fmt::layer()
+            .with_writer(io::stderr)
+            .with_span_events(FmtSpan::CLOSE)
+            .boxed(),
+        LogOutput::File(path) => fmt::layer()
+            .with_writer(Mutex::new(open_log(path)?))
+            .with_ansi(false)
+            .with_span_events(FmtSpan::CLOSE)
+            .boxed(),
     };
     Ok(Registry::default()
         .with(layer)
-        .with(filter)
-        .with(stderr)
-        .with(file))
+        .with(log.with_filter(filter)))
 }
 
 /// The filter from `CREST_LOG` when it is set and not blank, otherwise
@@ -245,6 +234,38 @@ mod tests {
         tracing::subscriber::with_default(subscriber, run_turn);
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    }
+
+    /// Counts the spans it sees.
+    #[derive(Clone, Default)]
+    struct CountSpans(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for CountSpans {
+        fn on_new_span(
+            &self,
+            _attrs: &tracing::span::Attributes<'_>,
+            _id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn log_filter_does_not_silence_the_extra_layer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crest.log");
+        let count = CountSpans::default();
+        let subscriber = build_subscriber(
+            &file_opts(path.clone(), "info"),
+            Some("error"),
+            count.clone(),
+        )
+        .unwrap();
+        tracing::subscriber::with_default(subscriber, run_turn);
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        assert_eq!(count.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]
