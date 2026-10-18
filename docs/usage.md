@@ -68,8 +68,10 @@ In insert mode, keys without a mapping go to the editor. While crest waits for t
 | normal | `<Space>m` | `model.pick` | Picks the model for the **next** turn. |
 | normal | `<Space>p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | normal | `:` | `mode.command` | Opens the command line. |
+| normal | `?` | `help.open` | Opens the [help](#help). |
 | command | `Esc` | `mode.normal` | Cancels the command. |
 | all | `Ctrl+C` | `turn.interrupt` | Interrupts the running turn. Also works while a picker or a dialog is open. |
+| all | `F1` | `help.open` | Opens the [help](#help). |
 | all | `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
 
 You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetmode-keys-action)).
@@ -79,6 +81,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | Command | What it does |
 | --- | --- |
 | `:q`, `:quit`, `:qa` | Quits crest. |
+| `:help [section\|search]`, `:h` | Opens the [help](#help), on a section (`commands`, `keys`, `tools`, `plugins`, `mcp`, `models`, `cli`, `files`, or its number) or with that search already typed. |
 | `:model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. With no argument it goes back to the default model. |
 | `:mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `:clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
@@ -92,7 +95,31 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `:<name> <args>` | A command registered with `app.commands.register`. |
 | `:<dotted.action>` | Runs a builtin action, for example `:picker.files` or `:panel.tree`. |
 
-An unknown command shows `unknown command :x (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research, :simulate or :q)`.
+An unknown command shows `unknown command :x (use :help, :model, :mode, :clear, :modal, :q; :help lists every command)`.
+
+### Help
+
+`?` in normal mode, `F1` in any mode or `:help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
+
+| # | Section | What it lists |
+| --- | --- | --- |
+| 1 | Commands | The builtin `:` commands with their usage, then the commands of your plugins (with the plugin and its `desc`). |
+| 2 | Keys | The effective keymap per mode: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
+| 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
+| 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `:plugin trust` command, or `no capabilities`) and its load problems. |
+| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, or held back because the workspace config is not trusted (with the `:mcp trust` command). |
+| 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn and the permission mode. |
+| 7 | CLI | The flags of `crest`, generated from the command-line parser. |
+| 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
+
+| Key | Effect |
+| --- | --- |
+| `1`–`8`, `Tab` / `Shift+Tab`, click | Switches section. |
+| `j` / `k`, arrows, `PageUp` / `PageDown`, `Home` / `End` | Moves the selection. |
+| `Enter` | Expands the selected row (a tool's input schema). |
+| `y` | Copies the selected row's command or name (`:plugin trust jira` for a pending plugin). |
+| `/` | Goes to the search box: what you type filters every section at once (each word must appear in the row, ignoring case). The arrows still move; `Enter` goes back to the list. |
+| `Esc`, `✕` | Closes the help; the focus goes back where it was. |
 
 ### File references with `@`
 

@@ -62,8 +62,8 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.models.roles`, `app.models.aliases` | tables | Models by role. |
 | `app.permissions.sensitive_paths` | list of strings | Paths the tools cannot read. |
 | `app.plugins` | list of strings | Extra plugins (global config only). |
-| `app.keymap.set(mode, keys, action)` | see below | At load time. |
-| `app.commands.register(name, fn)` | see below | At load time. |
+| `app.keymap.set(mode, keys, action [, { desc }])` | see below | At load time. |
+| `app.commands.register(name, fn [, { desc }])` | see below | At load time. |
 | `app.tools.register(def)` | see below | At load time. |
 | `app.on(event, fn)` | see below | At load time. |
 | `app.mcp` / `app.mcp.add(name, def)` | see below | At load time. |
@@ -78,11 +78,11 @@ Each file has its own environment: its global variables are not visible from oth
 
 A malformed argument to `keymap.set`, `commands.register`, `tools.register`, `app.on` or `mcp.add` does **not** stop the file: it produces a diagnostic with the line of the call, and only that call is ignored (see [Errors and diagnostics](#errors-and-diagnostics)).
 
-### `app.keymap.set(mode, keys, action)`
+### `app.keymap.set(mode, keys, action, opts)`
 
 ```lua
 app.keymap.set("n", "<leader>r", "picker.grep")               -- builtin action
-app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end)
+app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end, { desc = "Clear the session" })
 ```
 
 - **`mode`**: a mode or a list of modes. Each mode can be `"n"`/`"normal"`, `"i"`/`"insert"` or `"c"`/`"command"`.
@@ -94,6 +94,7 @@ app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end)
 
   `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
 - **`action`**: the name of a builtin action or a Lua function. The function is called with no arguments (`nil`) and can use `app.cmd` and `app.send`. If it returns `app.ui.block(...)`, that block is added to the timeline.
+- **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`?`, `F1`, `:help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
 
 A keymap replaces any other with the same keys in the same mode, builtin ones included. These are the builtin actions valid as a string:
 
@@ -110,20 +111,22 @@ A keymap replaces any other with the same keys in the same mode, builtin ones in
 | `model.pick` | Model menu for the next turn. |
 | `permission.cycle` | Cycles the permission mode. |
 | `turn.interrupt` | Interrupts the turn. |
+| `help.open` | Opens the help modal. |
 
 Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
 
-### `app.commands.register(name, fn)`
+### `app.commands.register(name, fn, opts)`
 
 ```lua
 app.commands.register("review", function(args)
   app.send("Review the uncommitted changes. " .. args, { role = "plan" })
-end)
+end, { desc = "Review the uncommitted changes" })
 ```
 
 - The command is used as `:review only src/`, and `fn` receives the rest of the line as a string (`"only src/"`, or `""` if there is nothing).
 - If the name starts with `/`, that slash is ignored.
-- The builtin commands `q`, `quit`, `qa`, `model`, `mode`, `clear`, `implement`, `research`, `mcp` and `plugin` are evaluated first, so a command with one of those names never runs.
+- The builtin commands `q`, `quit`, `qa`, `model`, `mode`, `clear`, `modal`, `help`, `h`, `implement`, `research`, `simulate`, `mcp` and `plugin` are evaluated first, so a command with one of those names never runs.
+- **`opts`** (optional): `{ desc = "..." }` describes the command in the help's Commands section, with the plugin that registered it. A bad `opts` is a diagnostic and the command is not registered.
 - As with keymaps, if `fn` returns `app.ui.block(...)`, the block is shown. Any other return value is ignored.
 
 ### `app.cmd(name)` and `app.send(text, opts)`
