@@ -658,4 +658,92 @@ mod tests {
             Err(RegisterError::Duplicate("show_chart".into()))
         );
     }
+
+    #[tokio::test]
+    async fn run_turn_shows_the_chart_the_model_asks_for() {
+        use std::sync::{Arc, Mutex};
+
+        use domain::block::ToolStatus;
+        use domain::conversation::{ContentPart, Session};
+        use domain::model::ModelPolicy;
+        use domain::permission::{PermissionMode, PermissionPolicy};
+
+        use crate::ports::events::DomainEvent;
+        use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
+        use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
+        use crate::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
+
+        let chart = json!({
+            "title": "Bytes by extension",
+            "kind": "pie",
+            "labels": ["rs", "md"],
+            "series": [{ "name": "bytes", "values": [900, 100] }]
+        });
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::tool_use("toolu_1", "show_chart", chart),
+            ScriptedResponse::text("Mostly Rust."),
+        ]));
+        let sink = Arc::new(RecordingSink::new());
+        let deps = AgentDeps {
+            llm: llm.clone(),
+            events: sink.clone(),
+            approval: Arc::new(ScriptedApproval::new()),
+            telemetry: Arc::new(RecordingTelemetry::new()),
+        };
+        let mut tools = ToolRegistry::new();
+        register_component_tools(&mut tools).unwrap();
+        let permissions = Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask)));
+        let service = AgentService::new(deps, tools, ModelPolicy::default(), permissions)
+            .with_system_prompt(COMPONENT_TOOLS_PROMPT);
+        let mut session = Session::new("/ws", 0);
+        service
+            .run_turn(&mut session, "chart it", TurnOptions::default())
+            .await
+            .unwrap();
+
+        let events = sink.events();
+        let charts: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                DomainEvent::BlockAdded { block } => match &block.kind {
+                    BlockKind::Chart(spec) => Some(spec),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(charts.len(), 1, "{events:#?}");
+        assert_eq!(charts[0].title, "Bytes by extension");
+        assert_eq!(charts[0].kind, ChartKind::Pie);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DomainEvent::ToolStatusChanged {
+                status: ToolStatus::Succeeded,
+                ..
+            }
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::ApprovalRequested { .. })),
+            "component tools must not ask for approval"
+        );
+
+        let results: Vec<_> = session
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.messages)
+            .flat_map(|message| &message.content)
+            .filter_map(|part| match part {
+                ContentPart::ToolResult {
+                    content, is_error, ..
+                } => Some((content.clone(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        let expected = ToolOutput::text(
+            "Chart 'Bytes by extension' shown to the user (pie, 1 series × 2 points).",
+        );
+        assert_eq!(results, [(expected.content, false)]);
+    }
 }
