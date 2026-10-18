@@ -91,7 +91,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T6.4 | integrada | T6.2 | `nodes/commit.rs` |
 | T6.5 | integrada | T6.1, T3.8 | `nodes/verify.rs` |
 | T6.6 | integrada | T6.5 | `nodes/report.rs` |
-| T6.7 ★ | en curso | T6.3–T6.6, T5.10 | `flows/implement/graph.rs` |
+| T6.7 ★ | integrada | T6.3–T6.6, T5.10 | `flows/implement/graph.rs` |
 | T7.1 | integrada | T1.6a, T2.A1 | `adapters/mcp/` |
 | T7.2 | integrada | T7.1, T2.F3 | `adapters/lua/src/api/mcp.rs` |
 | T7.3 | integrada | T2.A2 | `application/src/tools/task.rs` |
