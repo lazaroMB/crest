@@ -6,7 +6,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | --- | --- | --- | --- |
 | T0.1 ★ | integrada | — | raíz, `crates/*/Cargo.toml` |
 | T0.2 | integrada | T0.1 | `Makefile` |
-| T0.3 | en curso | — | `scripts/install-deps.sh` |
+| T0.3 | integrada | — | `scripts/install-deps.sh` |
 | T0.4 | integrada | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
 | T0.5 | pendiente | T0.2, T0.3, T0.4 | `.github/workflows/` |
 | T1.1 ★ | integrada | T0.1 | `domain/src/conversation.rs` |
@@ -17,32 +17,32 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T1.6a ★ | integrada | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
 | T1.6b | integrada | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
 | T1.6c | integrada | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
-| T1.7a ★ | en curso | T1.6a | `application/src/testing/llm.rs` |
-| T1.7b | en curso | T1.6b | `application/src/testing/fs.rs` |
-| T1.7c | en curso | T1.6c | `application/src/testing/system.rs` |
-| T2.A1 ★ | pendiente | T1.7a | `application/src/tools/registry.rs` |
-| T2.A2 ★ | pendiente | T2.A1, T1.7c | `application/src/usecases/run_turn.rs` |
-| T2.A3 ★ | pendiente | T2.A2, T1.5 | mismo archivo + `approval.rs` |
-| T2.A4 | pendiente | T2.A2 | `run_turn.rs` |
-| T2.A5 | pendiente | T2.A2 | `application/src/tools/budget.rs` |
-| T2.B1 ★ | pendiente | T1.6a | `adapters/anthropic/src/wire.rs` |
+| T1.7a ★ | integrada | T1.6a | `application/src/testing/llm.rs` |
+| T1.7b | integrada | T1.6b | `application/src/testing/fs.rs` |
+| T1.7c | integrada | T1.6c | `application/src/testing/system.rs` |
+| T2.A1 ★ | en curso | T1.7a | `application/src/tools/registry.rs` |
+| T2.A2 ★ | en curso | T2.A1, T1.7c | `application/src/usecases/run_turn.rs` |
+| T2.A3 ★ | en curso | T2.A2, T1.5 | mismo archivo + `approval.rs` |
+| T2.A4 | en curso | T2.A2 | `run_turn.rs` |
+| T2.A5 | en curso | T2.A2 | `application/src/tools/budget.rs` |
+| T2.B1 ★ | en curso | T1.6a | `adapters/anthropic/src/wire.rs` |
 | T2.B2 ★ | pendiente | T2.B1 | `stream.rs` |
 | T2.B3 | pendiente | T2.B1 | `client.rs` |
 | T2.B4 | pendiente | T2.B3, T1.3 | `retry.rs` |
 | T2.B5 | pendiente | T2.B3 | `catalog.rs` |
 | T2.B6 | pendiente | T2.B2 | `wire.rs`, `request.rs` |
 | T2.B7 | pendiente | T2.B4 | `tests/live.rs` |
-| T2.C1 | en curso | T1.6b | `adapters/search/src/process.rs` |
-| T2.C2 | pendiente | T2.C1 | `detect.rs` |
-| T2.C3 | pendiente | T2.C1 | `files.rs` |
-| T2.C4 | pendiente | T2.C1 | `grep.rs` |
-| T2.C5 | pendiente | T2.C2, T2.C3 | `find.rs` |
-| T2.D1 | pendiente | T1.6b, T1.4 | `adapters/fs/src/guard.rs` |
+| T2.C1 | integrada | T1.6b | `adapters/search/src/process.rs` |
+| T2.C2 | en curso | T2.C1 | `detect.rs` |
+| T2.C3 | en curso | T2.C1 | `files.rs` |
+| T2.C4 | en curso | T2.C1 | `grep.rs` |
+| T2.C5 | en curso | T2.C2, T2.C3 | `find.rs` |
+| T2.D1 | en curso | T1.6b, T1.4 | `adapters/fs/src/guard.rs` |
 | T2.D2 | pendiente | T2.D1 | `read.rs` |
 | T2.D3 | pendiente | T2.D1 | `write.rs` |
 | T2.D4 | pendiente | T1.6b | `adapters/shell/` |
-| T2.E1 | pendiente | T1.6c | `adapters/store/migrations/` |
-| T2.E2 | pendiente | T2.E1 | `adapters/store/src/session.rs` |
+| T2.E1 | en curso | T1.6c | `adapters/store/migrations/` |
+| T2.E2 | en curso | T2.E1 | `adapters/store/src/session.rs` |
 | T2.F1 | pendiente | T1.6c | `adapters/lua/src/host.rs` |
 | T2.F2 | pendiente | T2.F1 | `sandbox.rs` |
 | T2.F3 | pendiente | T2.F1, T1.3 | `config.rs` |
@@ -96,3 +96,5 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T7.2 | pendiente | T7.1, T2.F3 | `adapters/lua/src/api/mcp.rs` |
 | T7.3 | pendiente | T2.A2 | `application/src/tools/task.rs` |
 | T7.4 | pendiente | T0.5, T3.3 | `.github/workflows/release.yml` |
+
+Nota del orquestador: los carriles de la ola 2 cuyas tareas comparten crate y archivos (A1–A5, C2–C5, E1–E2…) se ejecutan en serie dentro de una sola rama por carril, con un commit `Task: <id>` por tarea, para evitar conflictos en `lib.rs`/`Cargo.toml` del crate.
