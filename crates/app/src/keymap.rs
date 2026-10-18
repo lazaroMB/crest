@@ -4,7 +4,7 @@
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
 //! passed in as an [`Instant`] so tests never sleep.
 //!
-//! The types here ([`Mode`], [`Key`], [`KeySequence`], `Action`) are the
+//! The types here ([`Mode`], [`Key`], [`KeySequence`], [`Action`]) are the
 //! keymap's own vocabulary. The Lua host (`app.keymap.set`) and the UI layer
 //! convert their own representations into them.
 
@@ -532,6 +532,59 @@ impl<A: Clone> KeySequencer<A> {
     }
 }
 
+/// What a mapping does: a builtin action by name, or a Lua callback that
+/// the plugin host registered under an id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Action {
+    Builtin(String),
+    Callback(u64),
+}
+
+impl Action {
+    /// A builtin action by name.
+    pub fn builtin(name: &str) -> Self {
+        Self::Builtin(name.to_owned())
+    }
+}
+
+/// Builtin mappings from the plan's keymap table, with the default leader.
+const DEFAULTS: &[(&[Mode], &str, &str)] = &[
+    (&[Mode::Insert], "<Esc>", "mode.normal"),
+    (&[Mode::Insert], "<CR>", "submit"),
+    (&[Mode::Insert], "<S-CR>", "newline"),
+    (&[Mode::Normal], "i", "mode.insert"),
+    (&[Mode::Normal], "j", "block.next"),
+    (&[Mode::Normal], "k", "block.prev"),
+    (&[Mode::Normal], "gg", "block.first"),
+    (&[Mode::Normal], "G", "block.last"),
+    (&[Mode::Normal], "<CR>", "block.toggle"),
+    (&[Mode::Normal], "t", "block.toggle_view"),
+    (&[Mode::Normal], "y", "block.yank"),
+    (&[Mode::Normal], "<leader>ff", "picker.files"),
+    (&[Mode::Normal], "<leader>fg", "picker.grep"),
+    (&[Mode::Normal], "<leader>m", "model.pick"),
+    (&[Mode::Normal], "<leader>p", "permission.cycle"),
+    (&[Mode::Normal], ":", "mode.command"),
+    (&[Mode::Command], "<Esc>", "mode.normal"),
+    (&Mode::ALL, "<C-c>", "turn.interrupt"),
+];
+
+/// The builtin keymap. User mappings are layered on top with
+/// [`Keymap::set`], which replaces a default with the same keys.
+pub fn default_keymap() -> Keymap<Action> {
+    let mut keymap = Keymap::new();
+    for (modes, notation, name) in DEFAULTS {
+        // The table is static and covered by tests, so parsing cannot fail;
+        // skipping instead of panicking keeps this path free of unwrap.
+        if let Ok(keys) = parse_keys(notation, DEFAULT_LEADER) {
+            for mode in *modes {
+                keymap.set_keys(*mode, &keys, Action::builtin(name));
+            }
+        }
+    }
+    keymap
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -830,6 +883,53 @@ mod tests {
         assert_eq!(
             seq.feed(Key::char('g'), t + ms(1500)),
             vec![Feed::Matched("g"), Feed::Pending]
+        );
+    }
+
+    #[test]
+    fn default_table_parses() {
+        for (_, notation, _) in DEFAULTS {
+            assert!(parse_keys(notation, DEFAULT_LEADER).is_ok(), "{notation}");
+        }
+    }
+
+    #[test]
+    fn default_keymap_follows_plan_table() {
+        let km = default_keymap();
+        let get = |mode, n: &str| km.lookup(mode, &keys(n)).exact.cloned();
+        let b = |name: &str| Some(Action::builtin(name));
+        assert_eq!(get(Mode::Insert, "<Esc>"), b("mode.normal"));
+        assert_eq!(get(Mode::Insert, "<S-Enter>"), b("newline"));
+        assert_eq!(get(Mode::Normal, "gg"), b("block.first"));
+        assert_eq!(get(Mode::Normal, "G"), b("block.last"));
+        assert_eq!(get(Mode::Normal, "<Space>ff"), b("picker.files"));
+        assert_eq!(get(Mode::Normal, ":"), b("mode.command"));
+        for mode in Mode::ALL {
+            assert_eq!(get(mode, "<C-c>"), b("turn.interrupt"));
+        }
+        assert_eq!(get(Mode::Insert, "j"), None);
+    }
+
+    #[test]
+    fn default_keymap_can_be_overridden() {
+        let mut seq = KeySequencer::new(default_keymap(), Mode::Normal);
+        assert_eq!(
+            seq.keymap_mut()
+                .set(Mode::Normal, "<leader>ff", Action::Callback(7)),
+            Ok(())
+        );
+        let t = Instant::now();
+        assert_eq!(
+            feed_all(&mut seq, "<Space>ff", t),
+            vec![
+                Feed::Pending,
+                Feed::Pending,
+                Feed::Matched(Action::Callback(7))
+            ]
+        );
+        assert_eq!(
+            feed_all(&mut seq, "<Space>fg", t).last(),
+            Some(&Feed::Matched(Action::builtin("picker.grep")))
         );
     }
 }
