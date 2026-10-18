@@ -40,7 +40,7 @@ pub mod hypotheses;
 pub mod experiments;
 
 // T5.6: Definition
-// pub mod define;
+pub mod define;
 
 // T5.7a: Research
 // pub mod research;
