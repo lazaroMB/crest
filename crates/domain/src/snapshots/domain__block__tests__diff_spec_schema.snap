@@ -1,0 +1,69 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(DiffSpec)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DiffSpec",
+  "description": "A file change. The adapter computes the diff; this is only data.",
+  "type": "object",
+  "properties": {
+    "approval": {
+      "description": "Approval state when the change needs the user's decision.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "new_text": {
+      "description": "New content.",
+      "type": "string"
+    },
+    "old_text": {
+      "description": "Previous content; absent when the file is new.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "description": "Path of the file, relative to the workspace.",
+      "type": "string"
+    },
+    "unified": {
+      "description": "Unified diff between both.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path",
+    "new_text",
+    "unified"
+  ],
+  "$defs": {
+    "ApprovalState": {
+      "description": "Decision of the user on a proposed file change.",
+      "oneOf": [
+        {
+          "description": "Waiting for the user.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Accepted.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "Rejected.",
+          "type": "string",
+          "const": "rejected"
+        }
+      ]
+    }
+  }
+}

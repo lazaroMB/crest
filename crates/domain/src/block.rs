@@ -1147,4 +1147,15 @@ mod tests {
             assert_eq!(Block::new(kind).validate(), Err(err));
         }
     }
+
+    #[test]
+    fn json_schemas() {
+        insta::assert_json_snapshot!("block_schema", schemars::schema_for!(Block));
+        insta::assert_json_snapshot!("chart_spec_schema", schemars::schema_for!(ChartSpec));
+        insta::assert_json_snapshot!("table_spec_schema", schemars::schema_for!(TableSpec));
+        insta::assert_json_snapshot!("mermaid_spec_schema", schemars::schema_for!(MermaidSpec));
+        insta::assert_json_snapshot!("diff_spec_schema", schemars::schema_for!(DiffSpec));
+        insta::assert_json_snapshot!("custom_node_schema", schemars::schema_for!(CustomNode));
+        insta::assert_json_snapshot!("source_ref_schema", schemars::schema_for!(SourceRef));
+    }
 }

@@ -1,0 +1,89 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(ChartSpec)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ChartSpec",
+  "description": "A chart: labels on one axis and one or more numeric series.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "description": "How the series are drawn.",
+      "$ref": "#/$defs/ChartKind"
+    },
+    "labels": {
+      "description": "Category labels, one per value of each series.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "series": {
+      "description": "Data series.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Series"
+      }
+    },
+    "title": {
+      "description": "Chart title.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "kind",
+    "labels",
+    "series"
+  ],
+  "$defs": {
+    "ChartKind": {
+      "description": "How a chart is drawn.",
+      "oneOf": [
+        {
+          "description": "Vertical bars.",
+          "type": "string",
+          "const": "bar"
+        },
+        {
+          "description": "Lines.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "Filled areas.",
+          "type": "string",
+          "const": "area"
+        },
+        {
+          "description": "Pie; takes exactly one series.",
+          "type": "string",
+          "const": "pie"
+        }
+      ]
+    },
+    "Series": {
+      "description": "A named series of values, one per chart label.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Values, aligned with the chart labels.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ]
+    }
+  }
+}

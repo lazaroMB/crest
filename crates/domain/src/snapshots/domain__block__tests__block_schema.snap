@@ -1,0 +1,939 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(Block)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Block",
+  "description": "A block of the timeline.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Stable id, used to update the block in place (streaming, status).",
+      "$ref": "#/$defs/BlockId"
+    }
+  },
+  "oneOf": [
+    {
+      "description": "Model answer, markdown that may still be streaming.",
+      "type": "object",
+      "properties": {
+        "markdown": {
+          "description": "Markdown source.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "text"
+        }
+      },
+      "required": [
+        "type",
+        "markdown"
+      ]
+    },
+    {
+      "description": "Extended thinking of the model.",
+      "type": "object",
+      "properties": {
+        "collapsed": {
+          "description": "Whether the UI shows it collapsed (the default).",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "Raw reasoning text.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "thinking"
+        }
+      },
+      "required": [
+        "type",
+        "text",
+        "collapsed"
+      ]
+    },
+    {
+      "description": "A tool invocation: one line with name, key arguments and status.",
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "Raw tool input as sent by the model."
+        },
+        "name": {
+          "description": "Tool name.",
+          "type": "string"
+        },
+        "output": {
+          "description": "Tool output shown when expanded, once available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Lifecycle state.",
+          "$ref": "#/$defs/ToolStatus"
+        },
+        "summary": {
+          "description": "Short human summary of the key arguments.",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "description": "Id of the `tool_use` content block this call belongs to.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "tool_call"
+        }
+      },
+      "required": [
+        "type",
+        "tool_use_id",
+        "name",
+        "summary",
+        "input",
+        "status"
+      ]
+    },
+    {
+      "description": "Tabular data (tool `show_table`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "table"
+        }
+      },
+      "$ref": "#/$defs/TableSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A chart (tool `show_chart`); the UI can toggle it to a table.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "chart"
+        }
+      },
+      "$ref": "#/$defs/ChartSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A proposed file change (`edit_file`, `write_file`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "diff"
+        }
+      },
+      "$ref": "#/$defs/DiffSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A Mermaid diagram (tool `show_mermaid`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "mermaid"
+        }
+      },
+      "$ref": "#/$defs/MermaidSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A markdown document (tool `show_markdown` or a written `.md`), shown\nwith document typography and toggleable to source.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Markdown source.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Document title, e.g. the file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "markdown"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    {
+      "description": "A block drawn by a Lua plugin from a declarative tree.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Block name within the plugin.",
+          "type": "string"
+        },
+        "plugin": {
+          "description": "Plugin that produced it.",
+          "type": "string"
+        },
+        "tree": {
+          "description": "Content to draw.",
+          "$ref": "#/$defs/CustomNode"
+        },
+        "type": {
+          "type": "string",
+          "const": "custom"
+        }
+      },
+      "required": [
+        "type",
+        "plugin",
+        "name",
+        "tree"
+      ]
+    },
+    {
+      "description": "Sources cited by a workflow node; citations in the text link here.",
+      "type": "object",
+      "properties": {
+        "sources": {
+          "description": "Cited sources, in citation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          }
+        },
+        "type": {
+          "type": "string",
+          "const": "sources"
+        }
+      },
+      "required": [
+        "type",
+        "sources"
+      ]
+    },
+    {
+      "description": "An image (screenshot, exported chart, web image) with its source.",
+      "type": "object",
+      "properties": {
+        "data_or_path": {
+          "description": "Inline bytes or a path to read them from.",
+          "$ref": "#/$defs/ImageData"
+        },
+        "media_type": {
+          "description": "MIME type, e.g. `image/png`.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the image came from.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "image"
+        }
+      },
+      "required": [
+        "type",
+        "media_type",
+        "data_or_path"
+      ]
+    },
+    {
+      "description": "Marks that the workflow entered a new stage, with progress\n(`index` of `total`, 1-based, e.g. 5/14).",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based position of the stage.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "stage": {
+          "description": "Stage name.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Number of stages.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string",
+          "const": "stage_header"
+        }
+      },
+      "required": [
+        "type",
+        "stage",
+        "index",
+        "total"
+      ]
+    },
+    {
+      "description": "Failure of the API or a tool.",
+      "type": "object",
+      "properties": {
+        "hint": {
+          "description": "Suggested action for the user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "What went wrong.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "error"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ]
+    }
+  ],
+  "required": [
+    "id"
+  ],
+  "$defs": {
+    "Align": {
+      "description": "Horizontal alignment of a column.",
+      "oneOf": [
+        {
+          "description": "Left aligned.",
+          "type": "string",
+          "const": "left"
+        },
+        {
+          "description": "Centered.",
+          "type": "string",
+          "const": "center"
+        },
+        {
+          "description": "Right aligned.",
+          "type": "string",
+          "const": "right"
+        }
+      ]
+    },
+    "ApprovalState": {
+      "description": "Decision of the user on a proposed file change.",
+      "oneOf": [
+        {
+          "description": "Waiting for the user.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Accepted.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "Rejected.",
+          "type": "string",
+          "const": "rejected"
+        }
+      ]
+    },
+    "BlockId": {
+      "description": "Stable identifier of a block in the timeline.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "Cell": {
+      "description": "A table cell: a plain JSON scalar.",
+      "anyOf": [
+        {
+          "description": "Empty cell (`null`).",
+          "type": "null"
+        },
+        {
+          "description": "Boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "Number.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "Text.",
+          "type": "string"
+        }
+      ]
+    },
+    "ChartKind": {
+      "description": "How a chart is drawn.",
+      "oneOf": [
+        {
+          "description": "Vertical bars.",
+          "type": "string",
+          "const": "bar"
+        },
+        {
+          "description": "Lines.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "Filled areas.",
+          "type": "string",
+          "const": "area"
+        },
+        {
+          "description": "Pie; takes exactly one series.",
+          "type": "string",
+          "const": "pie"
+        }
+      ]
+    },
+    "ChartSpec": {
+      "description": "A chart: labels on one axis and one or more numeric series.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How the series are drawn.",
+          "$ref": "#/$defs/ChartKind"
+        },
+        "labels": {
+          "description": "Category labels, one per value of each series.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "description": "Data series.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Series"
+          }
+        },
+        "title": {
+          "description": "Chart title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "kind",
+        "labels",
+        "series"
+      ]
+    },
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "CustomNode": {
+      "description": "Declarative UI primitive of a `Custom` block, tagged by `type`.\n\nLua never touches GPUI: plugins return this tree and the UI turns it\ninto components.",
+      "oneOf": [
+        {
+          "description": "Plain text.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "description": "The text.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "description": "Children laid out horizontally.",
+          "type": "object",
+          "properties": {
+            "children": {
+              "description": "Child nodes.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CustomNode"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "row"
+            }
+          },
+          "required": [
+            "type",
+            "children"
+          ]
+        },
+        {
+          "description": "Children laid out vertically.",
+          "type": "object",
+          "properties": {
+            "children": {
+              "description": "Child nodes.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CustomNode"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "col"
+            }
+          },
+          "required": [
+            "type",
+            "children"
+          ]
+        },
+        {
+          "description": "A bulleted list.",
+          "type": "object",
+          "properties": {
+            "items": {
+              "description": "One node per item.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CustomNode"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "list"
+            }
+          },
+          "required": [
+            "type",
+            "items"
+          ]
+        },
+        {
+          "description": "A table.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "table"
+            }
+          },
+          "$ref": "#/$defs/TableSpec",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A chart.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "chart"
+            }
+          },
+          "$ref": "#/$defs/ChartSpec",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A code snippet.",
+          "type": "object",
+          "properties": {
+            "lang": {
+              "description": "Language for highlighting.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "description": "Source code.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "code"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ]
+        },
+        {
+          "description": "Rendered markdown.",
+          "type": "object",
+          "properties": {
+            "source": {
+              "description": "Markdown source.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "markdown"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ]
+        }
+      ]
+    },
+    "DiffSpec": {
+      "description": "A file change. The adapter computes the diff; this is only data.",
+      "type": "object",
+      "properties": {
+        "approval": {
+          "description": "Approval state when the change needs the user's decision.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_text": {
+          "description": "New content.",
+          "type": "string"
+        },
+        "old_text": {
+          "description": "Previous content; absent when the file is new.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Path of the file, relative to the workspace.",
+          "type": "string"
+        },
+        "unified": {
+          "description": "Unified diff between both.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "new_text",
+        "unified"
+      ]
+    },
+    "ImageData": {
+      "description": "Bytes of an image block, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "Inline, base64 encoded.",
+          "type": "object",
+          "properties": {
+            "data": {
+              "description": "Base64 payload.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "base64"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "description": "A file on disk.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "File path.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "path"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        }
+      ]
+    },
+    "MermaidSpec": {
+      "description": "A Mermaid diagram; the UI shows the source and the error if it does not\nparse.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Mermaid source.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Optional caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "Series": {
+      "description": "A named series of values, one per chart label.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Values, aligned with the chart labels.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ]
+    },
+    "SourceRef": {
+      "description": "Where a piece of information came from, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "A file of the workspace, optionally a 1-based inclusive line range.",
+          "type": "object",
+          "properties": {
+            "line_end": {
+              "description": "Last line.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "line_start": {
+              "description": "First line.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "path": {
+              "description": "Path relative to the workspace.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "file"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        },
+        {
+          "description": "A git commit.",
+          "type": "object",
+          "properties": {
+            "sha": {
+              "description": "Commit hash.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "First line of the message.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "commit"
+            }
+          },
+          "required": [
+            "type",
+            "sha",
+            "summary"
+          ]
+        },
+        {
+          "description": "A web page.",
+          "type": "object",
+          "properties": {
+            "title": {
+              "description": "Page title.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "url"
+            },
+            "url": {
+              "description": "Address.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "Output of a shell command.",
+          "type": "object",
+          "properties": {
+            "command": {
+              "description": "Command line.",
+              "type": "string"
+            },
+            "output_excerpt": {
+              "description": "Relevant excerpt of its output.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "output_excerpt"
+          ]
+        }
+      ]
+    },
+    "TableSpec": {
+      "description": "A table: named columns and rows of cells.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Column headers, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          }
+        },
+        "rows": {
+          "description": "Rows; each must have one cell per column.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Cell"
+            }
+          }
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
+      ]
+    },
+    "ToolStatus": {
+      "description": "Lifecycle of a tool call.",
+      "oneOf": [
+        {
+          "description": "Requested by the model, not started yet.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Waiting for the user to approve it.",
+          "type": "string",
+          "const": "awaiting_approval"
+        },
+        {
+          "description": "Executing.",
+          "type": "string",
+          "const": "running"
+        },
+        {
+          "description": "Finished successfully.",
+          "type": "string",
+          "const": "succeeded"
+        },
+        {
+          "description": "Finished with an error.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "Rejected by the user or a permission rule.",
+          "type": "string",
+          "const": "denied"
+        },
+        {
+          "description": "Interrupted before finishing.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    }
+  }
+}

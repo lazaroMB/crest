@@ -1,0 +1,101 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(TableSpec)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TableSpec",
+  "description": "A table: named columns and rows of cells.",
+  "type": "object",
+  "properties": {
+    "columns": {
+      "description": "Column headers, in order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Column"
+      }
+    },
+    "rows": {
+      "description": "Rows; each must have one cell per column.",
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Cell"
+        }
+      }
+    }
+  },
+  "required": [
+    "columns",
+    "rows"
+  ],
+  "$defs": {
+    "Align": {
+      "description": "Horizontal alignment of a column.",
+      "oneOf": [
+        {
+          "description": "Left aligned.",
+          "type": "string",
+          "const": "left"
+        },
+        {
+          "description": "Centered.",
+          "type": "string",
+          "const": "center"
+        },
+        {
+          "description": "Right aligned.",
+          "type": "string",
+          "const": "right"
+        }
+      ]
+    },
+    "Cell": {
+      "description": "A table cell: a plain JSON scalar.",
+      "anyOf": [
+        {
+          "description": "Empty cell (`null`).",
+          "type": "null"
+        },
+        {
+          "description": "Boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "Number.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "Text.",
+          "type": "string"
+        }
+      ]
+    },
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  }
+}

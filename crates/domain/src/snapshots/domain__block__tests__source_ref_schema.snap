@@ -1,0 +1,118 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(SourceRef)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceRef",
+  "description": "Where a piece of information came from, tagged by `type`.",
+  "oneOf": [
+    {
+      "description": "A file of the workspace, optionally a 1-based inclusive line range.",
+      "type": "object",
+      "properties": {
+        "line_end": {
+          "description": "Last line.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "line_start": {
+          "description": "First line.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "description": "Path relative to the workspace.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "file"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    },
+    {
+      "description": "A git commit.",
+      "type": "object",
+      "properties": {
+        "sha": {
+          "description": "Commit hash.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "First line of the message.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "commit"
+        }
+      },
+      "required": [
+        "type",
+        "sha",
+        "summary"
+      ]
+    },
+    {
+      "description": "A web page.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Page title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "url"
+        },
+        "url": {
+          "description": "Address.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ]
+    },
+    {
+      "description": "Output of a shell command.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Command line.",
+          "type": "string"
+        },
+        "output_excerpt": {
+          "description": "Relevant excerpt of its output.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "command"
+        }
+      },
+      "required": [
+        "type",
+        "command",
+        "output_excerpt"
+      ]
+    }
+  ]
+}

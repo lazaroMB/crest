@@ -1,0 +1,26 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(MermaidSpec)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MermaidSpec",
+  "description": "A Mermaid diagram; the UI shows the source and the error if it does not\nparse.",
+  "type": "object",
+  "properties": {
+    "source": {
+      "description": "Mermaid source.",
+      "type": "string"
+    },
+    "title": {
+      "description": "Optional caption.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "source"
+  ]
+}

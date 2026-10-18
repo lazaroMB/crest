@@ -1,0 +1,339 @@
+---
+source: crates/domain/src/block.rs
+expression: "schemars::schema_for!(CustomNode)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CustomNode",
+  "description": "Declarative UI primitive of a `Custom` block, tagged by `type`.\n\nLua never touches GPUI: plugins return this tree and the UI turns it\ninto components.",
+  "oneOf": [
+    {
+      "description": "Plain text.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "description": "The text.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "text"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    {
+      "description": "Children laid out horizontally.",
+      "type": "object",
+      "properties": {
+        "children": {
+          "description": "Child nodes.",
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        },
+        "type": {
+          "type": "string",
+          "const": "row"
+        }
+      },
+      "required": [
+        "type",
+        "children"
+      ]
+    },
+    {
+      "description": "Children laid out vertically.",
+      "type": "object",
+      "properties": {
+        "children": {
+          "description": "Child nodes.",
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        },
+        "type": {
+          "type": "string",
+          "const": "col"
+        }
+      },
+      "required": [
+        "type",
+        "children"
+      ]
+    },
+    {
+      "description": "A bulleted list.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "description": "One node per item.",
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        },
+        "type": {
+          "type": "string",
+          "const": "list"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ]
+    },
+    {
+      "description": "A table.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "table"
+        }
+      },
+      "$ref": "#/$defs/TableSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A chart.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "chart"
+        }
+      },
+      "$ref": "#/$defs/ChartSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A code snippet.",
+      "type": "object",
+      "properties": {
+        "lang": {
+          "description": "Language for highlighting.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Source code.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "code"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    {
+      "description": "Rendered markdown.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Markdown source.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "markdown"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    }
+  ],
+  "$defs": {
+    "Align": {
+      "description": "Horizontal alignment of a column.",
+      "oneOf": [
+        {
+          "description": "Left aligned.",
+          "type": "string",
+          "const": "left"
+        },
+        {
+          "description": "Centered.",
+          "type": "string",
+          "const": "center"
+        },
+        {
+          "description": "Right aligned.",
+          "type": "string",
+          "const": "right"
+        }
+      ]
+    },
+    "Cell": {
+      "description": "A table cell: a plain JSON scalar.",
+      "anyOf": [
+        {
+          "description": "Empty cell (`null`).",
+          "type": "null"
+        },
+        {
+          "description": "Boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "Number.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "Text.",
+          "type": "string"
+        }
+      ]
+    },
+    "ChartKind": {
+      "description": "How a chart is drawn.",
+      "oneOf": [
+        {
+          "description": "Vertical bars.",
+          "type": "string",
+          "const": "bar"
+        },
+        {
+          "description": "Lines.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "Filled areas.",
+          "type": "string",
+          "const": "area"
+        },
+        {
+          "description": "Pie; takes exactly one series.",
+          "type": "string",
+          "const": "pie"
+        }
+      ]
+    },
+    "ChartSpec": {
+      "description": "A chart: labels on one axis and one or more numeric series.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How the series are drawn.",
+          "$ref": "#/$defs/ChartKind"
+        },
+        "labels": {
+          "description": "Category labels, one per value of each series.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "description": "Data series.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Series"
+          }
+        },
+        "title": {
+          "description": "Chart title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "kind",
+        "labels",
+        "series"
+      ]
+    },
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Series": {
+      "description": "A named series of values, one per chart label.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Values, aligned with the chart labels.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ]
+    },
+    "TableSpec": {
+      "description": "A table: named columns and rows of cells.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Column headers, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          }
+        },
+        "rows": {
+          "description": "Rows; each must have one cell per column.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Cell"
+            }
+          }
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
+      ]
+    }
+  }
+}
