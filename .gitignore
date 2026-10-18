@@ -1,1 +1,14 @@
+# Cargo build output (Cargo.lock is committed: crest is an application)
 /target
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local env files (may contain secrets such as API keys)
+.env
+.env.*
