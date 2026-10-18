@@ -3,6 +3,7 @@
 
 pub mod commit;
 pub mod implement;
+pub mod report;
 pub mod test;
 pub mod verify;
 
