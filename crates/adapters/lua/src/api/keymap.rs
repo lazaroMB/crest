@@ -7,13 +7,21 @@
 //! ```
 //!
 //! A keymap's action is a built-in action by name or a Lua function; a
-//! command (`:review args`) is a function receiving the arguments. The
-//! functions stay in the VM as callbacks; bad arguments become diagnostics
-//! with the caller's line.
+//! command (`:review args`) is a function receiving the arguments as a
+//! string. The functions stay in the VM as callbacks; bad arguments become
+//! diagnostics with the caller's line.
+//!
+//! Inside those callbacks, `app.cmd(name)` (a built-in command or action,
+//! e.g. `"clear"`) and `app.send(text, { role = "plan" })` (a prompt, with
+//! an optional model role) ask the app to do something. They are recorded
+//! in call order and the callback's result becomes
+//! [`PluginOutput::Actions`](application::ports::plugin::PluginOutput),
+//! which the UI runs once the callback returned.
 
 use std::sync::Arc;
 
-use application::ports::plugin::{CommandSpec, KeyAction, KeyMode, KeymapSpec};
+use application::ports::plugin::{CommandSpec, KeyAction, KeyMode, KeymapSpec, PluginAction};
+use domain::model::ModelRole;
 use mlua::{Function, Lua, Table, Value};
 
 use crate::callbacks;
@@ -32,6 +40,62 @@ pub(crate) fn install(
     let commands = lua.create_table()?;
     commands.set("register", commands_register(lua, sink, origin)?)?;
     app.set("commands", commands)?;
+    app.set("cmd", lua.create_function(cmd)?)?;
+    app.set("send", lua.create_function(send)?)?;
+    Ok(())
+}
+
+/// Actions recorded by `app.cmd` and `app.send` during the current call.
+#[derive(Debug, Default)]
+struct PendingActions(Vec<PluginAction>);
+
+fn push(lua: &Lua, action: PluginAction) {
+    match lua.app_data_mut::<PendingActions>() {
+        Some(mut pending) => pending.0.push(action),
+        None => {
+            lua.set_app_data(PendingActions(vec![action]));
+        }
+    }
+}
+
+/// Takes the actions recorded since the last call.
+pub(crate) fn take_actions(lua: &Lua) -> Vec<PluginAction> {
+    lua.app_data_mut::<PendingActions>()
+        .map(|mut pending| std::mem::take(&mut pending.0))
+        .unwrap_or_default()
+}
+
+fn cmd(lua: &Lua, command: Value) -> mlua::Result<()> {
+    let Value::String(command) = command else {
+        return Err(mlua::Error::runtime(format!(
+            "app.cmd: expected a command name, got {}",
+            command.type_name()
+        )));
+    };
+    let command = command.to_str()?.trim().to_owned();
+    if command.is_empty() {
+        return Err(mlua::Error::runtime("app.cmd: the command is empty"));
+    }
+    push(lua, PluginAction::Cmd { command });
+    Ok(())
+}
+
+fn send(lua: &Lua, (text, opts): (Value, Option<Table>)) -> mlua::Result<()> {
+    let Value::String(text) = text else {
+        return Err(mlua::Error::runtime(format!(
+            "app.send: expected the prompt text, got {}",
+            text.type_name()
+        )));
+    };
+    let text = text.to_str()?.to_owned();
+    let role = match opts.map(|o| o.get::<Option<String>>("role")).transpose()? {
+        Some(Some(name)) => Some(
+            name.parse::<ModelRole>()
+                .map_err(|e| mlua::Error::runtime(format!("app.send: {e}")))?,
+        ),
+        _ => None,
+    };
+    push(lua, PluginAction::Send { text, role });
     Ok(())
 }
 
@@ -124,4 +188,63 @@ fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Resu
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::callbacks::CallbackIds;
+    use crate::config::api::Phase;
+    use crate::sandbox;
+
+    fn run(code: &str) -> (Lua, mlua::Result<()>) {
+        let lua = sandbox::new_lua(None).unwrap();
+        callbacks::install(&lua, CallbackIds::default()).unwrap();
+        let phase = Phase::new(&lua, "init.lua", "config").unwrap();
+        let ran = lua
+            .load(code)
+            .set_name("@init.lua")
+            .set_environment(phase.env.clone())
+            .exec();
+        (lua, ran)
+    }
+
+    #[test]
+    fn cmd_and_send_are_recorded_in_order() {
+        let (lua, ran) = run(r#"app.cmd("clear")
+            app.send("Revisa", { role = "plan" })
+            app.send("hola")"#);
+        ran.unwrap();
+        assert_eq!(
+            take_actions(&lua),
+            [
+                PluginAction::Cmd {
+                    command: "clear".into()
+                },
+                PluginAction::Send {
+                    text: "Revisa".into(),
+                    role: Some(ModelRole::Plan)
+                },
+                PluginAction::Send {
+                    text: "hola".into(),
+                    role: None
+                },
+            ]
+        );
+        assert!(take_actions(&lua).is_empty(), "taken once");
+    }
+
+    #[test]
+    fn bad_arguments_raise_errors() {
+        for code in [
+            "app.cmd(3)",
+            "app.cmd('  ')",
+            "app.send({})",
+            "app.send('x', { role = 'boss' })",
+        ] {
+            let (lua, ran) = run(code);
+            assert!(ran.is_err(), "{code}");
+            assert!(take_actions(&lua).is_empty(), "{code}");
+        }
+    }
 }

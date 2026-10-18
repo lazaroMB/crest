@@ -215,7 +215,8 @@ fn plugin_files(
 mod tests {
     use application::cost::CostTracker;
     use application::ports::plugin::{
-        HookEvent, HookKind, HookOutcome, KeyAction, KeyMode, KeymapSpec, PluginOutput,
+        HookEvent, HookKind, HookOutcome, KeyAction, KeyMode, KeymapSpec, PluginAction,
+        PluginOutput,
     };
     use domain::conversation::Usage;
     use domain::model::{ModelId, ModelRole, ResolveRequest, ThinkingConfig};
@@ -347,6 +348,23 @@ end)
             input: json!({ "command": "ls" }),
         };
         assert_eq!(vm.run_hooks(ls).unwrap(), HookOutcome::Continue);
+
+        let KeyAction::Callback(clear) = config.keymaps[1].action else {
+            unreachable!("checked above")
+        };
+        assert_eq!(
+            vm.invoke(clear, &Value::Null).unwrap(),
+            PluginOutput::Actions(vec![PluginAction::Cmd {
+                command: "clear".into()
+            }])
+        );
+        assert_eq!(
+            vm.invoke(config.commands[0].callback, &json!("")).unwrap(),
+            PluginOutput::Actions(vec![PluginAction::Send {
+                text: "Revisa los cambios sin commitear y lista riesgos".into(),
+                role: Some(ModelRole::Plan),
+            }])
+        );
     }
 
     #[test]

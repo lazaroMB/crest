@@ -8,7 +8,7 @@ use application::ports::plugin::{
 use mlua::Lua;
 use serde_json::Value;
 
-use crate::api::hooks;
+use crate::api::{hooks, keymap};
 use crate::callbacks::{self, CallbackIds};
 use crate::convert;
 use crate::host::HostOptions;
@@ -68,14 +68,24 @@ impl Vm {
         self.limiter.guard(run)
     }
 
-    /// Runs a keymap, command or tool callback. A table built by
-    /// `app.ui.block` comes back as [`PluginOutput::Block`].
+    /// Runs a keymap or command callback. When it called `app.cmd` or
+    /// `app.send` the result is those [`PluginOutput::Actions`]; otherwise
+    /// a table built by `app.ui.block` comes back as
+    /// [`PluginOutput::Block`] and anything else as a value.
     pub(crate) fn invoke(
         &mut self,
         id: CallbackId,
         args: &Value,
     ) -> Result<PluginOutput, PluginError> {
-        self.call(id, args).map(crate::api::ui::output)
+        keymap::take_actions(&self.lua);
+        let ret = self.call(id, args);
+        let actions = keymap::take_actions(&self.lua);
+        let ret = ret?;
+        if actions.is_empty() {
+            Ok(crate::api::ui::output(ret))
+        } else {
+            Ok(PluginOutput::Actions(actions))
+        }
     }
 
     /// Runs the handler of the plugin tool `name`.
@@ -88,7 +98,10 @@ impl Vm {
             .tools
             .get(name)
             .ok_or_else(|| PluginError::NotFound(format!("tool {name}")))?;
-        self.invoke(id, input)
+        // A tool answers the model; app.cmd/app.send do nothing there.
+        let ret = self.call(id, input);
+        keymap::take_actions(&self.lua);
+        ret.map(crate::api::ui::output)
     }
 
     /// Runs the hooks for `event` in order. A hook returns `nil` to go on,
@@ -163,6 +176,42 @@ mod tests {
         let id = register_code(&vm, "return function(a) return { sum = a.x + a.y } end");
         let out = vm.invoke(id, &json!({ "x": 1, "y": 2 })).unwrap();
         assert_eq!(out, PluginOutput::Value(json!({ "sum": 3 })));
+    }
+
+    #[test]
+    fn callbacks_that_ask_for_actions_return_them() {
+        use application::ports::plugin::PluginAction;
+        let mut vm = vm();
+        let phase = crate::config::api::Phase::new(&vm.lua, "init.lua", "config").unwrap();
+        let f: mlua::Function = vm
+            .lua
+            .load("return function(args) app.send('Revisa ' .. args, { role = 'plan' }) end")
+            .set_environment(phase.env.clone())
+            .eval()
+            .unwrap();
+        let id = callbacks::register(&vm.lua, f).unwrap();
+        let out = vm.invoke(id, &json!("todo")).unwrap();
+        assert_eq!(
+            out,
+            PluginOutput::Actions(vec![PluginAction::Send {
+                text: "Revisa todo".into(),
+                role: Some(domain::model::ModelRole::Plan),
+            }])
+        );
+        vm.tools.insert("t".into(), id);
+        let out = vm.call_tool("t", &json!("x")).unwrap();
+        assert_eq!(
+            out,
+            PluginOutput::Value(Value::Null),
+            "tools ignore actions"
+        );
+        assert_eq!(
+            vm.invoke(id, &json!("y")).unwrap(),
+            PluginOutput::Actions(vec![PluginAction::Send {
+                text: "Revisa y".into(),
+                role: Some(domain::model::ModelRole::Plan),
+            }])
+        );
     }
 
     #[test]
