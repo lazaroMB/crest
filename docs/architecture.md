@@ -148,7 +148,7 @@ Each iteration of the loop goes through these steps:
    7. the `after_tool` hook.
 
    Denials are returned to the model as a `tool_result` with an error.
-6. **Cancellation**: the `CancelToken` races against the stream and against each tool. On cancellation, the running call and the pending ones get «cancelled by user» and the turn ends as `Interrupted`, with the session left consistent.
+6. **Cancellation**: the `CancelToken` races against the stream and against each tool. On cancellation, the running call and the pending ones get "cancelled by user" and the turn ends as `Interrupted`, with the session left consistent.
 
 The permission policy (`domain::permission`) combines the mode (`ask`, `auto-edit`, `plan`) with the tool's effect (`read`, `write`, `execute`, `network`) and with the user's rules:
 
