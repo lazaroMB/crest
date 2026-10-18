@@ -158,6 +158,144 @@ expression: "schemars::schema_for!(CustomNode)"
         "type",
         "source"
       ]
+    },
+    {
+      "description": "A picture, from a file or inline bytes, with zoom and pan.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "image"
+        },
+        "source": {
+          "description": "Inline bytes or a file. A file must be inside the workspace and\nnot sensitive; the app replaces a rejected one with a text node.",
+          "$ref": "#/$defs/ImageData"
+        },
+        "media_type": {
+          "description": "MIME type, e.g. `image/png`; required for inline bytes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alt": {
+          "description": "Text shown when the image cannot be drawn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fit": {
+          "description": "How the image is sized at first.",
+          "$ref": "#/$defs/ImageFit",
+          "default": "contain"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    {
+      "description": "A basic HTML subset (headings, paragraphs, lists, tables, links,\nemphasis, code), drawn natively; no CSS layout and no scripts.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "html"
+        },
+        "source": {
+          "description": "HTML source.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    {
+      "description": "A JSON value as a collapsible tree.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "json"
+        },
+        "value": {
+          "description": "The value."
+        },
+        "expand_depth": {
+          "description": "Levels expanded at first (0 shows only the root collapsed).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ]
+    },
+    {
+      "description": "A Mermaid diagram, with pan and zoom.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "mermaid"
+        },
+        "source": {
+          "description": "Mermaid source.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ]
+    },
+    {
+      "description": "A link that opens in the user's browser.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "link"
+        },
+        "text": {
+          "description": "Text shown.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Address; `http`, `https` or `mailto` only.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text",
+        "url"
+      ]
+    },
+    {
+      "description": "A colored unified diff.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "diff"
+        },
+        "unified": {
+          "description": "Unified diff text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "unified"
+      ]
     }
   ],
   "$defs": {
@@ -333,6 +471,62 @@ expression: "schemars::schema_for!(CustomNode)"
         "kind",
         "labels",
         "series"
+      ]
+    },
+    "ImageData": {
+      "description": "Bytes of an image block, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "Inline, base64 encoded.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "base64"
+            },
+            "data": {
+              "description": "Base64 payload.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "description": "A file on disk.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "path"
+            },
+            "path": {
+              "description": "File path.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        }
+      ]
+    },
+    "ImageFit": {
+      "description": "How an [`CustomNode::Image`] is sized before the user zooms.",
+      "oneOf": [
+        {
+          "description": "Natural size, scaled down to the width available.",
+          "type": "string",
+          "const": "contain"
+        },
+        {
+          "description": "Natural size (1:1); wider images scroll.",
+          "type": "string",
+          "const": "actual"
+        }
       ]
     }
   }

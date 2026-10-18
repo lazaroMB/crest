@@ -282,6 +282,18 @@ pub enum BlockError {
     /// A table without columns.
     #[error("table has no columns")]
     TableNoColumns,
+    /// An inline image without its MIME type.
+    #[error("an inline image needs a media_type (e.g. image/png)")]
+    ImageMediaType,
+    /// An image file with an empty path.
+    #[error("image path is empty")]
+    ImageEmptyPath,
+    /// A link whose URL is not `http`, `https` or `mailto`.
+    #[error("link {url:?} must be an http, https or mailto URL")]
+    LinkScheme {
+        /// The rejected URL.
+        url: String,
+    },
     /// A table row whose width differs from the number of columns.
     #[error("table row {row} has {actual} cells, expected {expected}")]
     TableRowWidth {
@@ -558,10 +570,85 @@ pub enum CustomNode {
         /// Markdown source.
         source: String,
     },
+    /// A picture, from a file or inline bytes, with zoom and pan.
+    Image {
+        /// Inline bytes or a file. A file must be inside the workspace and
+        /// not sensitive; the app replaces a rejected one with a text node.
+        source: ImageData,
+        /// MIME type, e.g. `image/png`; required for inline bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+        /// Text shown when the image cannot be drawn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt: Option<String>,
+        /// How the image is sized at first.
+        #[serde(default)]
+        fit: ImageFit,
+    },
+    /// A basic HTML subset (headings, paragraphs, lists, tables, links,
+    /// emphasis, code), drawn natively; no CSS layout and no scripts.
+    Html {
+        /// HTML source.
+        source: String,
+    },
+    /// A JSON value as a collapsible tree.
+    Json {
+        /// The value.
+        value: Value,
+        /// Levels expanded at first (0 shows only the root collapsed).
+        #[serde(default = "default_expand_depth")]
+        expand_depth: u32,
+    },
+    /// A Mermaid diagram, with pan and zoom.
+    Mermaid {
+        /// Mermaid source.
+        source: String,
+    },
+    /// A link that opens in the user's browser.
+    Link {
+        /// Text shown.
+        text: String,
+        /// Address; `http`, `https` or `mailto` only.
+        url: String,
+    },
+    /// A colored unified diff.
+    Diff {
+        /// Unified diff text.
+        unified: String,
+    },
+}
+
+fn default_expand_depth() -> u32 {
+    1
+}
+
+/// How an [`CustomNode::Image`] is sized before the user zooms.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFit {
+    /// Natural size, scaled down to the width available.
+    #[default]
+    Contain,
+    /// Natural size (1:1); wider images scroll.
+    Actual,
+}
+
+/// URL schemes a [`CustomNode::Link`] may open.
+pub const LINK_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+/// Whether `url` starts with one of [`LINK_SCHEMES`] (case-insensitive).
+#[must_use]
+pub fn is_openable_url(url: &str) -> bool {
+    url.split_once(':').is_some_and(|(scheme, rest)| {
+        !rest.is_empty()
+            && LINK_SCHEMES
+                .iter()
+                .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+    })
 }
 
 impl CustomNode {
-    /// Validates every table and chart in the tree.
+    /// Validates every table, chart, image and link in the tree.
     ///
     /// # Errors
     ///
@@ -573,7 +660,73 @@ impl CustomNode {
             }
             Self::Table(spec) => spec.validate(),
             Self::Chart(spec) => spec.validate(),
-            Self::Text { .. } | Self::Code { .. } | Self::Markdown { .. } => Ok(()),
+            Self::Image {
+                source, media_type, ..
+            } => match source {
+                ImageData::Base64 { .. }
+                    if media_type.as_deref().is_none_or(|t| t.trim().is_empty()) =>
+                {
+                    Err(BlockError::ImageMediaType)
+                }
+                ImageData::Path { path } if path.trim().is_empty() => {
+                    Err(BlockError::ImageEmptyPath)
+                }
+                _ => Ok(()),
+            },
+            Self::Link { url, .. } if !is_openable_url(url) => {
+                Err(BlockError::LinkScheme { url: url.clone() })
+            }
+            Self::Text { .. }
+            | Self::Code { .. }
+            | Self::Markdown { .. }
+            | Self::Html { .. }
+            | Self::Json { .. }
+            | Self::Mermaid { .. }
+            | Self::Link { .. }
+            | Self::Diff { .. } => Ok(()),
+        }
+    }
+
+    /// Calls `check` with the path of every image read from a file, depth
+    /// first. `Ok(path)` replaces the path (e.g. with the resolved one);
+    /// `Err(reason)` replaces the whole image with a text node that says
+    /// it is unavailable and why.
+    pub fn check_image_paths(&mut self, check: &mut dyn FnMut(&str) -> Result<String, String>) {
+        match self {
+            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
+                for child in children {
+                    child.check_image_paths(check);
+                }
+            }
+            Self::Image {
+                source: ImageData::Path { path },
+                alt,
+                ..
+            } => match check(path) {
+                Ok(resolved) => *path = resolved,
+                Err(reason) => {
+                    let name = alt.as_deref().unwrap_or(path.as_str());
+                    *self = Self::Text {
+                        text: format!("[image unavailable: {name}: {reason}]"),
+                    };
+                }
+            },
+            _ => {}
+        }
+    }
+
+    /// Whether the tree has an image read from a file.
+    #[must_use]
+    pub fn has_image_paths(&self) -> bool {
+        match self {
+            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
+                children.iter().any(Self::has_image_paths)
+            }
+            Self::Image {
+                source: ImageData::Path { .. },
+                ..
+            } => true,
+            _ => false,
         }
     }
 }
@@ -989,6 +1142,160 @@ mod tests {
             }],
         };
         assert_eq!(bad.validate(), Err(BlockError::TableNoColumns));
+    }
+
+    #[test]
+    fn rich_nodes_roundtrip_and_validate() {
+        let tree = CustomNode::Col {
+            children: vec![
+                CustomNode::Image {
+                    source: ImageData::Path {
+                        path: "out/a.png".into(),
+                    },
+                    media_type: None,
+                    alt: Some("plot".into()),
+                    fit: ImageFit::Actual,
+                },
+                CustomNode::Html {
+                    source: "<b>hi</b>".into(),
+                },
+                CustomNode::Json {
+                    value: json!({"a": [1, 2]}),
+                    expand_depth: 2,
+                },
+                CustomNode::Mermaid {
+                    source: "graph TD; a-->b".into(),
+                },
+                CustomNode::Link {
+                    text: "docs".into(),
+                    url: "https://example.com".into(),
+                },
+                CustomNode::Diff {
+                    unified: "@@ -1 +1 @@\n-a\n+b\n".into(),
+                },
+            ],
+        };
+        assert_eq!(tree.validate(), Ok(()));
+        let value = serde_json::to_value(&tree).unwrap();
+        assert_eq!(value["children"][0]["type"], "image");
+        assert_eq!(value["children"][0]["source"]["type"], "path");
+        assert_eq!(value["children"][0]["fit"], "actual");
+        assert_eq!(value["children"][2]["expand_depth"], 2);
+        let back: CustomNode = serde_json::from_value(value).unwrap();
+        assert_eq!(back, tree);
+        let defaults: CustomNode = serde_json::from_value(json!({
+            "type": "json", "value": null
+        }))
+        .unwrap();
+        assert_eq!(
+            defaults,
+            CustomNode::Json {
+                value: Value::Null,
+                expand_depth: 1
+            }
+        );
+        let image: CustomNode = serde_json::from_value(json!({
+            "type": "image", "source": {"type": "path", "path": "a.png"}
+        }))
+        .unwrap();
+        assert!(matches!(
+            image,
+            CustomNode::Image {
+                fit: ImageFit::Contain,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn bad_images_and_links_are_rejected() {
+        let inline = CustomNode::Image {
+            source: ImageData::Base64 {
+                data: "AA==".into(),
+            },
+            media_type: None,
+            alt: None,
+            fit: ImageFit::Contain,
+        };
+        assert_eq!(inline.validate(), Err(BlockError::ImageMediaType));
+        let empty = CustomNode::Image {
+            source: ImageData::Path { path: " ".into() },
+            media_type: None,
+            alt: None,
+            fit: ImageFit::Contain,
+        };
+        assert_eq!(empty.validate(), Err(BlockError::ImageEmptyPath));
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "example.com",
+            "https:",
+        ] {
+            let link = CustomNode::Row {
+                children: vec![CustomNode::Link {
+                    text: "x".into(),
+                    url: url.into(),
+                }],
+            };
+            assert_eq!(
+                link.validate(),
+                Err(BlockError::LinkScheme { url: url.into() }),
+                "{url}"
+            );
+        }
+        for url in ["https://a.b/c", "HTTP://a", "mailto:me@example.com"] {
+            assert!(is_openable_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn image_paths_are_checked_and_replaced() {
+        let image = |path: &str| CustomNode::Image {
+            source: ImageData::Path { path: path.into() },
+            media_type: None,
+            alt: None,
+            fit: ImageFit::Contain,
+        };
+        let mut tree = CustomNode::Col {
+            children: vec![
+                image("ok.png"),
+                CustomNode::List {
+                    items: vec![image(".env")],
+                },
+                CustomNode::Image {
+                    source: ImageData::Base64 {
+                        data: "AA==".into(),
+                    },
+                    media_type: Some("image/png".into()),
+                    alt: None,
+                    fit: ImageFit::Contain,
+                },
+            ],
+        };
+        assert!(tree.has_image_paths());
+        let mut seen = Vec::new();
+        tree.check_image_paths(&mut |path| {
+            seen.push(path.to_owned());
+            if path == "ok.png" {
+                Ok("/ws/ok.png".into())
+            } else {
+                Err("sensitive".into())
+            }
+        });
+        assert_eq!(seen, ["ok.png", ".env"]);
+        let CustomNode::Col { children } = &tree else {
+            panic!("not a col")
+        };
+        assert_eq!(children[0], image("/ws/ok.png"));
+        assert_eq!(
+            children[1],
+            CustomNode::List {
+                items: vec![CustomNode::Text {
+                    text: "[image unavailable: .env: sensitive]".into()
+                }]
+            }
+        );
+        assert!(!children[2].has_image_paths());
     }
 
     fn file(start: Option<u32>, end: Option<u32>) -> SourceRef {
