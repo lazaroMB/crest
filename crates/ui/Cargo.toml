@@ -14,7 +14,19 @@ domain.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-gpui-component.workspace = true
+# Tree-sitter highlighting for code blocks in markdown and the markdown
+# source view; only the grammars an agent session commonly shows.
+gpui-component = { workspace = true, features = [
+    "tree-sitter-bash",
+    "tree-sitter-javascript",
+    "tree-sitter-lua",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
 notify.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
