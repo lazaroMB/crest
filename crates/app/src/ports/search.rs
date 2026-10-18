@@ -318,6 +318,110 @@ pub trait FileSearchPort: Send + Sync {
     async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError>;
 }
 
+/// Default of [`GrepRequest::context`].
+pub const DEFAULT_GREP_CONTEXT: u32 = 2;
+/// Default of [`GrepRequest::limit`].
+pub const DEFAULT_GREP_LIMIT: usize = 100;
+
+fn default_grep_context() -> u32 {
+    DEFAULT_GREP_CONTEXT
+}
+
+fn default_grep_limit() -> usize {
+    DEFAULT_GREP_LIMIT
+}
+
+/// Input of the `grep` tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GrepRequest {
+    /// Regular expression (ripgrep syntax) to search for, or a literal
+    /// string when `fixed` is true.
+    pub pattern: String,
+    /// File or directory to search in; the whole workspace when omitted.
+    #[serde(default)]
+    pub path: Option<WorkspacePath>,
+    /// Optional glob that searched files must match, e.g. `*.rs`.
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// Treat `pattern` as a literal string instead of a regex.
+    #[serde(default)]
+    pub fixed: bool,
+    /// Match case-insensitively.
+    #[serde(default)]
+    pub ignore_case: bool,
+    /// Lines of context to include before and after each match (default 2).
+    #[serde(default = "default_grep_context")]
+    pub context: u32,
+    /// Maximum number of matches to return (default 100).
+    #[serde(default = "default_grep_limit")]
+    pub limit: usize,
+}
+
+impl GrepRequest {
+    /// A regex search for `pattern` over the whole workspace with defaults.
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            path: None,
+            glob: None,
+            fixed: false,
+            ignore_case: false,
+            context: DEFAULT_GREP_CONTEXT,
+            limit: DEFAULT_GREP_LIMIT,
+        }
+    }
+}
+
+/// Byte range of a match within [`GrepHit::line`]: `start` inclusive,
+/// `end` exclusive, both 0-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnRange {
+    /// Offset of the first byte of the match.
+    pub start: usize,
+    /// Offset just past the last byte of the match.
+    pub end: usize,
+}
+
+/// One matching line found by `grep`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrepHit {
+    /// File containing the match.
+    pub path: WorkspacePath,
+    /// 1-based line number of the match.
+    pub line_number: u64,
+    /// Range of the first match within `line`.
+    pub column_range: ColumnRange,
+    /// The matching line, without its line terminator.
+    pub line: String,
+    /// Up to `context` lines preceding the match, in file order.
+    pub context_before: Vec<String>,
+    /// Up to `context` lines following the match, in file order.
+    pub context_after: Vec<String>,
+}
+
+/// Matches found by `grep`, in the order `rg` reports them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GrepResult {
+    /// The returned matches, at most `limit`.
+    pub hits: Vec<GrepHit>,
+    /// Whether more matches existed than were returned.
+    pub truncated: bool,
+    /// How many matches were seen before applying the limit. When the
+    /// adapter stops reading early this is a lower bound and `truncated`
+    /// is true.
+    pub total: usize,
+}
+
+/// Searches file contents. Implemented with `rg --json`.
+#[async_trait]
+pub trait ContentSearchPort: Send + Sync {
+    /// Searches the workspace (or `request.path`) for `request.pattern`,
+    /// returning at most `request.limit` hits with their context lines.
+    /// An invalid regex fails with [`SearchError::InvalidPattern`]; finding
+    /// no matches is an empty, successful result.
+    async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +491,13 @@ mod tests {
         assert_eq!(tree.name, "src");
         assert_eq!(tree.children.len(), 1);
         assert_eq!(tree.children[0].path, p("src/a.rs"));
+    }
+
+    #[test]
+    fn grep_request_takes_documented_defaults() {
+        let grep: GrepRequest = serde_json::from_str(r#"{"pattern":"fn main"}"#).unwrap();
+        assert_eq!(grep, GrepRequest::new("fn main"));
+        assert_eq!((grep.context, grep.limit), (2, 100));
+        assert!(!grep.fixed && !grep.ignore_case);
     }
 }
