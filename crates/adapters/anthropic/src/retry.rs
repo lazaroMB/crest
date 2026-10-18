@@ -34,7 +34,7 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 
 use crate::client::{AnthropicClient, ApiKey, ClientConfig};
-use crate::convert;
+use crate::request;
 use crate::wire::MessagesRequest;
 
 /// Retry limits and backoff.
@@ -247,7 +247,7 @@ impl Run {
             });
             return;
         };
-        let body = convert::messages_request(&self.req, &model, true);
+        let body = request::build(&self.req, &model);
         let err = match try_model(&self.llm.client, &body).await {
             Ok((held, stream)) => {
                 self.queue.extend(held.into_iter().map(Ok));
