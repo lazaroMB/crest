@@ -100,6 +100,7 @@ async fn demo_with(answers: &str, mode: PermissionMode, script: Vec<ScriptedResp
         mode,
         model: None,
         trust_mcp: Vec::new(),
+        resume: false,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
@@ -257,6 +258,7 @@ async fn app_with_init(init: &str) -> (tempfile::TempDir, App, Buffer) {
         mode: PermissionMode::Ask,
         model: None,
         trust_mcp: Vec::new(),
+        resume: false,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

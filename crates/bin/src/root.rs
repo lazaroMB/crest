@@ -36,7 +36,9 @@ use application::tools::registry::ToolRegistry;
 use application::tools::task::{TaskPorts, TaskTool};
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
+use application::usecases::resume::{restore_permission_rules, resume_latest};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
+use domain::block::Block;
 use domain::conversation::Session;
 use domain::model::{ModelPolicy, ModelRole};
 use domain::permission::{PermissionMode, PermissionPolicy};
@@ -58,6 +60,9 @@ pub struct Config {
     pub model: Option<String>,
     /// `--trust-mcp`: workspace MCP servers approved on this run.
     pub trust_mcp: Vec<String>,
+    /// Resume the latest session of the workspace: the window does unless
+    /// `--new`, headless only with `--continue`.
+    pub resume: bool,
 }
 
 impl Config {
@@ -77,6 +82,11 @@ impl Config {
             mode: args.mode.unwrap_or_default(),
             model: args.model.clone(),
             trust_mcp: args.trust_mcp.clone(),
+            resume: if args.headless.is_some() {
+                args.continue_session
+            } else {
+                !args.new
+            },
         })
     }
 }
@@ -126,7 +136,8 @@ impl EventSink for TimelineSink {
 pub struct App {
     /// The agent.
     pub service: AgentService,
-    /// The current session (always new for now).
+    /// The current session: the latest one of the workspace when resumed,
+    /// otherwise a new one.
     pub session: Session,
     /// Options of each turn (`main` role and the `--model` override).
     pub turn_options: TurnOptions,
@@ -195,21 +206,26 @@ impl App {
         *self.timeline.lock().unwrap_or_else(PoisonError::into_inner) = TimelineState::new();
     }
 
-    /// The session as it would be stored: history, timeline and the
-    /// "allow always" rules granted so far.
+    /// The blocks of the session's timeline, including those of a resumed
+    /// session.
     #[must_use]
-    pub fn stored_session(&self) -> StoredSession {
-        let timeline = self
-            .timeline
+    pub fn timeline_blocks(&self) -> Vec<Block> {
+        self.timeline
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entries()
             .iter()
             .map(|entry| entry.block.clone())
-            .collect();
+            .collect()
+    }
+
+    /// The session as it would be stored: history, timeline and the
+    /// "allow always" rules granted so far.
+    #[must_use]
+    pub fn stored_session(&self) -> StoredSession {
         StoredSession {
             session: self.session.clone(),
-            timeline,
+            timeline: self.timeline_blocks(),
             permission_rules: lock_permissions(self.service.permissions()).rules.clone(),
         }
     }
@@ -359,6 +375,28 @@ pub async fn build_app(
     warnings.extend(mcp_warnings);
 
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
+    let mut session = Session::new(root.as_path().display().to_string(), now_ms());
+    let mut resumed_notice = None;
+    if config.resume
+        && let Some(store) = &store
+    {
+        match resume_latest(store.as_ref(), &session.workspace_root).await {
+            Ok(Some(stored)) => {
+                restore_permission_rules(&permissions, &stored.permission_rules);
+                let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
+                for block in stored.timeline {
+                    state.apply(&DomainEvent::BlockAdded { block });
+                }
+                resumed_notice = Some(format!(
+                    "sesión anterior reanudada ({} turnos); `crest --new` empieza una nueva",
+                    stored.session.turns.len()
+                ));
+                session = stored.session;
+            }
+            Ok(None) => {}
+            Err(err) => warnings.push(format!("no pude reanudar la última sesión: {err}")),
+        }
+    }
     let deps = AgentDeps {
         llm,
         events: Arc::clone(&events),
@@ -390,13 +428,19 @@ pub async fn build_app(
             message: warning.clone(),
         });
     }
+    if let Some(message) = resumed_notice {
+        startup_events.emit(DomainEvent::Notice {
+            level: NoticeLevel::Info,
+            message,
+        });
+    }
     let mut turn_options = TurnOptions::new(ModelRole::Main);
     if let Some(model) = &config.model {
         turn_options = turn_options.with_override(model.clone());
     }
     Ok(App {
         service,
-        session: Session::new(root.as_path().display().to_string(), now_ms()),
+        session,
         turn_options,
         workspace: root,
         warnings,
@@ -506,5 +550,8 @@ mod tests {
         assert_eq!(config.mode, PermissionMode::Ask);
         assert_eq!(config.model, None);
         assert!(config.trust_mcp.is_empty());
+        assert!(config.resume, "the window resumes by default");
+        let headless = Config::from_args(&Args::parse_from(["crest", "--headless", "x"])).unwrap();
+        assert!(!headless.resume);
     }
 }

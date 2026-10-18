@@ -339,6 +339,7 @@ pub fn session_parts(
                 app.warn(warning);
             }
             let timeoutlen = crate::keys::timeoutlen(&app.options);
+            let history = app.timeline_blocks();
             let controller = Arc::new(UiController::new(app, handle.clone()));
             let mut parts = SessionParts::new(
                 controller,
@@ -350,6 +351,7 @@ pub fn session_parts(
             parts.model = Some(model);
             parts.keymap = keymap;
             parts.timeoutlen = timeoutlen;
+            parts.history = history;
             (parts, workspace)
         }
         Err(err) => {

@@ -33,6 +33,16 @@ pub struct Args {
     #[arg(long, requires = "headless")]
     pub yes: bool,
 
+    /// Abre la ventana con una sesión nueva en vez de reanudar la última
+    /// del workspace.
+    #[arg(long, conflicts_with = "headless")]
+    pub new: bool,
+
+    /// En headless, continúa la última sesión del workspace (con su
+    /// historial) en vez de empezar una nueva.
+    #[arg(long = "continue", requires = "headless")]
+    pub continue_session: bool,
+
     /// Confía en el servidor MCP NAME del `.crest/init.lua` del workspace y
     /// lo arranca; se recuerda para este workspace. Repetible.
     #[arg(long = "trust-mcp", value_name = "NAME")]
@@ -102,6 +112,20 @@ mod tests {
         assert!(parse(&[]).unwrap().trust_mcp.is_empty());
         let args = parse(&["--trust-mcp", "git", "--trust-mcp", "docs"]).unwrap();
         assert_eq!(args.trust_mcp, ["git", "docs"]);
+    }
+
+    #[test]
+    fn new_is_for_the_window_and_continue_for_headless() {
+        let args = parse(&[]).unwrap();
+        assert!(!args.new && !args.continue_session);
+        assert!(parse(&["--new"]).unwrap().new);
+        assert!(
+            parse(&["--headless", "hola", "--continue"])
+                .unwrap()
+                .continue_session
+        );
+        assert!(parse(&["--continue"]).is_err());
+        assert!(parse(&["--new", "--headless", "hola"]).is_err());
     }
 
     #[test]

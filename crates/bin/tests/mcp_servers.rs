@@ -122,6 +122,7 @@ async fn fixture(
         mode: PermissionMode::Ask,
         model: None,
         trust_mcp: trust_mcp.iter().map(|s| (*s).to_owned()).collect(),
+        resume: false,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
