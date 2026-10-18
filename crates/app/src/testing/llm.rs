@@ -8,10 +8,15 @@
 //! and `MessageStop`. Consumers therefore exercise
 //! [`MessageAssembler`](crate::ports::llm::MessageAssembler) for real.
 
+use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use async_trait::async_trait;
 use domain::conversation::{StopReason, ToolUseId, Usage};
 use domain::model::ModelId;
+use futures::stream;
 
-use crate::ports::llm::{LlmEvent, LlmRequest};
+use crate::ports::llm::{LlmError, LlmEvent, LlmPort, LlmRequest, LlmStream};
 
 /// Signature attached to scripted thinking blocks.
 pub const FAKE_SIGNATURE: &str = "fake-signature";
@@ -278,22 +283,95 @@ fn estimate_input_tokens(req: &LlmRequest) -> u64 {
     tokens(system + messages + tools)
 }
 
+/// [`LlmPort`] that answers each call with the next [`ScriptedResponse`]
+/// of a FIFO queue and records every request it receives.
+///
+/// Streams are plain in-memory streams: no timers, no runtime needed.
+/// When the queue is empty `stream` fails with
+/// [`LlmError::InvalidRequest`] mentioning `script exhausted`.
+#[derive(Debug, Default)]
+pub struct ScriptedLlm {
+    script: Mutex<VecDeque<ScriptedResponse>>,
+    requests: Mutex<Vec<LlmRequest>>,
+}
+
+impl ScriptedLlm {
+    /// A fake that plays `script` in order.
+    #[must_use]
+    pub fn new(script: impl IntoIterator<Item = ScriptedResponse>) -> Self {
+        Self {
+            script: Mutex::new(script.into_iter().collect()),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Appends one more answer to the end of the script.
+    pub fn push(&self, response: ScriptedResponse) {
+        lock(&self.script).push_back(response);
+    }
+
+    /// Every request received so far, oldest first.
+    #[must_use]
+    pub fn requests(&self) -> Vec<LlmRequest> {
+        lock(&self.requests).clone()
+    }
+
+    /// The last request received, if any.
+    #[must_use]
+    pub fn last_request(&self) -> Option<LlmRequest> {
+        lock(&self.requests).last().cloned()
+    }
+
+    /// Number of answers not consumed yet.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        lock(&self.script).len()
+    }
+}
+
+#[async_trait]
+impl LlmPort for ScriptedLlm {
+    async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
+        lock(&self.requests).push(req.clone());
+        let response = lock(&self.script)
+            .pop_front()
+            .ok_or_else(|| LlmError::InvalidRequest {
+                message: format!(
+                    "script exhausted: ScriptedLlm has no answer for request #{}",
+                    lock(&self.requests).len()
+                ),
+            })?;
+        let events = response.events_for(&req).into_iter().map(Ok);
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+/// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
+/// recorded state from the others.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ports::llm::{AssembledMessage, MessageAssembler};
     use domain::conversation::{ContentPart, Message, Role};
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
+    use futures::StreamExt;
     use serde_json::json;
 
-    fn request(text: &str) -> LlmRequest {
-        let model = ResolvedModel {
+    fn model() -> ResolvedModel {
+        ResolvedModel {
             role: ModelRole::Main,
             spec: ModelSpec::new("claude-sonnet-5-5", 16_000),
             source: SpecSource::Default,
             warnings: Vec::new(),
-        };
-        LlmRequest::new(model, vec![Message::user_text(text)])
+        }
+    }
+
+    fn request(text: &str) -> LlmRequest {
+        LlmRequest::new(model(), vec![Message::user_text(text)])
     }
 
     fn assemble(events: Vec<LlmEvent>) -> AssembledMessage {
@@ -392,5 +470,91 @@ mod tests {
                 .events_for(&request("x")),
         );
         assert_eq!(out.usage, usage);
+    }
+
+    /// Consumes one stream with `MessageAssembler`.
+    async fn run(llm: &ScriptedLlm, req: LlmRequest) -> Result<AssembledMessage, LlmError> {
+        let mut stream = llm.stream(req).await?;
+        let mut asm = MessageAssembler::new();
+        while let Some(event) = stream.next().await {
+            asm.push(event?)?;
+        }
+        Ok(asm.finish()?)
+    }
+
+    #[tokio::test]
+    async fn plays_a_script_of_three_answers() {
+        let llm = ScriptedLlm::new([
+            ScriptedResponse::text("Busco primero.").then_tool_use(
+                "toolu_1",
+                "grep",
+                json!({ "pattern": "fn main", "path": "src" }),
+            ),
+            ScriptedResponse::tool_use("toolu_2", "read_file", json!({ "path": "src/main.rs" })),
+            ScriptedResponse::text("`main` está en src/main.rs."),
+        ]);
+
+        let mut history = vec![Message::user_text("¿dónde está main?")];
+        let mut stops = Vec::new();
+        let mut answers = Vec::new();
+        for tool_result in ["src/main.rs:1", "fn main() {}", ""] {
+            let req = LlmRequest::new(model(), history.clone());
+            let out = run(&llm, req).await.unwrap();
+            stops.push(out.stop_reason);
+            history.push(out.message.clone());
+            answers.push(out.message.content);
+            if out.stop_reason == StopReason::ToolUse {
+                let id = match history.last().map(|m| m.content.last()) {
+                    Some(Some(ContentPart::ToolUse { id, .. })) => id.clone(),
+                    other => panic!("expected a tool use, got {other:?}"),
+                };
+                history.push(Message::new(
+                    Role::User,
+                    vec![ContentPart::tool_result_text(id, tool_result)],
+                ));
+            }
+        }
+
+        assert_eq!(
+            stops,
+            [
+                StopReason::ToolUse,
+                StopReason::ToolUse,
+                StopReason::EndTurn
+            ]
+        );
+        assert_eq!(
+            answers,
+            vec![
+                vec![
+                    ContentPart::text("Busco primero."),
+                    ContentPart::ToolUse {
+                        id: ToolUseId::new("toolu_1"),
+                        name: "grep".into(),
+                        input: json!({ "pattern": "fn main", "path": "src" }),
+                    },
+                ],
+                vec![ContentPart::ToolUse {
+                    id: ToolUseId::new("toolu_2"),
+                    name: "read_file".into(),
+                    input: json!({ "path": "src/main.rs" }),
+                }],
+                vec![ContentPart::text("`main` está en src/main.rs.")],
+            ]
+        );
+        let sent: Vec<usize> = llm.requests().iter().map(|r| r.messages.len()).collect();
+        assert_eq!(sent, [1, 3, 5]);
+        assert_eq!(llm.remaining(), 0);
+    }
+
+    #[tokio::test]
+    async fn exhausted_script_is_a_clear_error() {
+        let llm = ScriptedLlm::new([]);
+        let err = llm.stream(request("hola")).await.err().unwrap();
+        assert!(
+            matches!(&err, LlmError::InvalidRequest { message } if message.contains("script exhausted")),
+            "{err}"
+        );
+        assert_eq!(llm.requests().len(), 1);
     }
 }
