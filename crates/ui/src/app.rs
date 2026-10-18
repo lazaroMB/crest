@@ -148,9 +148,13 @@ fn apply_theme(opts: &UiOptions, cx: &mut App) {
     });
 }
 
+/// App-wide key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
+fn app_key_bindings() -> Vec<KeyBinding> {
+    vec![KeyBinding::new("secondary-q", Quit, None)]
+}
+
 fn bind_app_keys(cx: &mut App) {
-    // `secondary` is Cmd on macOS and Ctrl elsewhere.
-    cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+    cx.bind_keys(app_key_bindings());
     cx.on_action(|_: &Quit, cx| cx.quit());
     // macOS keeps apps alive without windows; crest has a single window.
     cx.on_window_closed(|cx, _| {
@@ -289,6 +293,29 @@ impl Render for RootView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[gpui::test]
+    fn secondary_q_dispatches_quit_from_root_view(cx: &mut TestAppContext) {
+        let quits = Rc::new(Cell::new(0));
+        let counter = quits.clone();
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            cx.bind_keys(app_key_bindings());
+            cx.on_action(move |_: &Quit, _| counter.set(counter.get() + 1));
+        });
+        let window = cx.add_window(|window, cx| {
+            let view = RootView::new(cx);
+            window.focus(&view.focus_handle, cx);
+            view
+        });
+
+        cx.simulate_keystrokes(window.into(), "secondary-q");
+
+        assert_eq!(quits.get(), 1);
+    }
 
     #[test]
     fn title_includes_workspace_label() {

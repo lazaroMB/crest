@@ -15,5 +15,8 @@ gpui_platform.workspace = true
 gpui-component.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true
