@@ -21,6 +21,9 @@ use anyhow::{Context as _, anyhow};
 use application::cost::CostTracker;
 use application::flows::implement::graph::{ImplementSession, plan_path};
 use application::flows::implement::node::{AgentKit, ImplementDeps};
+use application::flows::research::agents::ExplorePorts;
+use application::flows::research::graph::ResearchWorkspace;
+use application::flows::research::session::ResearchSession;
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
@@ -50,6 +53,7 @@ use ui::timeline::TimelineState;
 
 use crate::args::Args;
 use crate::mcp::{self, McpServers, TrustOptions};
+use crate::research;
 use crate::startup::{self, CATALOG_TIMEOUT};
 
 /// What the command line decided.
@@ -176,6 +180,9 @@ pub struct App {
     store: Option<Arc<dyn SessionStorePort>>,
     implement: ImplementDeps,
     flow_storage: Option<Arc<SqliteFlowStorage>>,
+    /// The research flow of the workspace (`:research`), when the flow
+    /// store opened.
+    pub research: Option<ResearchSession>,
 }
 
 impl std::fmt::Debug for App {
@@ -444,13 +451,53 @@ pub async fn build_app(
         Arc::clone(&permissions),
     );
     kit.system_prompt = system_prompt(&root);
-    let implement = ImplementDeps::new(Arc::clone(&events), fs, shell).with_agent(kit);
+    let implement = ImplementDeps::new(Arc::clone(&events), Arc::clone(&fs), Arc::clone(&shell))
+        .with_agent(kit);
     let flow_storage = match open_flow_storage(overrides.db_path.as_deref()) {
         Ok(storage) => Some(Arc::new(storage)),
         Err(err) => {
             warnings.push(format!("los flujos no se guardarán: {err}"));
             None
         }
+    };
+    let research = match &flow_storage {
+        Some(storage) => {
+            let parts = research::ResearchParts {
+                agent: deps.clone(),
+                tools: tools.clone(),
+                permissions: Arc::clone(&permissions),
+                models: policy.clone(),
+                explore: ExplorePorts {
+                    llm: Arc::clone(&deps.llm),
+                    telemetry: Arc::clone(&deps.telemetry),
+                    models: policy.clone(),
+                    file_search: Arc::clone(&file_search),
+                    content_search: Arc::clone(&content_search),
+                    fs: Arc::clone(&fs),
+                    shell: Some(shell),
+                    extra_tools: Vec::new(),
+                },
+                workspace: ResearchWorkspace {
+                    fs,
+                    search: Arc::clone(&file_search),
+                },
+                system_prompt: system_prompt(&root),
+                root: root.clone(),
+                storage: Arc::clone(storage),
+            };
+            match research::build(parts) {
+                Ok(session) => Some(session),
+                Err(err) => {
+                    warnings.push(format!("flujo investigativo no disponible: {err:#}"));
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    let research_notice = match &research {
+        Some(session) => research::pending_notice(session).await,
+        None => None,
     };
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(system_prompt(&root))
@@ -476,7 +523,7 @@ pub async fn build_app(
             message: warning.clone(),
         });
     }
-    if let Some(message) = resumed_notice {
+    for message in resumed_notice.into_iter().chain(research_notice) {
         startup_events.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
             message,
@@ -508,6 +555,7 @@ pub async fn build_app(
         store,
         implement,
         flow_storage,
+        research,
     })
 }
 
@@ -581,7 +629,9 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
     )
 }
 
-fn now_ms() -> u64 {
+/// Wall clock in Unix epoch milliseconds.
+#[must_use]
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
