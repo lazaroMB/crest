@@ -91,3 +91,26 @@ check: fmt-check lint test arch ## Lo que debe pasar para cerrar una fase
 
 .PHONY: ci
 ci: doctor check ## doctor + check
+
+.PHONY: run
+run: ## Abre la app sobre un directorio (WORKSPACE=<dir>, por defecto .)
+	$(CARGO) run -p $(PACKAGE) -- $(WORKSPACE)
+
+.PHONY: run-headless
+run-headless: ## Corre un prompt sin UI (PROMPT="..." obligatorio, WORKSPACE=<dir>)
+ifeq ($(strip $(PROMPT)),)
+	@echo 'error: falta PROMPT. Uso: make run-headless PROMPT="..." [WORKSPACE=<dir>]' >&2
+	@exit 2
+else
+	$(CARGO) run -p $(PACKAGE) -- --headless "$(PROMPT)" --workspace $(WORKSPACE)
+endif
+
+.PHONY: install
+install: release ## Copia target/release/crest a PREFIX/bin (PREFIX=~/.local)
+	mkdir -p "$(PREFIX)/bin"
+	cp target/release/$(BIN) "$(PREFIX)/bin/$(BIN)"
+	@echo "instalado en $(PREFIX)/bin/$(BIN)"
+
+.PHONY: clean
+clean: ## Borra los artefactos de compilación (cargo clean)
+	$(CARGO) clean
