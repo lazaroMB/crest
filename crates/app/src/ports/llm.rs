@@ -8,8 +8,8 @@
 //!   adapter must release the underlying connection when that happens and
 //!   must not keep working in the background.
 
-use domain::conversation::{Message, SessionId, TurnId};
-use domain::model::ResolvedModel;
+use domain::conversation::{Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
+use domain::model::{ModelId, ResolvedModel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -181,6 +181,215 @@ pub struct RequestMetadata {
     pub turn_id: Option<TurnId>,
 }
 
+/// One event of a streamed model answer.
+///
+/// `index` is the position of the content block in the provider's answer.
+/// Blocks start with their first event (`TextDelta`, `ThinkingDelta`,
+/// `RedactedThinking`, `ToolUseStart` or `ServerToolUse`) and end with
+/// `BlockStop`. Events of different blocks may interleave.
+///
+/// `Retrying` and `ModelFallback` are emitted by the adapter between
+/// attempts, before the `MessageStart` of the attempt that succeeds; an
+/// adapter never retries once content of an attempt has been emitted.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmEvent {
+    /// The provider accepted the request; `model` is the model answering.
+    MessageStart {
+        /// Model actually answering (may be a fallback).
+        model: ModelId,
+    },
+    /// A chunk of text of a text block.
+    TextDelta {
+        /// Block index.
+        index: usize,
+        /// Text to append.
+        text: String,
+    },
+    /// A chunk of extended thinking.
+    ThinkingDelta {
+        /// Block index.
+        index: usize,
+        /// Thinking text to append.
+        thinking: String,
+    },
+    /// The signature of a thinking block, to be sent back unchanged.
+    SignatureDelta {
+        /// Block index of the thinking block.
+        index: usize,
+        /// Signature chunk to append.
+        signature: String,
+    },
+    /// A whole redacted thinking block (it has no deltas).
+    RedactedThinking {
+        /// Block index.
+        index: usize,
+        /// Opaque encrypted payload.
+        data: String,
+    },
+    /// The model starts calling a client-side tool.
+    ToolUseStart {
+        /// Block index.
+        index: usize,
+        /// Provider-assigned id of the call.
+        id: ToolUseId,
+        /// Tool name.
+        name: String,
+    },
+    /// A chunk of the tool input JSON; only valid once the block stops.
+    ToolInputDelta {
+        /// Block index of the tool use.
+        index: usize,
+        /// Partial JSON to append.
+        partial_json: String,
+    },
+    /// The provider runs one of its server tools (web search or fetch).
+    ///
+    /// Informational: lets the UI show progress. Server tool blocks and
+    /// their results are not part of the domain `Message`; what matters
+    /// for evidence are the [`LlmEvent::Citation`]s they produce.
+    ServerToolUse {
+        /// Block index.
+        index: usize,
+        /// Server tool name (e.g. `web_search`).
+        name: String,
+    },
+    /// A citation attached to the text block at `index`.
+    Citation {
+        /// Block index of the cited text.
+        index: usize,
+        /// The citation.
+        citation: Citation,
+    },
+    /// The content block at `index` is complete.
+    BlockStop {
+        /// Block index.
+        index: usize,
+    },
+    /// Usage so far for this message, cumulative: each event replaces the
+    /// previous one rather than adding to it.
+    Usage(Usage),
+    /// The adapter gave up on `from` and switches to `to`.
+    ModelFallback {
+        /// Model that failed.
+        from: ModelId,
+        /// Next model of the fallback chain.
+        to: ModelId,
+        /// Error that triggered the switch.
+        reason: LlmError,
+    },
+    /// The adapter waits and retries the same model.
+    Retrying {
+        /// Retry number, starting at 1.
+        attempt: u32,
+        /// Delay before the retry, in milliseconds.
+        delay_ms: u64,
+        /// Error that triggered the retry.
+        reason: LlmError,
+    },
+    /// The answer is complete.
+    MessageStop {
+        /// Why the model stopped.
+        stop_reason: StopReason,
+    },
+}
+
+/// A source cited by the model, typically from web search or fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Citation {
+    /// Cited URL.
+    pub url: String,
+    /// Page title, when known.
+    pub title: Option<String>,
+    /// Quoted text supporting the claim.
+    pub cited_text: String,
+}
+
+/// Errors of [`LlmPort`] and [`ModelCatalogPort`]. Messages never include
+/// the API key.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LlmError {
+    /// The API key is missing, invalid or lacks permission (401/403).
+    #[error("authentication failed: {message}")]
+    Auth {
+        /// What to fix, e.g. "set ANTHROPIC_API_KEY".
+        message: String,
+    },
+    /// Too many requests (429).
+    #[error("rate limited")]
+    RateLimited {
+        /// Wait suggested by the provider (`retry-after`), if any.
+        retry_after_ms: Option<u64>,
+    },
+    /// The provider is overloaded (529).
+    #[error("provider overloaded")]
+    Overloaded,
+    /// Other server-side failure.
+    #[error("server error {status}: {message}")]
+    Server {
+        /// HTTP status.
+        status: u16,
+        /// Provider message.
+        message: String,
+    },
+    /// The request was rejected as malformed (400/404/422).
+    #[error("invalid request: {message}")]
+    InvalidRequest {
+        /// Provider message.
+        message: String,
+    },
+    /// Connection, TLS or timeout failure.
+    #[error("network error: {0}")]
+    Network(String),
+    /// The response or the stream could not be decoded.
+    #[error("decode error: {0}")]
+    Decode(String),
+    /// The prompt does not fit in the model's context window.
+    #[error("prompt is too long for the model's context window")]
+    ContextTooLong,
+    /// The call was cancelled.
+    #[error("cancelled")]
+    Cancelled,
+    /// The adapter does not support this operation.
+    #[error("operation not supported by this provider")]
+    Unsupported,
+    /// Every model of the fallback chain failed; `last` is the final error.
+    #[error("all models failed; last error: {last}")]
+    AllModelsFailed {
+        /// Error of the last model tried.
+        last: Box<LlmError>,
+    },
+}
+
+impl LlmError {
+    /// Whether retrying the same request later may succeed: rate limits,
+    /// overload, 5xx and network errors.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::RateLimited { .. } | Self::Overloaded | Self::Network(_) => true,
+            Self::Server { status, .. } => *status >= 500,
+            Self::Auth { .. }
+            | Self::InvalidRequest { .. }
+            | Self::Decode(_)
+            | Self::ContextTooLong
+            | Self::Cancelled
+            | Self::Unsupported
+            | Self::AllModelsFailed { .. } => false,
+        }
+    }
+
+    /// Whether, after retries are exhausted, switching to the next model of
+    /// the fallback chain makes sense: overload (529) and 5xx errors.
+    #[must_use]
+    pub fn triggers_fallback(&self) -> bool {
+        match self {
+            Self::Overloaded => true,
+            Self::Server { status, .. } => *status >= 500,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +424,46 @@ mod tests {
         assert!(tool.cache);
         assert_eq!(tool.input_schema["type"], "object");
         assert_eq!(tool.input_schema["properties"]["title"]["type"], "string");
+    }
+
+    #[test]
+    fn retryable_and_fallback_errors() {
+        let server = |status| LlmError::Server {
+            status,
+            message: String::new(),
+        };
+        assert!(LlmError::Overloaded.is_retryable());
+        assert!(LlmError::Overloaded.triggers_fallback());
+        assert!(
+            LlmError::RateLimited {
+                retry_after_ms: None
+            }
+            .is_retryable()
+        );
+        assert!(
+            !LlmError::RateLimited {
+                retry_after_ms: None
+            }
+            .triggers_fallback()
+        );
+        assert!(LlmError::Network("reset".into()).is_retryable());
+        assert!(server(503).is_retryable() && server(503).triggers_fallback());
+        assert!(!server(418).is_retryable());
+        let auth = LlmError::Auth {
+            message: "set ANTHROPIC_API_KEY".into(),
+        };
+        assert!(!auth.is_retryable() && !auth.triggers_fallback());
+        assert!(!LlmError::ContextTooLong.is_retryable());
+    }
+
+    #[test]
+    fn all_models_failed_shows_last_error() {
+        let err = LlmError::AllModelsFailed {
+            last: Box::new(LlmError::Overloaded),
+        };
+        assert_eq!(
+            err.to_string(),
+            "all models failed; last error: provider overloaded"
+        );
     }
 }
