@@ -1,5 +1,7 @@
 //! Renderer of the `table` block kind; placeholder until its task lands.
 
+pub mod sort;
+
 use gpui::{AnyElement, App, Window};
 
 use crate::timeline::TimelineEntry;
