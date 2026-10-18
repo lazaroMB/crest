@@ -10,9 +10,14 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use application::ports::plugin::{ConfigSources, LoadedConfig, PluginDiagnostic, PluginError};
+use application::ports::plugin::{
+    ConfigOrigin, ConfigSources, LoadedConfig, PluginCapabilities, PluginDiagnostic, PluginError,
+};
 use mlua::prelude::LuaChunkMode;
+
+use crate::caps::Grant;
 
 use crate::vm::Vm;
 use api::Phase;
@@ -65,11 +70,16 @@ fn sources_from(xdg: Option<OsString>, home: Option<PathBuf>, workspace: &Path) 
 pub(crate) fn load(vm: &mut Vm, sources: &ConfigSources) -> Result<LoadedConfig, PluginError> {
     vm.reset()?;
     let mut errors = Vec::new();
+    let mut declared = Vec::new();
+    let mut found = Found {
+        errors: &mut errors,
+        declared: &mut declared,
+    };
 
     let global = sources
         .global
         .as_deref()
-        .and_then(|path| run_file(vm, path, GLOBAL_NAME, false, &mut errors));
+        .and_then(|path| run_file(vm, path, GLOBAL_NAME, File::Config, &mut found));
 
     let mut plugins = Vec::new();
     if let Some(config_dir) = sources.global.as_deref().and_then(Path::parent) {
@@ -77,15 +87,15 @@ pub(crate) fn load(vm: &mut Vm, sources: &ConfigSources) -> Result<LoadedConfig,
             .as_ref()
             .map(|g| g.declared.plugins.clone())
             .unwrap_or_default();
-        for (name, init) in plugin_files(config_dir, &listed, &mut errors) {
-            plugins.extend(run_file(vm, &init, &name, true, &mut errors));
+        for (name, init) in plugin_files(config_dir, &listed, found.errors) {
+            plugins.extend(run_file(vm, &init, &name, File::Plugin, &mut found));
         }
     }
 
     let workspace = sources
         .workspace
         .as_deref()
-        .and_then(|path| run_file(vm, path, WORKSPACE_NAME, false, &mut errors));
+        .and_then(|path| run_file(vm, path, WORKSPACE_NAME, File::Workspace, &mut found));
     if let (Some(ws), Some(path)) = (&workspace, &sources.workspace)
         && !ws.declared.plugins.is_empty()
     {
@@ -103,18 +113,75 @@ pub(crate) fn load(vm: &mut Vm, sources: &ConfigSources) -> Result<LoadedConfig,
     vm.hooks = merged.hooks;
     let mut config = merged.config;
     config.errors = errors;
+    for (grant, identity) in declared {
+        vm.grants.push(grant);
+        config.plugin_capabilities.push(identity);
+    }
     Ok(config)
+}
+
+/// Which kind of file [`run_file`] runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum File {
+    /// The global `init.lua`; may be absent.
+    Config,
+    /// A plugin's `init.lua`; must exist.
+    Plugin,
+    /// The workspace `init.lua`; may be absent.
+    Workspace,
+}
+
+/// What loading the files found besides their layers.
+struct Found<'a> {
+    errors: &'a mut Vec<PluginDiagnostic>,
+    /// Capability declarations, with the grant of their file.
+    declared: &'a mut Vec<(Arc<Grant>, PluginCapabilities)>,
+}
+
+/// The identity of the capabilities a loaded file declared, if any.
+fn declaration(
+    grant: &Grant,
+    path: &Path,
+    name: &str,
+    kind: File,
+    errors: &mut Vec<PluginDiagnostic>,
+) -> Option<PluginCapabilities> {
+    let declared = grant.declared()?;
+    let plugin = match (kind, declared.name) {
+        (File::Plugin, Some(other)) if other != name => {
+            errors.push(PluginDiagnostic {
+                source: path.display().to_string(),
+                message: format!(
+                    "app.plugin: the name `{other}` differs from the plugin's folder; the \
+                     plugin is still called `{name}`"
+                ),
+                line: None,
+            });
+            name.to_owned()
+        }
+        (_, Some(declared)) => declared,
+        (_, None) => name.to_owned(),
+    };
+    if declared.capabilities.is_empty() {
+        return None;
+    }
+    Some(PluginCapabilities {
+        plugin,
+        source: path.to_path_buf(),
+        origin: if kind == File::Workspace {
+            ConfigOrigin::Workspace
+        } else {
+            ConfigOrigin::Global
+        },
+        capabilities: declared.capabilities,
+    })
 }
 
 /// Runs one file in its own phase. Returns `None` when the file does not
 /// exist (and `required` is false) or fails.
-fn run_file(
-    vm: &Vm,
-    path: &Path,
-    name: &str,
-    required: bool,
-    errors: &mut Vec<PluginDiagnostic>,
-) -> Option<Layer> {
+fn run_file(vm: &Vm, path: &Path, name: &str, kind: File, found: &mut Found<'_>) -> Option<Layer> {
+    let required = kind == File::Plugin;
+    let errors = &mut *found.errors;
     let file = path.display().to_string();
     let diagnostic = |message: String| PluginDiagnostic {
         source: file.clone(),
@@ -152,6 +219,11 @@ fn run_file(
     }
     let (declared, mut problems) = parse::read(&vm.lua, &phase.app, &file);
     errors.append(&mut problems);
+    let grant = &phase.origin().grant;
+    if let Some(identity) = declaration(grant, path, name, kind, errors) {
+        grant.set_identity(identity.clone());
+        found.declared.push((Arc::clone(grant), identity));
+    }
     Some(Layer {
         declared,
         collected,
@@ -364,6 +436,27 @@ end)
                 text: "Review the uncommitted changes and list the risks".into(),
                 role: Some(ModelRole::Plan),
             }])
+        );
+    }
+
+    #[test]
+    fn capability_declarations_carry_who_declared_them() {
+        let fx = Fixture::new();
+        fx.plugin("jira", r#"app.plugin{ name = "other", capabilities = { "shell:jq" } }"#)
+            .plugin("quiet", "app.plugin{}")
+            .workspace(r#"app.plugin{ name = "repo", capabilities = { "network:x.dev" } }"#);
+        let (_vm, config) = fx.load();
+        assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
+        assert!(config.errors[0].message.contains("differs from the plugin's folder"));
+        let decls = &config.plugin_capabilities;
+        assert_eq!(decls.len(), 2, "{decls:?}");
+        assert_eq!(decls[0].plugin, "jira");
+        assert_eq!(decls[0].origin, ConfigOrigin::Global);
+        assert_eq!(decls[1].plugin, "repo");
+        assert_eq!(decls[1].origin, ConfigOrigin::Workspace);
+        assert_eq!(
+            decls[1].source,
+            fx.workspace.join(WORKSPACE_DIR).join(INIT_FILE)
         );
     }
 

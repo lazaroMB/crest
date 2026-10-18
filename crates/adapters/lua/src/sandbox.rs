@@ -28,10 +28,17 @@ const OS_KEEP: [&str; 4] = ["time", "clock", "date", "difftime"];
 /// Base functions removed from the sandbox.
 const BASE_REMOVE: [&str; 2] = ["dofile", "loadfile"];
 
-/// Replaces `load` with a version that only accepts text chunks.
+/// Replaces `load` with a version that only accepts text chunks. A chunk
+/// name never starts with `@` (a file name), so loaded code cannot pass for
+/// the code of a config file, to which capabilities are bound.
 const TEXT_ONLY_LOAD: &str = r##"
 local raw_load = load
 return function(chunk, name, _mode, ...)
+  if name == nil then
+    name = "=(load)"
+  elseif type(name) == "string" and name:sub(1, 1) == "@" then
+    name = "=" .. name:sub(2)
+  end
   if select("#", ...) == 0 then
     return raw_load(chunk, name, "t")
   end
@@ -266,6 +273,26 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn loaded_code_cannot_take_a_file_name() {
+        let lua = lua();
+        let probe = lua
+            .create_function(|lua, ()| {
+                Ok(lua
+                    .inspect_stack(1, |d| d.source().source.map(|s| s.into_owned()))
+                    .flatten())
+            })
+            .unwrap();
+        lua.globals().set("probe", probe).unwrap();
+        for code in [
+            "return load('return probe()', '@/x/init.lua')()",
+            "return load('return probe()')()",
+        ] {
+            let got: Option<String> = lua.load(code).eval().unwrap();
+            assert!(!got.unwrap_or_default().starts_with('@'), "{code}");
+        }
     }
 
     #[test]

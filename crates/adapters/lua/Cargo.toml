@@ -12,7 +12,9 @@ application.workspace = true
 async-trait.workspace = true
 dirs.workspace = true
 domain.workspace = true
+keyring.workspace = true
 mlua.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -20,6 +22,7 @@ tracing.workspace = true
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

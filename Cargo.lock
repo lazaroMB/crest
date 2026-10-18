@@ -125,11 +125,14 @@ dependencies = [
  "async-trait",
  "dirs 7.0.0",
  "domain",
+ "keyring",
  "mlua",
+ "reqwest",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]

@@ -48,10 +48,12 @@ pub(crate) struct Collected {
 /// Where registrations of one phase come from.
 #[derive(Debug)]
 pub(crate) struct Origin {
-    /// File, for diagnostics.
-    file: String,
+    /// File, for diagnostics; also the chunk name (`@file`) of its code.
+    pub(crate) file: String,
     /// Plugin (or config) name, for tools and hooks.
     pub(crate) plugin: String,
+    /// Its `app.plugin` declaration and whether it was approved.
+    pub(crate) grant: Arc<crate::caps::Grant>,
 }
 
 /// Where the functions of one `app` table record what they receive.
@@ -64,6 +66,7 @@ pub(crate) struct Phase {
     /// The file's `app` table.
     pub(crate) app: Table,
     sink: Sink,
+    origin: Arc<Origin>,
 }
 
 impl Phase {
@@ -74,6 +77,7 @@ impl Phase {
         let origin = Arc::new(Origin {
             file: file.to_owned(),
             plugin: plugin.to_owned(),
+            grant: Arc::default(),
         });
         let app = app_table(lua, &sink, &origin)?;
         let base_require: Function = lua.globals().get("require")?;
@@ -81,7 +85,17 @@ impl Phase {
             .load(NEW_ENV)
             .set_name("=sandbox")
             .call((app.clone(), base_require))?;
-        Ok(Self { env, app, sink })
+        Ok(Self {
+            env,
+            app,
+            sink,
+            origin,
+        })
+    }
+
+    /// Who registers through this phase.
+    pub(crate) fn origin(&self) -> &Arc<Origin> {
+        &self.origin
     }
 
     /// Takes what was registered so far.
@@ -111,6 +125,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     app.set("tools", tools)?;
     app.set("on", crate::api::hooks::on(lua, sink, origin)?)?;
     app.set("ui", crate::api::ui::table(lua, origin)?)?;
+    crate::caps::install(lua, &app, sink, origin)?;
     Ok(app)
 }
 

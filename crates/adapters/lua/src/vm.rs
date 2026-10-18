@@ -1,15 +1,17 @@
 //! State owned by the VM thread and the calls it serves.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use application::ports::plugin::{
-    CallbackId, HookEvent, HookKind, HookOutcome, PluginError, PluginOutput,
+    CallbackId, HookEvent, HookKind, HookOutcome, PluginCapabilities, PluginError, PluginOutput,
 };
 use mlua::Lua;
 use serde_json::Value;
 
 use crate::api::{hooks, keymap};
 use crate::callbacks::{self, CallbackIds};
+use crate::caps::{Context, Grant};
 use crate::convert;
 use crate::host::HostOptions;
 use crate::sandbox::{self, Limiter};
@@ -31,11 +33,20 @@ pub(crate) struct Vm {
     pub(crate) tools: BTreeMap<String, CallbackId>,
     /// Hooks, in the order they run.
     pub(crate) hooks: Vec<Hook>,
+    /// What the capability APIs need; survives [`Vm::reset`].
+    ctx: Arc<Context>,
+    /// The capability declarations of the loaded files.
+    pub(crate) grants: Vec<Arc<Grant>>,
 }
 
 impl Vm {
     pub(crate) fn new(options: HostOptions, ids: CallbackIds) -> Result<Self, PluginError> {
-        let (lua, limiter) = new_lua(&options, &ids)?;
+        let ctx = Arc::new(Context::new(
+            options.workspace.clone(),
+            options.keyring,
+            options.environment.clone(),
+        ));
+        let (lua, limiter) = new_lua(&options, &ids, &ctx)?;
         Ok(Self {
             lua,
             limiter,
@@ -43,16 +54,26 @@ impl Vm {
             ids,
             tools: BTreeMap::new(),
             hooks: Vec::new(),
+            ctx,
+            grants: Vec::new(),
         })
     }
 
     /// Replaces the Lua state with a fresh one and forgets every tool and
     /// hook. Callback ids keep increasing, so old ids stop resolving.
     pub(crate) fn reset(&mut self) -> Result<(), PluginError> {
-        (self.lua, self.limiter) = new_lua(&self.options, &self.ids)?;
+        (self.lua, self.limiter) = new_lua(&self.options, &self.ids, &self.ctx)?;
         self.tools.clear();
         self.hooks.clear();
+        self.grants.clear();
         Ok(())
+    }
+
+    /// Activates the declarations in `granted` and deactivates the rest.
+    pub(crate) fn grant(&mut self, granted: &[PluginCapabilities]) {
+        for grant in &self.grants {
+            grant.apply(granted);
+        }
     }
 
     /// Calls the callback `id` with `args` and returns what it returned.
@@ -135,9 +156,14 @@ impl Vm {
     }
 }
 
-fn new_lua(options: &HostOptions, ids: &CallbackIds) -> Result<(Lua, Limiter), PluginError> {
+fn new_lua(
+    options: &HostOptions,
+    ids: &CallbackIds,
+    ctx: &Arc<Context>,
+) -> Result<(Lua, Limiter), PluginError> {
     let setup = || -> mlua::Result<(Lua, Limiter)> {
         let lua = sandbox::new_lua(options.memory_limit)?;
+        lua.set_app_data(Arc::clone(ctx));
         callbacks::install(&lua, ids.clone())?;
         let limiter = Limiter::install(&lua, options.instruction_limit)?;
         Ok((lua, limiter))

@@ -6,12 +6,13 @@
 //! the answer on a oneshot, so the caller's async runtime never blocks while
 //! Lua runs. The VM itself never leaves its thread.
 
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
 use application::ports::plugin::{
-    CallbackId, ConfigSources, HookEvent, HookOutcome, LoadedConfig, PluginError, PluginHostPort,
-    PluginOutput,
+    CallbackId, ConfigSources, HookEvent, HookOutcome, LoadedConfig, PluginCapabilities,
+    PluginError, PluginHostPort, PluginOutput,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -31,6 +32,15 @@ pub struct HostOptions {
     pub instruction_limit: u64,
     /// Maximum memory of the whole VM, in bytes; `None` means unlimited.
     pub memory_limit: Option<usize>,
+    /// Workspace root, where `app.shell.run` runs programs; `None`
+    /// disables it.
+    pub workspace: Option<PathBuf>,
+    /// Whether `app.secret` reads the system keyring before the
+    /// environment (tests turn it off).
+    pub keyring: bool,
+    /// Environment that `app.secret` and `app.shell.run` see instead of
+    /// the process's (for tests); `None` uses the process environment.
+    pub environment: Option<Vec<(String, String)>>,
 }
 
 impl Default for HostOptions {
@@ -38,6 +48,9 @@ impl Default for HostOptions {
         Self {
             instruction_limit: 100_000_000,
             memory_limit: Some(256 * 1024 * 1024),
+            workspace: None,
+            keyring: true,
+            environment: None,
         }
     }
 }
@@ -120,6 +133,13 @@ impl PluginHostPort for LuaHandle {
 
     async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError> {
         self.run(move |vm| vm.run_hooks(event)).await?
+    }
+
+    async fn grant_capabilities(
+        &self,
+        granted: Vec<PluginCapabilities>,
+    ) -> Result<(), PluginError> {
+        self.run(move |vm| vm.grant(&granted)).await
     }
 }
 

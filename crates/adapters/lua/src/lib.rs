@@ -6,6 +6,7 @@
 
 mod api;
 mod callbacks;
+mod caps;
 mod config;
 mod convert;
 mod host;
