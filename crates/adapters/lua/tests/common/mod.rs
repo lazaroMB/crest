@@ -29,7 +29,8 @@ pub struct Agent {
 
 impl Agent {
     /// Loads `init_lua` as the global config, offers its tools (and the
-    /// ones `register` adds) to the model and answers with `script`.
+    /// ones `register` adds) to the model, runs its hooks around every
+    /// call and answers with `script`.
     pub async fn new(
         init_lua: &str,
         script: Vec<ScriptedResponse>,
@@ -71,7 +72,8 @@ impl Agent {
             telemetry: Arc::new(RecordingTelemetry::new()),
         };
         let permissions = Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask)));
-        let service = AgentService::new(deps, tools, ModelPolicy::default(), permissions);
+        let service = AgentService::new(deps, tools, ModelPolicy::default(), permissions)
+            .with_plugin_host(port);
         Self {
             host,
             config,
