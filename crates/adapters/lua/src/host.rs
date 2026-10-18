@@ -7,9 +7,10 @@
 //! Lua runs. The VM itself never leaves its thread.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 
+use application::ports::events::EventSink;
 use application::ports::plugin::{
     CallbackId, ConfigSources, HookEvent, HookOutcome, LoadedConfig, PluginCapabilities,
     PluginError, PluginHostPort, PluginOutput,
@@ -26,7 +27,7 @@ use crate::vm::Vm;
 const THREAD_NAME: &str = "crest-lua";
 
 /// Settings of the Lua host.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct HostOptions {
     /// Maximum VM instructions a single call may run before it is stopped.
     pub instruction_limit: u64,
@@ -41,6 +42,22 @@ pub struct HostOptions {
     /// Environment that `app.secret` and `app.shell.run` see instead of
     /// the process's (for tests); `None` uses the process environment.
     pub environment: Option<Vec<(String, String)>>,
+    /// Where `app.modal.*` sends its events (the front end); `None` makes
+    /// those calls fail with "no window".
+    pub events: Option<Arc<dyn EventSink>>,
+}
+
+impl std::fmt::Debug for HostOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostOptions")
+            .field("instruction_limit", &self.instruction_limit)
+            .field("memory_limit", &self.memory_limit)
+            .field("workspace", &self.workspace)
+            .field("keyring", &self.keyring)
+            .field("environment", &self.environment.as_ref().map(Vec::len))
+            .field("events", &self.events.is_some())
+            .finish()
+    }
 }
 
 impl Default for HostOptions {
@@ -51,6 +68,7 @@ impl Default for HostOptions {
             workspace: None,
             keyring: true,
             environment: None,
+            events: None,
         }
     }
 }

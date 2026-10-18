@@ -84,7 +84,17 @@ impl Grant {
     }
 }
 
-/// What the capability APIs need from the host.
+/// The front end's event sink, for `app.modal`.
+#[derive(Clone)]
+pub(crate) struct Events(pub(crate) Arc<dyn application::ports::events::EventSink>);
+
+impl std::fmt::Debug for Events {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Events")
+    }
+}
+
+/// What the capability APIs (and `app.modal`) need from the host.
 #[derive(Debug, Default)]
 pub(crate) struct Context {
     /// Workspace root: the working directory of `app.shell.run`.
@@ -94,6 +104,10 @@ pub(crate) struct Context {
     /// Environment to use instead of the process's.
     env: Option<Vec<(OsString, OsString)>>,
     runtime: OnceLock<Result<tokio::runtime::Runtime, String>>,
+    /// Where `app.modal` sends its events; `None` without a front end.
+    pub(crate) events: Option<Events>,
+    /// Ids handed to modals opened without one.
+    pub(crate) next_modal: std::sync::atomic::AtomicU64,
 }
 
 impl Context {
@@ -111,7 +125,18 @@ impl Context {
                     .collect()
             }),
             runtime: OnceLock::new(),
+            events: None,
+            next_modal: std::sync::atomic::AtomicU64::new(1),
         }
+    }
+
+    /// The same context sending `app.modal` events to `events`.
+    pub(crate) fn with_events(
+        mut self,
+        events: Option<Arc<dyn application::ports::events::EventSink>>,
+    ) -> Self {
+        self.events = events.map(Events);
+        self
     }
 
     /// The environment: the configured one or the process's.

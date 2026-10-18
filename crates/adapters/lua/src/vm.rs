@@ -41,11 +41,14 @@ pub(crate) struct Vm {
 
 impl Vm {
     pub(crate) fn new(options: HostOptions, ids: CallbackIds) -> Result<Self, PluginError> {
-        let ctx = Arc::new(Context::new(
-            options.workspace.clone(),
-            options.keyring,
-            options.environment.clone(),
-        ));
+        let ctx = Arc::new(
+            Context::new(
+                options.workspace.clone(),
+                options.keyring,
+                options.environment.clone(),
+            )
+            .with_events(options.events.clone()),
+        );
         let (lua, limiter) = new_lua(&options, &ids, &ctx)?;
         Ok(Self {
             lua,
