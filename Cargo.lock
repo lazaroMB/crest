@@ -40,6 +40,10 @@ version = "0.1.0"
 dependencies = [
  "application",
  "domain",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
