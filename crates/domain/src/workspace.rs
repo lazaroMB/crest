@@ -5,6 +5,7 @@
 //! is responsible for resolving symlinks after joining a [`WorkspacePath`].
 //! Only Unix path semantics are supported.
 
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 /// Errors produced while building workspace roots and paths.
@@ -121,6 +122,16 @@ impl WorkspaceRoot {
         }
         Ok(WorkspacePath::from_segments(rest))
     }
+
+    /// The absolute path of `path` under this root. Purely lexical: the fs
+    /// adapter must still canonicalize the result before using it.
+    pub fn join(&self, path: &WorkspacePath) -> PathBuf {
+        if path.is_root() {
+            self.0.clone()
+        } else {
+            self.0.join(path.as_str())
+        }
+    }
 }
 
 /// A lexically normalized path relative to a [`WorkspaceRoot`].
@@ -143,12 +154,52 @@ impl WorkspacePath {
         &self.0
     }
 
+    /// Whether this is the workspace root itself.
+    pub fn is_root(&self) -> bool {
+        self.0 == Self::ROOT
+    }
+
+    /// The components of the path; empty for the root.
+    pub fn components(&self) -> impl Iterator<Item = &str> {
+        let path = if self.is_root() { "" } else { self.0.as_str() };
+        path.split('/').filter(|c| !c.is_empty())
+    }
+
+    /// The containing directory, or `None` for the root.
+    pub fn parent(&self) -> Option<Self> {
+        if self.is_root() {
+            return None;
+        }
+        Some(match self.0.rsplit_once('/') {
+            Some((parent, _)) => Self(parent.to_owned()),
+            None => Self::root(),
+        })
+    }
+
+    /// The last component, or `None` for the root.
+    pub fn file_name(&self) -> Option<&str> {
+        if self.is_root() {
+            return None;
+        }
+        Some(
+            self.0
+                .rsplit_once('/')
+                .map_or(self.0.as_str(), |(_, name)| name),
+        )
+    }
+
     fn from_segments(segments: &[&str]) -> Self {
         if segments.is_empty() {
             Self::root()
         } else {
             Self(segments.join("/"))
         }
+    }
+}
+
+impl fmt::Display for WorkspacePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -366,6 +417,58 @@ mod tests {
             resolve("/ws/a\0"),
             Err(InvalidPathReason::ContainsNul.into())
         );
+    }
+
+    fn wp(input: &str) -> WorkspacePath {
+        root().resolve(input).unwrap()
+    }
+
+    #[test]
+    fn join_builds_absolute_path() {
+        assert_eq!(root().join(&wp("a/b.rs")), PathBuf::from("/ws/a/b.rs"));
+        assert_eq!(root().join(&wp("ü/日本")), PathBuf::from("/ws/ü/日本"));
+    }
+
+    #[test]
+    fn join_of_root_is_the_root() {
+        assert_eq!(root().join(&WorkspacePath::root()), PathBuf::from("/ws"));
+    }
+
+    #[test]
+    fn display_matches_as_str() {
+        assert_eq!(wp("./a//b/").to_string(), "a/b");
+        assert_eq!(WorkspacePath::root().to_string(), ".");
+    }
+
+    #[test]
+    fn is_root_only_for_root() {
+        assert!(wp(".").is_root());
+        assert!(wp("a/..").is_root());
+        assert!(!wp("a").is_root());
+    }
+
+    #[test]
+    fn components_split_path() {
+        assert_eq!(
+            wp("a/b/c").components().collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert_eq!(WorkspacePath::root().components().count(), 0);
+    }
+
+    #[test]
+    fn parent_walks_up_to_root() {
+        assert_eq!(wp("a/b/c").parent(), Some(wp("a/b")));
+        assert_eq!(wp("a").parent(), Some(WorkspacePath::root()));
+        assert_eq!(WorkspacePath::root().parent(), None);
+    }
+
+    #[test]
+    fn file_name_is_last_component() {
+        assert_eq!(wp("a/b/c.rs").file_name(), Some("c.rs"));
+        assert_eq!(wp("c.rs").file_name(), Some("c.rs"));
+        assert_eq!(wp("a/ñ").file_name(), Some("ñ"));
+        assert_eq!(WorkspacePath::root().file_name(), None);
     }
 
     #[test]
