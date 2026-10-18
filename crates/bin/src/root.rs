@@ -40,6 +40,7 @@ use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
 
 use crate::args::Args;
+use crate::mcp::{self, McpServers, TrustOptions};
 use crate::startup::{self, CATALOG_TIMEOUT};
 
 /// What the command line decided.
@@ -51,6 +52,8 @@ pub struct Config {
     pub mode: PermissionMode,
     /// `--model`: alias, role or id for the turns.
     pub model: Option<String>,
+    /// `--trust-mcp`: workspace MCP servers approved on this run.
+    pub trust_mcp: Vec<String>,
 }
 
 impl Config {
@@ -69,6 +72,7 @@ impl Config {
             workspace,
             mode: args.mode.unwrap_or_default(),
             model: args.model.clone(),
+            trust_mcp: args.trust_mcp.clone(),
         })
     }
 }
@@ -94,6 +98,8 @@ pub struct Overrides {
     pub config_sources: Option<ConfigSources>,
     /// Session database instead of the default one.
     pub db_path: Option<PathBuf>,
+    /// Store of approved workspace MCP servers instead of the default one.
+    pub mcp_trust_path: Option<PathBuf>,
 }
 
 /// Records the timeline of the session while forwarding every event.
@@ -124,6 +130,8 @@ pub struct App {
     pub workspace: WorkspaceRoot,
     /// Startup warnings, also emitted as `Notice` events.
     pub warnings: Vec<String>,
+    /// The MCP servers that were started, if any.
+    pub mcp: Option<McpServers>,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
     store: Option<Arc<dyn SessionStorePort>>,
@@ -288,6 +296,23 @@ pub async fn build_app(
         }
     }
 
+    let trust = TrustOptions {
+        store: overrides
+            .mcp_trust_path
+            .clone()
+            .or_else(mcp::default_trust_path),
+        trust_now: config.trust_mcp.clone(),
+    };
+    let (mcp, mcp_warnings) = mcp::start(
+        loaded.mcp_servers.clone(),
+        root.as_path(),
+        &trust,
+        mcp::READY_TIMEOUT,
+        &mut tools,
+    )
+    .await;
+    warnings.extend(mcp_warnings);
+
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
     let deps = AgentDeps {
         llm,
@@ -318,6 +343,7 @@ pub async fn build_app(
         turn_options,
         workspace: root,
         warnings,
+        mcp,
         events,
         timeline,
         store,
@@ -414,5 +440,6 @@ mod tests {
         assert_eq!(config.workspace, std::env::current_dir().unwrap());
         assert_eq!(config.mode, PermissionMode::Ask);
         assert_eq!(config.model, None);
+        assert!(config.trust_mcp.is_empty());
     }
 }

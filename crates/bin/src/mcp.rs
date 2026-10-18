@@ -15,12 +15,20 @@
 //! the declared values, header values included, so it is written readable
 //! only by its owner.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
+use adapter_mcp::{McpManager, McpOptions};
+use application::ports::mcp::{McpError, McpPort, McpServerState, McpServerStatus, McpToolResult};
 use application::ports::plugin::{ConfigOrigin, McpServerSpec, McpTransport};
+use application::tools::mcp::McpTool;
+use application::tools::registry::ToolRegistry;
+use async_trait::async_trait;
+use domain::permission::ToolEffect;
 use serde::{Deserialize, Serialize};
 
 /// Name of the store file in crest's data directory.
@@ -170,6 +178,182 @@ pub fn pending_warning(spec: &McpServerSpec) -> String {
          arranca con `crest --trust-mcp {name}` (se recuerda para este workspace)",
         name = spec.name
     )
+}
+
+/// How long startup waits for the servers before going on without the
+/// slow ones.
+pub const READY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Where the store lives and what the command line approved.
+#[derive(Debug, Clone, Default)]
+pub struct TrustOptions {
+    /// Store file; `None` keeps no approvals (every workspace server waits
+    /// unless approved on this run).
+    pub store: Option<PathBuf>,
+    /// `--trust-mcp` names.
+    pub trust_now: Vec<String>,
+}
+
+/// The MCP servers of a session, connected.
+#[derive(Debug)]
+pub struct McpServers {
+    /// The manager, to shut the servers down.
+    pub manager: Arc<McpManager>,
+    /// Their state right after startup.
+    pub statuses: Vec<McpServerStatus>,
+}
+
+/// Starts the servers of `specs` that may start in `workspace`, waits up
+/// to `ready_timeout` for them and registers the tools of the ready ones
+/// in `registry`, each with its server's effect. Returns the servers (none
+/// when nothing starts) and warnings: held-back servers, failed or slow
+/// ones, tools that could not be registered and store problems.
+pub async fn start(
+    specs: Vec<McpServerSpec>,
+    workspace: &Path,
+    trust: &TrustOptions,
+    ready_timeout: Duration,
+    registry: &mut ToolRegistry,
+) -> (Option<McpServers>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut store = match trust.store.as_deref().map(TrustStore::load) {
+        Some(Ok(store)) => store,
+        Some(Err(err)) => {
+            warnings.push(format!("no puedo leer los servidores MCP aprobados: {err}"));
+            TrustStore::default()
+        }
+        None => TrustStore::default(),
+    };
+    for name in &trust.trust_now {
+        let declared = specs
+            .iter()
+            .any(|s| &s.name == name && s.origin == ConfigOrigin::Workspace);
+        if !declared {
+            warnings.push(format!(
+                "--trust-mcp {name}: el workspace no declara un servidor MCP con ese nombre"
+            ));
+        }
+    }
+    let admission = admit(specs, workspace, &store, &trust.trust_now);
+    warnings.extend(admission.pending.iter().map(pending_warning));
+    if !admission.newly_trusted.is_empty() {
+        for spec in &admission.newly_trusted {
+            store.trust(workspace, spec);
+        }
+        if let Some(path) = &trust.store
+            && let Err(err) = store.save(path)
+        {
+            warnings.push(format!(
+                "no puedo guardar la aprobación de servidores MCP en {}: {err}",
+                path.display()
+            ));
+        }
+    }
+    if admission.start.is_empty() {
+        return (None, warnings);
+    }
+
+    let defaults = McpOptions::default();
+    let timeouts: HashMap<String, Duration> = admission
+        .start
+        .iter()
+        .map(|s| {
+            let limit = s
+                .timeout_ms
+                .map_or(defaults.call_timeout, Duration::from_millis);
+            (s.name.clone(), limit)
+        })
+        .collect();
+    let effects: HashMap<String, ToolEffect> = admission
+        .start
+        .iter()
+        .map(|s| (s.name.clone(), s.effect))
+        .collect();
+    // The manager's own limit must not cut a longer per-server timeout.
+    let options = McpOptions {
+        call_timeout: timeouts
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(defaults.call_timeout),
+        ..defaults
+    };
+    let manager = Arc::new(McpManager::start_with(admission.start, options));
+    let _ = tokio::time::timeout(ready_timeout, manager.wait_ready()).await;
+    let statuses = manager.servers().await;
+    for status in &statuses {
+        match &status.state {
+            McpServerState::Failed { message } => warnings.push(format!(
+                "servidor MCP `{}` no disponible: {message}",
+                status.name
+            )),
+            McpServerState::Starting => warnings.push(format!(
+                "servidor MCP `{}` no arrancó en {}s; sus tools no estarán en esta sesión",
+                status.name,
+                ready_timeout.as_secs()
+            )),
+            McpServerState::Ready { .. } | McpServerState::Stopped => {}
+        }
+    }
+
+    let port: Arc<dyn McpPort> = Arc::new(TimedMcp {
+        inner: Arc::clone(&manager),
+        timeouts,
+    });
+    match port.list_tools().await {
+        Ok(tools) => {
+            for spec in tools {
+                let effect = effects
+                    .get(&spec.server)
+                    .copied()
+                    .unwrap_or(ToolEffect::Execute);
+                let name = spec.qualified_name();
+                let tool = McpTool::new(spec, Arc::clone(&port)).with_effect(effect);
+                if let Err(err) = registry.register(Arc::new(tool)) {
+                    warnings.push(format!("tool MCP `{name}` ignorada: {err}"));
+                }
+            }
+        }
+        Err(err) => warnings.push(format!("no puedo listar las tools MCP: {err}")),
+    }
+    (Some(McpServers { manager, statuses }), warnings)
+}
+
+/// The manager with a time limit per server for each call.
+struct TimedMcp {
+    inner: Arc<McpManager>,
+    timeouts: HashMap<String, Duration>,
+}
+
+#[async_trait]
+impl McpPort for TimedMcp {
+    async fn list_tools(&self) -> Result<Vec<application::ports::mcp::McpTool>, McpError> {
+        self.inner.list_tools().await
+    }
+
+    async fn call_tool(
+        &self,
+        server: &str,
+        name: &str,
+        input: serde_json::Value,
+    ) -> Result<McpToolResult, McpError> {
+        let call = self.inner.call_tool(server, name, input);
+        match self.timeouts.get(server) {
+            // Dropping the call on timeout cancels it on the server.
+            Some(limit) => tokio::time::timeout(*limit, call)
+                .await
+                .unwrap_or_else(|_| {
+                    Err(McpError::Timeout {
+                        server: server.to_owned(),
+                    })
+                }),
+            None => call.await,
+        }
+    }
+
+    async fn servers(&self) -> Vec<McpServerStatus> {
+        self.inner.servers().await
+    }
 }
 
 #[cfg(test)]

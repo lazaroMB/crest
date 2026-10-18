@@ -98,6 +98,7 @@ async fn demo_with(answers: &str, mode: PermissionMode, script: Vec<ScriptedResp
         workspace: workspace.clone(),
         mode,
         model: None,
+        trust_mcp: Vec::new(),
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
