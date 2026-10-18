@@ -33,7 +33,7 @@ From left to right, the status bar shows:
 - the session cost;
 - the workspace.
 
-Notices (for example «retrying in 2.0s», «x failed, using y» or a model fallback) stay for 6 s.
+Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
 Each prompt runs as a **turn**, and only one turn runs at a time. If you send a prompt while a turn is running, it is **queued**: the bar shows how many are waiting, and it is sent when the turn finishes. `Ctrl+C` interrupts the turn and clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `:q` quits crest.
 
@@ -83,12 +83,14 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `:mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `:clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `:mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
+| `:plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
+| `:plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
 | `:implement <spec>` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
 | `:research <problem>`, `:research resume`, `:research` | Starts, resumes or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
 | `:<name> <args>` | A command registered with `app.commands.register`. |
 | `:<dotted.action>` | Runs a builtin action, for example `:picker.files` or `:panel.tree`. |
 
-An unknown command shows «comando desconocido :x (usa :model, :mode, :clear, :mcp, :implement, :research o :q)».
+An unknown command shows `unknown command :x (use :model, :mode, :clear, :mcp, :plugin, :implement, :research or :q)`.
 
 ### File references with `@`
 
@@ -116,11 +118,11 @@ A 280 px side panel, hidden at startup. It comes from the same `tree` the agent 
 
 - Clicking a directory opens or closes it.
 - Clicking a file inserts `@path`.
-- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice «el árbol no se refrescará solo» appears.
+- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
 
 ### Model menu (`<Space>m`)
 
-Lists «default (rol main)» and every alias, both the builtin ones (`opus`, `sonnet`, `haiku`, `fable`) and those in your config, with the model each one points to.
+Lists `default (main role)` and every alias, both the builtin ones (`opus`, `sonnet`, `haiku`, `fable`) and those in your config, with the model each one points to.
 
 | Key | Action |
 | --- | --- |
@@ -153,7 +155,7 @@ When approval is needed, a dialog opens with the colored diff (for edits) or wit
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
 | `Esc` | Reject without a reason. |
 
-There are also «Approve (y)», «Always (a)» and «Reject (n)» buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
+There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
 "Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `:clear` keeps those of the current run.
 
@@ -206,6 +208,7 @@ crest [OPTIONS] [DIR]
 | `--new` | — | The window opens with a new session instead of resuming the last one. Cannot be combined with `--headless`. |
 | `--continue` | — | In headless mode, continues the workspace's last session, with its history. Requires `--headless`. |
 | `--trust-mcp <NAME>` | name | Approves the MCP server `NAME` from the workspace's `.crest/init.lua`, starts it and remembers it. Can be repeated. |
+| `--trust-plugin <NAME>` | name | Approves the capabilities (network, shell) that plugin `NAME` declares, activates them in this run and remembers them until the declaration changes. Can be repeated. |
 | `-h`, `--help` / `-V`, `--version` | — | Help / version. |
 
 Examples:
@@ -219,8 +222,9 @@ crest --headless "run the tests and fix the one that fails" --mode auto-edit --y
 crest --headless "and the second failure?" --continue
 crest --headless --research "add() gets negative numbers wrong"
 crest --headless --research resume
-crest --headless --implement 0001-add-suma-negativos
+crest --headless --implement 0001-negative-add
 crest --trust-mcp tickets --trust-mcp docs
+crest --trust-plugin jira --trust-plugin jsonq
 ```
 
 With `make` (`WORKSPACE` defaults to `.`):
@@ -253,16 +257,16 @@ make run-headless PROMPT="list the project's TODOs" WORKSPACE=~/src/api
 Each approval shows the diff or the command and asks:
 
 ```text
-¿Permitir edit_file src/lib.rs? [y]es / [a]lways / [n]o:
+Allow edit_file src/lib.rs? [y]es / [a]lways / [n]o:
 ```
 
 | Answer | Effect |
 | --- | --- |
-| `y`, `yes`, `s`, `si`, `sí` | Approve. |
-| `a`, `always`, `siempre` | Always approve (for this exact subject). |
+| `y`, `yes` (Spanish aliases: `s`, `si`, `sí`) | Approve. |
+| `a`, `always` (alias: `siempre`) | Always approve (for this exact subject). |
 | `n`, `no`, or an empty line | Reject. |
 
-Any other answer asks again. If stdin closes, the action is rejected. With `--yes` everything is approved and logged as «aprobado por --yes».
+Any other answer asks again. If stdin closes, the action is rejected. With `--yes` everything is approved and logged as `approved by --yes: <tool> <subject>`.
 
 Answers can also be piped in: if stdin is not a terminal, crest echoes every line it reads so it shows up in the transcript.
 
@@ -272,7 +276,7 @@ printf 'y\n' | crest --headless "add a test for parse()" --workspace .
 
 `Ctrl+C` during a headless turn:
 
-- the first one cancels the turn («^C interrumpiendo el turno (otra vez para salir)») and exits with 130 after saving the session;
+- the first one cancels the turn (`^C interrupting the turn (again to quit)`) and exits with 130 after saving the session;
 - the second one exits immediately with 130.
 
 With `--research` and `--implement`, however, `Ctrl+C` kills the process: there is no orderly cancellation, and the workflow stays at its last checkpoint.
@@ -282,11 +286,11 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 ## Sessions and resuming
 
 - Each session (the history sent to the model, the timeline and the "always" rules) is saved in SQLite (`~/.local/share/crest/sessions.db`) **after every turn**.
-- **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows «sesión anterior reanudada (N turnos); `crest --new` empieza una nueva». With `--new` it starts blank, and `:clear` does the same without closing.
+- **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows "previous session resumed (N turns); `crest --new` starts a new one". With `--new` it starts blank, and `:clear` does the same without closing.
 - **Headless**: each run is a new session unless you pass `--continue`, which picks up the workspace's last session (the same one the window would open).
 - Old sessions are never deleted, and there is no command to list them or to pick one other than the last.
 - The accumulated cost is not saved: a resumed session starts at `$0.00`.
-- **Compaction**: when the estimated context exceeds 80 % of 200,000 tokens, crest summarizes the old turns with the `compact` role, keeps the 2 most recent ones and shows «historial compactado: N turnos → resumen». If the API replies that the context is too long, it compacts and retries once. The threshold is not configurable.
+- **Compaction**: when the estimated context exceeds 80 % of 200,000 tokens, crest summarizes the old turns with the `compact` role, keeps the 2 most recent ones and shows `history compacted: N turns → summary`. If the API replies that the context is too long, it compacts and retries once. The threshold is not configurable.
 - A turn can make at most 50 model calls. Beyond that, it fails.
 
 ## Agent tools
@@ -306,7 +310,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `mcp__<server>__<tool>` | the server's schema | the server's `effect` (execute by default) |
 | plugin tools | their `schema` | their `effect` (execute by default) |
 
-All paths are relative to the workspace. A path that leaves it, even through a symlink, fails, and so does a sensitive path. Each result is truncated to about 32 KB, with the note «N resultados más; refina la búsqueda».
+All paths are relative to the workspace. A path that leaves it, even through a symlink, fails, and so does a sensitive path. Each result is truncated to about 32 KB, with the note `N more results; refine the search`.
 
 ## MCP servers and trust
 
@@ -316,8 +320,7 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 - **Workspace config** (`.crest/init.lua`): they **do not start** until you trust them, because running them means running a program or contacting a URL chosen by whoever wrote the repository. Until then you see the notice:
 
   ```text
-  servidor MCP `tickets` del workspace no iniciado: conectaría con https://tickets.example.com/mcp.
-  Si confías en él, arranca con `crest --trust-mcp tickets` (se recuerda para este workspace)
+  workspace MCP server `tickets` not started: it would connect to https://tickets.example.com/mcp. If you trust it, start crest with `crest --trust-mcp tickets` (remembered for this workspace)
   ```
 
   To trust one:
@@ -326,3 +329,17 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 
   The approval is stored in `~/.local/share/crest/mcp-trust.json`, per workspace and with the exact transport (command, arguments, environment, URL, headers). If the repository changes the declaration, it becomes pending again. To revoke it, delete the entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. One that fails or is slow is reported as a notice, and crest carries on without it.
+
+## Plugin capabilities and trust
+
+A plugin can ask to make HTTP requests to some hosts or to run some programs by declaring capabilities with `app.plugin` ([plugins.md](plugins.md#capabilities)). Nothing is active until you approve it. On startup each pending declaration shows a notice:
+
+```text
+plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `:plugin trust jira`
+```
+
+- `crest --trust-plugin jira` approves it for this run and remembers it.
+- `:plugin trust jira`, from the window, approves it and activates it immediately.
+- `:plugin list` shows every declaration and its state.
+
+This applies to plugins of the global config too, not only to the workspace's. The approval is stored in `~/.local/share/crest/plugin-trust.json` with the plugin's name, its file and the exact list: if the plugin asks for something else, it becomes pending again. Until then, its calls to `app.http`, `app.shell.run` or `app.secret` fail with an error that says how to approve it, and the model sees that error. The tools of the plugin keep going through the normal approvals.

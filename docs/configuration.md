@@ -11,6 +11,7 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
 | Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` | SQLite. Stores the chat sessions and the workflow checkpoints. |
 | Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` | Written with `0600` permissions. |
+| Approved plugin capabilities | `$XDG_DATA_HOME/crest/plugin-trust.json`, or `~/.local/share/crest/plugin-trust.json` | Written with `0600` permissions. See [Plugin capabilities and secrets](#plugin-capabilities-and-secrets). |
 | Research workflow Specs | `<workspace>/.crest/specs/NNNN-slug/` | See [workflows.md](workflows.md). |
 
 ### Load order and precedence
@@ -42,7 +43,7 @@ When the layers are combined, precedence from lowest to highest is: plugins, glo
 
 A file that fails (syntax error, runtime error, instruction or memory limit) **contributes nothing**, but the others still load. crest starts regardless. Each problem shows up:
 
-- in the window, as an `Error` block at the top of the timeline, with the text `file:line: message` and the hint «crest arrancó sin lo que define ese archivo (valores por defecto); corrígelo y vuelve a abrir crest»;
+- in the window, as an `Error` block at the top of the timeline, with the text `file:line: message` and the hint "crest started without what that file defines (using the defaults); fix it and reopen crest";
 - in headless mode, in the output.
 
 A mistyped field (for example `app.opt.timeoutlen = "500"`) is dropped on its own, with a diagnostic, and the rest of the file still applies. Some typical messages:
@@ -80,7 +81,7 @@ security add-generic-password -s crest -a ANTHROPIC_API_KEY -w
 
 If there is no key:
 
-- the window opens anyway, and the first block is the error «falta la API key de Anthropic: exporta ANTHROPIC_API_KEY o guárdala en el llavero del sistema (servicio `crest`, entrada `ANTHROPIC_API_KEY`)»;
+- the window opens anyway, and the first block is the error "the Anthropic API key is missing: export ANTHROPIC_API_KEY or store it in the system keyring (service `crest`, entry `ANTHROPIC_API_KEY`)";
 - headless mode exits with code 2.
 
 The API URL is fixed (`https://api.anthropic.com`): there is no variable to change it.
@@ -109,10 +110,10 @@ app.opt.max_session_cost = 5
 
 - The numbers are only an example: crest ships no built-in prices, so use the provider's current ones. All four fields are required, must be numbers ≥ 0, and no other fields are allowed.
 - Cost is added per response, including compaction summaries. It shows in the status bar: `$0.00` before the model is used, `$?` if a model without a price was used, and otherwise the running total (four decimals below 1 USD).
-- When the cap is reached, crest asks «La sesión gastó $X de $Y; ¿continuar?» through the approval dialog (in headless mode, on stdin):
+- When the cap is reached, crest asks "The session spent $X of $Y; continue?" through the approval dialog (in headless mode, on stdin):
   - **approve** raises the cap by the same amount again;
   - **always** removes the cap for the session;
-  - **reject** ends the turn («turno detenido por el tope de gasto»).
+  - **reject** ends the turn ("turn stopped by the spend cap ($X of $Y)").
 - The cost lives in memory: a resumed session counts from zero again.
 
 ## Models by role
@@ -171,7 +172,7 @@ Aliases are merged with the builtin ones (the workspace wins) and appear in the 
 4. Global config, with its plugins.
 5. Builtin values (the table above).
 
-At startup, crest queries `GET /v1/models` and waits at most 5 s. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice «no pude validar los modelos configurados» appears and nothing is validated.
+At startup, crest queries `GET /v1/models` and waits at most 5 s. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice "could not validate the configured models: …" appears and nothing is validated.
 
 ## Permissions and sensitive paths
 
@@ -211,9 +212,44 @@ app.mcp = { tickets = { url = "https://tickets.example.com/mcp", headers = { Aut
 ```
 
 - Servers from the **global config** (and its plugins) start when crest opens.
-- Those from the **workspace** stay pending, with a notice like «servidor MCP `x` del workspace no iniciado: ejecutaría `…`». They start once you approve them with `crest --trust-mcp <name>` or with `:mcp trust <name>` (the latter takes effect the next time you open crest).
+- Those from the **workspace** stay pending, with a notice like "workspace MCP server `x` not started: it would run `…`. If you trust it, start crest with `crest --trust-mcp x` (remembered for this workspace)". They start once you approve them with `crest --trust-mcp <name>` or with `:mcp trust <name>` (the latter takes effect the next time you open crest).
 - The approval is stored per workspace in `mcp-trust.json`, together with the exact transport: if the command, arguments, environment, URL or headers change, crest asks again. To revoke an approval, delete its entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. The per-call limit for a tool is `timeout` if you declare it, or 120 s otherwise.
+
+## Plugin capabilities and secrets
+
+Plugins declare network and shell capabilities with `app.plugin{ capabilities = ... }` ([plugins.md](plugins.md#capabilities)). They stay inactive until you approve them:
+
+- `crest --trust-plugin <name>` (repeatable) or `:plugin trust <name>` in the window, which activates them at once. `:plugin list` shows each declaration and whether it is approved.
+- Approvals are stored in `plugin-trust.json` (path in [Files and paths](#files-and-paths)), written with `0600` permissions. Each entry holds the plugin name, the `init.lua` that declared it, its layer (`global` or `workspace`) and the exact capability list:
+
+  ```json
+  {
+    "plugins": [
+      {
+        "plugin": "jira",
+        "source": "/home/me/.config/crest/plugins/jira/init.lua",
+        "origin": "global",
+        "capabilities": ["network:jira.example.com", "shell:jq"]
+      }
+    ]
+  }
+  ```
+
+  If the declaration changes in any way, the plugin asks again. To revoke an approval, delete its entry; it takes effect on the next start.
+
+A plugin's secrets (`app.secret("<name>")`) are read from the system keyring, service `crest`, entry `plugin:<plugin>:<name>`, and otherwise from the environment variable `CREST_PLUGIN_<PLUGIN>_<NAME>` (uppercase; every character other than a letter or digit becomes `_`). To store one in the keyring:
+
+```bash
+# Linux (libsecret / GNOME Keyring, KWallet via Secret Service); prompts for the value
+secret-tool store --label=crest service crest username plugin:jira:token
+# macOS (Keychain)
+security add-generic-password -s crest -a plugin:jira:token -w
+# or, for this shell only
+export CREST_PLUGIN_JIRA_TOKEN=...
+```
+
+Only a plugin whose capabilities were approved can read secrets, and only its own. crest never logs them, and the programs run by `run_command` or `app.shell.run` do not inherit any `CREST_PLUGIN_*` variable.
 
 ## Environment variables
 
@@ -221,7 +257,8 @@ app.mcp = { tickets = { url = "https://tickets.example.com/mcp", headers = { Aut
 | --- | --- |
 | `ANTHROPIC_API_KEY` | The API key. Takes priority over the keyring. |
 | `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute. |
-| `XDG_DATA_HOME` | Base of `sessions.db` and `mcp-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute. |
+| `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute. |
+| `CREST_PLUGIN_<PLUGIN>_<NAME>` | A plugin secret, read by `app.secret("<name>")` when the keyring has no entry (see [Plugin capabilities and secrets](#plugin-capabilities-and-secrets)). Never passed to the programs crest runs. |
 | `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn`. The log goes to stderr. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Enable trace export to Langfuse, **only in a binary built with `--features langfuse`**. Both are needed: if one is missing, crest shows a notice and does not export. |
 | `LANGFUSE_HOST` | Langfuse instance. Defaults to `https://cloud.langfuse.com`. |
@@ -237,7 +274,7 @@ crest emits `tracing` spans per turn, per model call and per tool. By default th
 cargo build --release -p crest --features langfuse
 export LANGFUSE_PUBLIC_KEY=pk-lf-...
 export LANGFUSE_SECRET_KEY=sk-lf-...
-# export LANGFUSE_HOST=https://mi-langfuse.example.com
+# export LANGFUSE_HOST=https://my-langfuse.example.com
 ./target/release/crest
 ```
 

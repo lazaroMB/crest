@@ -7,7 +7,8 @@ A plugin is an `init.lua` that uses the `app` table to add things to crest:
 - `:` commands;
 - key mappings;
 - `Custom` blocks in the timeline;
-- MCP servers.
+- MCP servers;
+- HTTP requests, programs and secrets, through [capabilities](#capabilities) the user approves.
 
 The global config and the workspace config use the same API. The declarative options (`app.opt`, `app.models`, permissions) are in [configuration.md](configuration.md).
 
@@ -17,7 +18,7 @@ The global config and the workspace config use the same API. The declarative opt
 ~/.config/crest/                 ($XDG_CONFIG_HOME/crest/)
   init.lua                       global config
   plugins/
-    guardia/init.lua             plugin "guardia"
+    guard/init.lua             plugin "guard"
     todo/init.lua                plugin "todo"
 <workspace>/.crest/init.lua      workspace config
 ```
@@ -43,7 +44,7 @@ All Lua (the config and the plugins) runs in a single Lua 5.4 VM. That VM lives 
 | `os.time`, `os.clock`, `os.date`, `os.difftime` | `os.execute`, `os.remove`, `os.rename`, `os.exit`, `os.getenv`, `os.tmpname`, `os.setlocale` |
 | `load` with text only | `dofile`, `loadfile`, bytecode (a binary `init.lua` is rejected) |
 | `require("app")`, which returns the file's `app` table | `require` of any other module or path |
-| `print(...)`, which goes to the log (`CREST_LOG=warn,lua=info` to see it) | Network, shell and file system |
+| `print(...)`, which goes to the log (`CREST_LOG=warn,lua=info` to see it) | File system; network and programs except through approved [capabilities](#capabilities) |
 
 There are two limits:
 
@@ -68,6 +69,10 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.cmd(name)` | `string → nil` | Inside a keymap or command callback. |
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
+| `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
+| `app.http.request(opts)`, `app.http.get(url, opts)`, `app.http.post(url, opts)` | → response table | Inside handlers and callbacks, with a `network:` capability. |
+| `app.shell.run(program, args, opts)` | → result table | Inside handlers and callbacks, with a `shell:` capability. |
+| `app.secret(name)` | `string → string?` | Inside handlers and callbacks, once the capabilities are approved. |
 
 A malformed argument to `keymap.set`, `commands.register`, `tools.register`, `app.on` or `mcp.add` does **not** stop the file: it produces a diagnostic with the line of the call, and only that call is ignored (see [Errors and diagnostics](#errors-and-diagnostics)).
 
@@ -104,7 +109,7 @@ A keymap replaces any other with the same keys in the same mode, builtin ones in
 | `permission.cycle` | Cycles the permission mode. |
 | `turn.interrupt` | Interrupts the turn. |
 
-Any other name is accepted at load time, but pressing it only shows «la acción … todavía no hace nada». For example, `session.resume` is not implemented.
+Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
 
 ### `app.commands.register(name, fn)`
 
@@ -114,9 +119,9 @@ app.commands.register("review", function(args)
 end)
 ```
 
-- The command is used as `:review solo src/`, and `fn` receives the rest of the line as a string (`"solo src/"`, or `""` if there is nothing).
+- The command is used as `:review only src/`, and `fn` receives the rest of the line as a string (`"only src/"`, or `""` if there is nothing).
 - If the name starts with `/`, that slash is ignored.
-- The builtin commands `q`, `quit`, `qa`, `model`, `mode`, `clear`, `implement`, `research` and `mcp` are evaluated first, so a command with one of those names never runs.
+- The builtin commands `q`, `quit`, `qa`, `model`, `mode`, `clear`, `implement`, `research`, `mcp` and `plugin` are evaluated first, so a command with one of those names never runs.
 - As with keymaps, if `fn` returns `app.ui.block(...)`, the block is shown. Any other return value is ignored.
 
 ### `app.cmd(name)` and `app.send(text, opts)`
@@ -140,7 +145,7 @@ app.tools.register({
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `name` | string | The name under which the model sees the tool. It cannot reuse the name of a builtin tool (`read_file`, `grep`, `show_chart`, `task`...): such a tool is ignored, with the notice «tool de plugin `x` ignorada». Across Lua layers, the highest-precedence one wins. |
+| `name` | string | The name under which the model sees the tool. It cannot reuse the name of a builtin tool (`read_file`, `grep`, `show_chart`, `task`...): such a tool is ignored, with the notice ``plugin tool `x` ignored: …``. Across Lua layers, the highest-precedence one wins. |
 | `description` | string | What the model reads to decide when to use it. |
 | `schema` | JSON Schema table | The input it expects. Defaults to `{ type = "object" }`. The model's input must always be an object. |
 | `effect` | string | What the permission policy uses (see the table in [configuration.md](configuration.md#permissions-and-sensitive-paths)). **It defaults to `"execute"`**, so the tool asks for approval in `ask` and `auto-edit` and is denied in `plan`. A read-only tool should declare `effect = "read"`. |
@@ -176,14 +181,14 @@ The hook runs **before** the permission policy and the approval. A rewritten inp
 
 **`after_tool`** receives `{ type = "after_tool", name, input, output = { text = "...", is_error = bool } }` once the tool has finished (also if it failed). Its return value is ignored. Denied calls, whether by a hook, by the policy or by the user, never reach `after_tool`.
 
-If a hook raises an error or exhausts the instruction limit, the notice «before_tool hook failed for `x`: …» appears and the call continues with its original input.
+If a hook raises an error or exhausts the instruction limit, the notice ``before_tool hook failed for `x`: …`` appears and the call continues with its original input.
 
 These are the builtin tool inputs most often filtered (the full reference is in [usage.md](usage.md#agent-tools)):
 
 ```text
 run_command  { command = "git", args = { "push" }, timeout_s = 120 }   -- no shell: command is the program
 edit_file    { path = "src/a.rs", old = "...", new = "..." }
-write_file   { path = "notas.md", content = "..." }
+write_file   { path = "notes.md", content = "..." }
 read_file    { path = "src/a.rs", offset = 1, limit = 2000 }
 ```
 
@@ -238,6 +243,220 @@ app.mcp.add("git", { command = "mcp-git", effect = "read", timeout = 30 })
 - Servers from the global config and from plugins start when crest opens.
 - Workspace servers do not start until the user approves them with `crest --trust-mcp <name>` or `:mcp trust <name>` (see [usage.md](usage.md#mcp-servers-and-trust)). The approval is required again if the declaration changes.
 
+## Capabilities
+
+The sandbox has no network, no programs and no access to the environment. A plugin that needs to call an API or a command-line program declares it with `app.plugin`, and the user approves that declaration once. Until then the APIs below raise an error.
+
+### Declaring them: `app.plugin`
+
+```lua
+local app = require("app")
+
+app.plugin{
+  name = "jira",
+  capabilities = { "network:jira.example.com", "network:*.github.com", "shell:jq", "shell:git" },
+}
+```
+
+Write it at the top of the plugin's `init.lua`. It is also allowed in the global and in the workspace `init.lua`.
+
+| Field | Notes |
+| --- | --- |
+| `name` | Letters, digits, `-` and `_` (at most 64). It names the plugin in notices, in `--trust-plugin` and in its secrets. In a plugin folder it defaults to the folder name, and a different name is reported as a diagnostic and ignored. In the global and workspace configs it defaults to `config` and `workspace`. |
+| `capabilities` | A list of strings, each with one of the forms below. |
+
+| Capability | Allows |
+| --- | --- |
+| `network:jira.example.com` | `app.http` to `https://jira.example.com` (port 443). |
+| `network:*.github.com` | `app.http` over HTTPS to any subdomain of `github.com` (`api.github.com`, `a.b.github.com`), but not `github.com` itself. |
+| `network:http://localhost:8080`, `network:https://host:8443` | That scheme, host and port exactly. Plain `http` is only allowed when written like this. |
+| `shell:jq` | `app.shell.run("jq", ...)`. Only a program name: no paths and no arguments. |
+
+- `app.plugin` may be called once per file; later calls are ignored with a diagnostic.
+- A malformed entry (`disk:/`, `shell:/bin/sh`, `network:x.com/path`...), an unknown field or a bad `name` produces a diagnostic with the line, and only that entry is left out.
+- The list is kept sorted and without duplicates, so reordering it does not count as a change.
+- A plugin that declares nothing can use none of these APIs, and neither can `app.secret`.
+
+### Approving them
+
+On startup, each declaration that has not been approved yet shows a notice:
+
+```text
+plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `:plugin trust jira`
+```
+
+(A declaration of the workspace config starts with ``workspace plugin `x` ``.)
+
+- `crest --trust-plugin jira` (repeatable) approves it for this run and saves it.
+- `:plugin trust jira`, in the window, saves it and activates it **immediately**, without restarting.
+- `:plugin list` shows every declaration, the file it comes from, its capabilities and whether it is `approved` or `pending`.
+
+An approval covers one exact declaration: the plugin name, the file that declared it (for the workspace config that path includes the workspace root), its layer and the exact capability list. If any of them changes (a new host, one more program), the plugin asks again. Approvals are stored in `plugin-trust.json` in crest's data directory (see [configuration.md](configuration.md#plugin-capabilities-and-secrets)); deleting an entry revokes it on the next start.
+
+A call without approval fails with a Lua error such as:
+
+```text
+app.http: the capabilities of plugin `jira` (network: jira.example.com) are not approved; approve them with `crest --trust-plugin jira` or `:plugin trust jira`
+```
+
+Capabilities are **independent of tool approvals**: a tool registered by the plugin keeps its `effect`, and the permission policy asks for it as usual. Declare `effect = "network"` (or `"execute"`) for tools that call out, so that the user sees each call.
+
+### `app.http`
+
+```lua
+local res = app.http.request{
+  method = "POST",                          -- default "GET"
+  url = "https://jira.example.com/rest/api/2/search",
+  headers = { Authorization = "Bearer " .. token },
+  query = { maxResults = 10 },              -- appended to the URL
+  json = { jql = "assignee = currentUser()" }, -- or body = "raw string"
+  timeout = 20,                             -- seconds, default 30
+}
+local res = app.http.get(url, opts)         -- same options, without url/method
+local res = app.http.post(url, opts)
+```
+
+| Option | Notes |
+| --- | --- |
+| `method` | Any HTTP method, case-insensitive. Only `request` takes it. |
+| `url` | `http` or `https`. Its scheme, host and port must match a declared `network:` capability. |
+| `headers` | Table of strings (numbers and booleans are converted). |
+| `query` | Table of scalars, added to the query string. |
+| `body` / `json` | A string sent as is, or a table encoded as JSON (with `Content-Type: application/json` unless you set one). Not both. |
+| `timeout` | Seconds, greater than 0 and at most 600. It covers the whole exchange: connection, redirects and body. |
+
+The result is `{ status = 200, headers = { ["content-type"] = "..." }, body = "...", json = ... }`:
+
+- `headers` has lowercase names; repeated headers are joined with `, `.
+- `body` is the raw body (a Lua string, so binary is fine).
+- `json` is the decoded body when the `content-type` mentions `json` and the body parses; otherwise `nil`.
+- Any status (404, 500...) comes back as a result. Network errors, timeouts, a body larger than **10 MiB** and denied hosts raise a Lua error prefixed with `app.http:`.
+
+Redirects are followed by hand, at most 5. Every target must also match a declared capability, otherwise the call fails (`redirect from … to … denied`). When a redirect changes host, `Authorization` and `Cookie` are dropped. A `303`, or a `301`/`302` after a `POST`, continues as a `GET` without body.
+
+### `app.shell.run`
+
+```lua
+local out = app.shell.run("jq", { "-r", ".name" }, {
+  stdin = '{"name":"crest"}',  -- optional
+  cwd = "sub/dir",             -- optional, inside the workspace
+  env = { NO_COLOR = "1" },    -- optional, extra variables
+  timeout = 10,                -- seconds, default 60
+})
+-- out = { status = 0, stdout = "crest\n", stderr = "", timed_out = false, truncated = false }
+```
+
+- There is no shell: `program` is the name of a declared `shell:` capability and `args` (strings or numbers) are passed as is, so pipes, globs and `$VAR` are not interpreted.
+- The program is looked up in the **absolute** directories of `PATH`; relative entries such as `.` are skipped, so a repository cannot slip in its own `jq`.
+- It runs in the workspace root. `cwd` may be relative to it or absolute, but once symlinks are resolved it must be a directory inside the workspace.
+- It inherits crest's environment minus `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY` and every `CREST_PLUGIN_*` variable (other plugins' secrets). `env` adds variables on top.
+- It runs in its own process group. When `timeout` (at most 3600 s) elapses, the whole group is killed: `timed_out` is `true` and `status` is `nil`.
+- `status` is the exit code (`nil` if a signal killed it). `stdout` and `stderr` keep at most 1 MiB each; `truncated` says whether something was dropped.
+- A program that is not declared, not found or cannot start raises a Lua error prefixed with `app.shell.run:`. A non-zero exit is not an error.
+
+### `app.secret`
+
+```lua
+local token = app.secret("token")  -- string, or nil if it is not stored
+```
+
+It reads, in this order:
+
+1. the system keyring, service `crest`, entry `plugin:<plugin>:<name>`;
+2. the environment variable `CREST_PLUGIN_<PLUGIN>_<NAME>`, uppercase, with every character other than a letter or digit turned into `_` (`app.secret("api.token")` in plugin `jira-cloud` reads `CREST_PLUGIN_JIRA_CLOUD_API_TOKEN`).
+
+A plugin only reads its own secrets, and only after its capabilities were approved. crest never logs the values. How to store one is described in [configuration.md](configuration.md#plugin-capabilities-and-secrets).
+
+### Security notes
+
+- The APIs are bound to the file that declared them: they check that the Lua function calling them was written in that file. Another plugin that gets hold of your `app` table or your functions cannot use them, and `load` cannot pretend to be that file.
+- They are only active once the files have loaded: calling them at the top level of `init.lua` fails with `capabilities are not active while init.lua loads`. Use them inside tool handlers, hooks and callbacks.
+- The VM runs one call at a time, so a slow request or program delays other Lua calls (hooks of other tools included) until it finishes or hits its timeout. The window and the agent keep running meanwhile; the timeouts are the guard, because the instruction limit does not count time spent waiting.
+- What a tool returns goes to the model. Do not return secrets or whole responses that contain them.
+- The workspace config is code from the repository: approve its capabilities only if you trust that repository.
+
+### Example: an API tool with `app.http` and `app.secret`
+
+`~/.config/crest/plugins/jira/init.lua`:
+
+```lua
+local app = require("app")
+
+app.plugin{ name = "jira", capabilities = { "network:jira.example.com" } }
+
+local BASE = "https://jira.example.com/rest/api/2"
+
+app.tools.register({
+  name = "jira_issue",
+  description = "Fetches a Jira issue by key (e.g. CR-7): summary, status and assignee.",
+  schema = {
+    type = "object",
+    properties = { key = { type = "string", description = "Issue key, e.g. CR-7" } },
+    required = { "key" },
+  },
+  effect = "network",
+  handler = function(input)
+    local token = app.secret("token")
+    if not token then
+      error("no Jira token: store it with `secret-tool store --label=crest service crest username plugin:jira:token`")
+    end
+    local res = app.http.get(BASE .. "/issue/" .. input.key, {
+      headers = { Authorization = "Bearer " .. token, Accept = "application/json" },
+      query = { fields = "summary,status,assignee" },
+      timeout = 15,
+    })
+    if res.status ~= 200 or not res.json then
+      error("Jira answered " .. res.status)
+    end
+    local f = res.json.fields
+    return {
+      key = res.json.key,
+      summary = f.summary,
+      status = f.status and f.status.name,
+      assignee = f.assignee and f.assignee.displayName,
+    }
+  end,
+})
+```
+
+1. Store the token: `secret-tool store --label=crest service crest username plugin:jira:token`, or export `CREST_PLUGIN_JIRA_TOKEN`.
+2. Start once with `crest --trust-plugin jira` (or open crest and type `:plugin trust jira`).
+3. Ask "what is the status of CR-7?". Because of `effect = "network"`, the call asks for approval in `ask` mode; the model gets the table as JSON.
+
+For GitHub, declare `"network:api.github.com"`, read `app.secret("token")` and send `Authorization = "Bearer " .. token` plus `Accept = "application/vnd.github+json"`.
+
+### Example: a CLI wrapper with `app.shell.run` and `jq`
+
+`~/.config/crest/plugins/jsonq/init.lua`:
+
+```lua
+local app = require("app")
+
+app.plugin{ name = "jsonq", capabilities = { "shell:jq" } }
+
+app.tools.register({
+  name = "json_query",
+  description = "Runs a jq filter over a JSON file of the workspace and returns the result.",
+  schema = {
+    type = "object",
+    properties = {
+      file = { type = "string", description = "Path relative to the workspace" },
+      filter = { type = "string", description = "jq filter, e.g. .dependencies | keys" },
+    },
+    required = { "file", "filter" },
+  },
+  effect = "read",
+  handler = function(input)
+    local out = app.shell.run("jq", { input.filter, input.file }, { timeout = 10 })
+    if out.timed_out then error("jq timed out") end
+    if out.status ~= 0 then error("jq failed: " .. out.stderr) end
+    return out.stdout
+  end,
+})
+```
+
+Approve it with `crest --trust-plugin jsonq` and ask "list the dependencies in package.json". Note that `jq` reads the path it is given, so this tool can read any file the user can, sensitive paths included: the `effect = "read"` above lets it run without asking, so only declare it like that if that is acceptable, or use `effect = "execute"` to approve each call.
+
 ## Errors and diagnostics
 
 | Problem | What happens |
@@ -246,13 +465,15 @@ app.mcp.add("git", { command = "mcp-git", effect = "read", timeout = 30 })
 | Infinite loop or excess memory while loading | As above, with `instruction limit exceeded` or `out of memory`. |
 | Invalid argument to a registration function | Diagnostic with the line of the call. Only that call is ignored. |
 | Invalid declarative field (`app.opt.x`, `app.models...`) | Diagnostic without a line. Only that field is ignored. |
-| `app.plugins` folder without an `init.lua` | Diagnostic «cannot read the file». |
+| `app.plugins` folder without an `init.lua` | Diagnostic `cannot read the file: …`. |
 | Error in a tool handler | The model gets the error and the ToolCall is marked failed. |
 | Error in a hook | Notice in the status bar. The tool continues. |
 | Error in a keymap or command callback | `Error` block with `Lua: <message>`. |
-| Keymap with invalid notation | Notice «keymap `x` ignorado: …» when the window opens. |
+| Malformed `app.plugin` entry | Diagnostic with the line of the call. Only that entry is ignored. |
+| Capability API without approval | Lua error saying how to approve it (`crest --trust-plugin <name>` or `:plugin trust <name>`). |
+| Keymap with invalid notation | Notice ``keymap `x` ignored: …`` when the window opens. |
 
-In headless mode the diagnostics go to the terminal. Run `crest --headless "hola"` to check that your config loads cleanly.
+In headless mode the diagnostics go to the terminal. Run `crest --headless "hello"` to check that your config loads cleanly.
 
 ## Step-by-step examples
 
@@ -277,10 +498,10 @@ app.tools.register({
         items = {
           type = "object",
           properties = {
-            tarea = { type = "string" },
-            hecha = { type = "boolean" },
+            task = { type = "string" },
+            done = { type = "boolean" },
           },
-          required = { "tarea" },
+          required = { "task" },
         },
       },
     },
@@ -288,43 +509,41 @@ app.tools.register({
   },
   effect = "read",  -- only displays data: runs without asking for approval
   handler = function(input)
-    local rows, hechas = {}, 0
+    local rows, done_count = {}, 0
     for i, item in ipairs(input.items) do
-      local hecha = item.hecha == true
-      if hecha then hechas = hechas + 1 end
-      rows[i] = { item.tarea, hecha }
+      local done = item.done == true
+      if done then done_count = done_count + 1 end
+      rows[i] = { item.task, done }
     end
     return app.ui.block("todo", app.ui.col({
-      app.ui.text(string.format("%d of %d done", hechas, #input.items)),
+      app.ui.text(string.format("%d of %d done", done_count, #input.items)),
       app.ui.table({ columns = { "task", { name = "done", align = "center" } }, rows = rows }),
       app.ui.chart({
         title = "Progress",
         kind = "pie",
         labels = { "done", "pending" },
-        series = { { name = "tasks", values = { hechas, #input.items - hechas } } },
+        series = { { name = "tasks", values = { done_count, #input.items - done_count } } },
       }),
     }))
   end,
 })
 ```
 
-(`tarea` and `hecha` are the schema's field names, Spanish for "task" and "done".)
-
 To try it, open crest and ask: "use todo_list to show the tasks: parser (done), docs, release". The timeline shows the `todo_list` ToolCall and, below it, the block with the text "1 of 3 done", the table and the pie chart. The model only gets `[shown to the user as a block]`.
 
 ### 2. A hook that blocks `rm` and forces `git push --dry-run`
 
-`~/.config/crest/plugins/guardia/init.lua`:
+`~/.config/crest/plugins/guard/init.lua`:
 
 ```lua
 local app = require("app")
 
-local prohibidos = { rm = true, shred = true }
+local blocked = { rm = true, shred = true }
 
 app.on("before_tool", function(ev)
   if ev.name ~= "run_command" then return nil end
-  if prohibidos[ev.input.command] then
-    return { deny = true, reason = "`" .. ev.input.command .. "` is blocked by the guardia plugin" }
+  if blocked[ev.input.command] then
+    return { deny = true, reason = "`" .. ev.input.command .. "` is blocked by the guard plugin" }
   end
   -- git push always as a dry run
   if ev.input.command == "git" and ev.input.args and ev.input.args[1] == "push" then
@@ -345,7 +564,7 @@ This is how the hook responds to each input:
 
 | Input | Result |
 | --- | --- |
-| `{ command = "rm", args = { "-rf", "x" } }` | Denied with the reason "`rm` is blocked by the guardia plugin". |
+| `{ command = "rm", args = { "-rf", "x" } }` | Denied with the reason "`rm` is blocked by the guard plugin". |
 | `{ command = "git", args = { "push", "origin", "main" } }` | Runs as `git push --dry-run origin main`, and the approval shows that command. |
 | `{ command = "ls" }` | Continues unchanged. |
 
@@ -365,7 +584,7 @@ app.commands.register("review", function(args)
 end)
 ```
 
-To use it, press `Esc`, type `:review solo src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. solo src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
+To use it, press `Esc`, type `:review only src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. only src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
 
 ### 4. Keymaps
 
@@ -395,7 +614,7 @@ app.keymap.set("n", "<leader>fg", "picker.grep")
 
 ### Testing a plugin
 
-1. Start headless on any directory: `crest --headless "list the files" --workspace /tmp/prueba`. Load diagnostics are printed to the terminal.
+1. Start headless on any directory: `crest --headless "list the files" --workspace /tmp/try`. Load diagnostics are printed to the terminal.
 2. Open the window and check that there are no `Error` blocks at the top of the timeline.
 3. For tools: ask for something that uses them, expand the ToolCall with `Enter` (in normal mode) and check the input and the output.
 4. For hooks: use `print` and `CREST_LOG=warn,lua=info`.

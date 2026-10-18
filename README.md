@@ -7,7 +7,7 @@ What sets it apart:
 - **A timeline with rich blocks.** The agent does not just answer with text. It shows charts (with their table, one `t` keypress away), sortable tables, Mermaid diagrams with pan and zoom, markdown documents, colored diffs and blocks defined by your own plugins.
 - **Anthropic models by role.** Every call asks for a role (`main`, `plan`, `explore`, `compact`, `title`, `component`, `deep`), and the configuration decides which model serves it, with its fallbacks.
 - **Search with `rg` and `fzf`.** The agent's tools and the window's pickers use the same processes, so you see what the model sees.
-- **Config and plugins in Lua**, with Neovim-style modal key bindings (insert, normal and command). From Lua you can add tools, hooks, commands and blocks, all inside a sandbox with instruction and memory limits.
+- **Config and plugins in Lua**, with Neovim-style modal key bindings (insert, normal and command). From Lua you can add tools, hooks, commands and blocks, all inside a sandbox with instruction and memory limits. Plugins that need to call an API or a command-line program declare `network:` and `shell:` capabilities, which stay off until you approve them (`--trust-plugin`, `:plugin trust`).
 - **Guided workflows.** The *research* workflow (X-Workflow, 14 nodes) goes from a problem to a Spec with its plan. The *implementation* workflow runs that plan task by task, with one commit per task and a final report.
 - **Hexagonal architecture.** The domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, and `make arch` verifies it.
 
@@ -100,7 +100,7 @@ To research a problem and then implement the fix:
 
 ```text
 :research the add() tests fail with negative numbers
-…answer «sí» at each gate…
+…answer `yes` (or `sí`) at each gate…
 :implement 0001-<slug>
 ```
 
@@ -108,9 +108,9 @@ To research a problem and then implement the fix:
 
 | Guide | Contents |
 | --- | --- |
-| [docs/usage.md](docs/usage.md) | Window, modes, every key binding and `:` command, approvals, blocks, the full CLI, headless mode, sessions and MCP. |
+| [docs/usage.md](docs/usage.md) | Window, modes, every key binding and `:` command, approvals, blocks, the full CLI, headless mode, sessions, MCP and plugin trust. |
 | [docs/configuration.md](docs/configuration.md) | Paths, precedence, API key, `app.opt`, models by role, permissions, environment variables, Langfuse and a full `init.lua`. |
-| [docs/plugins.md](docs/plugins.md) | How to write Lua plugins: sandbox, the `app` table, tools, hooks, `Custom` blocks, MCP and examples. |
+| [docs/plugins.md](docs/plugins.md) | How to write Lua plugins: sandbox, the `app` table, tools, hooks, `Custom` blocks, MCP, capabilities (HTTP, programs, secrets) and examples. |
 | [docs/workflows.md](docs/workflows.md) | The research workflow (14 nodes, gates, Specs) and the implementation workflow (steps, gates, commits, report). |
 | [docs/architecture.md](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, events, threads and persistence. |
 | [docs/development.md](docs/development.md) | Tests, fakes and how to add tools, blocks, adapters or nodes; commit conventions and CI. |
@@ -207,12 +207,12 @@ All 11 phases of the original plan are implemented and `make check` passes on Li
 - It has not been tested against the real Anthropic API in the development environment: every test uses scripted models or `wiremock`, and `make test-live` has not been run here. The default model ids (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`) are validated against `GET /v1/models` at startup.
 - macOS has not been tested on a real machine. The code and the CI account for it, but nothing has been run there.
 - CI has never run on GitHub: the repository has no remote configured.
-- Reading the API key from the system keyring has not been tested.
+- Reading the API key or plugin secrets from the system keyring has not been tested (the tests use the environment fallback).
 
 **Behavior to keep in mind**
 
 - `Ctrl+C` does not interrupt a running workflow (`:research`, `:implement`). In the window it does not reach the running step, and in headless mode it kills the process. To stop a workflow in an orderly way, use `/abort` at a gate. It does interrupt normal turns, in the window and in headless mode.
-- At workflow gates, an empty line counts as «sí / continuar». In the implementation workflow that can commit with failing criteria or close the workflow.
+- At workflow gates, an empty line counts as an approval (`yes` / `continue`). In the implementation workflow that can commit with failing criteria or close the workflow.
 - In the implementation workflow, only `edit_file` and `write_file` are restricted to the task's files: `run_command` can touch others (although the commit only includes the task's files).
 - crest ships no model prices: until you set `app.opt.pricing`, the cost shows as `$?`. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
 
@@ -222,7 +222,7 @@ All 11 phases of the original plan are implemented and `make check` passes on Li
 - `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use space. Actions such as `session.resume` are not implemented.
 - There is no command to list or pick older sessions: the workspace's last one is always resumed.
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
-- `:mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run.
+- `:mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run. (`:plugin trust`, by contrast, takes effect at once.)
+- Plugin capabilities cover HTTP(S) to listed hosts and listed programs; there is no file-system capability, and a slow `app.http` or `app.shell.run` call holds the Lua VM (other hooks wait) until it finishes or times out.
 - Langfuse export requires building with `--features langfuse`; the `make release` binaries do not include it.
 - The macOS binaries from `release.yml` are not signed or notarized.
-- Some messages (errors from the research workflow's `/` commands, `init.lua` diagnostics) are in English and the rest in Spanish.
