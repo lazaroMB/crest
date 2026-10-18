@@ -30,7 +30,7 @@ use std::time::Duration;
 use application::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
 use async_trait::async_trait;
 use domain::workspace::WorkspaceRoot;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 use crate::capture::Capture;
 pub use crate::capture::MAX_CAPTURE_BYTES;
@@ -114,15 +114,49 @@ impl LocalShell {
         command.process_group(0);
         command
     }
+
+    async fn spawn(&self, request: &RunCommandRequest) -> Result<Child, ShellError> {
+        match self.command(request).spawn() {
+            Ok(child) => Ok(child),
+            // ENOENT is also what a missing working directory produces.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                if tokio::fs::metadata(self.root.as_path()).await.is_err() {
+                    Err(ShellError::Spawn(format!(
+                        "workspace root {} does not exist",
+                        self.root.as_path().display()
+                    )))
+                } else {
+                    Err(ShellError::NotFound {
+                        command: request.command.clone(),
+                    })
+                }
+            }
+            Err(err) => Err(ShellError::Spawn(format!("{}: {err}", request.command))),
+        }
+    }
+}
+
+/// Rejects requests no process could be started for.
+fn validate(request: &RunCommandRequest) -> Result<(), ShellError> {
+    if request.command.trim().is_empty() {
+        return Err(ShellError::InvalidCommand("the command is empty".into()));
+    }
+    let has_nul = std::iter::once(&request.command)
+        .chain(&request.args)
+        .any(|part| part.contains('\0'));
+    if has_nul {
+        return Err(ShellError::InvalidCommand(
+            "the command or an argument contains a NUL byte".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
 impl ShellPort for LocalShell {
     async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
-        let mut child = self
-            .command(&request)
-            .spawn()
-            .map_err(|err| ShellError::Spawn(format!("{}: {err}", request.command)))?;
+        validate(&request)?;
+        let mut child = self.spawn(&request).await?;
         let mut group = ProcessGroup::of(&child);
         let out_pipe = child.stdout.take();
         let err_pipe = child.stderr.take();
@@ -381,5 +415,52 @@ mod tests {
             .unwrap();
         assert!(out.stdout.lines().any(|line| line.starts_with("PATH=")));
         assert!(!out.stdout.contains("ANTHROPIC_API_KEY="));
+    }
+
+    #[tokio::test]
+    async fn missing_program_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = shell(&dir)
+            .run(RunCommandRequest::new("crest-no-such-program", ["x"]))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ShellError::NotFound {
+                command: "crest-no-such-program".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_command_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        for command in ["", "  "] {
+            let err = shell(&dir)
+                .run(RunCommandRequest::new(command, ["x"]))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, ShellError::InvalidCommand(_)), "{err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn nul_bytes_are_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = shell(&dir)
+            .run(RunCommandRequest::new("echo", ["a\0b"]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ShellError::InvalidCommand(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn missing_root_is_a_spawn_error() {
+        let root = WorkspaceRoot::new("/nonexistent/crest-root").unwrap();
+        let err = LocalShell::new(root)
+            .run(RunCommandRequest::new("echo", ["x"]))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ShellError::Spawn(_)), "{err:?}");
     }
 }
