@@ -121,6 +121,86 @@ impl From<String> for ModelId {
     }
 }
 
+/// Extended thinking configuration for a request.
+///
+/// Serialises with a `type` tag, mirroring the Messages API shape
+/// (`{"type": "enabled", "budget_tokens": 8000}`).
+///
+/// `Adaptive` lets the model decide how much to think (supported by recent
+/// models); it carries no budget. Adapters for models that do not support it
+/// should fall back to `Disabled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkingConfig {
+    /// No extended thinking.
+    #[default]
+    Disabled,
+    /// Extended thinking with a fixed token budget.
+    Enabled {
+        /// Maximum tokens the model may spend thinking.
+        budget_tokens: u32,
+    },
+    /// The model chooses its own thinking effort.
+    Adaptive,
+}
+
+impl ThinkingConfig {
+    /// Token budget, if this configuration has one.
+    #[must_use]
+    pub const fn budget_tokens(self) -> Option<u32> {
+        match self {
+            Self::Enabled { budget_tokens } => Some(budget_tokens),
+            Self::Disabled | Self::Adaptive => None,
+        }
+    }
+}
+
+/// Fully specified model choice for one role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelSpec {
+    /// Primary model id.
+    pub id: ModelId,
+    /// `max_tokens` sent with each request.
+    pub max_tokens: u32,
+    /// Extended thinking configuration.
+    #[serde(default)]
+    pub thinking: ThinkingConfig,
+    /// Models to try, in order, after 529/5xx errors on `id`.
+    #[serde(default)]
+    pub fallbacks: Vec<ModelId>,
+}
+
+impl ModelSpec {
+    /// A spec with no thinking and no fallbacks.
+    #[must_use]
+    pub fn new(id: impl Into<ModelId>, max_tokens: u32) -> Self {
+        Self {
+            id: id.into(),
+            max_tokens,
+            thinking: ThinkingConfig::Disabled,
+            fallbacks: Vec::new(),
+        }
+    }
+
+    /// Builder: sets the thinking configuration.
+    #[must_use]
+    pub fn with_thinking(mut self, thinking: ThinkingConfig) -> Self {
+        self.thinking = thinking;
+        self
+    }
+
+    /// Builder: sets the fallback list.
+    #[must_use]
+    pub fn with_fallbacks<I, T>(mut self, fallbacks: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<ModelId>,
+    {
+        self.fallbacks = fallbacks.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +243,52 @@ mod tests {
             serde_json::to_value(&id).unwrap(),
             serde_json::json!("claude-haiku-5-5")
         );
+    }
+
+    #[test]
+    fn thinking_serialises_like_the_api() {
+        let cases = [
+            (
+                ThinkingConfig::Disabled,
+                serde_json::json!({"type": "disabled"}),
+            ),
+            (
+                ThinkingConfig::Enabled {
+                    budget_tokens: 8000,
+                },
+                serde_json::json!({"type": "enabled", "budget_tokens": 8000}),
+            ),
+            (
+                ThinkingConfig::Adaptive,
+                serde_json::json!({"type": "adaptive"}),
+            ),
+        ];
+        for (cfg, json) in cases {
+            assert_eq!(serde_json::to_value(cfg).unwrap(), json);
+            assert_eq!(serde_json::from_value::<ThinkingConfig>(json).unwrap(), cfg);
+        }
+    }
+
+    #[test]
+    fn thinking_budget() {
+        assert_eq!(ThinkingConfig::Disabled.budget_tokens(), None);
+        assert_eq!(ThinkingConfig::Adaptive.budget_tokens(), None);
+        assert_eq!(
+            ThinkingConfig::Enabled { budget_tokens: 5 }.budget_tokens(),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn model_spec_defaults_optional_fields() {
+        let spec: ModelSpec =
+            serde_json::from_value(serde_json::json!({"id": "m", "max_tokens": 10})).unwrap();
+        assert_eq!(spec, ModelSpec::new("m", 10));
+        let full = ModelSpec::new("m", 10)
+            .with_thinking(ThinkingConfig::Enabled { budget_tokens: 4 })
+            .with_fallbacks(["a", "b"]);
+        let back: ModelSpec = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert_eq!(back, full);
+        assert_eq!(full.fallbacks, vec![ModelId::from("a"), ModelId::from("b")]);
     }
 }
