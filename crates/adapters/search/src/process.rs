@@ -292,6 +292,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn timeout_kills_the_process() {
+        let start = std::time::Instant::now();
+        let out = run(&spec("sleep").arg("5"), None, Duration::from_millis(200))
+            .await
+            .unwrap();
+        assert!(out.timed_out);
+        assert!(!out.status.success());
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn timeout_keeps_partial_output() {
+        // `tail -f` prints the file and then waits for more forever.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("log"), "partial\n").unwrap();
+        let spec = ProcessSpec::new("tail", dir.path()).args(["-f", "log"]);
+        let out = run(&spec, None, Duration::from_millis(300)).await.unwrap();
+        assert!(out.timed_out);
+        assert_eq!(out.stdout, b"partial\n");
+    }
+
+    #[tokio::test]
     async fn missing_program_is_not_found() {
         let err = run(&spec("crest-no-such-program"), None, LONG)
             .await
