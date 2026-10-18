@@ -1,14 +1,14 @@
 //! FileSystemPort adapter with workspace guards.
 //!
 //! [`guard::WorkspaceGuard`] confines every path to the canonical workspace
-//! root, resolving symlinks so that none can escape it, and denies reads of
-//! sensitive paths. [`LocalFs`] implements [`FileSystemPort`] on top of it.
+//! root, resolving symlinks so that none can escape it, and denies reads
+//! and writes of sensitive paths. [`LocalFs`] implements [`FileSystemPort`]
+//! on top of it.
 //!
 //! Layout: `read_file` lives in `read.rs` (task T2.D2) and the two-phase
 //! `edit_file`/`write_file` (`prepare_edit`, `prepare_write`, `apply`) in
-//! `write.rs` (task T2.D3). Until the latter lands, its methods fail with
-//! [`FsError::Io`] naming the pending task. Every one of them must
-//! go through the guard: [`WorkspaceGuard::resolve_readable`] for reads and
+//! `write.rs` (task T2.D3). Every one of them goes through the guard:
+//! [`WorkspaceGuard::resolve_readable`] for reads and
 //! [`WorkspaceGuard::resolve_for_write`] for writes, re-checked in `apply`.
 
 pub mod guard;
@@ -42,10 +42,6 @@ impl LocalFs {
     }
 }
 
-fn not_implemented(task: &str) -> FsError {
-    FsError::Io(format!("not implemented yet: {task}"))
-}
-
 #[async_trait]
 impl FileSystemPort for LocalFs {
     fn root(&self) -> &WorkspaceRoot {
@@ -72,8 +68,8 @@ impl FileSystemPort for LocalFs {
         write::prepare_write(&self.guard, request).await
     }
 
-    async fn apply(&self, _change: PendingChange) -> Result<FileChange, FsError> {
-        Err(not_implemented("T2.D3"))
+    async fn apply(&self, change: PendingChange) -> Result<FileChange, FsError> {
+        write::apply(&self.guard, change).await
     }
 }
 
@@ -103,6 +99,30 @@ mod tests {
             fs.exists(&path("up")).await,
             Err(FsError::Path(PathError::OutsideWorkspace { .. }))
         ));
+    }
+
+    #[tokio::test]
+    async fn writes_through_the_port_are_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let fs = LocalFs::new(WorkspaceGuard::open(dir.path()).unwrap());
+        let path = WorkspacePath::parse("src/a.txt").unwrap();
+        let write = WriteFileRequest {
+            path: path.clone(),
+            content: "one\ntwo\n".into(),
+        };
+        fs.apply(fs.prepare_write(write).await.unwrap())
+            .await
+            .unwrap();
+        let edit = EditFileRequest {
+            path: path.clone(),
+            old: "two".into(),
+            new: "2".into(),
+        };
+        fs.apply(fs.prepare_edit(edit).await.unwrap())
+            .await
+            .unwrap();
+        let content = fs.read_file(ReadFileRequest::new(path)).await.unwrap();
+        assert_eq!(content.render_numbered(), "     1\tone\n     2\t2\n");
     }
 
     #[test]
