@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, ToolStatus};
@@ -66,6 +66,7 @@ impl TypedTool for Echo {
 pub(super) struct Harness {
     pub(super) llm: Arc<ScriptedLlm>,
     pub(super) sink: Arc<RecordingSink>,
+    pub(super) approval: Arc<ScriptedApproval>,
     pub(super) telemetry: Arc<RecordingTelemetry>,
     pub(super) service: AgentService,
     pub(super) session: Session,
@@ -101,6 +102,7 @@ impl Harness {
         Self {
             llm,
             sink,
+            approval,
             telemetry,
             service,
             session: Session::new("/ws", 0),

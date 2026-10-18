@@ -9,17 +9,25 @@
 //! block of the tool (e.g. a `Diff`), `ToolStatusChanged` to `Running` and
 //! to its final status. The turn is framed by `TurnStarted` and
 //! `TurnFinished` (or `TurnFailed`).
+//!
+//! Between preparing and running a call the [`PermissionPolicy`] decides:
+//! `Allow` runs it, `Deny` answers the model with an error without asking,
+//! and `Ask` emits `ToolStatusChanged(AwaitingApproval)` and
+//! `ApprovalRequested` and waits for the [`ApprovalPort`] (see
+//! [`super::approval`]). A rejected call ends with status `Denied`.
+//!
+//! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use domain::block::{Block, BlockId, BlockKind, ToolStatus};
+use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
 use domain::conversation::{
     ContentPart, Message, Role, Session, SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
 };
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
-use domain::permission::PermissionPolicy;
+use domain::permission::{ActionRequest, Decision};
 use futures::StreamExt;
 use serde_json::Value;
 
@@ -30,11 +38,10 @@ use crate::ports::llm::{
     SystemBlock,
 };
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
-use crate::tools::registry::{ToolContext, ToolOutput, ToolRegistry};
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
-/// Permission policy shared between the agent loop, which adds "allow
-/// always" rules, and the UI, which cycles the mode.
-pub type SharedPermissions = Arc<Mutex<PermissionPolicy>>;
+pub use super::approval::SharedPermissions;
+use super::approval::{ApprovalGate, PendingApproval, UserVerdict, policy_denial};
 
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
@@ -125,7 +132,7 @@ pub struct AgentService {
     deps: AgentDeps,
     tools: ToolRegistry,
     models: ModelPolicy,
-    permissions: SharedPermissions,
+    gate: ApprovalGate,
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
@@ -157,10 +164,10 @@ impl AgentService {
         permissions: SharedPermissions,
     ) -> Self {
         Self {
-            deps,
             tools,
             models,
-            permissions,
+            gate: ApprovalGate::new(Arc::clone(&deps.approval), permissions),
+            deps,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
             clock: system_now_ms,
@@ -191,7 +198,7 @@ impl AgentService {
     /// The permission policy, shared with whoever cycles the mode.
     #[must_use]
     pub fn permissions(&self) -> &SharedPermissions {
-        &self.permissions
+        self.gate.permissions()
     }
 
     /// The tools offered to the model.
@@ -499,12 +506,7 @@ impl TurnRun<'_> {
             id
         });
         let ctx = ToolContext::new(self.session_id(), self.turn.id, tool_use_id.clone());
-        let output = self.prepare_and_run(&ctx, &name, input, block_id).await;
-        let status = if output.is_error {
-            ToolStatus::Failed
-        } else {
-            ToolStatus::Succeeded
-        };
+        let (output, status) = self.prepare_and_run(&ctx, &name, input, block_id).await;
         self.emit(DomainEvent::ToolStatusChanged {
             block_id,
             status,
@@ -517,29 +519,104 @@ impl TurnRun<'_> {
         }
     }
 
+    /// Prepares the call, gets it approved and runs it; returns its output
+    /// and final status.
     async fn prepare_and_run(
         &self,
         ctx: &ToolContext,
         name: &str,
         input: Value,
         block_id: BlockId,
-    ) -> ToolOutput {
-        let prepared = match self.service.tools.prepare(name, input.clone(), ctx).await {
-            Ok(prepared) => prepared,
-            Err(err) => return err.into(),
+    ) -> (ToolOutput, ToolStatus) {
+        let failed = |err: ToolError| (ToolOutput::from(err), ToolStatus::Failed);
+        let Some(tool) = self.service.tools.get(name) else {
+            return failed(ToolError::UnknownTool(name.to_owned()));
         };
+        let effect = tool.effect(&input);
+        let mut prepared = match tool.prepare(input.clone(), ctx).await {
+            Ok(prepared) => prepared,
+            Err(err) => return failed(err),
+        };
+        let summary = prepared.subject.clone();
         self.emit(DomainEvent::BlockUpdated {
             block: Block {
                 id: block_id,
-                kind: tool_call_kind(&ctx.tool_use_id, name, input, prepared.subject.clone()),
+                kind: tool_call_kind(&ctx.tool_use_id, name, input, summary),
             },
         });
-        let extra_block = prepared.block.map(|kind| {
-            let block = Block::new(kind);
-            let id = block.id;
-            self.emit(DomainEvent::BlockAdded { block });
-            id
+        let action = ActionRequest::new(name, effect, prepared.subject.clone());
+        match self.service.gate.decide(&action) {
+            Decision::Deny { reason } => (
+                ToolOutput::error(policy_denial(&reason)),
+                ToolStatus::Denied,
+            ),
+            Decision::Allow => {
+                let extra = prepared.block.take().map(|kind| self.add_block(kind));
+                self.run_prepared(name, prepared, block_id, extra).await
+            }
+            Decision::Ask => {
+                let mut extra = prepared.block.take().map(|kind| self.add_block(kind));
+                if let Some(block) = &mut extra {
+                    self.set_diff_approval(block, ApprovalState::Pending);
+                }
+                let pending = PendingApproval {
+                    action,
+                    tool_use_id: ctx.tool_use_id.clone(),
+                    preview: prepared.preview.take(),
+                    tool_block: block_id,
+                    shown_in: extra.as_ref().map_or(block_id, |block| block.id),
+                };
+                let verdict = self
+                    .service
+                    .gate
+                    .ask(pending, self.service.deps.events.as_ref())
+                    .await;
+                match verdict {
+                    UserVerdict::Approved => {
+                        if let Some(block) = &mut extra {
+                            self.set_diff_approval(block, ApprovalState::Approved);
+                        }
+                        self.run_prepared(name, prepared, block_id, extra).await
+                    }
+                    UserVerdict::Rejected(message) => {
+                        if let Some(block) = &mut extra {
+                            self.set_diff_approval(block, ApprovalState::Rejected);
+                        }
+                        (ToolOutput::error(message), ToolStatus::Denied)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adds a block to the timeline and returns it.
+    fn add_block(&self, kind: BlockKind) -> Block {
+        let block = Block::new(kind);
+        self.emit(DomainEvent::BlockAdded {
+            block: block.clone(),
         });
+        block
+    }
+
+    /// Marks a `Diff` block with the user's decision; other kinds are left
+    /// as they are.
+    fn set_diff_approval(&self, block: &mut Block, state: ApprovalState) {
+        if let BlockKind::Diff(spec) = &mut block.kind {
+            spec.approval = Some(state);
+            self.emit(DomainEvent::BlockUpdated {
+                block: block.clone(),
+            });
+        }
+    }
+
+    /// Runs an approved call.
+    async fn run_prepared(
+        &self,
+        name: &str,
+        prepared: PreparedCall,
+        block_id: BlockId,
+        extra: Option<Block>,
+    ) -> (ToolOutput, ToolStatus) {
         self.emit(DomainEvent::ToolStatusChanged {
             block_id,
             status: ToolStatus::Running,
@@ -554,18 +631,22 @@ impl TurnRun<'_> {
             ok: !output.is_error,
         });
         if let Some(kind) = output.block_update.take() {
-            let block = match extra_block {
-                Some(id) => Block { id, kind },
-                None => Block::new(kind),
-            };
-            let event = if extra_block.is_some() {
-                DomainEvent::BlockUpdated { block }
-            } else {
-                DomainEvent::BlockAdded { block }
+            let event = match extra {
+                Some(block) => DomainEvent::BlockUpdated {
+                    block: Block { id: block.id, kind },
+                },
+                None => DomainEvent::BlockAdded {
+                    block: Block::new(kind),
+                },
             };
             self.emit(event);
         }
-        output
+        let status = if output.is_error {
+            ToolStatus::Failed
+        } else {
+            ToolStatus::Succeeded
+        };
+        (output, status)
     }
 }
 
@@ -595,5 +676,7 @@ fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+#[cfg(test)]
+mod approval_tests;
 #[cfg(test)]
 mod tests;
