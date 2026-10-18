@@ -9,6 +9,7 @@ pub mod fake;
 pub mod flow;
 pub mod gate;
 pub mod node;
+pub mod nodes;
 pub mod task;
 
 #[cfg(test)]
