@@ -20,13 +20,16 @@ use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{ConfigSources, PluginHostPort};
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
+use application::ports::telemetry::TelemetryPort;
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
+use application::tools::task::{TaskPorts, TaskTool};
 use application::usecases::approval::lock_permissions;
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use domain::conversation::Session;
@@ -247,18 +250,33 @@ pub async fn build_app(
     };
 
     let search = Arc::new(search);
+    let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
+    let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     let mut tools = ToolRegistry::new();
     register_file_tools(
         &mut tools,
         FileToolPorts {
             file_search: search.clone(),
-            content_search: search,
-            fs: Arc::new(LocalFs::new(guard)),
+            content_search: search.clone(),
+            fs: Arc::clone(&fs),
             shell: Arc::new(LocalShell::new(root.clone())),
         },
     )
     .context("registro de tools")?;
     register_component_tools(&mut tools).context("registro de tools")?;
+    let task = TaskTool::new(
+        TaskPorts {
+            llm: Arc::clone(&llm),
+            telemetry: Arc::clone(&telemetry),
+            models: policy.clone(),
+            file_search: search.clone(),
+            content_search: search,
+            fs,
+        },
+        tools.budget(),
+    )
+    .context("registro de tools")?;
+    tools.register_typed(task).context("registro de tools")?;
     if let Some(host) = &plugins {
         for spec in loaded.tools.iter().cloned() {
             let name = spec.name.clone();
@@ -274,7 +292,7 @@ pub async fn build_app(
         llm,
         events: Arc::clone(&events),
         approval: frontend.approval,
-        telemetry: Arc::new(TracingTelemetry::new()),
+        telemetry,
     };
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(system_prompt(&root));
