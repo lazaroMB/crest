@@ -106,6 +106,111 @@ impl fmt::Display for ToolUseId {
     }
 }
 
+/// Author of a [`Message`]. Not to be confused with the model role used to
+/// pick which model answers (see `crate::model`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// The human (or tool results sent on their behalf).
+    User,
+    /// The model.
+    Assistant,
+}
+
+/// One piece of a message's content.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    /// Plain text.
+    Text {
+        /// The text.
+        text: String,
+    },
+    /// Extended thinking produced by the model.
+    Thinking {
+        /// The reasoning text.
+        thinking: String,
+        /// Opaque signature that must be sent back unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    /// Thinking redacted by the provider; only the opaque payload is kept.
+    RedactedThinking {
+        /// Opaque encrypted payload.
+        data: String,
+    },
+    /// A tool call requested by the model.
+    ToolUse {
+        /// Provider-assigned id, echoed back in the matching result.
+        id: ToolUseId,
+        /// Tool name.
+        name: String,
+        /// Tool arguments as JSON.
+        input: serde_json::Value,
+    },
+    /// The result of executing a tool call.
+    ToolResult {
+        /// Id of the [`ContentPart::ToolUse`] this answers.
+        tool_use_id: ToolUseId,
+        /// Result content.
+        content: Vec<ToolResultContent>,
+        /// Whether the tool failed.
+        #[serde(default)]
+        is_error: bool,
+    },
+    /// An inline image.
+    Image {
+        /// MIME type, e.g. `image/png`.
+        media_type: String,
+        /// Base64-encoded image bytes.
+        data: String,
+    },
+}
+
+impl ContentPart {
+    /// Builds a [`ContentPart::Text`].
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    /// Builds a successful [`ContentPart::ToolResult`] with a single text item.
+    #[must_use]
+    pub fn tool_result_text(tool_use_id: ToolUseId, text: impl Into<String>) -> Self {
+        Self::ToolResult {
+            tool_use_id,
+            content: vec![ToolResultContent::text(text)],
+            is_error: false,
+        }
+    }
+}
+
+/// One piece of a tool result's content.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolResultContent {
+    /// Plain text.
+    Text {
+        /// The text.
+        text: String,
+    },
+    /// An inline image.
+    Image {
+        /// MIME type, e.g. `image/png`.
+        media_type: String,
+        /// Base64-encoded image bytes.
+        data: String,
+    },
+}
+
+impl ToolResultContent {
+    /// Builds a [`ToolResultContent::Text`].
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +244,76 @@ mod tests {
         assert_eq!(serde_json::to_string(&id).unwrap(), "\"toolu_01ABC\"");
         assert_eq!(id.to_string(), "toolu_01ABC");
         round_trip(&id);
+    }
+
+    #[test]
+    fn role_serializes_snake_case() {
+        assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
+        assert_eq!(
+            serde_json::to_string(&Role::Assistant).unwrap(),
+            "\"assistant\""
+        );
+        round_trip(&Role::Assistant);
+    }
+
+    fn all_parts() -> Vec<ContentPart> {
+        vec![
+            ContentPart::text("hola"),
+            ContentPart::Thinking {
+                thinking: "pienso".into(),
+                signature: Some("sig".into()),
+            },
+            ContentPart::Thinking {
+                thinking: "sin firma".into(),
+                signature: None,
+            },
+            ContentPart::RedactedThinking {
+                data: "opaque".into(),
+            },
+            ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "grep".into(),
+                input: serde_json::json!({ "pattern": "fn main" }),
+            },
+            ContentPart::tool_result_text(ToolUseId::new("toolu_1"), "src/main.rs:1"),
+            ContentPart::ToolResult {
+                tool_use_id: ToolUseId::new("toolu_2"),
+                content: vec![ToolResultContent::Image {
+                    media_type: "image/png".into(),
+                    data: "iVBORw0KGgo=".into(),
+                }],
+                is_error: true,
+            },
+            ContentPart::Image {
+                media_type: "image/jpeg".into(),
+                data: "/9j/4AAQ".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn content_parts_round_trip() {
+        for part in all_parts() {
+            round_trip(&part);
+        }
+    }
+
+    #[test]
+    fn content_parts_wire_shape() {
+        insta::assert_json_snapshot!(all_parts());
+    }
+
+    #[test]
+    fn tool_result_is_error_defaults_to_false() {
+        let part: ContentPart = serde_json::from_value(serde_json::json!({
+            "type": "tool_result",
+            "tool_use_id": "toolu_9",
+            "content": [{ "type": "text", "text": "ok" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            part,
+            ContentPart::tool_result_text(ToolUseId::new("toolu_9"), "ok")
+        );
     }
 }

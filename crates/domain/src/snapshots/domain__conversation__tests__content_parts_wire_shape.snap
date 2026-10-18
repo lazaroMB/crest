@@ -1,0 +1,59 @@
+---
+source: crates/domain/src/conversation.rs
+expression: all_parts()
+---
+[
+  {
+    "type": "text",
+    "text": "hola"
+  },
+  {
+    "type": "thinking",
+    "thinking": "pienso",
+    "signature": "sig"
+  },
+  {
+    "type": "thinking",
+    "thinking": "sin firma"
+  },
+  {
+    "type": "redacted_thinking",
+    "data": "opaque"
+  },
+  {
+    "type": "tool_use",
+    "id": "toolu_1",
+    "name": "grep",
+    "input": {
+      "pattern": "fn main"
+    }
+  },
+  {
+    "type": "tool_result",
+    "tool_use_id": "toolu_1",
+    "content": [
+      {
+        "type": "text",
+        "text": "src/main.rs:1"
+      }
+    ],
+    "is_error": false
+  },
+  {
+    "type": "tool_result",
+    "tool_use_id": "toolu_2",
+    "content": [
+      {
+        "type": "image",
+        "media_type": "image/png",
+        "data": "iVBORw0KGgo="
+      }
+    ],
+    "is_error": true
+  },
+  {
+    "type": "image",
+    "media_type": "image/jpeg",
+    "data": "/9j/4AAQ"
+  }
+]
