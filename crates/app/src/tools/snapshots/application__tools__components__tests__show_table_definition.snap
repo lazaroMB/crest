@@ -1,0 +1,106 @@
+---
+source: crates/app/src/tools/components.rs
+expression: definition(ShowTableTool)
+---
+{
+  "name": "show_table",
+  "description": "Shows rows of records as a sortable table in the user's timeline. Use it for items with several attributes or exact values the user will scan or compare, e.g. the largest files with their size and last change. Every row needs one cell per column. Returns only a short confirmation: do not repeat the rows in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "columns": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Column"
+        },
+        "description": "Column headers, in order; use `right` alignment for numbers."
+      },
+      "rows": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Cell"
+          }
+        },
+        "description": "Rows, each with exactly one cell (string, number, boolean or null)\nper column."
+      }
+    },
+    "required": [
+      "columns",
+      "rows"
+    ],
+    "description": "Input of `show_table`.",
+    "title": "ShowTable",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Column": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Header text."
+          },
+          "align": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Align"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Horizontal alignment; the UI picks one when absent."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "A table column header."
+      },
+      "Align": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "left",
+            "description": "Left aligned."
+          },
+          {
+            "type": "string",
+            "const": "center",
+            "description": "Centered."
+          },
+          {
+            "type": "string",
+            "const": "right",
+            "description": "Right aligned."
+          }
+        ],
+        "description": "Horizontal alignment of a column."
+      },
+      "Cell": {
+        "anyOf": [
+          {
+            "type": "null",
+            "description": "Empty cell (`null`)."
+          },
+          {
+            "type": "boolean",
+            "description": "Boolean."
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Number."
+          },
+          {
+            "type": "string",
+            "description": "Text."
+          }
+        ],
+        "description": "A table cell: a plain JSON scalar."
+      }
+    }
+  }
+}

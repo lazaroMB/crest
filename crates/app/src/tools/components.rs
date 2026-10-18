@@ -10,7 +10,7 @@
 //! needs approval.
 
 use async_trait::async_trait;
-use domain::block::{BlockKind, ChartKind, ChartSpec, Series};
+use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, TableSpec};
 use domain::permission::ToolEffect;
 use futures::FutureExt;
 use schemars::JsonSchema;
@@ -122,6 +122,72 @@ fn chart_kind_name(kind: ChartKind) -> &'static str {
     }
 }
 
+/// Input of `show_table`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowTable {
+    /// Column headers, in order; use `right` alignment for numbers.
+    pub columns: Vec<Column>,
+    /// Rows, each with exactly one cell (string, number, boolean or null)
+    /// per column.
+    pub rows: Vec<Vec<Cell>>,
+}
+
+/// `show_table`: shows records as a sortable table.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowTableTool;
+
+const SHOW_TABLE: &str = "show_table";
+
+#[async_trait]
+impl TypedTool for ShowTableTool {
+    type Input = ShowTable;
+
+    fn name(&self) -> &str {
+        SHOW_TABLE
+    }
+
+    fn description(&self) -> &str {
+        "Shows rows of records as a sortable table in the user's timeline. \
+         Use it for items with several attributes or exact values the user \
+         will scan or compare, e.g. the largest files with their size and \
+         last change. Every row needs one cell per column. Returns only a \
+         short confirmation: do not repeat the rows in your reply."
+    }
+
+    fn effect(&self, _input: &ShowTable) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowTable,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let spec = TableSpec {
+            columns: input.columns,
+            rows: input.rows,
+        };
+        spec.validate()
+            .map_err(|err| invalid(SHOW_TABLE, err.to_string()))?;
+        if spec.rows.is_empty() {
+            return Err(invalid(SHOW_TABLE, "table has no rows"));
+        }
+        let confirmation = format!(
+            "Table shown to the user ({} × {}).",
+            count(spec.columns.len(), "column", "columns"),
+            count(spec.rows.len(), "row", "rows"),
+        );
+        let subject = spec
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(show(subject, BlockKind::Table(spec), confirmation))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -129,6 +195,7 @@ mod tests {
 
     use super::*;
     use crate::tools::registry::{Tool, ToolRegistry, Typed};
+    use domain::block::Align;
 
     fn ctx() -> ToolContext {
         ToolContext::new(SessionId::new(), TurnId::new(), ToolUseId::new("toolu_1"))
@@ -255,5 +322,60 @@ mod tests {
             out.text_content()
         );
         assert_eq!(out.block_update, None);
+    }
+
+    #[test]
+    fn show_table_definition() {
+        insta::assert_json_snapshot!("show_table_definition", definition(ShowTableTool));
+    }
+
+    #[tokio::test]
+    async fn show_table_adds_a_table_and_confirms_briefly() {
+        let out = call(
+            ShowTableTool,
+            json!({
+                "columns": [{ "name": "file" }, { "name": "bytes", "align": "right" }],
+                "rows": [["a.rs", 120], ["b.rs", null]]
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!out.is_error);
+        assert_eq!(
+            out.text_content(),
+            "Table shown to the user (2 columns × 2 rows)."
+        );
+        let Some(BlockKind::Table(spec)) = out.block_update else {
+            panic!("expected a table, got {:?}", out.block_update);
+        };
+        assert_eq!(spec.columns[1].align, Some(Align::Right));
+        assert_eq!(
+            spec.rows[0],
+            [Cell::Text("a.rs".into()), Cell::Number(120.0)]
+        );
+        assert_eq!(spec.rows[1][1], Cell::Null);
+    }
+
+    #[tokio::test]
+    async fn show_table_rejects_empty_tables() {
+        let no_columns = json!({ "columns": [], "rows": [] });
+        assert_eq!(
+            invalid_message(call(ShowTableTool, no_columns).await),
+            "table has no columns"
+        );
+        let no_rows = json!({ "columns": [{ "name": "a" }], "rows": [] });
+        assert_eq!(
+            invalid_message(call(ShowTableTool, no_rows).await),
+            "table has no rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_table_rejects_ragged_rows() {
+        let input = json!({ "columns": [{ "name": "a" }, { "name": "b" }], "rows": [[1, 2], [3]] });
+        assert_eq!(
+            invalid_message(call(ShowTableTool, input).await),
+            "table row 1 has 1 cells, expected 2"
+        );
     }
 }
