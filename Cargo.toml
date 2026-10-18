@@ -86,6 +86,12 @@ notify = "8.2.0"
 # itself. 0.2.0 publishes no `gpui` feature; `-core` names the primitives.
 rusty-mermaid = { version = "=0.2.0", default-features = false }
 rusty-mermaid-core = "=0.2.0"
+# Offscreen 3D board of the simulator. Same major version as the wgpu GPUI
+# links on Linux (gpui-pre-wgpu 0.3.9), so it is not built twice there.
+wgpu = { version = "29.0.4", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "metal"] }
+bytemuck = "1.25.2"
+# Frames of GPUI's RenderImage (the version gpui-pre uses).
+image = { version = "0.25.10", default-features = false }
 
 # Test-only crates
 # hyper serves adapter-mcp's example server over streamable HTTP.

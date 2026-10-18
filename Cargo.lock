@@ -8164,11 +8164,13 @@ dependencies = [
  "application",
  "async-trait",
  "base64 0.23.1",
+ "bytemuck",
  "domain",
  "futures",
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
+ "image",
  "notify",
  "rusty-mermaid",
  "rusty-mermaid-core",
@@ -8176,6 +8178,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "uuid",
+ "wgpu",
 ]
 
 [[package]]

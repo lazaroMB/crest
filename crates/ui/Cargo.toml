@@ -11,10 +11,12 @@ publish.workspace = true
 application.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+bytemuck.workspace = true
 domain.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+image.workspace = true
 # Tree-sitter highlighting for code blocks in markdown and the markdown
 # source view; only the grammars an agent session commonly shows.
 gpui-component = { workspace = true, features = [
@@ -34,6 +36,7 @@ rusty-mermaid-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+wgpu.workspace = true
 
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }
