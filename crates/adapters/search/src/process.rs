@@ -8,11 +8,12 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 /// A program to run: executable, arguments, working directory and extra
@@ -309,6 +310,133 @@ pub async fn pipe(
     })
 }
 
+/// How a [`for_each_line`] run ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinesOutcome {
+    /// Exit status; the status of the killed process when `stopped` or
+    /// `timed_out`.
+    pub status: ExitStatus,
+    /// Everything read from stderr.
+    pub stderr: Vec<u8>,
+    /// Whether the callback asked to stop and the process was killed.
+    pub stopped: bool,
+    /// Whether the timeout elapsed and the process was killed.
+    pub timed_out: bool,
+}
+
+/// Runs `spec` with an empty stdin and hands each stdout line to `on_line`
+/// as it arrives (without its `\n` or `\r\n`, invalid UTF-8 replaced).
+///
+/// Returning [`ControlFlow::Break`] kills the process right away, so a
+/// search that already has enough results stops early instead of scanning
+/// the whole workspace. On timeout the process is killed too; lines already
+/// delivered stay delivered.
+pub async fn for_each_line<F>(
+    spec: &ProcessSpec,
+    timeout: Duration,
+    mut on_line: F,
+) -> Result<LinesOutcome, ProcessError>
+where
+    F: FnMut(String) -> ControlFlow<()>,
+{
+    let mut command = spec.command();
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = spec.spawn(command).await?;
+    let out = child.stdout.take();
+    let mut err = child.stderr.take();
+
+    let mut stderr = Vec::new();
+    let work = async {
+        let lines = async {
+            let Some(out) = out else {
+                return Ok::<_, io::Error>(false);
+            };
+            let mut reader = BufReader::new(out);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                if reader.read_until(b'\n', &mut buf).await? == 0 {
+                    return Ok(false);
+                }
+                if buf.last() == Some(&b'\n') {
+                    buf.pop();
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
+                }
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                if on_line(line).is_break() {
+                    return Ok(true);
+                }
+            }
+        };
+        let read_then_wait = async {
+            let stopped = lines.await?;
+            let status = if stopped {
+                kill(&mut child).await?
+            } else {
+                child.wait().await?
+            };
+            Ok::<_, io::Error>((status, stopped))
+        };
+        let (result, read_err) = tokio::join!(read_then_wait, read_all(err.as_mut(), &mut stderr));
+        read_err?;
+        result
+    };
+    let (status, stopped, timed_out) = match tokio::time::timeout(timeout, work).await {
+        Ok(result) => {
+            let (status, stopped) = result?;
+            (status, stopped, false)
+        }
+        Err(_) => (kill(&mut child).await?, false, true),
+    };
+    Ok(LinesOutcome {
+        status,
+        stderr,
+        stopped,
+        timed_out,
+    })
+}
+
+/// Stdout lines collected by [`run_lines`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinesOutput {
+    /// At most `max_lines` lines, in output order.
+    pub lines: Vec<String>,
+    /// Whether the process had more lines than `max_lines` (it was killed
+    /// once the extra line arrived).
+    pub truncated: bool,
+    /// How the run ended.
+    pub outcome: LinesOutcome,
+}
+
+/// Runs `spec` and collects up to `max_lines` stdout lines, killing the
+/// process as soon as one more line shows up (see [`for_each_line`]).
+/// Useful for `rg --files`.
+pub async fn run_lines(
+    spec: &ProcessSpec,
+    timeout: Duration,
+    max_lines: usize,
+) -> Result<LinesOutput, ProcessError> {
+    let mut lines = Vec::new();
+    let outcome = for_each_line(spec, timeout, |line| {
+        if lines.len() == max_lines {
+            return ControlFlow::Break(());
+        }
+        lines.push(line);
+        ControlFlow::Continue(())
+    })
+    .await?;
+    Ok(LinesOutput {
+        lines,
+        truncated: outcome.stopped,
+        outcome,
+    })
+}
+
 /// Appends everything `reader` yields to `buf`. Reads chunk by chunk so a
 /// cancelled call (on timeout) leaves the bytes read so far in `buf`.
 async fn read_all<R: AsyncRead + Unpin>(
@@ -481,6 +609,52 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ProcessError::NotFound { .. }), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn run_lines_collects_all_lines() {
+        let out = run_lines(&spec("printf").arg("a\\nb\\r\\nc"), LONG, 10)
+            .await
+            .unwrap();
+        assert_eq!(out.lines, ["a", "b", "c"]);
+        assert!(!out.truncated);
+        assert!(out.outcome.status.success());
+    }
+
+    #[tokio::test]
+    async fn run_lines_stops_at_the_limit() {
+        let start = std::time::Instant::now();
+        let out = run_lines(&spec("yes"), LONG, 3).await.unwrap();
+        assert_eq!(out.lines, ["y", "y", "y"]);
+        assert!(out.truncated);
+        assert!(out.outcome.stopped);
+        assert!(!out.outcome.timed_out);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn run_lines_exactly_at_the_limit_is_not_truncated() {
+        let out = run_lines(&spec("printf").arg("a\\nb\\n"), LONG, 2)
+            .await
+            .unwrap();
+        assert_eq!(out.lines, ["a", "b"]);
+        assert!(!out.truncated);
+    }
+
+    #[tokio::test]
+    async fn for_each_line_times_out() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("log"), "one\n").unwrap();
+        let spec = ProcessSpec::new("tail", dir.path()).args(["-f", "log"]);
+        let mut seen = Vec::new();
+        let outcome = for_each_line(&spec, Duration::from_millis(300), |line| {
+            seen.push(line);
+            ControlFlow::Continue(())
+        })
+        .await
+        .unwrap();
+        assert!(outcome.timed_out);
+        assert_eq!(seen, ["one"]);
     }
 
     #[tokio::test]
