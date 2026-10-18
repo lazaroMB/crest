@@ -657,6 +657,103 @@ mod tests {
         assert_eq!(seen, ["one"]);
     }
 
+    /// Pid of the running process whose command line is exactly `args`.
+    #[cfg(target_os = "linux")]
+    async fn wait_for_pid(args: &[&str]) -> u32 {
+        let wanted: Vec<u8> = args
+            .iter()
+            .flat_map(|a| [a.as_bytes(), b"\0"].concat())
+            .collect();
+        for _ in 0..250 {
+            for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+                let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+                    continue;
+                };
+                if std::fs::read(entry.path().join("cmdline")).is_ok_and(|c| c == wanted) {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("process {args:?} never started");
+    }
+
+    /// Whether `pid` is gone or a zombie (killed, waiting to be reaped).
+    #[cfg(target_os = "linux")]
+    async fn wait_until_dead(pid: u32) -> bool {
+        for _ in 0..250 {
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(_) => return true,
+                Ok(stat) => {
+                    let state = stat.rsplit_once(')').map(|(_, rest)| rest.trim_start());
+                    if state.is_some_and(|s| s.starts_with('Z')) {
+                        return true;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_run_kills_the_process() {
+        let spec = spec("sleep").arg("30.4241");
+        let mut fut = Box::pin(run(&spec, None, LONG));
+        let pid = tokio::select! {
+            _ = &mut fut => panic!("sleep finished early"),
+            pid = wait_for_pid(&["sleep", "30.4241"]) => pid,
+        };
+        drop(fut);
+        assert!(
+            wait_until_dead(pid).await,
+            "process {pid} survived the drop"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_pipe_kills_both_processes() {
+        let first = spec("sleep").arg("30.4242");
+        let second = spec("sleep").arg("30.4243");
+        let mut fut = Box::pin(pipe(&first, &second, LONG));
+        let pids = tokio::select! {
+            _ = &mut fut => panic!("pipe finished early"),
+            pids = async {
+                (
+                    wait_for_pid(&["sleep", "30.4242"]).await,
+                    wait_for_pid(&["sleep", "30.4243"]).await,
+                )
+            } => pids,
+        };
+        drop(fut);
+        assert!(
+            wait_until_dead(pids.0).await,
+            "first process survived the drop"
+        );
+        assert!(
+            wait_until_dead(pids.1).await,
+            "second process survived the drop"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_for_each_line_kills_the_process() {
+        let spec = spec("sleep").arg("30.4244");
+        let mut fut = Box::pin(for_each_line(&spec, LONG, |_| ControlFlow::Continue(())));
+        let pid = tokio::select! {
+            _ = &mut fut => panic!("sleep finished early"),
+            pid = wait_for_pid(&["sleep", "30.4244"]) => pid,
+        };
+        drop(fut);
+        assert!(
+            wait_until_dead(pid).await,
+            "process {pid} survived the drop"
+        );
+    }
+
     #[tokio::test]
     async fn missing_program_is_not_found() {
         let err = run(&spec("crest-no-such-program"), None, LONG)
