@@ -39,7 +39,7 @@ STUB
 run_case() {
     local name=$1 want=$2 out rc pat
     shift 2
-    out=$(HOME=$TMP/home PATH="$BIN:/usr/bin:/bin" "$BASH" "$SCRIPT" --check --no-rust 2>&1)
+    out=$(HOME=$TMP/home PATH="$BIN:/usr/bin:/bin" CREST_BREW_CANDIDATES="" "$BASH" "$SCRIPT" --check --no-rust 2>&1)
     rc=$?
     if [ "$rc" != "$want" ]; then
         echo "FAIL [$name]: exit code $rc, expected $want" >&2

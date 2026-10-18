@@ -115,12 +115,14 @@ pkg_mgr_cmd() {
 }
 
 # Finds Homebrew even when it is not in the PATH (fresh install).
+# CREST_BREW_CANDIDATES overrides the well-known locations (the tests use it
+# so a Homebrew installed on the CI runner does not leak in).
 find_brew() {
     if have brew; then
         return 0
     fi
     local b
-    for b in /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+    for b in ${CREST_BREW_CANDIDATES-/opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew}; do
         if [ -x "$b" ]; then
             PATH="${b%/brew}:$PATH"
             export PATH
