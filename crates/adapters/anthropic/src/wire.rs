@@ -609,7 +609,7 @@ pub struct MessagesResponse {
     #[serde(default)]
     pub content: Vec<WireContentBlock>,
     /// Why generation stopped; `null` in `message_start`. Kept as a string
-    /// because the API adds values (see `convert::stop_reason`).
+    /// because the API adds values (see [`crate::convert::stop_reason`]).
     #[serde(default)]
     pub stop_reason: Option<String>,
     /// The custom stop sequence that was produced, if any.

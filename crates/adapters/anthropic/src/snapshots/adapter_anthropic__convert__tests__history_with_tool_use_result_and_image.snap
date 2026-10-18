@@ -1,0 +1,73 @@
+---
+source: crates/adapters/anthropic/src/convert.rs
+expression: wire
+---
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "What is in this screenshot?"
+      },
+      {
+        "type": "image",
+        "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "iVBORw0KGgo="
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "Let me read the file.",
+        "signature": "sig"
+      },
+      {
+        "type": "redacted_thinking",
+        "data": "opaque"
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_01",
+        "name": "read_file",
+        "input": {
+          "path": "a.rs"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01",
+        "content": [
+          {
+            "type": "text",
+            "text": "fn main() {}"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/jpeg",
+              "data": "/9j/"
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01",
+        "is_error": true
+      }
+    ]
+  }
+]
