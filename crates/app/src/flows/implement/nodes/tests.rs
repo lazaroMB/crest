@@ -1,7 +1,10 @@
 //! Shared fixtures of the step tests: a loaded plan and an agent over
 //! `ScriptedLlm`, `InMemoryFs` and a shell.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
 
 use domain::model::ModelPolicy;
 use domain::permission::{PermissionMode, PermissionPolicy};
@@ -12,7 +15,7 @@ use crate::flows::implement::load::tests::plan_json;
 use crate::flows::implement::node::{AgentKit, ImplementDeps, StepContext};
 use crate::flows::implement::state::{ImplementState, Step};
 use crate::ports::approval::ApprovalResponse;
-use crate::ports::shell::ShellPort;
+use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
 use crate::testing::fs::{InMemoryFs, ScriptedShell};
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
@@ -29,6 +32,52 @@ pub(crate) fn loaded_state(tasks: &[(&str, &[&str])]) -> ImplementState {
     state.order = loaded.order;
     state.branch = Some("spec/0007-cache-de-sesiones".into());
     state
+}
+
+/// An exit status with `stdout`.
+pub(crate) fn exit(code: i32, stdout: &str) -> CommandOutput {
+    CommandOutput {
+        status: Some(code),
+        stdout: stdout.into(),
+        ..CommandOutput::default()
+    }
+}
+
+/// A shell that answers each call with the next output of a list (the
+/// last one repeats), recording the calls.
+#[derive(Debug, Default)]
+pub(crate) struct SequenceShell {
+    outputs: Mutex<VecDeque<CommandOutput>>,
+    last: Mutex<Option<CommandOutput>>,
+    calls: Mutex<Vec<RunCommandRequest>>,
+}
+
+impl SequenceShell {
+    pub(crate) fn new(outputs: impl IntoIterator<Item = CommandOutput>) -> Self {
+        Self {
+            outputs: Mutex::new(outputs.into_iter().collect()),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn calls(&self) -> Vec<RunCommandRequest> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ShellPort for SequenceShell {
+    async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
+        self.calls.lock().unwrap().push(request);
+        let next = self.outputs.lock().unwrap().pop_front();
+        let mut last = self.last.lock().unwrap();
+        if let Some(next) = next {
+            *last = Some(next);
+        }
+        last.clone().ok_or(ShellError::NotFound {
+            command: "nothing scripted".into(),
+        })
+    }
 }
 
 /// Ports of a step test.
