@@ -16,6 +16,7 @@ use domain::plan::Plan;
 use domain::research::{ConstraintId, Stage};
 use serde_json::Value;
 
+use super::review::PLANS_DATA_KEY;
 use super::spec::sink::{MemorySpecSink, SpecSink};
 use super::spec::structured::{ask_valid, submit_tool};
 use super::spec::{DRAFTS_KEY, SpecDraft, sink_error, write_journal};
@@ -87,6 +88,7 @@ impl ResearchNode for Planner {
         let schema = serde_json::to_string_pretty(&tool.input_schema)
             .map_err(|e| NodeError::Failed(format!("schema of submit_plan: {e}")))?;
         let mut folders = Vec::with_capacity(drafts.len());
+        let mut plans: Vec<Plan> = ctx.data(PLANS_DATA_KEY).unwrap_or_default();
         for draft in &drafts {
             let prompt = prompt(ctx, draft, &schema);
             let folder = draft.folder.clone();
@@ -102,12 +104,15 @@ impl ResearchNode for Planner {
                 plan.hypothesis_tests.len(),
                 plan.constraint_tests.len()
             ));
+            plans.retain(|p| p.spec != folder);
+            plans.push(plan);
             folders.push(folder);
         }
         for folder in &folders {
             write_journal(self.sink.as_ref(), folder, ctx.state()).await?;
         }
         ctx.set_data(PLANS_KEY, &folders)?;
+        ctx.set_data(PLANS_DATA_KEY, &plans)?;
         Ok(NodeOutcome::Done)
     }
 }
@@ -321,6 +326,8 @@ mod tests {
         assert!(matches!(&kinds[0], BlockKind::Mermaid(m) if m.source == written.to_mermaid()));
         assert!(matches!(&kinds[1], BlockKind::Table(t) if t.rows.len() == 2));
         assert_eq!(ctx.data::<Vec<String>>(PLANS_KEY).unwrap(), [FOLDER]);
+        let plans: Vec<Plan> = ctx.data(PLANS_DATA_KEY).unwrap();
+        assert_eq!(plans, [written]);
     }
 
     #[tokio::test]
