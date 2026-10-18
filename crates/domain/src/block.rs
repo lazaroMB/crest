@@ -202,7 +202,7 @@ pub enum BlockKind {
     },
 }
 
-/// Lifecycle of a [`BlockKind::ToolCall`].
+/// Lifecycle of a tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
@@ -451,7 +451,7 @@ impl ChartSpec {
     }
 }
 
-/// How a [`ChartSpec`] is drawn.
+/// How a chart is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
@@ -491,7 +491,7 @@ pub struct DiffSpec {
     pub approval: Option<ApprovalState>,
 }
 
-/// Decision of the user on a [`DiffSpec`].
+/// Decision of the user on a proposed file change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalState {
