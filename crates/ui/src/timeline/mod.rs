@@ -1,8 +1,10 @@
 //! The session timeline: a pure model ([`TimelineState`]) fed by domain
-//! events.
+//! events and its virtualized GPUI view ([`TimelineView`]).
 
 mod render;
 mod state;
+mod view;
 
 pub use render::{copy_text, kind_name, render_block, status_label, tool_call_line};
 pub use state::{TimelineChange, TimelineEntry, TimelineState};
+pub use view::TimelineView;

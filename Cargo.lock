@@ -6975,6 +6975,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "domain",
+ "futures",
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
