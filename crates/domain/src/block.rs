@@ -112,6 +112,8 @@ pub enum BlockKind {
     Chart(ChartSpec),
     /// A proposed file change (`edit_file`, `write_file`).
     Diff(DiffSpec),
+    /// A Mermaid diagram (tool `show_mermaid`).
+    Mermaid(MermaidSpec),
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -407,6 +409,17 @@ pub enum ApprovalState {
     Rejected,
 }
 
+/// A Mermaid diagram; the UI shows the source and the error if it does not
+/// parse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MermaidSpec {
+    /// Mermaid source.
+    pub source: String,
+    /// Optional caption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,5 +678,15 @@ mod tests {
             approval: None,
             ..new_file
         })));
+    }
+
+    #[test]
+    fn mermaid_block_roundtrip() {
+        let value = roundtrip(&Block::new(BlockKind::Mermaid(MermaidSpec {
+            source: "graph TD; a-->b".into(),
+            title: None,
+        })));
+        assert_eq!(value["type"], "mermaid");
+        assert!(value.get("title").is_none());
     }
 }
