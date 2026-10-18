@@ -6978,6 +6978,7 @@ dependencies = [
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
