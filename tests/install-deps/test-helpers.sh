@@ -69,6 +69,21 @@ check "opensuse" eq "$(pkg_mgr_for_distro opensuse-tumbleweed)" zypper
 check "void" eq "$(pkg_mgr_for_distro void)" xbps
 check "desconocida" eq "$(pkg_mgr_for_distro plan9)" ""
 
+# verify_sha256 y destinos de descarga
+TMP_F=$(mktemp "${TMPDIR:-/tmp}/sha.XXXXXX")
+printf 'abc' >"$TMP_F"
+check "sha256 correcta" verify_sha256 "$TMP_F" ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+check "sha256 incorrecta" not verify_sha256 "$TMP_F" 0000 2>/dev/null
+rm -f "$TMP_F"
+PLATFORM=macos ARCH=aarch64
+check "rg macOS arm" eq "$(rg_target)" aarch64-apple-darwin
+check "fzf macOS arm" eq "$(fzf_target)" darwin_arm64
+PLATFORM=linux ARCH=x86_64
+check "rg linux x86_64" eq "$(rg_target)" x86_64-unknown-linux-musl
+check "fzf linux x86_64" eq "$(fzf_target)" linux_amd64
+PLATFORM=linux ARCH=riscv64
+check "rg arquitectura no soportada" not rg_target
+
 # packages_for: sin duplicados y vacío para lo que el gestor no provee
 PKG_MGR=apk
 check "apk deduplica xkbcommon" eq "$(packages_for 'xkbcommon xkbcommon-x11 cc')" "libxkbcommon-dev build-base"

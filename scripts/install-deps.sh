@@ -592,6 +592,147 @@ print_summary() {
     return 1
 }
 
+# --- binarios oficiales de GitHub (rg, fzf) ---------------------------------
+
+RG_VERSION=${CREST_RG_VERSION:-15.2.0}
+FZF_VERSION=${CREST_FZF_VERSION:-0.74.5}
+WORK_DIR=''
+
+cleanup() {
+    if [ -n "$WORK_DIR" ]; then rm -rf "$WORK_DIR"; fi
+}
+
+# Crea WORK_DIR una sola vez. No llamar en un subshell: el trap lo borraría
+# al salir de él.
+ensure_work_dir() {
+    if [ -z "$WORK_DIR" ]; then
+        WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/crest-deps.XXXXXX") || {
+            err "no se pudo crear un directorio temporal"
+            return 1
+        }
+        trap cleanup EXIT
+    fi
+}
+
+# download URL DESTINO
+download() {
+    if have curl; then
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"
+    elif have wget; then
+        wget -q -O "$2" "$1"
+    else
+        err "hace falta curl o wget para descargar $1"
+        return 1
+    fi
+}
+
+sha256_of() {
+    if have sha256sum; then
+        sha256sum "$1" | cut -d ' ' -f 1
+    elif have shasum; then
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    else
+        return 1
+    fi
+}
+
+# verify_sha256 ARCHIVO SUMA_ESPERADA
+verify_sha256() {
+    local got
+    if ! got=$(sha256_of "$1") || [ -z "$got" ]; then
+        err "no hay sha256sum ni shasum para verificar ${1##*/}"
+        return 1
+    fi
+    if [ "$got" != "$2" ]; then
+        err "suma SHA-256 incorrecta para ${1##*/}: $got (esperada $2)"
+        return 1
+    fi
+}
+
+# Triple de destino de las releases de ripgrep para esta máquina.
+rg_target() {
+    case $PLATFORM:$ARCH in
+        linux:x86_64) echo x86_64-unknown-linux-musl ;;
+        linux:aarch64) echo aarch64-unknown-linux-musl ;;
+        macos:x86_64) echo x86_64-apple-darwin ;;
+        macos:aarch64) echo aarch64-apple-darwin ;;
+        *) return 1 ;;
+    esac
+}
+
+# Sufijo de plataforma de las releases de fzf para esta máquina.
+fzf_target() {
+    case $PLATFORM:$ARCH in
+        linux:x86_64) echo linux_amd64 ;;
+        linux:aarch64) echo linux_arm64 ;;
+        macos:x86_64) echo darwin_amd64 ;;
+        macos:aarch64) echo darwin_arm64 ;;
+        *) return 1 ;;
+    esac
+}
+
+# install_bin ORIGEN NOMBRE: copia un ejecutable a LOCAL_BIN.
+install_bin() {
+    mkdir -p "$LOCAL_BIN" || return 1
+    cp "$1" "$LOCAL_BIN/$2.tmp" && chmod 755 "$LOCAL_BIN/$2.tmp" &&
+        mv -f "$LOCAL_BIN/$2.tmp" "$LOCAL_BIN/$2"
+}
+
+install_rg_from_github() {
+    local target name base dir sum
+    target=$(rg_target) || {
+        err "no hay binario de ripgrep para $PLATFORM/$ARCH"
+        return 1
+    }
+    name=ripgrep-$RG_VERSION-$target
+    base=https://github.com/BurntSushi/ripgrep/releases/download/$RG_VERSION/$name.tar.gz
+    ensure_work_dir || return 1
+    dir=$WORK_DIR
+    info "Descargando ripgrep $RG_VERSION ($target) a $LOCAL_BIN"
+    download "$base" "$dir/$name.tar.gz" && download "$base.sha256" "$dir/$name.sha256" || return 1
+    sum=$(cut -d ' ' -f 1 "$dir/$name.sha256")
+    verify_sha256 "$dir/$name.tar.gz" "$sum" || return 1
+    tar -xzf "$dir/$name.tar.gz" -C "$dir" && install_bin "$dir/$name/rg" rg
+}
+
+install_fzf_from_github() {
+    local target name base dir sum
+    target=$(fzf_target) || {
+        err "no hay binario de fzf para $PLATFORM/$ARCH"
+        return 1
+    }
+    name=fzf-$FZF_VERSION-$target.tar.gz
+    base=https://github.com/junegunn/fzf/releases/download/v$FZF_VERSION
+    ensure_work_dir || return 1
+    dir=$WORK_DIR
+    info "Descargando fzf $FZF_VERSION ($target) a $LOCAL_BIN"
+    download "$base/$name" "$dir/$name" &&
+        download "$base/fzf_${FZF_VERSION}_checksums.txt" "$dir/fzf-checksums.txt" || return 1
+    sum=$(grep " $name\$" "$dir/fzf-checksums.txt" | cut -d ' ' -f 1)
+    if [ -z "$sum" ]; then
+        err "$name no aparece en fzf_${FZF_VERSION}_checksums.txt"
+        return 1
+    fi
+    verify_sha256 "$dir/$name" "$sum" || return 1
+    mkdir -p "$dir/fzf" && tar -xzf "$dir/$name" -C "$dir/fzf" && install_bin "$dir/fzf/fzf" fzf
+}
+
+# tool_ok CMD MINIMA: éxito si CMD existe y su versión es >= MINIMA.
+tool_ok() {
+    local ver
+    have "$1" || return 1
+    ver=$(tool_version "$1")
+    [ -n "$ver" ] && version_ge "$ver" "$2"
+}
+
+# Si tras los paquetes rg o fzf faltan o son viejos (el fzf de Ubuntu 22.04
+# es 0.29), instala el binario oficial en ~/.local/bin.
+ensure_search_tools() {
+    tool_ok rg "$RG_MIN" || install_rg_from_github || err "no se pudo instalar ripgrep desde GitHub"
+    tool_ok fzf "$FZF_MIN" || install_fzf_from_github || err "no se pudo instalar fzf desde GitHub"
+    hash -r
+}
+
 # Herramientas que el propio instalador necesita para descargar.
 bootstrap_ids() {
     local ids='' c
@@ -615,9 +756,12 @@ run_install() {
     fi
     info "Plan de instalación"
     [ -n "$pkgs" ] && printf '  paquetes (%s): %s\n' "$PKG_MGR" "$pkgs"
+    printf '  rg y fzf: si faltan o son viejos tras los paquetes, binario oficial de GitHub en %s\n' "$LOCAL_BIN"
     confirm "¿Continuar?" || die "instalación cancelada"
     [ -n "$pkgs" ] && setup_sudo
     install_packages "$pkgs" || true
+    hash -r
+    ensure_search_tools
 }
 
 main() {
