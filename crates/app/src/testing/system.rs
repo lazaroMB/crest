@@ -6,10 +6,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use domain::conversation::SessionId;
+use domain::conversation::{SessionId, StopReason, Usage};
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use serde_json::Value;
 
@@ -20,6 +21,7 @@ use crate::ports::plugin::{
     PluginHostPort, PluginOutput,
 };
 use crate::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
+use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
 /// recorded data from the next assertion.
@@ -870,6 +872,145 @@ mod plugin_tests {
                     args: json!(2)
                 },
                 PluginInvocation::Hook(before("t", json!(3))),
+            ]
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TelemetryPort
+// ---------------------------------------------------------------------------
+
+/// A call received by a [`RecordingTelemetry`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TelemetryRecord {
+    /// [`TelemetryPort::turn_started`], with the span it returned.
+    TurnStarted {
+        /// Span handed out.
+        span: SpanId,
+        /// What was reported.
+        turn: TurnSpan,
+    },
+    /// [`TelemetryPort::llm_call`].
+    LlmCall(LlmCallRecord),
+    /// [`TelemetryPort::tool_call`].
+    ToolCall(ToolCallRecord),
+    /// [`TelemetryPort::turn_finished`].
+    TurnFinished {
+        /// Span closed.
+        span: SpanId,
+        /// Total usage of the turn.
+        usage: Usage,
+        /// Stop reason, `None` when the turn failed.
+        stop_reason: Option<StopReason>,
+    },
+}
+
+/// [`TelemetryPort`] that records every call; spans are numbered 1, 2, ...
+#[derive(Debug, Default)]
+pub struct RecordingTelemetry {
+    next_span: AtomicU64,
+    records: Mutex<Vec<TelemetryRecord>>,
+}
+
+impl RecordingTelemetry {
+    /// Creates an empty recorder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Calls received so far, in order.
+    #[must_use]
+    pub fn records(&self) -> Vec<TelemetryRecord> {
+        lock(&self.records).clone()
+    }
+
+    fn record(&self, record: TelemetryRecord) {
+        lock(&self.records).push(record);
+    }
+}
+
+impl TelemetryPort for RecordingTelemetry {
+    fn turn_started(&self, turn: TurnSpan) -> SpanId {
+        let span = SpanId(self.next_span.fetch_add(1, Ordering::Relaxed) + 1);
+        self.record(TelemetryRecord::TurnStarted { span, turn });
+        span
+    }
+
+    fn llm_call(&self, record: LlmCallRecord) {
+        self.record(TelemetryRecord::LlmCall(record));
+    }
+
+    fn tool_call(&self, record: ToolCallRecord) {
+        self.record(TelemetryRecord::ToolCall(record));
+    }
+
+    fn turn_finished(&self, span: SpanId, usage: Usage, stop_reason: Option<StopReason>) {
+        self.record(TelemetryRecord::TurnFinished {
+            span,
+            usage,
+            stop_reason,
+        });
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use domain::conversation::TurnId;
+    use domain::model::{ModelId, ModelRole};
+
+    use super::*;
+
+    fn turn() -> TurnSpan {
+        TurnSpan {
+            session_id: SessionId::new(),
+            turn_id: TurnId::new(),
+            role: ModelRole::Main,
+            model: ModelId::new("claude-sonnet-5-5"),
+        }
+    }
+
+    #[test]
+    fn spans_are_incremental() {
+        let telemetry = RecordingTelemetry::new();
+        assert_eq!(telemetry.turn_started(turn()), SpanId(1));
+        assert_eq!(telemetry.turn_started(turn()), SpanId(2));
+    }
+
+    #[test]
+    fn records_calls_in_order() {
+        let telemetry: Arc<RecordingTelemetry> = Arc::new(RecordingTelemetry::new());
+        let port: Arc<dyn TelemetryPort> = telemetry.clone();
+        let t = turn();
+        let span = port.turn_started(t.clone());
+        let tool = ToolCallRecord {
+            parent: span,
+            name: "grep".into(),
+            duration_ms: 3,
+            ok: false,
+        };
+        port.tool_call(tool.clone());
+        let llm = LlmCallRecord {
+            parent: span,
+            model: ModelId::new("m"),
+            usage: Usage::default(),
+            latency_ms: 10,
+            error: Some("overloaded".into()),
+        };
+        port.llm_call(llm.clone());
+        port.turn_finished(span, Usage::default(), None);
+        assert_eq!(
+            telemetry.records(),
+            [
+                TelemetryRecord::TurnStarted { span, turn: t },
+                TelemetryRecord::ToolCall(tool),
+                TelemetryRecord::LlmCall(llm),
+                TelemetryRecord::TurnFinished {
+                    span,
+                    usage: Usage::default(),
+                    stop_reason: None
+                },
             ]
         );
     }
