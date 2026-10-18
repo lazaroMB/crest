@@ -7,6 +7,9 @@
 //! real file system produces: [`InMemoryFs::with_escaping_link`] marks a
 //! path as a symlink that resolves outside the workspace, and
 //! [`InMemoryFs::set_file`] changes a file behind the use case's back.
+//!
+//! Diffs of prepared changes come from [`unified_diff`], a simple stand-in
+//! for the adapter's `similar`-based diff.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -16,7 +19,7 @@ use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceR
 
 use crate::ports::fs::{
     EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, MAX_READ_BYTES,
-    PendingChange, ReadFileRequest, WriteFileRequest,
+    PendingChange, ReadFileRequest, WriteFileRequest, replace_unique,
 };
 
 /// A workspace held in memory. Directories are implied by the files below
@@ -220,17 +223,143 @@ impl FileSystemPort for InMemoryFs {
         Ok(files.contains_key(path) || is_dir(&files, path))
     }
 
-    async fn prepare_edit(&self, _request: EditFileRequest) -> Result<PendingChange, FsError> {
-        Err(FsError::Io("prepare_edit is not supported yet".into()))
+    async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
+        let path = request.path;
+        self.check_access(&path)?;
+        let files = self.lock();
+        check_writable(&files, &path)?;
+        let original = match files.get(&path) {
+            Some(bytes) => as_text(bytes).ok_or_else(|| FsError::Binary { path: path.clone() })?,
+            None => return Err(FsError::NotFound { path }),
+        };
+        let new_content = replace_unique(original, &request.old, &request.new)?;
+        let diff = unified_diff(&path, Some(original), &new_content);
+        Ok(PendingChange::new(
+            path,
+            Some(original.to_owned()),
+            new_content,
+            diff,
+        ))
     }
 
-    async fn prepare_write(&self, _request: WriteFileRequest) -> Result<PendingChange, FsError> {
-        Err(FsError::Io("prepare_write is not supported yet".into()))
+    async fn prepare_write(&self, request: WriteFileRequest) -> Result<PendingChange, FsError> {
+        let path = request.path;
+        self.check_access(&path)?;
+        let files = self.lock();
+        check_writable(&files, &path)?;
+        let original = match files.get(&path) {
+            Some(bytes) => Some(
+                as_text(bytes)
+                    .ok_or_else(|| FsError::Binary { path: path.clone() })?
+                    .to_owned(),
+            ),
+            None => None,
+        };
+        let diff = unified_diff(&path, original.as_deref(), &request.content);
+        Ok(PendingChange::new(path, original, request.content, diff))
     }
 
-    async fn apply(&self, _change: PendingChange) -> Result<FileChange, FsError> {
-        Err(FsError::Io("apply is not supported yet".into()))
+    async fn apply(&self, change: PendingChange) -> Result<FileChange, FsError> {
+        let path = change.path();
+        self.check_access(path)?;
+        let mut files = self.lock();
+        check_writable(&files, path)?;
+        let current = files.get(path).map(Vec::as_slice);
+        if current != change.original().map(str::as_bytes) {
+            return Err(FsError::Stale { path: path.clone() });
+        }
+        files.insert(path.clone(), change.new_content().as_bytes().to_vec());
+        Ok(change.to_change())
     }
+}
+
+/// Fails when `path` cannot hold a file: it is a directory, or one of its
+/// ancestors is a file.
+fn check_writable(
+    files: &BTreeMap<WorkspacePath, Vec<u8>>,
+    path: &WorkspacePath,
+) -> Result<(), FsError> {
+    if is_dir(files, path) {
+        return Err(FsError::IsDirectory { path: path.clone() });
+    }
+    let mut ancestor = path.parent();
+    while let Some(dir) = ancestor {
+        if files.contains_key(&dir) {
+            return Err(FsError::Io(format!("not a directory: {dir}")));
+        }
+        ancestor = dir.parent();
+    }
+    Ok(())
+}
+
+/// Lines of unchanged context around the changed block of [`unified_diff`].
+const DIFF_CONTEXT: usize = 3;
+
+/// A minimal unified diff from `old` (`None` for a new file) to `new`.
+///
+/// It trims the common leading and trailing lines and reports everything
+/// between them as one hunk (all removals, then all additions) with up to
+/// [`DIFF_CONTEXT`] lines of context. That is stable and readable, but not
+/// minimal like the real adapter's, which computes it with `similar`; tests
+/// should assert on the fake's diff only through this format. Identical
+/// contents give an empty diff.
+pub fn unified_diff(path: &WorkspacePath, old: Option<&str>, new: &str) -> String {
+    let old_lines: Vec<&str> = old.map_or_else(Vec::new, |old| old.split_inclusive('\n').collect());
+    let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
+    if old.is_some() && old_lines == new_lines {
+        return String::new();
+    }
+    let prefix = old_lines
+        .iter()
+        .zip(&new_lines)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = old_lines[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let start = prefix.saturating_sub(DIFF_CONTEXT);
+    let old_end = (old_lines.len() - suffix + DIFF_CONTEXT).min(old_lines.len());
+    let new_end = (new_lines.len() - suffix + DIFF_CONTEXT).min(new_lines.len());
+
+    let mut out = match old {
+        Some(_) => format!("--- a/{path}\n+++ b/{path}\n"),
+        None => format!("--- /dev/null\n+++ b/{path}\n"),
+    };
+    out.push_str(&format!(
+        "@@ -{} +{} @@\n",
+        hunk_range(start, old_end - start),
+        hunk_range(start, new_end - start)
+    ));
+    let mut push = |sign: char, line: &str| {
+        out.push(sign);
+        out.push_str(line);
+        if !line.ends_with('\n') {
+            out.push_str("\n\\ No newline at end of file\n");
+        }
+    };
+    for line in &old_lines[start..prefix] {
+        push(' ', line);
+    }
+    for line in &old_lines[prefix..old_lines.len() - suffix] {
+        push('-', line);
+    }
+    for line in &new_lines[prefix..new_lines.len() - suffix] {
+        push('+', line);
+    }
+    for line in &new_lines[new_lines.len() - suffix..new_end] {
+        push(' ', line);
+    }
+    out
+}
+
+/// The `start,len` of a hunk side, 1-based; an empty side names the line
+/// before it, as `diff -u` does.
+fn hunk_range(start: usize, len: usize) -> String {
+    let first = if len == 0 { start } else { start + 1 };
+    format!("{first},{len}")
 }
 
 #[cfg(test)]
@@ -358,5 +487,189 @@ mod tests {
         assert_eq!(fs.file(".env"), None);
         let paths: Vec<_> = fs.snapshot().into_keys().map(|k| k.to_string()).collect();
         assert_eq!(paths, ["README.md", "logo.png", "src/lib.rs"]);
+    }
+
+    fn edit(path: &str, old: &str, new: &str) -> EditFileRequest {
+        EditFileRequest {
+            path: p(path),
+            old: old.into(),
+            new: new.into(),
+        }
+    }
+
+    fn write(path: &str, content: &str) -> WriteFileRequest {
+        WriteFileRequest {
+            path: p(path),
+            content: content.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn edit_is_written_only_when_applied() {
+        let fs = fs();
+        let pending = fs
+            .prepare_edit(edit("src/lib.rs", "two", "2"))
+            .await
+            .unwrap();
+        assert_eq!(pending.new_content(), "one\n2\nthree\n");
+        assert_eq!(
+            pending.diff_unified(),
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three\n"
+        );
+        assert_eq!(fs.file("src/lib.rs").as_deref(), Some("one\ntwo\nthree\n"));
+
+        let change = fs.apply(pending).await.unwrap();
+        assert!(!change.created);
+        assert_eq!(fs.file("src/lib.rs").as_deref(), Some("one\n2\nthree\n"));
+    }
+
+    #[tokio::test]
+    async fn edit_rejects_missing_ambiguous_and_guarded_files() {
+        let fs = fs().with_file("dup.txt", "x x");
+        let cases = [
+            (
+                edit("nope.rs", "a", "b"),
+                FsError::NotFound { path: p("nope.rs") },
+            ),
+            (
+                edit("dup.txt", "x", "y"),
+                FsError::OldNotUnique { count: 2 },
+            ),
+            (edit("dup.txt", "z", "y"), FsError::OldNotFound),
+            (edit("dup.txt", "", "y"), FsError::EmptyOld),
+            (
+                edit("logo.png", "P", "Q"),
+                FsError::Binary {
+                    path: p("logo.png"),
+                },
+            ),
+            (
+                edit("src", "a", "b"),
+                FsError::IsDirectory { path: p("src") },
+            ),
+            (
+                edit(".env", "KEY", "K"),
+                FsError::SensitivePath {
+                    path: p(".env"),
+                    pattern: ".env*".into(),
+                },
+            ),
+        ];
+        for (request, expected) in cases {
+            assert_eq!(fs.prepare_edit(request).await, Err(expected));
+        }
+        let outside = fs.with_escaping_link("link");
+        assert_eq!(
+            outside.prepare_edit(edit("link/a", "a", "b")).await,
+            Err(PathError::OutsideWorkspace {
+                path: "link/a".into()
+            }
+            .into())
+        );
+    }
+
+    #[tokio::test]
+    async fn write_creates_files_with_a_creation_diff() {
+        let fs = fs();
+        let pending = fs
+            .prepare_write(write("docs/new.md", "hi\nthere"))
+            .await
+            .unwrap();
+        assert!(pending.creates());
+        assert_eq!(
+            pending.diff_unified(),
+            "--- /dev/null\n+++ b/docs/new.md\n@@ -0,0 +1,2 @@\n+hi\n+there\n\\ No newline at end of file\n"
+        );
+        let change = fs.apply(pending).await.unwrap();
+        assert!(change.created);
+        assert_eq!(fs.file("docs/new.md").as_deref(), Some("hi\nthere"));
+    }
+
+    #[tokio::test]
+    async fn write_overwrites_with_a_diff_against_the_current_content() {
+        let fs = fs();
+        let pending = fs
+            .prepare_write(write("src/lib.rs", "one\n"))
+            .await
+            .unwrap();
+        assert_eq!(pending.original(), Some("one\ntwo\nthree\n"));
+        assert_eq!(
+            pending.diff_unified(),
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,1 @@\n one\n-two\n-three\n"
+        );
+        let same = fs
+            .prepare_write(write("src/lib.rs", "one\ntwo\nthree\n"))
+            .await;
+        assert_eq!(same.unwrap().diff_unified(), "");
+    }
+
+    #[tokio::test]
+    async fn write_rejects_guarded_paths() {
+        let fs = fs();
+        let cases = [
+            (write("src", "x"), FsError::IsDirectory { path: p("src") }),
+            (
+                write("logo.png", "x"),
+                FsError::Binary {
+                    path: p("logo.png"),
+                },
+            ),
+            (
+                write("src/lib.rs/x", "x"),
+                FsError::Io("not a directory: src/lib.rs".into()),
+            ),
+            (
+                write("keys/id_rsa", "x"),
+                FsError::SensitivePath {
+                    path: p("keys/id_rsa"),
+                    pattern: "id_rsa*".into(),
+                },
+            ),
+        ];
+        for (request, expected) in cases {
+            assert_eq!(fs.prepare_write(request).await, Err(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_detects_stale_changes() {
+        let fs = fs();
+        let edit = fs
+            .prepare_edit(edit("src/lib.rs", "one", "1"))
+            .await
+            .unwrap();
+        fs.set_file("src/lib.rs", "changed\n");
+        assert_eq!(
+            fs.apply(edit).await,
+            Err(FsError::Stale {
+                path: p("src/lib.rs")
+            })
+        );
+        assert_eq!(fs.file("src/lib.rs").as_deref(), Some("changed\n"));
+
+        let create = fs.prepare_write(write("new.txt", "a")).await.unwrap();
+        fs.set_file("new.txt", "b");
+        assert_eq!(
+            fs.apply(create).await,
+            Err(FsError::Stale { path: p("new.txt") })
+        );
+
+        let overwrite = fs.prepare_write(write("new.txt", "c")).await.unwrap();
+        fs.remove_file("new.txt");
+        assert_eq!(
+            fs.apply(overwrite).await,
+            Err(FsError::Stale { path: p("new.txt") })
+        );
+    }
+
+    #[test]
+    fn diff_keeps_only_nearby_context() {
+        let old: String = (1..=10).map(|n| format!("{n}\n")).collect();
+        let new = old.replace("5\n", "five\n");
+        let diff = unified_diff(&p("n.txt"), Some(&old), &new);
+        assert_eq!(
+            diff,
+            "--- a/n.txt\n+++ b/n.txt\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n"
+        );
     }
 }
