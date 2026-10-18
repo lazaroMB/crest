@@ -35,6 +35,7 @@ use futures::future::BoxFuture;
 
 use crate::client::{AnthropicClient, ApiKey, ClientConfig};
 use crate::request;
+use crate::server_tools::ServerToolOptions;
 use crate::wire::MessagesRequest;
 
 /// Retry limits and backoff.
@@ -111,6 +112,7 @@ pub struct AnthropicLlm {
     client: AnthropicClient,
     policy: RetryPolicy,
     clock: Arc<dyn Clock>,
+    server_tools: ServerToolOptions,
 }
 
 impl std::fmt::Debug for AnthropicLlm {
@@ -118,6 +120,7 @@ impl std::fmt::Debug for AnthropicLlm {
         f.debug_struct("AnthropicLlm")
             .field("client", &self.client)
             .field("policy", &self.policy)
+            .field("server_tools", &self.server_tools)
             .finish_non_exhaustive()
     }
 }
@@ -130,6 +133,7 @@ impl AnthropicLlm {
             client,
             policy: RetryPolicy::default(),
             clock: Arc::new(TokioClock),
+            server_tools: ServerToolOptions::default(),
         }
     }
 
@@ -148,6 +152,14 @@ impl AnthropicLlm {
     #[must_use]
     pub fn with_policy(mut self, policy: RetryPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Replaces the options written on every web search and web fetch
+    /// tool the adapter sends (domain filters, location, fetch limits).
+    #[must_use]
+    pub fn with_server_tool_options(mut self, options: ServerToolOptions) -> Self {
+        self.server_tools = options;
         self
     }
 
@@ -247,7 +259,8 @@ impl Run {
             });
             return;
         };
-        let body = request::build(&self.req, &model);
+        let mut body = request::build(&self.req, &model);
+        self.llm.server_tools.apply(&mut body);
         let err = match try_model(&self.llm.client, &body).await {
             Ok((held, stream)) => {
                 self.queue.extend(held.into_iter().map(Ok));

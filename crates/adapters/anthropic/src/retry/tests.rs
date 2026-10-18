@@ -310,3 +310,34 @@ fn backoff_is_exponential_capped_and_jittered() {
     let jitter = TokioClock.jitter();
     assert!((0.0..=1.0).contains(&jitter));
 }
+
+#[tokio::test]
+async fn server_tool_options_are_sent_with_the_request() {
+    use application::ports::llm::ServerTool;
+
+    use crate::server_tools::{DomainFilter, ServerToolOptions, WebSearchOptions};
+
+    let Setup { server, llm, .. } = setup(1).await;
+    let llm = llm.with_server_tool_options(ServerToolOptions {
+        web_search: WebSearchOptions {
+            domains: DomainFilter::Allow(vec!["docs.rs".into()]),
+            user_location: None,
+        },
+        ..ServerToolOptions::default()
+    });
+    for_model("claude-opus-5-5")
+        .and(body_partial_json(json!({"tools": [{
+            "type": "web_search_20260318",
+            "name": "web_search",
+            "max_uses": 2,
+            "allowed_domains": ["docs.rs"]
+        }]})))
+        .respond_with(ok_from("claude-opus-5-5"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut req = request("claude-opus-5-5", &[]);
+    req.server_tools = vec![ServerTool::WebSearch { max_uses: Some(2) }];
+    let items = collect(&llm, req).await;
+    assert_eq!(assemble(items), vec![ContentPart::text("Hello!")]);
+}
