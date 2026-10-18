@@ -17,6 +17,7 @@ use futures::FutureExt;
 
 use super::budget::ResultBudget;
 use super::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
+use crate::ports::fs::{FileContent, FileSystemPort, FsError, ReadFileRequest};
 use crate::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit, GrepRequest,
     ListFilesRequest, SearchError, TreeNode, TreeNodeKind, TreeRequest,
@@ -389,6 +390,95 @@ impl TypedTool for TreeTool {
     }
 }
 
+/// The message the model gets for a failed file operation.
+fn fs_error_message(err: &FsError) -> String {
+    match err {
+        FsError::Path(err) => path_error_message(err),
+        FsError::NotFound { path } => {
+            format!("file not found: {path}. Check the path with `find_file` or `list_files`")
+        }
+        FsError::OldNotFound => "`old` was not found in the file; read the file again and copy \
+             the exact text, including whitespace and indentation"
+            .to_owned(),
+        FsError::OldNotUnique { count } => format!(
+            "`old` appears {count} times in the file; include more surrounding context so it \
+             matches exactly once"
+        ),
+        other => other.to_string(),
+    }
+}
+
+const READ_FILE_DESCRIPTION: &str = "\
+Reads a text file of the workspace. Lines are returned numbered as `cat -n` does (line \
+number, a tab, the line); the numbers are not part of the file.
+- `path` is relative to the workspace root.
+- Returns up to 2000 lines by default. For long files pass `offset` (1-based first line) and \
+`limit` (number of lines) to read a range; a cut result ends with the offset to continue.
+- Binary files are rejected, and files over 2 MB can only be read with an explicit range.
+- Read a file before editing it, so `edit_file` gets the exact current text.";
+
+/// `read_file`: a numbered slice of a text file.
+pub struct ReadFileTool {
+    fs: Arc<dyn FileSystemPort>,
+    budget: ResultBudget,
+}
+
+impl ReadFileTool {
+    /// The tool over `fs`, cutting results to `budget`.
+    #[must_use]
+    pub fn new(fs: Arc<dyn FileSystemPort>, budget: ResultBudget) -> Self {
+        Self { fs, budget }
+    }
+}
+
+fn render_content(content: &FileContent, budget: ResultBudget) -> String {
+    if content.lines.is_empty() {
+        return if content.total_lines == 0 {
+            format!("[{} is empty]", content.path)
+        } else {
+            format!(
+                "[offset {} is past the end of {} ({} lines)]",
+                content.start_line, content.path, content.total_lines
+            )
+        };
+    }
+    inner_budget(budget).truncate_text(content.render_numbered().trim_end_matches('\n'))
+}
+
+#[async_trait]
+impl TypedTool for ReadFileTool {
+    type Input = ReadFileRequest;
+
+    fn name(&self) -> &str {
+        "read_file"
+    }
+
+    fn description(&self) -> &str {
+        READ_FILE_DESCRIPTION
+    }
+
+    fn effect(&self, _input: &ReadFileRequest) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ReadFileRequest,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let subject = input.path.to_string();
+        let fs = Arc::clone(&self.fs);
+        let budget = self.budget;
+        let run = async move {
+            Ok(match fs.read_file(input).await {
+                Ok(content) => ToolOutput::text(render_content(&content, budget)),
+                Err(err) => ToolOutput::error(fs_error_message(&err)),
+            })
+        };
+        Ok(PreparedCall::new(subject, run.boxed()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -540,6 +630,58 @@ mod tests {
                 .starts_with("PathOutsideWorkspace: `link`"),
             "{}",
             out.text_content()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_numbers_lines_and_supports_ranges() {
+        let tool = Typed(ReadFileTool::new(workspace(), budget()));
+        let (subject, out) = call(&tool, json!({ "path": "src/lib.rs" })).await;
+        assert_eq!(subject, "src/lib.rs");
+        assert_eq!(
+            out.text_content(),
+            "     1\tpub mod tools;\n     2\t\n     3\tfn main() {}"
+        );
+        let input = json!({ "path": "src/lib.rs", "offset": 2, "limit": 1 });
+        let (_, out) = call(&tool, input).await;
+        assert_eq!(
+            out.text_content(),
+            "     2\t\n[showing lines 2-2 of 3; continue with offset=3]"
+        );
+        let (_, out) = call(&tool, json!({ "path": "src/lib.rs", "offset": 9 })).await;
+        assert_eq!(
+            out.text_content(),
+            "[offset 9 is past the end of src/lib.rs (3 lines)]"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_reports_missing_and_sensitive_files() {
+        let fs = workspace();
+        fs.set_file(".env", "SECRET=1\n");
+        let tool = Typed(ReadFileTool::new(fs, budget()));
+        let (_, out) = call(&tool, json!({ "path": "nope.rs" })).await;
+        assert!(out.is_error);
+        assert!(out.text_content().starts_with("file not found: nope.rs."));
+        let (_, out) = call(&tool, json!({ "path": ".env" })).await;
+        assert!(out.is_error);
+        assert!(
+            out.text_content().contains("denied"),
+            "{}",
+            out.text_content()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_paths_outside_the_workspace_as_input() {
+        let tool = Typed(ReadFileTool::new(workspace(), budget()));
+        let err = tool
+            .prepare(json!({ "path": "../etc/passwd" }), &ctx())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, ToolError::InvalidInput { message, .. } if message.contains("outside the workspace")),
+            "{err:?}"
         );
     }
 }
