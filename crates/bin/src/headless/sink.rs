@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use domain::block::{Block, BlockId, BlockKind, ToolStatus};
+use domain::block::{Block, BlockId, BlockKind, Cell, TableSpec, ToolStatus};
 use domain::conversation::{StopReason, Usage};
 
 use super::terminal::{Style, Terminal, Writer};
@@ -115,6 +115,9 @@ impl EventSink for HeadlessSink {
 
 fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
     match &block.kind {
+        // Streamed text starts empty and comes as deltas; a text block with
+        // content is a message of its own (a gate of a flow).
+        BlockKind::Text { markdown } if !markdown.is_empty() => w.line(None, markdown.trim_end()),
         BlockKind::Text { .. } => w.break_line(),
         BlockKind::Thinking { .. } => {}
         BlockKind::ToolCall { name, summary, .. } => {
@@ -139,10 +142,7 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
         }
         BlockKind::Error { message, .. } => w.line(Some(Style::Red), &format!("error: {message}")),
         BlockKind::Chart(chart) => w.line(Some(Style::Dim), &format!("[gráfica: {}]", chart.title)),
-        BlockKind::Table(table) => w.line(
-            Some(Style::Dim),
-            &format!("[tabla: {} filas]", table.rows.len()),
-        ),
+        BlockKind::Table(table) => print_table(w, table),
         BlockKind::Mermaid(_) => w.line(Some(Style::Dim), "[diagrama mermaid]"),
         BlockKind::StageHeader {
             stage,
@@ -155,6 +155,26 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             );
         }
         BlockKind::Custom { .. } | BlockKind::Sources { .. } | BlockKind::Image { .. } => {}
+    }
+}
+
+fn cell_text(cell: &Cell) -> String {
+    match cell {
+        Cell::Null => String::new(),
+        Cell::Bool(true) => "sí".to_owned(),
+        Cell::Bool(false) => "no".to_owned(),
+        Cell::Number(n) => n.to_string(),
+        Cell::Text(text) => text.replace('\n', " "),
+    }
+}
+
+/// One line per row, cells separated by `|`, the header in bold.
+fn print_table(w: &mut Writer<'_>, table: &TableSpec) {
+    let header: Vec<_> = table.columns.iter().map(|c| c.name.as_str()).collect();
+    w.line(Some(Style::Bold), &format!("  {}", header.join(" | ")));
+    for row in &table.rows {
+        let cells: Vec<_> = row.iter().map(cell_text).collect();
+        w.line(None, &format!("  {}", cells.join(" | ")));
     }
 }
 
@@ -306,6 +326,28 @@ mod tests {
              \x20 diff a.rs\n  @@ -1 +1 @@\n  -a\n  +b\n\
              aviso: sin fzf\n\
              tokens: 10 entrada, 5 salida, caché 0 leídos / 0 escritos\n"
+        );
+    }
+
+    #[test]
+    fn messages_and_tables_are_printed_whole() {
+        use domain::block::Column;
+        let (term, buf) = terminal(false);
+        let sink = HeadlessSink::new(term);
+        sink.emit(DomainEvent::BlockAdded {
+            block: Block::new(BlockKind::Text {
+                markdown: "¿Empezamos?\n".into(),
+            }),
+        });
+        sink.emit(DomainEvent::BlockAdded {
+            block: Block::new(BlockKind::Table(TableSpec {
+                columns: vec![Column::new("Esperado"), Column::new("Cumple")],
+                rows: vec![vec![Cell::Text("p95 < 20ms".into()), Cell::Bool(true)]],
+            })),
+        });
+        assert_eq!(
+            buf.text(),
+            "¿Empezamos?\n  Esperado | Cumple\n  p95 < 20ms | sí\n"
         );
     }
 
