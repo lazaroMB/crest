@@ -13,6 +13,7 @@
 
 pub mod guard;
 mod read;
+mod write;
 
 use application::ports::fs::{
     EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
@@ -63,8 +64,8 @@ impl FileSystemPort for LocalFs {
         }
     }
 
-    async fn prepare_edit(&self, _request: EditFileRequest) -> Result<PendingChange, FsError> {
-        Err(not_implemented("T2.D3"))
+    async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
+        write::prepare_edit(&self.guard, request).await
     }
 
     async fn prepare_write(&self, _request: WriteFileRequest) -> Result<PendingChange, FsError> {

@@ -11,6 +11,7 @@ publish.workspace = true
 application.workspace = true
 async-trait.workspace = true
 domain.workspace = true
+similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
