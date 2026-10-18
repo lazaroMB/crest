@@ -30,6 +30,7 @@ use crate::detect::{Tool, ToolReport};
 
 pub mod detect;
 pub mod files;
+pub mod grep;
 pub mod process;
 
 #[cfg(test)]

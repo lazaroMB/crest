@@ -182,6 +182,8 @@ fn is_pattern_error(stderr: &str) -> bool {
     stderr.contains("regex parse error")
         || stderr.contains("error parsing glob")
         || stderr.contains("regex could not be compiled")
+        || stderr.contains("not allowed in a regex")
+        || stderr.contains("exceeds size limit")
 }
 
 /// A path printed by `rg --files`; non-UTF-8 or invalid ones are skipped.
