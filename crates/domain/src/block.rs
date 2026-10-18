@@ -110,6 +110,8 @@ pub enum BlockKind {
     Table(TableSpec),
     /// A chart (tool `show_chart`); the UI can toggle it to a table.
     Chart(ChartSpec),
+    /// A proposed file change (`edit_file`, `write_file`).
+    Diff(DiffSpec),
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -376,6 +378,35 @@ pub struct Series {
     pub values: Vec<f64>,
 }
 
+/// A file change. The adapter computes the diff; this is only data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiffSpec {
+    /// Path of the file, relative to the workspace.
+    pub path: String,
+    /// Previous content; absent when the file is new.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_text: Option<String>,
+    /// New content.
+    pub new_text: String,
+    /// Unified diff between both.
+    pub unified: String,
+    /// Approval state when the change needs the user's decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalState>,
+}
+
+/// Decision of the user on a [`DiffSpec`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalState {
+    /// Waiting for the user.
+    Pending,
+    /// Accepted.
+    Approved,
+    /// Rejected.
+    Rejected,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,5 +645,25 @@ mod tests {
             ]
         );
         assert_eq!(table.validate(), Ok(()));
+    }
+
+    #[test]
+    fn diff_block_roundtrip() {
+        let new_file = DiffSpec {
+            path: "src/lib.rs".into(),
+            old_text: None,
+            new_text: "fn a() {}\n".into(),
+            unified: "+fn a() {}\n".into(),
+            approval: Some(ApprovalState::Pending),
+        };
+        let value = roundtrip(&Block::new(BlockKind::Diff(new_file.clone())));
+        assert_eq!(value["type"], "diff");
+        assert_eq!(value["approval"], "pending");
+        assert!(value.get("old_text").is_none());
+        roundtrip(&Block::new(BlockKind::Diff(DiffSpec {
+            old_text: Some(String::new()),
+            approval: None,
+            ..new_file
+        })));
     }
 }
