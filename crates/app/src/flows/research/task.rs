@@ -248,7 +248,8 @@ impl NodeTask {
             problem,
             feedback,
             ctx.clone(),
-        );
+        )
+        .with_stages(Arc::clone(&self.stages));
         let outcome = self.node.run(&mut node_ctx).await?;
         put(&ctx, KEY_STATE, node_ctx.into_state())?;
 
@@ -415,6 +416,56 @@ mod tests {
         let err = g.execute_session(&mut s).await.unwrap_err();
         assert!(err.to_string().contains("not an earlier stage"), "{err}");
         assert!(sink.kinds().contains(&"block_added".to_owned()));
+    }
+
+    /// Goes back to the first of Datos and Observación the graph has.
+    struct NeedsData;
+
+    #[async_trait]
+    impl ResearchNode for NeedsData {
+        fn stage(&self) -> Stage {
+            Stage::Analysis
+        }
+
+        async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
+            Ok(NodeOutcome::Back {
+                to: ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
+                reason: format!("{} etapas", ctx.stages().len()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn nodes_see_the_stages_of_their_graph() {
+        let sink = Arc::new(RecordingSink::new());
+        let deps = NodeDeps::new(
+            Arc::new(ScriptedLlm::new([])),
+            ModelPolicy::default(),
+            Arc::clone(&sink) as _,
+        );
+        let stages: Arc<[Stage]> = [Stage::Observation, Stage::Analysis].into();
+        let g = GraphBuilder::new("research")
+            .add_task(Arc::new(NodeTask::new(
+                Arc::new(FakeNode::new(Stage::Observation)),
+                deps.clone(),
+                Arc::clone(&stages),
+            )))
+            .add_task(Arc::new(NodeTask::new(
+                Arc::new(NeedsData),
+                deps,
+                Arc::clone(&stages),
+            )))
+            .add_edge(task_id(Stage::Observation), task_id(Stage::Analysis))
+            .build()
+            .unwrap();
+        let mut s = session(Stage::Analysis);
+        g.execute_session(&mut s).await.unwrap();
+        assert_eq!(s.current_task_id, task_id(Stage::Observation));
+        let journal = load_state(&s.context).journal;
+        assert!(
+            journal.last().unwrap().text.contains("2 etapas"),
+            "{journal:?}"
+        );
     }
 
     #[tokio::test]
