@@ -10,8 +10,11 @@
 //!
 //! A `before_tool` hook gets `{ type, name, input }` and returns `nil` to go
 //! on, `{ deny = true, reason = "..." }` to stop the call, or
-//! `{ input = {...} }` to run it with another input. An `after_tool` hook
-//! gets `{ type, name, input, output }`; what it returns is ignored.
+//! `{ input = {...} }` to run it with another input; the next hook sees the
+//! rewritten input. An `after_tool` hook gets `{ type, name, input, output }`
+//! once a call has run, with `output = { text, is_error }`; what it returns
+//! is ignored. A hook that raises an error or hits the instruction limit is
+//! reported as a warning and the call goes on.
 
 use std::sync::Arc;
 
