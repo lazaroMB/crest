@@ -84,6 +84,31 @@ impl WorkspaceGuard {
         Ok((path, canonical))
     }
 
+    /// Resolves `input` to the place a write would land, which may not exist.
+    ///
+    /// The nearest existing ancestor is canonicalized and the missing tail
+    /// appended, so a missing file in missing nested directories is checked
+    /// against its first real ancestor. Dangling symlinks are followed to
+    /// where they would create the file. Fails with
+    /// [`PathError::OutsideWorkspace`] when the result escapes the root,
+    /// including through an intermediate symlinked directory or a symlinked
+    /// file pointing outside.
+    pub async fn resolve_for_write(
+        &self,
+        input: &str,
+    ) -> Result<(WorkspacePath, PathBuf), FsError> {
+        let path = self.root.resolve(input)?;
+        let joined = self.root.join(&path);
+        let target =
+            resolve_lenient(&joined)
+                .await?
+                .ok_or_else(|| PathError::OutsideWorkspace {
+                    path: input.to_owned(),
+                })?;
+        self.ensure_inside(input, &target)?;
+        Ok((path, target))
+    }
+
     /// Fails with [`PathError::OutsideWorkspace`] unless `canonical` is the
     /// root or below it. [`Path::starts_with`] compares whole components,
     /// so `/ws-other` is not inside `/ws`.
@@ -96,6 +121,64 @@ impl WorkspaceGuard {
                 path: input.to_owned(),
             }
             .into())
+        }
+    }
+}
+
+/// How many dangling symlinks [`resolve_lenient`] follows, as Linux's
+/// `MAXSYMLINKS`.
+const MAX_SYMLINK_HOPS: usize = 40;
+
+/// Canonicalizes `path` even when its last components do not exist: the
+/// nearest existing ancestor is canonicalized and the missing names are
+/// appended. A dangling symlink is replaced by its target and resolution
+/// starts over.
+///
+/// Returns `None` when the result cannot be trusted to stay put: a missing
+/// tail that contains `..` (which the kernel would resolve against the
+/// symlink targets, not lexically) or too many dangling symlinks.
+async fn resolve_lenient(path: &Path) -> Result<Option<PathBuf>, FsError> {
+    let mut current = path.to_path_buf();
+    // Missing names, innermost first.
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut hops = 0;
+    loop {
+        match tokio::fs::canonicalize(&current).await {
+            Ok(canonical) => {
+                return Ok(Some(tail.iter().rev().fold(canonical, |p, n| p.join(n))));
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io_error(&current, &e)),
+        }
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                hops += 1;
+                if hops > MAX_SYMLINK_HOPS {
+                    return Ok(None);
+                }
+                let link = tokio::fs::read_link(&current)
+                    .await
+                    .map_err(|e| io_error(&current, &e))?;
+                current = match current.parent() {
+                    Some(parent) => parent.join(link),
+                    None => link,
+                };
+            }
+            Ok(_) => {
+                return Err(FsError::Io(format!(
+                    "{}: cannot be canonicalized",
+                    current.display()
+                )));
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                let (Some(name), Some(parent)) = (current.file_name(), current.parent()) else {
+                    // Ends in `..` or is `/`: refuse to guess.
+                    return Ok(None);
+                };
+                tail.push(name.to_owned());
+                current = parent.to_path_buf();
+            }
+            Err(e) => return Err(io_error(&current, &e)),
         }
     }
 }
@@ -254,5 +337,75 @@ mod tests {
         std::fs::write(sibling.join("x"), "x").unwrap();
         symlink(sibling.join("x"), f.ws.join("x")).unwrap();
         assert!(is_outside(f.guard.resolve_existing("x").await));
+    }
+
+    #[tokio::test]
+    async fn write_resolves_new_file_in_new_nested_dirs() {
+        let f = fixture();
+        let (path, target) = f.guard.resolve_for_write("a/b/c/new.txt").await.unwrap();
+        assert_eq!(path.as_str(), "a/b/c/new.txt");
+        assert_eq!(target, f.ws.join("a/b/c/new.txt"));
+    }
+
+    #[tokio::test]
+    async fn write_resolves_existing_file() {
+        let f = fixture();
+        std::fs::write(f.ws.join("a.txt"), "a").unwrap();
+        let (_, target) = f.guard.resolve_for_write("a.txt").await.unwrap();
+        assert_eq!(target, f.ws.join("a.txt"));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_lexical_escape() {
+        let f = fixture();
+        assert!(is_outside(
+            f.guard.resolve_for_write("../outside/new").await
+        ));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_symlinked_directory_component() {
+        let f = fixture();
+        symlink(&f.outside, f.ws.join("out")).unwrap();
+        assert!(is_outside(f.guard.resolve_for_write("out/new.txt").await));
+        assert!(is_outside(
+            f.guard.resolve_for_write("out/x/y/new.txt").await
+        ));
+        assert!(is_outside(f.guard.resolve_for_write("out/secret").await));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_symlinked_file_pointing_outside() {
+        let f = fixture();
+        symlink(f.outside.join("secret"), f.ws.join("link")).unwrap();
+        assert!(is_outside(f.guard.resolve_for_write("link").await));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_dangling_symlink_pointing_outside() {
+        let f = fixture();
+        symlink(f.outside.join("not-yet"), f.ws.join("dangling")).unwrap();
+        assert!(is_outside(f.guard.resolve_for_write("dangling").await));
+        symlink("../outside/missing/new", f.ws.join("relative")).unwrap();
+        assert!(is_outside(f.guard.resolve_for_write("relative").await));
+    }
+
+    #[tokio::test]
+    async fn write_follows_internal_dangling_symlink() {
+        let f = fixture();
+        symlink("real/new.txt", f.ws.join("alias")).unwrap();
+        let (path, target) = f.guard.resolve_for_write("alias").await.unwrap();
+        assert_eq!(path.as_str(), "alias");
+        assert_eq!(target, f.ws.join("real/new.txt"));
+    }
+
+    #[tokio::test]
+    async fn write_rejects_symlink_loops_and_dotdot_tails() {
+        let f = fixture();
+        symlink("loop-b", f.ws.join("loop-a")).unwrap();
+        symlink("loop-a", f.ws.join("loop-b")).unwrap();
+        assert!(f.guard.resolve_for_write("loop-a").await.is_err());
+        symlink("missing/../../outside/x", f.ws.join("tricky")).unwrap();
+        assert!(is_outside(f.guard.resolve_for_write("tricky").await));
     }
 }
