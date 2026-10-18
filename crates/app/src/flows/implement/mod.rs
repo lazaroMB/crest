@@ -1,5 +1,47 @@
 //! The implementation flow: a second graph-flow graph that takes an
-//! approved `plan.json` and runs it task by task.
+//! approved `plan.json` and runs it task by task. Here the agent stops
+//! being creative: it executes, verifies and writes every departure from
+//! the plan to the journal.
+//!
+//! # Steps
+//!
+//! | # | Step | Node | Gate |
+//! | - | ---- | ---- | ---- |
+//! | 1 | Cargar plan | [`LoadNode`](load::LoadNode) | plan and branch, before starting |
+//! | 2 | Implementar tarea | [`ImplementTask`](nodes::implement::ImplementTask) | when the agent says the task is blocked |
+//! | 3 | Pruebas y corrección | [`TestTask`](nodes::test::TestTask) | after 3 failed fixes |
+//! | 4 | Commit | [`CommitTask`](nodes::commit::CommitTask) | when git refuses |
+//! | 5 | Verificar hipótesis | [`VerifyPlan`](nodes::verify::VerifyPlan) | |
+//! | 6 | Reporte y futuro | [`WriteReport`](nodes::report::WriteReport) | before closing |
+//!
+//! Steps 2–4 repeat for each task in dependency order: Commit (or a
+//! skipped task) moves to the next task and goes back to Implementar,
+//! which goes on to Verificar once none is left. Every step is a
+//! checkpoint. At the problem gates the user answers «reintentar» (or
+//! instructions for the agent), «continuar», «saltar», «abortar» or
+//! «volver al spec» ([`gate`]); the last one ends the flow with
+//! [`FlowStatus::BackToSpec`](state::FlowStatus::BackToSpec) so the chat
+//! can reopen the Spec node of the research flow.
+//!
+//! # Assembling
+//!
+//! ```ignore
+//! let deps = ImplementDeps::new(events, fs, shell)
+//!     .with_agent(AgentKit::new(agent_deps, tools, models, permissions));
+//! let graph = ImplementGraphBuilder::new(deps)
+//!     .node(LoadNode::new())
+//!     .node(ImplementTask::new())
+//!     .node(TestTask::new())
+//!     .node(CommitTask::new())
+//!     .node(VerifyPlan::new())
+//!     .node(WriteReport::new())
+//!     .build()?;
+//! let flow = ImplementFlow::start(graph, storage, session_id, plan_path).await?;
+//! flow.run().await?; // stops at the first gate
+//! flow.handle_line("sí").await?;
+//! ```
+//!
+//! # Modules
 //!
 //! - [`builder`]: chains steps into an [`ImplementGraph`](builder::ImplementGraph).
 //! - [`checks`]: running the plan's checks through the shell.
