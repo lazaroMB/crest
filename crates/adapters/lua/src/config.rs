@@ -213,9 +213,11 @@ fn plugin_files(
 
 #[cfg(test)]
 mod tests {
+    use application::cost::CostTracker;
     use application::ports::plugin::{
         HookEvent, HookKind, HookOutcome, KeyAction, KeyMode, KeymapSpec, PluginOutput,
     };
+    use domain::conversation::Usage;
     use domain::model::{ModelId, ModelRole, ResolveRequest, ThinkingConfig};
     use serde_json::{Value, json};
 
@@ -416,6 +418,31 @@ end)
             vm.call_tool("t", &Value::Null).unwrap(),
             PluginOutput::Value(json!("global"))
         );
+    }
+
+    #[test]
+    fn pricing_and_spending_cap_reach_the_cost_tracker() {
+        let fx = Fixture::new();
+        fx.global(
+            r#"app.opt.pricing = {
+                 ["claude-sonnet-5"] = { input = 3, output = 15, cache_read = 0.3, cache_write = 3.75 },
+               }
+               app.opt.max_session_cost = 5"#,
+        )
+        .workspace("app.opt.max_session_cost = 1.5");
+        let (_, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}", config.errors);
+        let tracker = CostTracker::from_options(&config.options).unwrap();
+        assert_eq!(tracker.cap(), Some(1.5));
+        let usage = Usage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            ..Usage::default()
+        };
+        let cost = tracker
+            .pricing()
+            .cost(&ModelId::new("claude-sonnet-5-5"), &usage);
+        assert_eq!(cost, Some(18.0));
     }
 
     #[test]

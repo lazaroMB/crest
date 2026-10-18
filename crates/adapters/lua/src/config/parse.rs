@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
+use application::cost;
 use application::ports::plugin::{AppOptions, McpServerSpec, McpTransport, PluginDiagnostic};
 use domain::model::{ModelId, ModelRole, ModelSpecPatch, RoleConfig, ThinkingConfig};
 use mlua::{Lua, Table};
@@ -160,6 +161,20 @@ fn options(value: Value, report: &mut Report<'_>) -> AppOptions {
                 Some(ms) => out.timeoutlen_ms = Some(ms),
                 None => report.push("app.opt.timeoutlen must be a whole number of milliseconds"),
             },
+            // Kept in `extra` for `CostTracker::from_options`, once valid.
+            cost::PRICING_OPTION | cost::CAP_OPTION => {
+                let checked = if key == cost::CAP_OPTION {
+                    cost::cap_from_json(v).map(drop)
+                } else {
+                    cost::PricingTable::from_json(v).map(drop)
+                };
+                match checked {
+                    Ok(()) => {
+                        out.extra.insert(key.clone(), v.clone());
+                    }
+                    Err(e) => report.push(e.to_string()),
+                }
+            }
             _ => {
                 out.extra.insert(key.clone(), v.clone());
             }
@@ -347,6 +362,37 @@ mod tests {
         assert_eq!(o.theme.as_deref(), Some("tokyonight"));
         assert_eq!(o.timeoutlen_ms, Some(300));
         assert_eq!(o.extra.get("wrap"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn checks_pricing_and_the_spending_cap() {
+        let (declared, diags) = read_code(
+            r#"app.opt.pricing = {
+                 ["claude-sonnet-5"] = { input = 3, output = 15, cache_read = 0.3, cache_write = 3.75 },
+               }
+               app.opt.max_session_cost = 2.5"#,
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        let o = declared.options;
+        assert_eq!(o.extra.get("max_session_cost"), Some(&json!(2.5)));
+        assert_eq!(
+            o.extra["pricing"]["claude-sonnet-5"]["cache_write"],
+            json!(3.75)
+        );
+
+        let (declared, diags) = read_code(
+            r#"app.opt.pricing = { m = { input = 1 } }
+               app.opt.max_session_cost = "mucho""#,
+        );
+        assert!(declared.options.extra.is_empty());
+        let messages: Vec<_> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "app.opt.max_session_cost must be a positive number of USD",
+                "app.opt.pricing[\"m\"]: `output` must be a number (USD per million tokens)",
+            ]
+        );
     }
 
     #[test]
