@@ -250,7 +250,7 @@ pub fn build(scene: &Scene, frame: &Frame, selected: Option<&str>) -> Mesh {
             (l.emissive, l.busy, l.up, l.queued)
         });
         let top = if up {
-            mix(state, if busy { 1.6 } else { 0.55 })
+            mix(state, if busy { 0.8 } else { 0.12 })
         } else {
             mix(DOWN, 1.2)
         };

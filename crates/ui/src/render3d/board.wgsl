@@ -55,7 +55,7 @@ fn fs_scene(i: VsOut) -> SceneOut {
     let ground = vec3<f32>(0.04, 0.05, 0.06);
     let ambient = mix(ground, sky, n.y * 0.5 + 0.5) * cam.params.y;
     let fill = max(dot(n, normalize(vec3<f32>(-0.6, 0.35, -0.5))), 0.0) * 0.18;
-    let lit = i.color * (ambient + diffuse * vec3<f32>(1.0, 0.96, 0.9) + fill)
+    let lit = i.color * (ambient + diffuse * vec3<f32>(0.85, 0.82, 0.77) + fill)
         + vec3<f32>(specular) + i.emissive;
     var o: SceneOut;
     o.color = vec4<f32>(lit, 1.0);

@@ -40,7 +40,7 @@ impl CameraUniform {
         let mut f: Vec<f32> = self.view_proj.iter().flatten().copied().collect();
         f.extend_from_slice(&[self.eye[0], self.eye[1], self.eye[2], 1.0]);
         f.extend_from_slice(&[self.light[0], self.light[1], self.light[2], 0.0]);
-        f.extend_from_slice(&[self.inv_far, 1.0, 0.0, 0.0]);
+        f.extend_from_slice(&[self.inv_far, 0.7, 0.0, 0.0]);
         bytemuck::cast_slice(&f).to_vec()
     }
 }
@@ -483,7 +483,7 @@ impl Gpu {
                 "composite",
                 &lit,
                 &bloom_a,
-                [texel[0], texel[1], 0.0, 0.0, 0.0, 1.1, 0.0, 1.0],
+                [texel[0], texel[1], 0.0, 0.0, 0.0, 0.7, 0.0, 1.0],
             );
             self.targets = Some(Targets {
                 width,
