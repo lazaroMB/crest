@@ -23,6 +23,7 @@ pub const DEFAULT_NODE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub struct ResearchGraph {
     graph: Arc<Graph>,
     stages: Arc<[Stage]>,
+    deps: NodeDeps,
 }
 
 impl std::fmt::Debug for ResearchGraph {
@@ -57,6 +58,11 @@ impl ResearchGraph {
     #[must_use]
     pub fn next_after(&self, stage: Stage) -> Option<Stage> {
         self.stages.iter().copied().find(|s| *s > stage)
+    }
+
+    /// The ports given to the nodes.
+    pub(crate) fn deps(&self) -> &NodeDeps {
+        &self.deps
     }
 
     /// Whether `stage` has a node in this graph.
@@ -149,6 +155,7 @@ impl ResearchGraphBuilder {
         Ok(ResearchGraph {
             graph: Arc::new(graph),
             stages,
+            deps: self.deps,
         })
     }
 }

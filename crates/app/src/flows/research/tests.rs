@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use domain::block::BlockKind;
 use domain::model::ModelPolicy;
-use domain::research::Stage;
+use domain::research::{Phase, Stage};
 use graph_flow::{InMemorySessionStorage, Session, SessionStorage};
 
 use super::builder::{ResearchGraph, ResearchGraphBuilder};
 use super::error::FlowError;
 use super::fake::FakeNode;
-use super::flow::ResearchFlow;
+use super::flow::{FlowReply, ResearchFlow};
 use super::gate::FlowStatus;
 use super::node::{NodeDeps, NodeOutcome};
 use crate::ports::events::DomainEvent;
@@ -273,4 +273,142 @@ async fn start_and_resume_check_the_session() {
     assert!(matches!(again, Err(FlowError::SessionExists(_))));
     let missing = ResearchFlow::resume(fx.graph(), storage, "nope").await;
     assert!(matches!(missing, Err(FlowError::SessionNotFound(_))));
+}
+
+#[tokio::test]
+async fn stage_reports_the_position() {
+    let fx = Fixture::with_one_back();
+    let flow = fx.start().await;
+    flow.run().await.unwrap();
+    let FlowReply::Position(position) = flow.handle_line("/stage").await.unwrap() else {
+        panic!("expected a position");
+    };
+    assert_eq!(position.stage, B);
+    assert_eq!((position.index(), position.total()), (5, 14));
+    assert_eq!(position.phase(), Phase::Discovery);
+    assert_eq!(
+        position.to_string(),
+        "Etapa 5/14: Hipótesis (Descubrimiento) · esperando tu respuesta"
+    );
+}
+
+#[tokio::test]
+async fn back_by_number_reruns_from_that_stage() {
+    let fx = Fixture::with_one_back();
+    let flow = fx.start().await;
+    flow.run().await.unwrap();
+
+    // /back 1 names Intake, which this graph does not have.
+    let err = flow.handle_line("/back 1").await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            FlowError::InvalidBack {
+                stage: Stage::Intake,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    // Ahead of the current stage.
+    assert!(matches!(
+        flow.back(C).await,
+        Err(FlowError::InvalidBack { .. })
+    ));
+
+    let reply = flow.handle_line("/back 2").await.unwrap();
+    assert!(matches!(reply, FlowReply::Status(ref s) if waiting_at(s) == Some(B)));
+    assert_eq!(fx.runs(), [2, 2, 0]);
+    let journal = flow.state().await.unwrap().journal;
+    assert!(
+        journal
+            .iter()
+            .any(|e| e.stage == A && e.text.contains("/back"))
+    );
+}
+
+#[tokio::test]
+async fn skip_only_jumps_over_optional_stages() {
+    let fx = Fixture::with_one_back();
+    let flow = fx.start().await;
+    let err = flow.handle_line("/skip").await.unwrap_err();
+    assert!(matches!(err, FlowError::NotOptional(A)));
+    assert_eq!(
+        err.to_string(),
+        "Observación (2/14) is not optional; only Datos (3) and Prototipo (11) can be skipped"
+    );
+
+    // A graph whose middle node is optional.
+    let fx = Fixture::new(FakeNode::new(B), FakeNode::new(C));
+    let deps = NodeDeps::new(
+        Arc::new(ScriptedLlm::new([])),
+        ModelPolicy::default(),
+        Arc::clone(&fx.sink) as _,
+    );
+    let data = Arc::new(FakeNode::new(Stage::Data));
+    let graph = ResearchGraphBuilder::new(deps)
+        .shared_node(Arc::clone(&fx.a) as _)
+        .shared_node(Arc::clone(&data) as _)
+        .shared_node(Arc::clone(&fx.c) as _)
+        .build()
+        .unwrap();
+    let storage = Arc::clone(&fx.storage) as Arc<dyn SessionStorage>;
+    let flow = ResearchFlow::start(graph, storage, "s2", "x")
+        .await
+        .unwrap();
+    assert_eq!(
+        flow.step().await.unwrap(),
+        FlowStatus::Running { next: Stage::Data }
+    );
+    let status = flow.handle_line("/skip").await.unwrap();
+    assert_eq!(status, FlowReply::Status(FlowStatus::Completed));
+    assert_eq!((data.runs(), fx.c.runs()), (0, 1));
+    let journal = flow.state().await.unwrap().journal;
+    assert!(
+        journal
+            .iter()
+            .any(|e| e.stage == Stage::Data && e.text.contains("/skip"))
+    );
+}
+
+#[tokio::test]
+async fn abort_stops_the_flow_for_good() {
+    let fx = Fixture::with_one_back();
+    let flow = fx.start().await;
+    flow.run().await.unwrap();
+    let reply = flow.handle_line("/abort").await.unwrap();
+    assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
+    assert_eq!(flow.run().await.unwrap(), FlowStatus::Aborted);
+    assert!(matches!(
+        flow.provide_input("sí").await,
+        Err(FlowError::Aborted)
+    ));
+    assert!(matches!(flow.back(A).await, Err(FlowError::Aborted)));
+    assert_eq!(flow.abort().await.unwrap(), FlowStatus::Aborted);
+    assert_eq!(fx.runs(), [1, 1, 0]);
+
+    // Still aborted after a restart.
+    let storage = Arc::clone(&fx.storage) as Arc<dyn SessionStorage>;
+    let flow = ResearchFlow::resume(fx.graph(), storage, "s1")
+        .await
+        .unwrap();
+    assert_eq!(flow.status().await.unwrap(), FlowStatus::Aborted);
+}
+
+#[tokio::test]
+async fn plain_lines_answer_the_gate_and_bad_commands_fail() {
+    let fx = Fixture::with_one_back();
+    let flow = fx.start().await;
+    assert!(matches!(
+        flow.handle_line("hola").await,
+        Err(FlowError::NotWaiting)
+    ));
+    flow.run().await.unwrap();
+    assert!(matches!(
+        flow.handle_line("/back").await,
+        Err(FlowError::Command(_))
+    ));
+    let reply = flow.handle_line("dale").await.unwrap();
+    assert!(matches!(reply, FlowReply::Status(ref s) if waiting_at(s) == Some(B)));
+    assert_eq!(fx.runs(), [2, 2, 1]);
 }

@@ -41,6 +41,9 @@ pub enum FlowError {
         .0.name_es(), .0.index(), Stage::total(), optional_list()
     )]
     NotOptional(Stage),
+    /// A chat command could not be parsed.
+    #[error(transparent)]
+    Command(#[from] super::commands::CommandError),
     /// graph-flow or its storage failed (a node error included).
     #[error(transparent)]
     Graph(#[from] GraphError),

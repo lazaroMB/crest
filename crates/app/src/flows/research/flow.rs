@@ -8,10 +8,13 @@ use domain::research::{Phase, ResearchState, Stage};
 use graph_flow::{FlowRunner, Session, SessionStorage};
 
 use super::builder::{GRAPH_ID, ResearchGraph};
+use super::commands::{Command, parse_command};
 use super::error::FlowError;
 use super::gate::{
-    FlowStatus, GateReply, KEY_PROBLEM, KEY_REPLY, KEY_STATE, KEY_STATUS, stage_of_task, task_id,
+    FlowStatus, GateReply, KEY_BACKS, KEY_ENTERED, KEY_GATE, KEY_PROBLEM, KEY_REPLY, KEY_STATE,
+    KEY_STATUS, stage_of_task, task_id,
 };
+use super::node::is_optional;
 
 /// Most nodes one [`ResearchFlow::run`] goes through before returning,
 /// even if no gate stops it (a guard against runaway loops).
@@ -63,6 +66,30 @@ impl fmt::Display for Position {
             FlowStatus::Aborted => write!(f, " · flujo abortado"),
         }
     }
+}
+
+/// What a chat line did ([`ResearchFlow::handle_line`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlowReply {
+    /// `/stage`: where the flow is.
+    Position(Position),
+    /// Status after the command or the answer, and the nodes it ran.
+    Status(FlowStatus),
+}
+
+/// Appends a journal entry in the session and clears any pending gate.
+fn log_and_clear_gate(
+    session: &Session,
+    at: u64,
+    stage: Stage,
+    text: &str,
+) -> Result<(), FlowError> {
+    let mut state: ResearchState = session.context.get(KEY_STATE).unwrap_or_default();
+    state.log(at, stage, text);
+    session.context.set(KEY_STATE, state)?;
+    session.context.remove(KEY_GATE);
+    session.context.remove(KEY_REPLY);
+    Ok(())
 }
 
 /// A research flow bound to one stored session.
@@ -282,5 +309,133 @@ impl ResearchFlow {
             .set(KEY_STATUS, FlowStatus::Running { next: stage })?;
         self.save(session).await?;
         self.run().await
+    }
+
+    fn now(&self) -> u64 {
+        self.graph.deps().now()
+    }
+
+    /// `/back <nodo>`: moves the flow to `to`, an earlier stage or the
+    /// current one (any stage once finished). Nothing runs until
+    /// [`ResearchFlow::run`].
+    ///
+    /// # Errors
+    ///
+    /// [`FlowError::InvalidBack`], [`FlowError::Aborted`], or a storage
+    /// error.
+    pub async fn back(&self, to: Stage) -> Result<FlowStatus, FlowError> {
+        let mut session = self.load().await?;
+        let current = self.current_stage(&session)?;
+        let status = self.status_of(&session)?;
+        if status == FlowStatus::Aborted {
+            return Err(FlowError::Aborted);
+        }
+        if !self.graph.contains(to) {
+            return Err(FlowError::InvalidBack {
+                stage: to,
+                reason: "it is not a node of this flow",
+            });
+        }
+        if status != FlowStatus::Completed && to > current {
+            return Err(FlowError::InvalidBack {
+                stage: to,
+                reason: "it is ahead of the current stage",
+            });
+        }
+        let text = format!("Regreso manual desde {} (/back).", current.name_es());
+        log_and_clear_gate(&session, self.now(), to, &text)?;
+        session.context.remove(KEY_ENTERED);
+        session.context.remove(KEY_BACKS);
+        session.current_task_id = task_id(to);
+        let status = FlowStatus::Running { next: to };
+        session.context.set(KEY_STATUS, &status)?;
+        self.save(session).await?;
+        Ok(status)
+    }
+
+    /// `/skip`: jumps over the current stage if it is optional (see
+    /// [`OPTIONAL_STAGES`](super::node::OPTIONAL_STAGES)). Nothing runs
+    /// until [`ResearchFlow::run`].
+    ///
+    /// # Errors
+    ///
+    /// [`FlowError::NotOptional`], [`FlowError::Completed`],
+    /// [`FlowError::Aborted`], or a storage error.
+    pub async fn skip(&self) -> Result<FlowStatus, FlowError> {
+        let mut session = self.load().await?;
+        let current = self.current_stage(&session)?;
+        match self.status_of(&session)? {
+            FlowStatus::Completed => return Err(FlowError::Completed),
+            FlowStatus::Aborted => return Err(FlowError::Aborted),
+            FlowStatus::Running { .. } | FlowStatus::WaitingForInput { .. } => {}
+        }
+        if !is_optional(current) {
+            return Err(FlowError::NotOptional(current));
+        }
+        log_and_clear_gate(&session, self.now(), current, "Etapa saltada (/skip).")?;
+        let status = match self.graph.next_after(current) {
+            Some(next) => {
+                session.current_task_id = task_id(next);
+                FlowStatus::Running { next }
+            }
+            None => FlowStatus::Completed,
+        };
+        session.context.set(KEY_STATUS, &status)?;
+        self.save(session).await?;
+        Ok(status)
+    }
+
+    /// `/abort`: stops the flow for good; its state and journal stay
+    /// stored. Aborting twice is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// A storage error.
+    pub async fn abort(&self) -> Result<FlowStatus, FlowError> {
+        let session = self.load().await?;
+        if self.status_of(&session)? == FlowStatus::Aborted {
+            return Ok(FlowStatus::Aborted);
+        }
+        let current = self.current_stage(&session)?;
+        log_and_clear_gate(&session, self.now(), current, "Flujo abortado (/abort).")?;
+        session.context.set(KEY_STATUS, FlowStatus::Aborted)?;
+        self.save(session).await?;
+        Ok(FlowStatus::Aborted)
+    }
+
+    /// Applies a parsed command without running any node.
+    ///
+    /// # Errors
+    ///
+    /// As the method of each command.
+    pub async fn command(&self, command: Command) -> Result<FlowReply, FlowError> {
+        Ok(match command {
+            Command::Stage => FlowReply::Position(self.position().await?),
+            Command::Back(to) => FlowReply::Status(self.back(to).await?),
+            Command::Skip => FlowReply::Status(self.skip().await?),
+            Command::Abort => FlowReply::Status(self.abort().await?),
+        })
+    }
+
+    /// Handles a line typed in the chat while the flow is active: a
+    /// research command (`/back` and `/skip` then run on to the next
+    /// gate), or else the answer to the pending gate.
+    ///
+    /// # Errors
+    ///
+    /// [`FlowError::Command`] for a malformed command, or as
+    /// [`ResearchFlow::command`] and [`ResearchFlow::provide_input`].
+    pub async fn handle_line(&self, line: &str) -> Result<FlowReply, FlowError> {
+        match parse_command(line) {
+            Some(command) => {
+                let command = command?;
+                let reply = self.command(command).await?;
+                if matches!(command, Command::Back(_) | Command::Skip) {
+                    return Ok(FlowReply::Status(self.run().await?));
+                }
+                Ok(reply)
+            }
+            None => Ok(FlowReply::Status(self.provide_input(line).await?)),
+        }
     }
 }
