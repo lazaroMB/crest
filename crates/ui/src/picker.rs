@@ -703,4 +703,64 @@ mod tests {
             |_, _| div().relative().size_full().child(picker.clone()),
         );
     }
+
+    #[gpui::test]
+    fn grep_results_match_the_port(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let (picker, cx) = picker(fs.clone(), cx);
+        open(&picker, GREP_ACTION, cx);
+        cx.simulate_input("run");
+        settle(cx);
+        let expected = block_on(fs.grep(grep_request("run"))).unwrap();
+        assert_eq!(expected.hits.len(), 4);
+        picker.read_with(cx, |picker, _| {
+            let rows: Vec<_> = picker
+                .items()
+                .iter()
+                .map(|item| (item.path.clone(), item.line, item.text.clone()))
+                .collect();
+            let hits: Vec<_> = expected
+                .hits
+                .iter()
+                .map(|hit| {
+                    (
+                        hit.path.clone(),
+                        Some(hit.line_number),
+                        Some(hit.line.clone()),
+                    )
+                })
+                .collect();
+            assert_eq!(rows, hits);
+        });
+    }
+
+    #[gpui::test]
+    fn enter_on_a_match_opens_its_line(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let (picker, cx) = picker(fs.clone(), cx);
+        let events = events(&picker, cx);
+        open(&picker, GREP_ACTION, cx);
+        cx.simulate_input("run()");
+        settle(cx);
+        // `(` is a regex metacharacter, so the request fails like the tool's.
+        picker.read_with(cx, |picker, _| {
+            assert!(picker.items().is_empty());
+            assert!(
+                picker
+                    .error()
+                    .is_some_and(|e| e.contains("invalid pattern"))
+            );
+        });
+        cx.simulate_keystrokes("backspace backspace");
+        settle(cx);
+        cx.simulate_keystrokes("ctrl-n enter");
+        let expected = block_on(fs.grep(grep_request("run"))).unwrap();
+        assert_eq!(
+            *events.borrow(),
+            [PickerEvent::Open {
+                path: expected.hits[1].path.clone(),
+                line: Some(expected.hits[1].line_number),
+            }]
+        );
+    }
 }
