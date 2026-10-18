@@ -8,11 +8,11 @@
 //! display.
 
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Bounds, Context, FocusHandle, Focusable,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
     Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px, size,
 };
-use gpui_component::{ActiveTheme as _, Root, Theme, v_flex};
+use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
 actions!(crest, [Quit]);
 
@@ -101,11 +101,24 @@ pub fn window_title(workspace_label: &str) -> String {
     }
 }
 
-/// Boots GPUI and runs the event loop until the user quits.
+/// Boots GPUI and runs the event loop until the user quits, with an empty
+/// [`RootView`].
 ///
 /// On Linux this returns once the app quits; on macOS the platform may end
 /// the process from inside the event loop instead.
 pub fn run(opts: UiOptions) -> Result<(), UiError> {
+    run_with(opts, |_, cx| cx.new(RootView::new))
+}
+
+/// Like [`run`], with the root view made by `build_root` once the main
+/// window exists (GPUI, the theme and the app key bindings are ready).
+///
+/// `build_root` usually fills the slots of the root and focuses the input;
+/// when it leaves nothing focused, the root view gets the focus.
+pub fn run_with<F>(opts: UiOptions, build_root: F) -> Result<(), UiError>
+where
+    F: FnOnce(&mut Window, &mut App) -> Entity<RootView> + 'static,
+{
     let title = window_title(&opts.workspace_label);
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let failure_in_app = failure.clone();
@@ -114,7 +127,7 @@ pub fn run(opts: UiOptions) -> Result<(), UiError> {
         gpui_component::init(cx);
         apply_theme(&opts, cx);
         bind_app_keys(cx);
-        if let Err(err) = open_main_window(title, cx) {
+        if let Err(err) = open_main_window(title, build_root, cx) {
             *failure_in_app.borrow_mut() = Some(err);
             cx.quit();
             return;
@@ -165,7 +178,10 @@ fn bind_app_keys(cx: &mut App) {
     .detach();
 }
 
-fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
+fn open_main_window<F>(title: String, build_root: F, cx: &mut App) -> Result<(), UiError>
+where
+    F: FnOnce(&mut Window, &mut App) -> Entity<RootView>,
+{
     let restore = Bounds::centered(None, size(px(RESTORE_SIZE.0), px(RESTORE_SIZE.1)), cx);
     // GPUI asks X11 window managers for fullscreen before mapping the
     // window, and they ignore that request; on X11 the window opens
@@ -186,8 +202,10 @@ fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
-        let view = cx.new(RootView::new);
-        window.focus(&view.focus_handle(cx), cx);
+        let view = build_root(window, cx);
+        if window.focused(cx).is_none() {
+            window.focus(&view.focus_handle(cx), cx);
+        }
         if x11 {
             window.on_next_frame(|window, _| window.toggle_fullscreen());
         }
@@ -198,15 +216,22 @@ fn open_main_window(title: String, cx: &mut App) -> Result<(), UiError> {
 }
 
 /// Root view of the main window: timeline on top (grows), prompt input
-/// below it and the status bar at the bottom.
+/// below it and the status bar at the bottom, with an optional side panel
+/// on the left and overlays (pickers, dialogs) above everything.
 ///
 /// Each area is a slot that later views fill (`set_timeline`, `set_input`,
-/// `set_status`); an empty slot renders a placeholder box.
+/// `set_status`); an empty slot renders a placeholder box. The side panel
+/// ([`Self::set_side_panel`]) takes no room when unset, and each overlay
+/// ([`Self::push_overlay`]) is rendered as a child of a `relative`
+/// container over the whole window, in the order pushed; overlays draw
+/// nothing while closed and position themselves (`absolute`) when open.
 pub struct RootView {
     focus_handle: FocusHandle,
     timeline: Option<AnyView>,
     input: Option<AnyView>,
     status: Option<AnyView>,
+    side_panel: Option<AnyView>,
+    overlays: Vec<AnyView>,
 }
 
 impl RootView {
@@ -217,7 +242,22 @@ impl RootView {
             timeline: None,
             input: None,
             status: None,
+            side_panel: None,
+            overlays: Vec::new(),
         }
+    }
+
+    /// Fills the side panel on the left (the workspace tree).
+    pub fn set_side_panel(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.side_panel = Some(view.into());
+        cx.notify();
+    }
+
+    /// Adds a layer above the window (a picker, the approval dialog).
+    /// Later overlays are drawn above earlier ones.
+    pub fn push_overlay(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.overlays.push(view.into());
+        cx.notify();
     }
 
     /// Fills the timeline area.
@@ -261,10 +301,10 @@ impl Render for RootView {
         let theme = cx.theme();
         let border = theme.border;
         let status_bg = theme.title_bar;
-        v_flex()
-            .id("crest-root")
-            .track_focus(&self.focus_handle)
-            .size_full()
+        let session = v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
                 &self.timeline,
                 "timeline",
@@ -286,7 +326,19 @@ impl Render for RootView {
                     .border_color(border)
                     .bg(status_bg)
                     .child(slot(&self.status, "status", cx)),
+            );
+        div()
+            .id("crest-root")
+            .track_focus(&self.focus_handle)
+            .relative()
+            .size_full()
+            .child(
+                h_flex()
+                    .size_full()
+                    .children(self.side_panel.clone())
+                    .child(session),
             )
+            .children(self.overlays.iter().cloned())
     }
 }
 
