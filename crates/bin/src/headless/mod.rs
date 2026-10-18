@@ -1,6 +1,7 @@
 //! Headless mode: one turn in the terminal, without UI.
 
 pub mod approval;
+pub mod interrupt;
 pub mod run;
 pub mod sink;
 pub mod terminal;

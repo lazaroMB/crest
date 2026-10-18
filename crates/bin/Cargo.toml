@@ -34,7 +34,8 @@ ui.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-tokio.workspace = true
+# `signal` for Ctrl+C in headless mode.
+tokio = { workspace = true, features = ["signal"] }
 
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }

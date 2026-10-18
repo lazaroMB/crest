@@ -68,7 +68,12 @@ pub async fn run(args: &Args, prompt: &str, cancel: CancelToken) -> Exit {
         build_app(&config, frontend(&terminal, approval), Overrides::default()).await
     };
     match app.await {
-        Ok(mut app) => run_turn(&mut app, prompt, cancel).await,
+        Ok(mut app) => {
+            let watcher = super::interrupt::watch_ctrl_c(cancel.clone(), terminal);
+            let exit = run_turn(&mut app, prompt, cancel).await;
+            watcher.abort();
+            exit
+        }
         Err(err) => {
             eprintln!("error: {err:#}");
             Exit::Config
