@@ -197,7 +197,11 @@ mod tests {
     // On a single-threaded runtime, a blocking call would freeze the ticker.
     #[tokio::test(flavor = "current_thread")]
     async fn a_slow_lua_call_does_not_block_the_runtime() {
-        let host = spawn();
+        let host = LuaHost::spawn(HostOptions {
+            instruction_limit: u64::MAX,
+            ..HostOptions::default()
+        })
+        .unwrap();
         let ticks = Arc::new(AtomicU64::new(0));
         let ticker = {
             let ticks = Arc::clone(&ticks);
@@ -266,6 +270,21 @@ mod tests {
             "the other task never ran"
         );
         other.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_host_keeps_answering_after_a_runaway_plugin() {
+        let host = LuaHost::spawn(HostOptions {
+            instruction_limit: 1_000_000,
+            ..HostOptions::default()
+        })
+        .unwrap();
+        let spin = register(&host, "return function() while true do end end").await;
+        let ok = register(&host, "return function() return 'alive' end").await;
+        let cut = host.invoke_callback(spin, Value::Null).await;
+        assert_eq!(cut, Err(PluginError::InstructionLimit));
+        let alive = host.invoke_callback(ok, Value::Null).await;
+        assert_eq!(alive, Ok(PluginOutput::Value(json!("alive"))));
     }
 
     #[tokio::test]

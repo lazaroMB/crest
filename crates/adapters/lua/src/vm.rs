@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::callbacks::{self, CallbackIds};
 use crate::convert;
 use crate::host::HostOptions;
-use crate::sandbox;
+use crate::sandbox::{self, Limiter};
 
 /// A hook registered with `app.on`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +23,7 @@ pub(crate) struct Hook {
 /// The Lua state plus what the loaded config registered in it.
 pub(crate) struct Vm {
     pub(crate) lua: Lua,
+    pub(crate) limiter: Limiter,
     pub(crate) options: HostOptions,
     ids: CallbackIds,
     /// Handler of each plugin tool.
@@ -33,9 +34,10 @@ pub(crate) struct Vm {
 
 impl Vm {
     pub(crate) fn new(options: HostOptions, ids: CallbackIds) -> Result<Self, PluginError> {
-        let lua = new_lua(&options, &ids)?;
+        let (lua, limiter) = new_lua(&options, &ids)?;
         Ok(Self {
             lua,
+            limiter,
             options,
             ids,
             tools: BTreeMap::new(),
@@ -46,7 +48,7 @@ impl Vm {
     /// Replaces the Lua state with a fresh one and forgets every tool and
     /// hook. Callback ids keep increasing, so old ids stop resolving.
     pub(crate) fn reset(&mut self) -> Result<(), PluginError> {
-        self.lua = new_lua(&self.options, &self.ids)?;
+        (self.lua, self.limiter) = new_lua(&self.options, &self.ids)?;
         self.tools.clear();
         self.hooks.clear();
         Ok(())
@@ -67,7 +69,7 @@ impl Vm {
             let ret: mlua::Value = f.call(convert::to_lua(lua, args)?)?;
             convert::to_json(lua, ret)
         };
-        run().map_err(|e| convert::runtime_error(&e))
+        self.limiter.guard(run)
     }
 
     /// Runs a keymap or command callback.
@@ -123,10 +125,14 @@ impl Vm {
     }
 }
 
-fn new_lua(options: &HostOptions, ids: &CallbackIds) -> Result<Lua, PluginError> {
-    let lua = sandbox::new_lua(options.memory_limit).map_err(|e| convert::runtime_error(&e))?;
-    callbacks::install(&lua, ids.clone()).map_err(|e| convert::runtime_error(&e))?;
-    Ok(lua)
+fn new_lua(options: &HostOptions, ids: &CallbackIds) -> Result<(Lua, Limiter), PluginError> {
+    let setup = || -> mlua::Result<(Lua, Limiter)> {
+        let lua = sandbox::new_lua(options.memory_limit)?;
+        callbacks::install(&lua, ids.clone())?;
+        let limiter = Limiter::install(&lua, options.instruction_limit)?;
+        Ok((lua, limiter))
+    };
+    setup().map_err(|e| convert::runtime_error(&e))
 }
 
 /// Reads what a hook returned.
@@ -203,6 +209,25 @@ mod tests {
         assert_eq!(
             vm.invoke(good, &Value::Null).unwrap(),
             PluginOutput::Value(json!(1))
+        );
+    }
+
+    #[test]
+    fn a_runaway_callback_hits_the_instruction_limit() {
+        let options = HostOptions {
+            instruction_limit: 1_000_000,
+            ..HostOptions::default()
+        };
+        let mut vm = Vm::new(options, CallbackIds::default()).unwrap();
+        let spin = register_code(&vm, "return function() while true do end end");
+        let ok = register_code(&vm, "return function() return 'alive' end");
+        assert_eq!(
+            vm.invoke(spin, &Value::Null),
+            Err(PluginError::InstructionLimit)
+        );
+        assert_eq!(
+            vm.invoke(ok, &Value::Null),
+            Ok(PluginOutput::Value(json!("alive")))
         );
     }
 

@@ -11,10 +11,19 @@
 //! `require(name)` only resolves modules the host registers with
 //! [`set_module`], such as `app`.
 
-use mlua::{Lua, LuaOptions, StdLib, Table, Variadic};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
+use application::ports::plugin::PluginError;
+use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Variadic, VmState};
+
+use crate::convert;
 
 /// Registry table with the modules `require` can return.
 const MODULES: &str = "crest.modules";
+
+/// Instructions between two checks of the budget.
+const CHECK_EVERY: u32 = 10_000;
 
 /// `os` functions kept in the sandbox.
 const OS_KEEP: [&str; 4] = ["time", "clock", "date", "difftime"];
@@ -98,6 +107,91 @@ fn require(lua: &Lua, name: String) -> mlua::Result<mlua::Value> {
 pub(crate) fn set_module(lua: &Lua, name: &str, module: impl mlua::IntoLua) -> mlua::Result<()> {
     let modules: Table = lua.named_registry_value(MODULES)?;
     modules.raw_set(name, module)
+}
+
+/// Wraps the functions that catch errors so they re-raise the limit error.
+const RETHROW_LIMIT: &str = r#"
+local raw_pcall, raw_xpcall, raw_resume, exceeded = ...
+local function check(...)
+  if exceeded() then error("instruction limit exceeded", 0) end
+  return ...
+end
+pcall = function(...) return check(raw_pcall(...)) end
+xpcall = function(...) return check(raw_xpcall(...)) end
+coroutine.resume = function(...) return check(raw_resume(...)) end
+"#;
+
+/// Stops a call that runs more than a fixed number of instructions.
+///
+/// The budget is refilled at the start of every [`Limiter::guard`]. Once it
+/// runs out, the hook raises an error at every check until the call
+/// returns, and `pcall`, `xpcall` and `coroutine.resume` re-raise it, so a
+/// plugin cannot catch it and keep looping. The call is reported as
+/// [`PluginError::InstructionLimit`] even if Lua swallowed the error.
+#[derive(Debug, Clone)]
+pub(crate) struct Limiter {
+    limit: i64,
+    state: Arc<LimiterState>,
+}
+
+#[derive(Debug, Default)]
+struct LimiterState {
+    remaining: AtomicI64,
+    exceeded: AtomicBool,
+}
+
+impl Limiter {
+    /// Installs the instruction hook on `lua`.
+    pub(crate) fn install(lua: &Lua, limit: u64) -> mlua::Result<Self> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX).max(1);
+        let step = u32::try_from(limit)
+            .unwrap_or(CHECK_EVERY)
+            .clamp(1, CHECK_EVERY);
+        let state = Arc::new(LimiterState::default());
+        state.remaining.store(limit, Ordering::Relaxed);
+        let hook_state = Arc::clone(&state);
+        // A global hook, unlike `set_hook`, also runs inside coroutines
+        // created from Lua, which inherit it.
+        lua.set_global_hook(
+            HookTriggers::new().every_nth_instruction(step),
+            move |_, _| {
+                let left = hook_state
+                    .remaining
+                    .fetch_sub(i64::from(step), Ordering::Relaxed)
+                    - i64::from(step);
+                if left <= 0 {
+                    hook_state.exceeded.store(true, Ordering::Relaxed);
+                    return Err(mlua::Error::runtime("instruction limit exceeded"));
+                }
+                Ok(VmState::Continue)
+            },
+        )?;
+        let flag = Arc::clone(&state);
+        let exceeded =
+            lua.create_function(move |_, ()| Ok(flag.exceeded.load(Ordering::Relaxed)))?;
+        let globals = lua.globals();
+        let coroutine: Table = globals.get("coroutine")?;
+        lua.load(RETHROW_LIMIT).set_name("=sandbox").call::<()>((
+            globals.get::<mlua::Function>("pcall")?,
+            globals.get::<mlua::Function>("xpcall")?,
+            coroutine.get::<mlua::Function>("resume")?,
+            exceeded,
+        ))?;
+        Ok(Self { limit, state })
+    }
+
+    /// Runs `f` with a full budget and maps its errors.
+    pub(crate) fn guard<R>(&self, f: impl FnOnce() -> mlua::Result<R>) -> Result<R, PluginError> {
+        self.state.remaining.store(self.limit, Ordering::Relaxed);
+        self.state.exceeded.store(false, Ordering::Relaxed);
+        let result = f();
+        let exceeded = self.state.exceeded.swap(false, Ordering::Relaxed);
+        self.state.remaining.store(self.limit, Ordering::Relaxed);
+        if exceeded {
+            return Err(PluginError::InstructionLimit);
+        }
+        result.map_err(|e| convert::runtime_error(&e))
+    }
 }
 
 #[cfg(test)]
@@ -186,17 +280,103 @@ mod tests {
         assert!(err.to_string().contains("not found"), "{err}");
     }
 
+    fn limited(limit: u64) -> (Lua, Limiter) {
+        let lua = lua();
+        let limiter = Limiter::install(&lua, limit).unwrap();
+        (lua, limiter)
+    }
+
+    #[test]
+    fn an_infinite_loop_is_cut() {
+        let (lua, limiter) = limited(1_000_000);
+        let result = limiter.guard(|| lua.load("while true do end").exec());
+        assert_eq!(result, Err(PluginError::InstructionLimit));
+    }
+
+    #[test]
+    fn the_vm_is_usable_after_hitting_the_limit() {
+        let (lua, limiter) = limited(1_000_000);
+        let cut = limiter.guard(|| lua.load("while true do end").exec());
+        assert_eq!(cut, Err(PluginError::InstructionLimit));
+        let n = limiter.guard(|| {
+            lua.load("local s = 0 for i = 1, 100 do s = s + i end return s")
+                .eval::<i64>()
+        });
+        assert_eq!(n, Ok(5050));
+    }
+
+    #[test]
+    fn the_budget_is_per_call() {
+        let (lua, limiter) = limited(1_000_000);
+        let work = "local s = 0 for i = 1, 20000 do s = s + i end return s";
+        for _ in 0..20 {
+            assert!(limiter.guard(|| lua.load(work).eval::<i64>()).is_ok());
+        }
+    }
+
+    #[test]
+    fn pcall_cannot_swallow_the_limit() {
+        let (lua, limiter) = limited(1_000_000);
+        let result = limiter.guard(|| {
+            lua.load("while true do pcall(function() while true do end end) end")
+                .exec()
+        });
+        assert_eq!(result, Err(PluginError::InstructionLimit));
+        let caught = limiter.guard(|| {
+            lua.load("pcall(function() while true do end end) return 1")
+                .eval::<i64>()
+        });
+        assert_eq!(caught, Err(PluginError::InstructionLimit));
+    }
+
+    #[test]
+    fn xpcall_and_resume_cannot_swallow_the_limit() {
+        let (lua, limiter) = limited(1_000_000);
+        for code in [
+            "while true do xpcall(function() while true do end end, function(e) return e end) end",
+            "while true do coroutine.resume(coroutine.create(function() while true do end end)) end",
+        ] {
+            assert_eq!(
+                limiter.guard(|| lua.load(code).exec()),
+                Err(PluginError::InstructionLimit),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn pcall_still_catches_ordinary_errors() {
+        let (lua, limiter) = limited(1_000_000);
+        let (ok, msg): (bool, String) = limiter
+            .guard(|| lua.load("return pcall(error, 'x', 0)").eval())
+            .unwrap();
+        assert!(!ok);
+        assert_eq!(msg, "x");
+    }
+
+    #[test]
+    fn loops_inside_coroutines_are_cut() {
+        let (lua, limiter) = limited(1_000_000);
+        let result = limiter.guard(|| {
+            lua.load("coroutine.wrap(function() while true do end end)()")
+                .exec()
+        });
+        assert_eq!(result, Err(PluginError::InstructionLimit));
+    }
+
     #[test]
     fn memory_limit_stops_runaway_allocation() {
         let lua = new_lua(Some(8 * 1024 * 1024)).unwrap();
-        let result = lua
-            .load("local t = {} for i = 1, 1e9 do t[i] = string.rep('x', 1024) .. i end")
-            .exec();
+        let limiter = Limiter::install(&lua, u64::MAX).unwrap();
+        let result = limiter.guard(|| {
+            lua.load("local t = {} for i = 1, 1e9 do t[i] = string.rep('x', 1024) .. i end")
+                .exec()
+        });
         assert!(
-            matches!(&result, Err(mlua::Error::MemoryError(_))),
+            matches!(&result, Err(PluginError::Runtime(m)) if m.contains("memory")),
             "{result:?}"
         );
-        let n: i64 = lua.load("return 1 + 1").eval().unwrap();
-        assert_eq!(n, 2);
+        let n = limiter.guard(|| lua.load("return 1 + 1").eval::<i64>());
+        assert_eq!(n, Ok(2));
     }
 }
