@@ -9,5 +9,6 @@ pub mod picker;
 pub mod render3d;
 pub mod session;
 pub mod status;
+pub mod sysboard;
 pub mod timeline;
 pub mod tree;
