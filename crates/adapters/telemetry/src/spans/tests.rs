@@ -135,13 +135,14 @@ fn turn_span_carries_ids_and_closes_on_finish() {
     let (_, turn) = &turns[0];
     assert_eq!(turn.parent, None);
     assert!(turn.closed);
-    assert_eq!(turn.fields["session_id"], session);
+    assert_eq!(turn.fields["session.id"], session);
     assert_eq!(turn.fields["role"], "main");
-    assert_eq!(turn.fields["model"], "claude-sonnet-5-5");
-    assert_eq!(turn.fields["input_tokens"], "10");
-    assert_eq!(turn.fields["output_tokens"], "5");
+    assert_eq!(turn.fields["gen_ai.request.model"], "claude-sonnet-5-5");
+    assert_eq!(turn.fields["gen_ai.usage.input_tokens"], "10");
+    assert_eq!(turn.fields["gen_ai.usage.output_tokens"], "5");
     assert_eq!(turn.fields["stop_reason"], "end_turn");
-    assert_eq!(turn.fields["failed"], "false");
+    assert_eq!(turn.fields["otel.status_code"], "ok");
+    assert!(!turn.fields.contains_key("otel.status_description"));
     assert_eq!(telemetry.open_turns(), 0);
 }
 
@@ -173,19 +174,22 @@ fn llm_and_tool_calls_are_children_of_their_turn() {
     let (_, tool) = &capture.named("tool_call")[0];
     assert_eq!(llm.parent, Some(turns[0]));
     assert_eq!(tool.parent, Some(turns[1]));
-    assert_eq!(llm.fields["input_tokens"], "100");
+    assert_eq!(llm.fields["gen_ai.usage.input_tokens"], "100");
     assert_eq!(llm.fields["latency_ms"], "1200");
-    assert!(!llm.fields.contains_key("error"));
-    assert_eq!(tool.fields["tool"], "grep");
-    assert_eq!(tool.fields["ok"], "true");
+    assert!(!llm.fields.contains_key("otel.status_description"));
+    assert_eq!(llm.fields["otel.name"], "chat claude-sonnet-5-5");
+    assert_eq!(llm.fields["otel.kind"], "client");
+    assert_eq!(llm.fields["gen_ai.operation.name"], "chat");
+    assert_eq!(tool.fields["gen_ai.tool.name"], "grep");
+    assert_eq!(tool.fields["otel.status_code"], "ok");
     assert!(capture.spans().iter().all(|(_, s)| s.closed));
     let (_, failed) = &capture.named("turn")[1];
-    assert_eq!(failed.fields["failed"], "true");
+    assert_eq!(failed.fields["otel.status_description"], "turn failed");
     assert!(!failed.fields.contains_key("stop_reason"));
 }
 
 #[test]
-fn llm_call_error_is_recorded_and_truncated() {
+fn llm_call_error_sets_a_truncated_error_status() {
     let telemetry = TracingTelemetry::new();
     let long = "é".repeat(MAX_ERROR_LEN);
     let capture = with_capture(|| {
@@ -201,8 +205,8 @@ fn llm_call_error_is_recorded_and_truncated() {
     });
 
     let (_, llm) = &capture.named("llm_call")[0];
-    assert!(llm.fields["error"].len() <= MAX_ERROR_LEN);
-    assert!(long.starts_with(&llm.fields["error"]));
+    assert!(llm.fields["otel.status_description"].len() <= MAX_ERROR_LEN);
+    assert!(long.starts_with(&llm.fields["otel.status_description"]));
 }
 
 #[test]
@@ -228,21 +232,23 @@ fn spans_never_carry_unexpected_fields() {
     // Guard against adding message content or credentials by accident:
     // every field the adapter can emit is listed here.
     let allowed = [
-        "session_id",
+        "otel.name",
+        "otel.kind",
+        "otel.status_code",
+        "otel.status_description",
+        "session.id",
         "turn_id",
         "role",
-        "model",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_input_tokens",
-        "cache_creation_input_tokens",
+        "gen_ai.operation.name",
+        "gen_ai.request.model",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_creation.input_tokens",
+        "gen_ai.tool.name",
         "stop_reason",
-        "failed",
         "latency_ms",
-        "error",
-        "tool",
         "duration_ms",
-        "ok",
     ];
     let telemetry = TracingTelemetry::new();
     let capture = with_capture(|| {

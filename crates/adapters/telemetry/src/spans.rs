@@ -20,6 +20,11 @@ const MAX_ERROR_LEN: usize = 512;
 /// [`TelemetryPort`] that records turns, model calls and tool calls as
 /// `tracing` spans.
 ///
+/// Fields follow the OpenTelemetry GenAI conventions (`gen_ai.request.model`,
+/// `gen_ai.usage.input_tokens`, ...) plus the `otel.*` fields that
+/// `tracing-opentelemetry` maps to the span name, kind and status, so the
+/// same spans export to Langfuse without translation.
+///
 /// The `turn` span stays open from [`TelemetryPort::turn_started`] until
 /// [`TelemetryPort::turn_finished`]; model and tool calls are explicit
 /// children of it, so the hierarchy does not depend on which span is
@@ -69,16 +74,18 @@ impl TelemetryPort for TracingTelemetry {
             target: TARGET,
             parent: None,
             "turn",
-            session_id = %turn.session_id,
+            otel.kind = "internal",
+            otel.status_code = Empty,
+            otel.status_description = Empty,
+            session.id = %turn.session_id,
             turn_id = %turn.turn_id,
             role = %turn.role,
-            model = %turn.model,
-            input_tokens = Empty,
-            output_tokens = Empty,
-            cache_read_input_tokens = Empty,
-            cache_creation_input_tokens = Empty,
+            gen_ai.request.model = %turn.model,
+            gen_ai.usage.input_tokens = Empty,
+            gen_ai.usage.output_tokens = Empty,
+            gen_ai.usage.cache_read.input_tokens = Empty,
+            gen_ai.usage.cache_creation.input_tokens = Empty,
             stop_reason = Empty,
-            failed = Empty,
         );
         self.lock().insert(id, span);
         id
@@ -86,33 +93,42 @@ impl TelemetryPort for TracingTelemetry {
 
     fn llm_call(&self, record: LlmCallRecord) {
         let parent = self.parent_of(record.parent);
+        let name = format!("chat {}", record.model);
         let span = info_span!(
             target: TARGET,
             parent: parent,
             "llm_call",
-            model = %record.model,
-            input_tokens = Empty,
-            output_tokens = Empty,
-            cache_read_input_tokens = Empty,
-            cache_creation_input_tokens = Empty,
+            otel.name = name.as_str(),
+            otel.kind = "client",
+            otel.status_description = Empty,
+            gen_ai.operation.name = "chat",
+            gen_ai.request.model = %record.model,
+            gen_ai.usage.input_tokens = Empty,
+            gen_ai.usage.output_tokens = Empty,
+            gen_ai.usage.cache_read.input_tokens = Empty,
+            gen_ai.usage.cache_creation.input_tokens = Empty,
             latency_ms = record.latency_ms,
-            error = Empty,
         );
         record_usage(&span, record.usage);
         if let Some(error) = &record.error {
-            span.record("error", truncate(error, MAX_ERROR_LEN));
+            // Sets the OpenTelemetry status to `error` with this description.
+            span.record("otel.status_description", truncate(error, MAX_ERROR_LEN));
         }
     }
 
     fn tool_call(&self, record: ToolCallRecord) {
         let parent = self.parent_of(record.parent);
+        let name = format!("execute_tool {}", record.name);
         let _span = info_span!(
             target: TARGET,
             parent: parent,
             "tool_call",
-            tool = %record.name,
+            otel.name = name.as_str(),
+            otel.kind = "internal",
+            otel.status_code = if record.ok { "ok" } else { "error" },
+            gen_ai.operation.name = "execute_tool",
+            gen_ai.tool.name = %record.name,
             duration_ms = record.duration_ms,
-            ok = record.ok,
         );
     }
 
@@ -125,10 +141,10 @@ impl TelemetryPort for TracingTelemetry {
         match stop_reason {
             Some(reason) => {
                 turn.record("stop_reason", stop_reason_str(reason));
-                turn.record("failed", false);
+                turn.record("otel.status_code", "ok");
             }
             None => {
-                turn.record("failed", true);
+                turn.record("otel.status_description", "turn failed");
             }
         }
         // Dropping the last handle closes the span.
@@ -136,11 +152,14 @@ impl TelemetryPort for TracingTelemetry {
 }
 
 fn record_usage(span: &Span, usage: Usage) {
-    span.record("input_tokens", usage.input_tokens);
-    span.record("output_tokens", usage.output_tokens);
-    span.record("cache_read_input_tokens", usage.cache_read_input_tokens);
+    span.record("gen_ai.usage.input_tokens", usage.input_tokens);
+    span.record("gen_ai.usage.output_tokens", usage.output_tokens);
     span.record(
-        "cache_creation_input_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        usage.cache_read_input_tokens,
+    );
+    span.record(
+        "gen_ai.usage.cache_creation.input_tokens",
         usage.cache_creation_input_tokens,
     );
 }
