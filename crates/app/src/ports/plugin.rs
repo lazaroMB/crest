@@ -77,7 +77,7 @@ pub enum KeyAction {
     Callback(CallbackId),
 }
 
-/// A keymap from `app.keymap.set(mode, lhs, action)`.
+/// A keymap from `app.keymap.set(mode, lhs, action, { desc = "..." })`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeymapSpec {
     /// Mode it applies to.
@@ -86,15 +86,28 @@ pub struct KeymapSpec {
     pub lhs: String,
     /// Action to run.
     pub action: KeyAction,
+    /// What it does (`desc`), shown by the help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Plugin (or config file) that registered it.
+    #[serde(default)]
+    pub plugin: String,
 }
 
-/// A chat command from `app.commands.register(name, fn)`, run as `/name`.
+/// A command from `app.commands.register(name, fn, { desc = "..." })`, run
+/// as `:name`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
-    /// Command name, without the slash.
+    /// Command name, without the colon.
     pub name: String,
     /// Lua function receiving the arguments.
     pub callback: CallbackId,
+    /// What it does (`desc`), shown by the help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Plugin (or config file) that registered it.
+    #[serde(default)]
+    pub plugin: String,
 }
 
 /// A tool from `app.tools.register`, offered to the model.
@@ -498,11 +511,15 @@ mod tests {
                     mode: KeyMode::Normal,
                     lhs: "<leader>r".into(),
                     action: KeyAction::Builtin("session.resume".into()),
+                    description: Some("Resume".into()),
+                    plugin: "config".into(),
                 },
                 KeymapSpec {
                     mode: KeyMode::Normal,
                     lhs: "<leader>x".into(),
                     action: KeyAction::Callback(CallbackId(3)),
+                    description: None,
+                    plugin: "config".into(),
                 },
             ],
             mcp_servers: vec![McpServerSpec {
@@ -527,5 +544,19 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let back: LoadedConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, config);
+    }
+
+    #[test]
+    fn keymaps_and_commands_without_desc_still_parse() {
+        let keymap: KeymapSpec = serde_json::from_value(serde_json::json!({
+            "mode": "normal",
+            "lhs": "x",
+            "action": { "type": "builtin", "value": "help.open" }
+        }))
+        .unwrap();
+        assert_eq!((keymap.description, keymap.plugin.as_str()), (None, ""));
+        let command: CommandSpec =
+            serde_json::from_value(serde_json::json!({ "name": "review", "callback": 1 })).unwrap();
+        assert_eq!((command.description, command.plugin.as_str()), (None, ""));
     }
 }

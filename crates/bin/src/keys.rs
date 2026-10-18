@@ -54,6 +54,8 @@ mod tests {
             mode,
             lhs: lhs.into(),
             action,
+            description: None,
+            plugin: "config".into(),
         }
     }
 

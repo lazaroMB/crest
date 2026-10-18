@@ -360,6 +360,61 @@ impl<A> Keymap<A> {
     }
 }
 
+/// One mapping of a [`Keymap`], as listed by [`Keymap::entries`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeymapEntry<A> {
+    /// Mode it applies to.
+    pub mode: Mode,
+    /// Keys, with the leader already expanded.
+    pub keys: KeySequence,
+    /// What it runs.
+    pub action: A,
+}
+
+impl<A> KeymapEntry<A> {
+    /// The keys in Neovim notation (`<Space>ff`).
+    pub fn notation(&self) -> String {
+        self.keys.iter().map(ToString::to_string).collect()
+    }
+}
+
+impl<A: Clone> Keymap<A> {
+    /// Every mapping, by mode (insert, normal, command) and then by keys in
+    /// notation order.
+    pub fn entries(&self) -> Vec<KeymapEntry<A>> {
+        let mut out = Vec::new();
+        for mode in Mode::ALL {
+            if let Some(root) = self.modes.get(&mode) {
+                let mut keys = Vec::new();
+                collect(root, mode, &mut keys, &mut out);
+            }
+        }
+        let rank = |mode: Mode| Mode::ALL.iter().position(|m| *m == mode);
+        out.sort_by_cached_key(|entry| (rank(entry.mode), entry.notation()));
+        out
+    }
+}
+
+fn collect<A: Clone>(
+    node: &Node<A>,
+    mode: Mode,
+    keys: &mut KeySequence,
+    out: &mut Vec<KeymapEntry<A>>,
+) {
+    if let Some(action) = &node.action {
+        out.push(KeymapEntry {
+            mode,
+            keys: keys.clone(),
+            action: action.clone(),
+        });
+    }
+    for (key, child) in &node.children {
+        keys.push(*key);
+        collect(child, mode, keys, out);
+        keys.pop();
+    }
+}
+
 /// Removes the action at `keys`, pruning nodes left empty.
 fn remove<A>(node: &mut Node<A>, keys: &[Key]) -> Option<A> {
     let Some((first, rest)) = keys.split_first() else {
@@ -547,34 +602,126 @@ impl Action {
     }
 }
 
-/// Builtin mappings, with the default leader (documented in `docs/usage.md`).
-const DEFAULTS: &[(&[Mode], &str, &str)] = &[
-    (&[Mode::Insert], "<Esc>", "mode.normal"),
-    (&[Mode::Insert], "<CR>", "submit"),
-    (&[Mode::Insert], "<S-CR>", "newline"),
-    (&[Mode::Normal], "i", "mode.insert"),
-    (&[Mode::Normal], "j", "block.next"),
-    (&[Mode::Normal], "k", "block.prev"),
-    (&[Mode::Normal], "gg", "block.first"),
-    (&[Mode::Normal], "G", "block.last"),
-    (&[Mode::Normal], "<CR>", "block.toggle"),
-    (&[Mode::Normal], "t", "block.toggle_view"),
-    (&[Mode::Normal], "y", "block.yank"),
-    (&[Mode::Normal], "<leader>ff", "picker.files"),
-    (&[Mode::Normal], "<leader>fg", "picker.grep"),
-    (&[Mode::Normal], "<leader>e", "panel.tree"),
-    (&[Mode::Normal], "<leader>m", "model.pick"),
-    (&[Mode::Normal], "<leader>p", "permission.cycle"),
-    (&[Mode::Normal], ":", "mode.command"),
-    (&[Mode::Command], "<Esc>", "mode.normal"),
-    (&Mode::ALL, "<C-c>", "turn.interrupt"),
+/// Builtin mappings, with the default leader (documented in `docs/usage.md`):
+/// modes, keys, action and what the action does (shown by the help).
+const DEFAULTS: &[(&[Mode], &str, &str, &str)] = &[
+    (&[Mode::Insert], "<Esc>", "mode.normal", "Go to normal mode"),
+    (&[Mode::Insert], "<CR>", "submit", "Send the prompt"),
+    (&[Mode::Insert], "<S-CR>", "newline", "Insert a new line"),
+    (
+        &[Mode::Normal],
+        "i",
+        "mode.insert",
+        "Go to insert mode (type a prompt)",
+    ),
+    (&[Mode::Normal], "j", "block.next", "Select the next block"),
+    (
+        &[Mode::Normal],
+        "k",
+        "block.prev",
+        "Select the previous block",
+    ),
+    (
+        &[Mode::Normal],
+        "gg",
+        "block.first",
+        "Select the first block",
+    ),
+    (&[Mode::Normal], "G", "block.last", "Select the last block"),
+    (
+        &[Mode::Normal],
+        "<CR>",
+        "block.toggle",
+        "Expand or collapse the selected block",
+    ),
+    (
+        &[Mode::Normal],
+        "t",
+        "block.toggle_view",
+        "Switch the block between chart and table",
+    ),
+    (
+        &[Mode::Normal],
+        "y",
+        "block.yank",
+        "Copy the selected block",
+    ),
+    (
+        &[Mode::Normal],
+        "<leader>ff",
+        "picker.files",
+        "Find a file by name",
+    ),
+    (
+        &[Mode::Normal],
+        "<leader>fg",
+        "picker.grep",
+        "Search text in the workspace",
+    ),
+    (
+        &[Mode::Normal],
+        "<leader>e",
+        "panel.tree",
+        "Show or hide the workspace tree",
+    ),
+    (
+        &[Mode::Normal],
+        "<leader>m",
+        "model.pick",
+        "Choose the model of the next turn",
+    ),
+    (
+        &[Mode::Normal],
+        "<leader>p",
+        "permission.cycle",
+        "Cycle the permission mode",
+    ),
+    (
+        &[Mode::Normal],
+        ":",
+        "mode.command",
+        "Open the command line",
+    ),
+    (&[Mode::Normal], "?", "help.open", "Open the help"),
+    (
+        &[Mode::Command],
+        "<Esc>",
+        "mode.normal",
+        "Go to normal mode",
+    ),
+    (
+        &Mode::ALL,
+        "<C-c>",
+        "turn.interrupt",
+        "Interrupt the running turn",
+    ),
+    (&Mode::ALL, "<F1>", "help.open", "Open the help"),
 ];
+
+/// What the builtin action `name` does, if it is one.
+pub fn action_description(name: &str) -> Option<&'static str> {
+    DEFAULTS
+        .iter()
+        .find(|(_, _, action, _)| *action == name)
+        .map(|(_, _, _, description)| *description)
+}
+
+/// Names of every builtin action, in table order, without repeats.
+pub fn builtin_actions() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for (_, _, action, _) in DEFAULTS {
+        if !names.contains(action) {
+            names.push(action);
+        }
+    }
+    names
+}
 
 /// The builtin keymap. User mappings are layered on top with
 /// [`Keymap::set`], which replaces a default with the same keys.
 pub fn default_keymap() -> Keymap<Action> {
     let mut keymap = Keymap::new();
-    for (modes, notation, name) in DEFAULTS {
+    for (modes, notation, name, _) in DEFAULTS {
         // The table is static and covered by tests, so parsing cannot fail;
         // skipping instead of panicking keeps this path free of unwrap.
         if let Ok(keys) = parse_keys(notation, DEFAULT_LEADER) {
@@ -889,7 +1036,7 @@ mod tests {
 
     #[test]
     fn default_table_parses() {
-        for (_, notation, _) in DEFAULTS {
+        for (_, notation, _, _) in DEFAULTS {
             assert!(parse_keys(notation, DEFAULT_LEADER).is_ok(), "{notation}");
         }
     }
@@ -909,6 +1056,67 @@ mod tests {
             assert_eq!(get(mode, "<C-c>"), b("turn.interrupt"));
         }
         assert_eq!(get(Mode::Insert, "j"), None);
+    }
+
+    #[test]
+    fn every_default_action_has_a_description() {
+        for (_, notation, action, description) in DEFAULTS {
+            assert!(!description.trim().is_empty(), "{notation} -> {action}");
+            assert_eq!(action_description(action), Some(*description), "{action}");
+        }
+        assert_eq!(action_description("nope"), None);
+        let actions = builtin_actions();
+        assert!(actions.contains(&"help.open"));
+        assert_eq!(
+            actions.iter().filter(|a| **a == "mode.normal").count(),
+            1,
+            "no repeats"
+        );
+    }
+
+    #[test]
+    fn help_opens_with_question_mark_and_f1() {
+        let km = default_keymap();
+        let get = |mode, n: &str| km.lookup(mode, &keys(n)).exact.cloned();
+        assert_eq!(get(Mode::Normal, "?"), Some(Action::builtin("help.open")));
+        for mode in Mode::ALL {
+            assert_eq!(get(mode, "<F1>"), Some(Action::builtin("help.open")));
+        }
+        assert_eq!(get(Mode::Insert, "?"), None, "? is typed in insert mode");
+    }
+
+    #[test]
+    fn entries_list_defaults_and_overrides_with_the_leader_resolved() {
+        let mut km = default_keymap();
+        assert_eq!(km.set_leader(","), Ok(()));
+        assert_eq!(
+            km.set(Mode::Normal, "<leader>x", Action::Callback(3)),
+            Ok(())
+        );
+        assert_eq!(
+            km.set(Mode::Normal, "j", Action::builtin("block.last")),
+            Ok(())
+        );
+        let entries = km.entries();
+        let find = |mode, n: &str| {
+            entries
+                .iter()
+                .find(|e| e.mode == mode && e.notation() == n)
+                .map(|e| e.action.clone())
+        };
+        assert_eq!(find(Mode::Normal, ",x"), Some(Action::Callback(3)));
+        assert_eq!(find(Mode::Normal, "j"), Some(Action::builtin("block.last")));
+        assert_eq!(
+            find(Mode::Normal, "<Space>ff"),
+            Some(Action::builtin("picker.files"))
+        );
+        assert_eq!(find(Mode::Insert, "<CR>"), Some(Action::builtin("submit")));
+        let defaults: usize = DEFAULTS.iter().map(|(modes, ..)| modes.len()).sum();
+        assert_eq!(entries.len(), defaults + 1, "one new mapping");
+        let modes: Vec<Mode> = entries.iter().map(|e| e.mode).collect();
+        let mut sorted = modes.clone();
+        sorted.sort_by_key(|m| Mode::ALL.iter().position(|x| x == m));
+        assert_eq!(modes, sorted, "grouped by mode");
     }
 
     #[test]
