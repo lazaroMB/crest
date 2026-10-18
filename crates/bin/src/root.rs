@@ -23,7 +23,9 @@ use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
-use application::ports::plugin::{ConfigSources, PluginHostPort};
+use application::ports::plugin::{
+    AppOptions, CommandSpec, ConfigSources, KeymapSpec, PluginHostPort,
+};
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
@@ -141,6 +143,15 @@ pub struct App {
     pub file_search: Arc<dyn FileSearchPort>,
     /// Text search of the workspace (rg), for the `<leader>fg` picker.
     pub content_search: Arc<dyn ContentSearchPort>,
+    /// The Lua host that runs the callbacks of keymaps and commands, if Lua
+    /// started.
+    pub plugins: Option<Arc<dyn PluginHostPort>>,
+    /// Keymaps of `init.lua`, in registration order.
+    pub keymaps: Vec<KeymapSpec>,
+    /// Commands of `init.lua` (`:name args`).
+    pub commands: Vec<CommandSpec>,
+    /// Options of `app.opt`.
+    pub options: AppOptions,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -358,8 +369,9 @@ pub async fn build_app(
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(system_prompt(&root))
         .with_compaction(CompactionPolicy::default());
-    if let Some(host) = plugins {
-        service = service.with_plugin_host(host);
+    let plugins = plugins.map(|host| host as Arc<dyn PluginHostPort>);
+    if let Some(host) = &plugins {
+        service = service.with_plugin_host(Arc::clone(host));
     }
     // The spending cap asks through the front end's approval port.
     match CostTracker::from_options(&loaded.options) {
@@ -392,6 +404,10 @@ pub async fn build_app(
         mcp,
         file_search,
         content_search,
+        plugins,
+        keymaps: loaded.keymaps,
+        commands: loaded.commands,
+        options: loaded.options,
         models,
         events,
         timeline,

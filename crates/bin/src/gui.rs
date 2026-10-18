@@ -16,10 +16,12 @@
 //! error is the first block of the timeline and every prompt answers with
 //! it ([`UnavailableController`]).
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use adapter_search::RipgrepSearch;
-use application::ports::events::{DomainEvent, EventSink};
+use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::plugin::{CallbackId, PluginError, PluginHostPort, PluginOutput};
 use application::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest, GrepResult,
     ListFilesRequest, SearchError, TreeNode, TreeRequest,
@@ -37,7 +39,7 @@ use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use ui::approval::UiApproval;
 use ui::session::{
-    ModelChoice, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
+    ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
 };
 
 use crate::args::Args;
@@ -131,6 +133,8 @@ pub struct UiController {
     app: Arc<tokio::sync::Mutex<App>>,
     permissions: SharedPermissions,
     models: Vec<ModelChoice>,
+    plugins: Option<Arc<dyn PluginHostPort>>,
+    commands: HashMap<String, CallbackId>,
 }
 
 impl UiController {
@@ -139,12 +143,34 @@ impl UiController {
     pub fn new(app: App, handle: Handle) -> Self {
         let permissions = Arc::clone(app.permissions());
         let models = model_choices(app.model_policy());
+        let plugins = app.plugins.clone();
+        let commands = app
+            .commands
+            .iter()
+            .map(|c| (c.name.clone(), c.callback))
+            .collect();
         Self {
             handle,
             app: Arc::new(tokio::sync::Mutex::new(app)),
             permissions,
             models,
+            plugins,
+            commands,
         }
+    }
+}
+
+/// What the session shows or runs for the result of a Lua callback.
+#[must_use]
+pub fn plugin_reply(result: Result<PluginOutput, PluginError>) -> Reply {
+    match result {
+        Ok(PluginOutput::Actions(actions)) => Reply::Actions(actions),
+        Ok(PluginOutput::Block(kind)) => Reply::Block(Block::new(kind)),
+        Ok(PluginOutput::Value(_)) => Reply::Done,
+        Err(err) => Reply::Block(Block::new(BlockKind::Error {
+            message: format!("Lua: {err}"),
+            hint: None,
+        })),
     }
 }
 
@@ -154,6 +180,9 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
         block: prompt_block(&request.prompt),
     });
     let mut opts = app.turn_options.clone().with_cancel(request.cancel);
+    if let Some(role) = request.role {
+        opts.role = role;
+    }
     if let Some(model) = request.model_override {
         opts = opts.with_override(model);
     }
@@ -202,6 +231,31 @@ impl SessionController for UiController {
             .handle
             .spawn(async move { app.lock().await.new_session() });
         task.map(|_| ()).boxed()
+    }
+
+    fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
+        let Some(host) = self.plugins.clone() else {
+            return futures::future::ready(Reply::Notice(
+                NoticeLevel::Warning,
+                "Lua no está disponible".into(),
+            ))
+            .boxed();
+        };
+        // The Lua host is called from tokio, never from GPUI's executor.
+        let call = self
+            .handle
+            .spawn(async move { host.invoke_callback(CallbackId(id), args).await });
+        call.map(|joined| {
+            plugin_reply(
+                joined.unwrap_or_else(|err| Err(PluginError::Unavailable(err.to_string()))),
+            )
+        })
+        .boxed()
+    }
+
+    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+        let id = self.commands.get(name)?;
+        Some(self.run_callback(id.0, serde_json::Value::String(args.to_owned())))
     }
 }
 
@@ -280,6 +334,11 @@ pub fn session_parts(
             let content = TokioPort::new(Arc::clone(&app.content_search), handle.clone());
             let workspace = app.workspace.as_path().to_path_buf();
             let model = initial_model(&app);
+            let (keymap, key_warnings) = crate::keys::keymap(&app.keymaps, &app.options);
+            for warning in key_warnings {
+                app.warn(warning);
+            }
+            let timeoutlen = crate::keys::timeoutlen(&app.options);
             let controller = Arc::new(UiController::new(app, handle.clone()));
             let mut parts = SessionParts::new(
                 controller,
@@ -289,6 +348,8 @@ pub fn session_parts(
                 Arc::new(content),
             );
             parts.model = Some(model);
+            parts.keymap = keymap;
+            parts.timeoutlen = timeoutlen;
             (parts, workspace)
         }
         Err(err) => {
@@ -415,6 +476,29 @@ mod tests {
         controller.set_permission_mode(PermissionMode::Plan);
         assert_eq!(controller.permission_mode(), PermissionMode::Plan);
         assert!(!controller.models().is_empty());
+    }
+
+    #[test]
+    fn lua_results_become_replies() {
+        use application::ports::plugin::PluginAction;
+        let clear = vec![PluginAction::Cmd {
+            command: "clear".into(),
+        }];
+        assert_eq!(
+            plugin_reply(Ok(PluginOutput::Actions(clear.clone()))),
+            Reply::Actions(clear)
+        );
+        assert_eq!(
+            plugin_reply(Ok(PluginOutput::Value(serde_json::json!(1)))),
+            Reply::Done
+        );
+        let Reply::Block(block) = plugin_reply(Err(PluginError::Runtime("boom".into()))) else {
+            panic!("an error is a block");
+        };
+        assert!(
+            matches!(&block.kind, BlockKind::Error { message, .. } if message.contains("boom")),
+            "{block:?}"
+        );
     }
 
     #[test]

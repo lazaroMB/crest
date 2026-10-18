@@ -273,3 +273,56 @@ fn a_broken_init_lua_opens_with_an_error_block(cx: &mut TestAppContext) {
         Some("hola")
     );
 }
+
+/// The example of the plan: `<leader>x` clears the session and `:review`
+/// asks the `plan` role.
+const KEYMAPS_INIT: &str = r#"
+local app = require("app")
+app.keymap.set("n", "<leader>x", function() app.cmd("clear") end)
+app.commands.register("review", function(args)
+  app.send("Revisa los cambios sin commitear y lista riesgos", { role = "plan" })
+end)
+"#;
+
+#[gpui::test]
+fn keymaps_and_commands_of_init_lua_run_their_actions(cx: &mut TestAppContext) {
+    let script = vec![
+        ScriptedResponse::text("hola"),
+        ScriptedResponse::text("Sin riesgos."),
+    ];
+    let (w, cx) = open_with(script, Some(KEYMAPS_INIT), cx);
+    assert!(
+        !blocks(&w, cx)
+            .iter()
+            .any(|kind| matches!(kind, BlockKind::Error { .. })),
+        "{:?}",
+        blocks(&w, cx)
+    );
+    cx.simulate_input("hola");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the first turn", |s, _| !s.is_running());
+    assert!(!texts(&blocks(&w, cx)).is_empty());
+
+    cx.simulate_keystrokes("escape space x");
+    wait_until(&w, cx, "<leader>x to clear the session", |s, cx| {
+        s.timeline().read(cx).state().is_empty()
+    });
+
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("review");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the review turn", |s, _| {
+        !s.is_running() && w.llm.remaining() == 0
+    });
+    let request = w.llm.last_request().unwrap();
+    assert_eq!(request.model.role, ModelRole::Plan);
+    // The new session only sends the review prompt.
+    assert_eq!(request.messages.len(), 1, "{:?}", request.messages);
+    assert_eq!(
+        texts(&blocks(&w, cx)),
+        [
+            "> Revisa los cambios sin commitear y lista riesgos\n",
+            "Sin riesgos."
+        ]
+    );
+}
