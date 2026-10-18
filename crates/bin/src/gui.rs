@@ -17,6 +17,10 @@
 //! every line sent from the input answers it instead of starting a turn,
 //! until the flow stops.
 //!
+//! `:research <problema>` starts the research flow of the workspace the
+//! same way (see [`crate::research`]): while it is active, the lines sent
+//! from the input go to it.
+//!
 //! When the agent cannot start (no API key) the window still opens: the
 //! error is the first block of the timeline and every prompt answers with
 //! it ([`UnavailableController`]).
@@ -29,6 +33,7 @@ use adapter_search::RipgrepSearch;
 use application::flows::implement::flow::{FlowError, FlowReply};
 use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
+use application::flows::research::session::ResearchSession;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::plugin::{
     CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
@@ -55,6 +60,7 @@ use ui::session::{
 };
 
 use crate::args::Args;
+use crate::research::ResearchCommand;
 use crate::root::{App, Config, Frontend, Overrides, build_app};
 
 /// [`EventSink`] that sends every event to the UI.
@@ -150,6 +156,47 @@ pub struct UiController {
     mcp: Arc<McpTrust>,
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
+    research: SharedResearch,
+}
+
+/// The research flow of the workspace, taken out of the [`App`] so a flow
+/// line does not wait for (or block) the chat's turns.
+type SharedResearch = Arc<tokio::sync::Mutex<Option<ResearchSession>>>;
+
+/// `:research <args>`: starts, resumes or reports the research flow and
+/// saves the chat session (its timeline holds the flow's blocks).
+async fn research_command(
+    app: Arc<tokio::sync::Mutex<App>>,
+    research: SharedResearch,
+    args: String,
+) -> Reply {
+    let mut guard = research.lock().await;
+    let Some(session) = guard.as_mut() else {
+        return Reply::Notice(
+            NoticeLevel::Warning,
+            ":research no está disponible: la base de datos de crest no abrió".into(),
+        );
+    };
+    let result = crate::research::command(
+        session,
+        ResearchCommand::parse(&args),
+        crate::root::now_ms(),
+    )
+    .await;
+    drop(guard);
+    save(&app).await;
+    match result {
+        Ok(message) => Reply::Notice(NoticeLevel::Info, message),
+        Err(message) => Reply::Notice(NoticeLevel::Warning, message),
+    }
+}
+
+/// Saves the chat session, warning on failure.
+async fn save(app: &tokio::sync::Mutex<App>) {
+    let app = app.lock().await;
+    if let Err(err) = app.save().await {
+        app.warn(format!("no pude guardar la sesión: {err}"));
+    }
 }
 
 /// The implementation flow the chat drives, if one is active.
@@ -262,7 +309,8 @@ impl McpTrust {
 impl UiController {
     /// A controller running the turns of `app` on `handle`.
     #[must_use]
-    pub fn new(app: App, handle: Handle) -> Self {
+    pub fn new(mut app: App, handle: Handle) -> Self {
+        let research = Arc::new(tokio::sync::Mutex::new(app.research.take()));
         let permissions = Arc::clone(app.permissions());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
@@ -287,6 +335,7 @@ impl UiController {
             mcp,
             events,
             flow: Arc::new(tokio::sync::Mutex::new(None)),
+            research,
         }
     }
 }
@@ -333,10 +382,11 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let (tx, rx) = oneshot::channel();
-        let (app, flow, events) = (
+        let (app, flow, events, research) = (
             Arc::clone(&self.app),
             Arc::clone(&self.flow),
             Arc::clone(&self.events),
+            Arc::clone(&self.research),
         );
         self.handle.spawn(async move {
             let mut active = flow.lock().await;
@@ -349,6 +399,22 @@ impl SessionController for UiController {
                 return;
             }
             drop(active);
+            let mut research = research.lock().await;
+            if let Some(session) = research.as_mut().filter(|s| s.is_active()) {
+                events.emit(DomainEvent::BlockAdded {
+                    block: prompt_block(&request.prompt),
+                });
+                let (level, message) = match crate::research::line(session, &request.prompt).await {
+                    Ok(message) => (NoticeLevel::Info, message),
+                    Err(message) => (NoticeLevel::Warning, message),
+                };
+                events.emit(DomainEvent::Notice { level, message });
+                drop(research);
+                save(&app).await;
+                tx.send(TurnEnd::Finished(StopReason::EndTurn)).ok();
+                return;
+            }
+            drop(research);
             let mut app = app.lock().await;
             tx.send(run_turn(&mut app, request).await).ok();
         });
@@ -410,6 +476,22 @@ impl SessionController for UiController {
                 task.map(|joined| {
                     joined.unwrap_or_else(|err| {
                         Reply::Notice(NoticeLevel::Warning, format!(":implement: {err}"))
+                    })
+                })
+                .boxed(),
+            );
+        }
+        if name == "research" {
+            let start = research_command(
+                Arc::clone(&self.app),
+                Arc::clone(&self.research),
+                args.to_owned(),
+            );
+            let task = self.handle.spawn(start);
+            return Some(
+                task.map(|joined| {
+                    joined.unwrap_or_else(|err| {
+                        Reply::Notice(NoticeLevel::Warning, format!(":research: {err}"))
                     })
                 })
                 .boxed(),

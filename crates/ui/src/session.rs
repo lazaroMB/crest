@@ -29,8 +29,8 @@
 //! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
 //!   `:clear` (a new, empty session; not while a turn runs) and `:q`.
 //! - Any other `:name args` goes to [`SessionController::run_command`]
-//!   (commands of `init.lua`, `:mcp`); a name with a dot runs that builtin
-//!   action (`:picker.files`).
+//!   (commands of `init.lua`, `:mcp`, `:implement`, `:research`); a name
+//!   with a dot runs that builtin action (`:picker.files`).
 //! - A mapping to a Lua function runs [`SessionController::run_callback`].
 //!   What it answers ([`Reply`]) is shown or run here: `app.cmd(name)` as a
 //!   `:` command and `app.send(text, { role })` as a prompt with that role.
@@ -652,7 +652,7 @@ impl Session {
                     self.notice(
                         NoticeLevel::Warning,
                         format!(
-                            "comando desconocido :{command} (usa :model, :mode, :clear, :mcp, :implement o :q)"
+                            "comando desconocido :{command} (usa :model, :mode, :clear, :mcp, :implement, :research o :q)"
                         ),
                         cx,
                     );
