@@ -18,6 +18,7 @@ use adapter_shell::LocalShell;
 use adapter_store::SqliteSessionStore;
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
+use application::cost::CostTracker;
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
@@ -353,6 +354,11 @@ pub async fn build_app(
         .with_compaction(CompactionPolicy::default());
     if let Some(host) = plugins {
         service = service.with_plugin_host(host);
+    }
+    // The spending cap asks through the front end's approval port.
+    match CostTracker::from_options(&loaded.options) {
+        Ok(tracker) => service = service.with_cost_tracker(tracker),
+        Err(err) => warnings.push(format!("costo: {err}; sin precios ni tope de gasto")),
     }
 
     for warning in &warnings {

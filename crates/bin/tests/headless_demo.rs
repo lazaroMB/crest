@@ -231,3 +231,47 @@ async fn a_failing_model_exits_with_1() {
     assert_eq!(exit, Exit::TurnFailed, "{out}");
     assert!(out.contains("error:"), "{out}");
 }
+
+/// The app over a workspace whose `.crest/init.lua` is `init`.
+async fn app_with_init(init: &str) -> (tempfile::TempDir, App) {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("ws");
+    std::fs::create_dir_all(workspace.join(".crest")).unwrap();
+    let init_path = workspace.join(".crest/init.lua");
+    std::fs::write(&init_path, init).unwrap();
+    let output = Buffer::default();
+    let terminal = Terminal::new(Box::new(output), false);
+    let approval = StdinApproval::new(terminal.clone(), Box::new(Cursor::new(Vec::new())), false);
+    let overrides = Overrides {
+        llm: Some(Arc::new(ScriptedLlm::new(Vec::new()))),
+        config_sources: Some(ConfigSources {
+            global: None,
+            workspace: Some(init_path),
+        }),
+        db_path: Some(dir.path().join("sessions.db")),
+        ..Overrides::default()
+    };
+    let config = Config {
+        workspace,
+        mode: PermissionMode::Ask,
+        model: None,
+        trust_mcp: Vec::new(),
+    };
+    let app = build_app(&config, frontend(&terminal, approval), overrides)
+        .await
+        .unwrap();
+    (dir, app)
+}
+
+#[tokio::test]
+async fn cost_options_start_the_tracker_without_warnings() {
+    // init.lua already rejects malformed values; valid ones reach the
+    // tracker without complaint.
+    let init = "local app = require('app')\n\
+                app.opt.max_session_cost = 5\n\
+                app.opt.pricing = { opus = { input = 5, output = 25, cache_read = 0.5, \
+                cache_write = 6.25 } }\n";
+    let (_dir, app) = app_with_init(init).await;
+    let cost = |w: &&String| w.contains("costo") || w.contains("app.opt");
+    assert_eq!(app.warnings.iter().find(cost), None);
+}
