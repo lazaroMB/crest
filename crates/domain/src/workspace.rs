@@ -5,8 +5,13 @@
 //! is responsible for resolving symlinks after joining a [`WorkspacePath`].
 //! Only Unix path semantics are supported.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
+
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Errors produced while building workspace roots and paths.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -106,8 +111,7 @@ impl WorkspaceRoot {
             path: input.to_owned(),
         };
         if !input.starts_with('/') {
-            let segments = normalize(input, false).ok_or_else(outside)?;
-            return Ok(WorkspacePath::from_segments(&segments));
+            return WorkspacePath::parse(input);
         }
         let segments = normalize(input, true).ok_or_else(outside)?;
         let mut rest = segments.as_slice();
@@ -147,6 +151,23 @@ impl WorkspacePath {
     /// The workspace root itself.
     pub fn root() -> Self {
         Self(Self::ROOT.to_owned())
+    }
+
+    /// Parses an already relative path without a root at hand.
+    ///
+    /// Applies the same lexical normalization as [`WorkspaceRoot::resolve`].
+    /// Absolute paths cannot be checked against a root here, so they are
+    /// rejected as [`PathError::OutsideWorkspace`].
+    pub fn parse(input: &str) -> Result<Self, PathError> {
+        check_input(input)?;
+        let outside = || PathError::OutsideWorkspace {
+            path: input.to_owned(),
+        };
+        if input.starts_with('/') {
+            return Err(outside());
+        }
+        let segments = normalize(input, false).ok_or_else(outside)?;
+        Ok(Self::from_segments(&segments))
     }
 
     /// The path as `/`-separated components, or `"."` for the root.
@@ -200,6 +221,44 @@ impl WorkspacePath {
 impl fmt::Display for WorkspacePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl FromStr for WorkspacePath {
+    type Err = PathError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl Serialize for WorkspacePath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkspacePath {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Cow::<'de, str>::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for WorkspacePath {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "WorkspacePath".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "description": "Path relative to the workspace root, using `/` as separator; `.` is the root."
+        })
     }
 }
 
@@ -469,6 +528,65 @@ mod tests {
         assert_eq!(wp("c.rs").file_name(), Some("c.rs"));
         assert_eq!(wp("a/ñ").file_name(), Some("ñ"));
         assert_eq!(WorkspacePath::root().file_name(), None);
+    }
+
+    #[test]
+    fn parse_normalizes_relative_paths() {
+        assert_eq!(WorkspacePath::parse("./a//b/../c/"), Ok(wp("a/c")));
+        assert_eq!(".".parse::<WorkspacePath>(), Ok(WorkspacePath::root()));
+    }
+
+    #[test]
+    fn parse_rejects_escapes_and_absolute_paths() {
+        assert_eq!(
+            WorkspacePath::parse("a/../../x"),
+            Err(PathError::OutsideWorkspace {
+                path: "a/../../x".into()
+            })
+        );
+        assert_eq!(
+            WorkspacePath::parse("/ws/a"),
+            Err(PathError::OutsideWorkspace {
+                path: "/ws/a".into()
+            })
+        );
+        assert_eq!(
+            WorkspacePath::parse(""),
+            Err(InvalidPathReason::Empty.into())
+        );
+    }
+
+    #[test]
+    fn serializes_as_plain_string() {
+        assert_eq!(serde_json::to_string(&wp("a/ñ.rs")).unwrap(), r#""a/ñ.rs""#);
+        assert_eq!(
+            serde_json::to_string(&WorkspacePath::root()).unwrap(),
+            r#"".""#
+        );
+    }
+
+    #[test]
+    fn deserialize_normalizes_and_validates() {
+        let p: WorkspacePath = serde_json::from_str(r#""./a//b/""#).unwrap();
+        assert_eq!(p, wp("a/b"));
+        let p: WorkspacePath = serde_json::from_str(r#""a\u00f1""#).unwrap();
+        assert_eq!(p.as_str(), "añ");
+        for bad in [r#""../x""#, r#""/etc/passwd""#, r#""""#, r#""a\u0000b""#] {
+            let err = serde_json::from_str::<WorkspacePath>(bad).unwrap_err();
+            assert!(err.is_data(), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn deserialize_reports_reason() {
+        let err = serde_json::from_str::<WorkspacePath>(r#""../x""#).unwrap_err();
+        assert!(err.to_string().contains("outside the workspace"), "{err}");
+    }
+
+    #[test]
+    fn json_schema_is_inline_string() {
+        let schema = schemars::schema_for!(WorkspacePath);
+        assert_eq!(schema.get("type"), Some(&serde_json::json!("string")));
     }
 
     #[test]
