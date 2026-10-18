@@ -226,6 +226,12 @@ impl PluginTrust {
             .clone()
     }
 
+    /// Whether `decl` is granted now.
+    #[must_use]
+    pub fn is_granted(&self, decl: &PluginCapabilities) -> bool {
+        self.granted().contains(decl)
+    }
+
     /// `:plugin list`: every declaration and whether it is active.
     #[must_use]
     pub fn list(&self) -> String {

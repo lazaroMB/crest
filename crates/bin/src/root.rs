@@ -30,8 +30,8 @@ use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
-    AppOptions, CommandSpec, ConfigSources, KeymapSpec, McpServerSpec, PluginCapabilities,
-    PluginHostPort,
+    AppOptions, CommandSpec, ConfigSources, HookSpec, KeymapSpec, McpServerSpec,
+    PluginCapabilities, PluginHostPort, PluginToolSpec,
 };
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::shell::ShellPort;
@@ -192,6 +192,14 @@ pub struct App {
     pub plugin_grants: Arc<Mutex<Vec<PluginCapabilities>>>,
     /// Store of approved plugin capabilities, if there is one.
     pub plugin_trust_path: Option<PathBuf>,
+    /// Tools of the plugins (registered in the agent when Lua started).
+    pub plugin_tools: Vec<PluginToolSpec>,
+    /// Hooks of the plugins, in the order they run.
+    pub hooks: Vec<HookSpec>,
+    /// The config files that were loaded.
+    pub config_sources: ConfigSources,
+    /// Database of sessions and flows, when known.
+    pub db_path: Option<PathBuf>,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -366,6 +374,7 @@ pub async fn build_app(
         .clone()
         .unwrap_or_else(|| default_sources(root.as_path()));
     let host = plugins.as_deref().map(|h| h as &dyn PluginHostPort);
+    let config_sources = sources.clone();
     let (loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
     let plugin_trust = plugin_trust::TrustOptions {
@@ -611,6 +620,13 @@ pub async fn build_app(
         plugin_capabilities: loaded.plugin_capabilities,
         plugin_grants: Arc::new(Mutex::new(granted)),
         plugin_trust_path: plugin_trust.store,
+        plugin_tools: loaded.tools,
+        hooks: loaded.hooks,
+        config_sources,
+        db_path: overrides
+            .db_path
+            .clone()
+            .or_else(adapter_store::path::default_db_path),
         models,
         events,
         timeline,
