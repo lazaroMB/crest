@@ -11,13 +11,18 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use domain::block::{BlockKind, DiffSpec};
 use domain::permission::ToolEffect;
 use domain::workspace::PathError;
 use futures::FutureExt;
 
 use super::budget::ResultBudget;
 use super::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::ports::fs::{FileContent, FileSystemPort, FsError, ReadFileRequest};
+use crate::ports::approval::ApprovalPreview;
+use crate::ports::fs::{
+    EditFileRequest, FileContent, FileSystemPort, FsError, PendingChange, ReadFileRequest,
+    WriteFileRequest,
+};
 use crate::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit, GrepRequest,
     ListFilesRequest, SearchError, TreeNode, TreeNodeKind, TreeRequest,
@@ -479,6 +484,144 @@ impl TypedTool for ReadFileTool {
     }
 }
 
+/// The diff shown for a prepared change, in the approval dialog and in the
+/// timeline.
+fn diff_spec(change: &PendingChange) -> DiffSpec {
+    DiffSpec {
+        path: change.path().to_string(),
+        old_text: change.original().map(str::to_owned),
+        new_text: change.new_content().to_owned(),
+        unified: change.diff_unified().to_owned(),
+        approval: None,
+    }
+}
+
+/// A call that writes `change` once approved, previewed as its diff.
+fn change_call(fs: Arc<dyn FileSystemPort>, change: PendingChange) -> PreparedCall {
+    let spec = diff_spec(&change);
+    let subject = change.path().to_string();
+    let lines = change.new_content().lines().count();
+    let run = async move {
+        Ok(match fs.apply(change).await {
+            Ok(applied) if applied.created => {
+                ToolOutput::text(format!("Created {} ({lines} lines).", applied.path))
+            }
+            Ok(applied) => ToolOutput::text(format!("Updated {} ({lines} lines).", applied.path)),
+            Err(err) => ToolOutput::error(fs_error_message(&err)),
+        })
+    };
+    PreparedCall::new(subject, run.boxed())
+        .with_preview(ApprovalPreview::Diff(spec.clone()))
+        .with_block(BlockKind::Diff(spec))
+}
+
+fn prepare_error(err: &FsError) -> ToolError {
+    ToolError::Execution(fs_error_message(err))
+}
+
+const EDIT_FILE_DESCRIPTION: &str = "\
+Edits an existing file by replacing one exact occurrence of `old` with `new`.
+- `old` must match the current file content exactly, including whitespace and indentation, \
+and must appear exactly once: when it appears several times, include more surrounding lines \
+to make it unique. Do not include the line numbers that `read_file` prints.
+- Read the file first. To create a file or rewrite it entirely, use `write_file`.
+- The user sees the diff and may need to approve it before it is written.
+- `path` is relative to the workspace root.";
+
+/// `edit_file`: exact, unique replacement in an existing file.
+pub struct EditFileTool {
+    fs: Arc<dyn FileSystemPort>,
+}
+
+impl EditFileTool {
+    /// The tool over `fs`.
+    #[must_use]
+    pub fn new(fs: Arc<dyn FileSystemPort>) -> Self {
+        Self { fs }
+    }
+}
+
+#[async_trait]
+impl TypedTool for EditFileTool {
+    type Input = EditFileRequest;
+
+    fn name(&self) -> &str {
+        "edit_file"
+    }
+
+    fn description(&self) -> &str {
+        EDIT_FILE_DESCRIPTION
+    }
+
+    fn effect(&self, _input: &EditFileRequest) -> ToolEffect {
+        ToolEffect::Write
+    }
+
+    async fn prepare(
+        &self,
+        input: EditFileRequest,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let change = self
+            .fs
+            .prepare_edit(input)
+            .await
+            .map_err(|err| prepare_error(&err))?;
+        Ok(change_call(Arc::clone(&self.fs), change))
+    }
+}
+
+const WRITE_FILE_DESCRIPTION: &str = "\
+Creates a file, or overwrites an existing one, with `content` as its full new content. \
+Missing parent directories are created.
+- Prefer `edit_file` for changes to an existing file: it is cheaper and safer than rewriting \
+it. Read an existing file before overwriting it.
+- The user sees the diff and may need to approve it before it is written.
+- `path` is relative to the workspace root.";
+
+/// `write_file`: create or overwrite a whole file.
+pub struct WriteFileTool {
+    fs: Arc<dyn FileSystemPort>,
+}
+
+impl WriteFileTool {
+    /// The tool over `fs`.
+    #[must_use]
+    pub fn new(fs: Arc<dyn FileSystemPort>) -> Self {
+        Self { fs }
+    }
+}
+
+#[async_trait]
+impl TypedTool for WriteFileTool {
+    type Input = WriteFileRequest;
+
+    fn name(&self) -> &str {
+        "write_file"
+    }
+
+    fn description(&self) -> &str {
+        WRITE_FILE_DESCRIPTION
+    }
+
+    fn effect(&self, _input: &WriteFileRequest) -> ToolEffect {
+        ToolEffect::Write
+    }
+
+    async fn prepare(
+        &self,
+        input: WriteFileRequest,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let change = self
+            .fs
+            .prepare_write(input)
+            .await
+            .map_err(|err| prepare_error(&err))?;
+        Ok(change_call(Arc::clone(&self.fs), change))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -486,7 +629,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::testing::fs::InMemoryFs;
+    use crate::testing::fs::{InMemoryFs, unified_diff};
     use crate::tools::registry::{Tool, Typed};
 
     fn ctx() -> ToolContext {
@@ -681,6 +824,105 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(&err, ToolError::InvalidInput { message, .. } if message.contains("outside the workspace")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_previews_the_diff_and_applies_it_when_run() {
+        let fs = workspace();
+        let tool = Typed(EditFileTool::new(Arc::clone(&fs) as Arc<dyn FileSystemPort>));
+        let input = json!({ "path": "src/lib.rs", "old": "fn main() {}", "new": "fn main() {\n    run();\n}" });
+        assert_eq!(tool.effect(&input), ToolEffect::Write);
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "src/lib.rs");
+        let old = "pub mod tools;\n\nfn main() {}\n";
+        let new = "pub mod tools;\n\nfn main() {\n    run();\n}\n";
+        let expected = DiffSpec {
+            path: "src/lib.rs".into(),
+            old_text: Some(old.into()),
+            new_text: new.into(),
+            unified: unified_diff(&"src/lib.rs".parse().unwrap(), Some(old), new),
+            approval: None,
+        };
+        assert!(
+            expected.unified.contains("+    run();"),
+            "{}",
+            expected.unified
+        );
+        assert_eq!(
+            prepared.preview,
+            Some(ApprovalPreview::Diff(expected.clone()))
+        );
+        assert_eq!(prepared.block, Some(BlockKind::Diff(expected)));
+        assert_eq!(
+            fs.file("src/lib.rs").as_deref(),
+            Some(old),
+            "prepare must not write"
+        );
+        let out = prepared.run.await.unwrap();
+        assert_eq!(out, ToolOutput::text("Updated src/lib.rs (5 lines)."));
+        assert_eq!(fs.file("src/lib.rs").as_deref(), Some(new));
+    }
+
+    #[tokio::test]
+    async fn edit_file_requires_a_unique_old() {
+        let tool = Typed(EditFileTool::new(workspace()));
+        let input = json!({ "path": "src/tools/files.rs", "old": "fn ", "new": "pub fn " });
+        let err = tool.prepare(input, &ctx()).await.unwrap_err();
+        assert_eq!(
+            ToolOutput::from(err).text_content(),
+            "`old` appears 2 times in the file; include more surrounding context so it \
+             matches exactly once"
+        );
+        let input = json!({ "path": "src/lib.rs", "old": "missing", "new": "" });
+        let err = tool.prepare(input, &ctx()).await.unwrap_err();
+        assert!(err.to_string().starts_with("`old` was not found"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn edit_file_fails_when_the_file_changed_before_running() {
+        let fs = workspace();
+        let tool = Typed(EditFileTool::new(Arc::clone(&fs) as Arc<dyn FileSystemPort>));
+        let input = json!({ "path": "Cargo.toml", "old": "[workspace]", "new": "[package]" });
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        fs.set_file("Cargo.toml", "[workspace]\nmembers = []\n");
+        let out = prepared.run.await.unwrap();
+        assert!(out.is_error);
+        assert!(
+            out.text_content().contains("changed since"),
+            "{}",
+            out.text_content()
+        );
+    }
+
+    #[tokio::test]
+    async fn write_file_creates_a_file_with_a_diff() {
+        let fs = workspace();
+        let tool = Typed(WriteFileTool::new(
+            Arc::clone(&fs) as Arc<dyn FileSystemPort>
+        ));
+        let input = json!({ "path": "notes/todo.md", "content": "- a\n- b\n" });
+        assert_eq!(tool.effect(&input), ToolEffect::Write);
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "notes/todo.md");
+        let Some(BlockKind::Diff(spec)) = &prepared.block else {
+            panic!("expected a diff block, got {:?}", prepared.block);
+        };
+        assert_eq!(spec.old_text, None);
+        assert!(spec.unified.contains("+- a"), "{}", spec.unified);
+        let out = prepared.run.await.unwrap();
+        assert_eq!(out, ToolOutput::text("Created notes/todo.md (2 lines)."));
+        assert_eq!(fs.file("notes/todo.md").as_deref(), Some("- a\n- b\n"));
+    }
+
+    #[tokio::test]
+    async fn write_file_rejects_sensitive_paths_when_preparing() {
+        let tool = Typed(WriteFileTool::new(workspace()));
+        let input = json!({ "path": "key.pem", "content": "x" });
+        let err = tool.prepare(input, &ctx()).await.unwrap_err();
+        assert!(
+            matches!(&err, ToolError::Execution(m) if m.contains("denied")),
             "{err:?}"
         );
     }
