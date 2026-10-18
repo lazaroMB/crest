@@ -388,6 +388,11 @@ impl Session {
         &self.status
     }
 
+    /// The approval dialog.
+    pub fn approval(&self) -> &Entity<ApprovalView> {
+        &self.approval
+    }
+
     /// Whether a turn is running.
     pub fn is_running(&self) -> bool {
         self.running.is_some()
