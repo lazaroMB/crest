@@ -7,10 +7,7 @@
 //! again is a no-op once everything is applied.
 //!
 //! Adding a migration: write `migrations/NNNN_name.sql` and append it here;
-//! never edit an applied one. The graph-flow checkpoints of the investigative
-//! flow (T5.1) are expected to come as the next migration, with their own
-//! tables (e.g. `flow_sessions(id, session_id, data_json, updated_at)`) so
-//! they do not touch the session tables.
+//! never edit an applied one.
 
 use rusqlite::{Connection, TransactionBehavior};
 
@@ -32,6 +29,10 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         name: "0002_turn_count",
         sql: include_str!("../migrations/0002_turn_count.sql"),
+    },
+    Migration {
+        name: "0003_flow_sessions",
+        sql: include_str!("../migrations/0003_flow_sessions.sql"),
     },
 ];
 
@@ -132,7 +133,12 @@ mod tests {
         assert_eq!(current_version(&conn).unwrap(), latest_version());
         assert_eq!(
             tables(&conn),
-            ["permission_rules", "sessions", "timeline_blocks"]
+            [
+                "flow_sessions",
+                "permission_rules",
+                "sessions",
+                "timeline_blocks"
+            ]
         );
     }
 
@@ -214,5 +220,38 @@ mod tests {
             .query_row("SELECT count(*) FROM permission_rules", [], |r| r.get(0))
             .unwrap();
         assert_eq!((blocks, rules), (1, 1));
+    }
+
+    #[test]
+    fn migrates_a_version_2_database_with_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(migrate_with(&mut conn, &MIGRATIONS[..2]).unwrap(), 2);
+        conn.execute_batch(
+            r#"
+            INSERT INTO sessions VALUES ('a', '/ws', 'kept', 1, 2, '{"id":"a","turns":[{}]}', 1);
+            INSERT INTO timeline_blocks VALUES ('a', 0, 'blk', 'text', '{"type":"text"}');
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), latest_version());
+
+        let row: (String, i64, i64) = conn
+            .query_row(
+                "SELECT title, turn_count, updated_at FROM sessions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("kept".into(), 1, 2));
+        let blocks: i64 = conn
+            .query_row("SELECT count(*) FROM timeline_blocks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 1);
+        let flows: i64 = conn
+            .query_row("SELECT count(*) FROM flow_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(flows, 0);
     }
 }
