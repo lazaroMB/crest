@@ -263,7 +263,7 @@ pub const fn thinking(config: ThinkingConfig) -> Option<WireThinking> {
     }
 }
 
-fn tool_choice(choice: &ToolChoice, thinking: bool) -> Option<WireToolChoice> {
+pub(crate) fn tool_choice(choice: &ToolChoice, thinking: bool) -> Option<WireToolChoice> {
     match choice {
         ToolChoice::Auto => None,
         ToolChoice::Any | ToolChoice::Tool(_) if thinking => None,

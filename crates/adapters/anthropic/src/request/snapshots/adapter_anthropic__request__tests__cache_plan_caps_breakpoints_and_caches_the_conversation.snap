@@ -1,0 +1,69 @@
+---
+source: crates/adapters/anthropic/src/request/tests.rs
+expression: body
+---
+{
+  "model": "claude-sonnet-5-5",
+  "max_tokens": 16000,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are crest, a coding agent.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Project conventions: ...",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Repository map: ...",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Today is 2026-10-17."
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Find the bug"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "grep",
+      "description": "A tool",
+      "input_schema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "read_file",
+      "description": "A tool",
+      "input_schema": {
+        "type": "object"
+      }
+    }
+  ],
+  "thinking": {
+    "type": "adaptive"
+  },
+  "stream": true,
+  "cache_control": {
+    "type": "ephemeral"
+  }
+}

@@ -1,0 +1,27 @@
+---
+source: crates/adapters/anthropic/src/request/tests.rs
+expression: body
+---
+{
+  "model": "claude-opus-4-6",
+  "max_tokens": 16000,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Find the bug"
+        }
+      ]
+    }
+  ],
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 15999
+  },
+  "stream": true,
+  "cache_control": {
+    "type": "ephemeral"
+  }
+}

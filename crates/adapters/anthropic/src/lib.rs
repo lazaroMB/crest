@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod client;
 pub mod convert;
 pub mod error;
+pub mod request;
 pub mod retry;
 pub mod stream;
 pub mod wire;
