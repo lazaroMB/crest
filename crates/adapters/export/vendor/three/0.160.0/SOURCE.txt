@@ -1,0 +1,5 @@
+three.js r160 (npm package three@0.160.0), file build/three.module.min.js,
+unmodified. https://registry.npmjs.org/three/-/three-0.160.0.tgz
+sha256 3e690ac7d180b0aadf0891bea39eec643e29e2d3e75c99b18689518665f69ba6
+License: MIT, see LICENSE in this folder.
+Inlined by adapter-export into simulation/board.html, so the page needs no network.
