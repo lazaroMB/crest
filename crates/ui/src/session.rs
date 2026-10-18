@@ -30,7 +30,8 @@
 //!   `:clear` (a new, empty session; not while a turn runs), `:modal close`
 //!   (closes the front plugin modal) and `:q`.
 //! - Any other `:name args` goes to [`SessionController::run_command`]
-//!   (commands of `init.lua`, `:mcp`, `:plugin`, `:implement`, `:research`); a name
+//!   (commands of `init.lua`, `:mcp`, `:plugin`, `:implement`, `:research`,
+//!   `:simulate`); a name
 //!   with a dot runs that builtin action (`:picker.files`).
 //! - A mapping to a Lua function runs [`SessionController::run_callback`].
 //!   What it answers ([`Reply`]) is shown or run here: `app.cmd(name)` as a
@@ -687,7 +688,7 @@ impl Session {
                     self.notice(
                         NoticeLevel::Warning,
                         format!(
-                            "unknown command :{command} (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research or :q)"
+                            "unknown command :{command} (use :model, :mode, :clear, :modal, :mcp, :plugin, :implement, :research, :simulate or :q)"
                         ),
                         cx,
                     );
