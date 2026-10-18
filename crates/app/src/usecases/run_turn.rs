@@ -16,6 +16,14 @@
 //! `ApprovalRequested` and waits for the [`ApprovalPort`] (see
 //! [`super::approval`]). A rejected call ends with status `Denied`.
 //!
+//! Cancelling [`TurnOptions::cancel`] interrupts the turn at any await
+//! point: the model stream or the running tool future is dropped (which
+//! closes the connection or kills the process), the partial answer is kept
+//! without its tool uses, every tool use already in the history gets a
+//! `cancelled by user` result, open tool calls end as `Cancelled`, and the
+//! turn finishes with [`StopReason::Interrupted`]. The session can then be
+//! sent to the model again.
+//!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::HashMap;
@@ -42,6 +50,7 @@ use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, T
 
 pub use super::approval::SharedPermissions;
 use super::approval::{ApprovalGate, PendingApproval, UserVerdict, policy_denial};
+use super::cancel::{CancelToken, Interrupted};
 
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
@@ -71,6 +80,8 @@ pub struct TurnOptions {
     pub turn_override: Option<String>,
     /// Role pinned by a tool or plugin (e.g. a subagent asking `explore`).
     pub pinned_role: Option<ModelRole>,
+    /// Interrupts the turn when cancelled (`Ctrl+C`).
+    pub cancel: CancelToken,
 }
 
 impl Default for TurnOptions {
@@ -82,11 +93,12 @@ impl Default for TurnOptions {
 impl TurnOptions {
     /// Options for `role` without overrides.
     #[must_use]
-    pub const fn new(role: ModelRole) -> Self {
+    pub fn new(role: ModelRole) -> Self {
         Self {
             role,
             turn_override: None,
             pinned_role: None,
+            cancel: CancelToken::new(),
         }
     }
 
@@ -94,6 +106,13 @@ impl TurnOptions {
     #[must_use]
     pub fn with_override(mut self, name: impl Into<String>) -> Self {
         self.turn_override = Some(name.into());
+        self
+    }
+
+    /// Returns the same options interrupted by `cancel`.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
+        self.cancel = cancel;
         self
     }
 }
@@ -257,6 +276,7 @@ impl AgentService {
             model: &model,
             span,
             model_calls: 0,
+            cancel: opts.cancel,
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
@@ -300,6 +320,14 @@ struct TurnRun<'a> {
     model: &'a ResolvedModel,
     span: SpanId,
     model_calls: u32,
+    cancel: CancelToken,
+}
+
+/// One answer of the model, complete or cut by a cancellation.
+struct Answer {
+    assembled: AssembledMessage,
+    blocks: StreamBlocks,
+    interrupted: bool,
 }
 
 /// Timeline blocks opened while streaming one answer.
@@ -328,7 +356,23 @@ impl TurnRun<'_> {
                     limit: self.service.max_iterations,
                 });
             }
-            let (assembled, blocks) = self.call_model().await?;
+            if self.cancel.is_cancelled() {
+                return Ok(StopReason::Interrupted);
+            }
+            let Answer {
+                assembled,
+                blocks,
+                interrupted,
+            } = self.call_model().await?;
+            if interrupted {
+                for block_id in blocks.tool_calls.values() {
+                    self.emit_cancelled(*block_id);
+                }
+                if !assembled.message.content.is_empty() {
+                    self.turn.messages.push(assembled.message);
+                }
+                return Ok(StopReason::Interrupted);
+            }
             let stop_reason = assembled.stop_reason;
             let tool_uses: Vec<_> = assembled
                 .message
@@ -346,12 +390,40 @@ impl TurnRun<'_> {
                 return Ok(stop_reason);
             }
             let mut results = Vec::with_capacity(tool_uses.len());
-            for (id, name, input) in tool_uses {
+            let mut tool_uses = tool_uses.into_iter();
+            while let Some((id, name, input)) = tool_uses.next() {
                 let block_id = blocks.tool_calls.get(&id).copied();
-                results.push(self.execute_tool(id, name, input, block_id).await);
+                let run = self.execute_tool(id.clone(), name, input, block_id);
+                if let Ok(result) = self.cancel.run(run).await {
+                    results.push(result);
+                    continue;
+                }
+                // Every tool use must get a result, or the history could
+                // not be sent to the model again.
+                let unanswered = std::iter::once(id).chain(tool_uses.map(|(id, ..)| id));
+                for id in unanswered {
+                    if let Some(block_id) = blocks.tool_calls.get(&id) {
+                        self.emit_cancelled(*block_id);
+                    }
+                    results.push(ContentPart::ToolResult {
+                        tool_use_id: id,
+                        content: ToolOutput::from(ToolError::Cancelled).content,
+                        is_error: true,
+                    });
+                }
+                self.turn.messages.push(Message::new(Role::User, results));
+                return Ok(StopReason::Interrupted);
             }
             self.turn.messages.push(Message::new(Role::User, results));
         }
+    }
+
+    fn emit_cancelled(&self, block_id: BlockId) {
+        self.emit(DomainEvent::ToolStatusChanged {
+            block_id,
+            status: ToolStatus::Cancelled,
+            output: Some(ToolError::Cancelled.to_string()),
+        });
     }
 
     fn request(&self) -> LlmRequest {
@@ -377,48 +449,73 @@ impl TurnRun<'_> {
     }
 
     /// One model call: streams the answer into events and assembles it.
-    async fn call_model(&mut self) -> Result<(AssembledMessage, StreamBlocks), TurnError> {
+    async fn call_model(&mut self) -> Result<Answer, TurnError> {
         self.model_calls += 1;
         let started = Instant::now();
         let result = self.stream_answer().await;
         let (model, usage, error) = match &result {
-            Ok((assembled, _)) => (
-                assembled
+            Ok(answer) => (
+                answer
+                    .assembled
                     .model
                     .clone()
                     .unwrap_or_else(|| self.model.spec.id.clone()),
-                assembled.usage,
-                None,
+                answer.assembled.usage,
+                answer.interrupted.then(|| Interrupted.to_string()),
             ),
-            Err(err) => (self.model.spec.id.clone(), Usage::default(), Some(err)),
+            Err(err) => (
+                self.model.spec.id.clone(),
+                Usage::default(),
+                Some(err.to_string()),
+            ),
         };
         self.service.deps.telemetry.llm_call(LlmCallRecord {
             parent: self.span,
             model,
             usage,
             latency_ms: elapsed_ms(started),
-            error: error.map(ToString::to_string),
+            error,
         });
-        let (assembled, blocks) = result?;
-        self.turn.usage += assembled.usage;
+        let answer = result?;
+        self.turn.usage += answer.assembled.usage;
         self.emit(DomainEvent::UsageUpdated {
             turn: self.turn.usage,
             session: self.session.total_usage() + self.turn.usage,
             cost_usd: None,
         });
-        Ok((assembled, blocks))
+        Ok(answer)
     }
 
-    async fn stream_answer(&self) -> Result<(AssembledMessage, StreamBlocks), LlmError> {
-        let mut stream = self.service.deps.llm.stream(self.request()).await?;
+    /// Streams one answer. On cancellation the stream is dropped (closing
+    /// the connection) and what arrived is kept, without tool uses.
+    async fn stream_answer(&self) -> Result<Answer, LlmError> {
         let mut assembler = MessageAssembler::new();
         let mut blocks = StreamBlocks::default();
-        while let Some(event) = stream.next().await {
+        let interrupted = |assembler: MessageAssembler, blocks| Answer {
+            assembled: assembler.interrupt(),
+            blocks,
+            interrupted: true,
+        };
+        let opened = self.service.deps.llm.stream(self.request());
+        let Ok(stream) = self.cancel.run(opened).await else {
+            return Ok(interrupted(assembler, blocks));
+        };
+        let mut stream = stream?;
+        loop {
+            let Ok(next) = self.cancel.run(stream.next()).await else {
+                drop(stream);
+                return Ok(interrupted(assembler, blocks));
+            };
+            let Some(event) = next else { break };
             let event = event?;
             self.forward(&mut blocks, &event);
             assembler.push(event)?;
         }
-        Ok((assembler.finish()?, blocks))
+        Ok(Answer {
+            assembled: assembler.finish()?,
+            blocks,
+            interrupted: false,
+        })
     }
 
     /// Emits the domain events of one stream event.
@@ -678,5 +775,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 
 #[cfg(test)]
 mod approval_tests;
+#[cfg(test)]
+mod cancel_tests;
 #[cfg(test)]
 mod tests;
