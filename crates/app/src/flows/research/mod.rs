@@ -96,6 +96,7 @@
 //! over a `ScriptedLlm` (feature `testing`), and inside a graph with
 //! [`fake::FakeNode`] neighbours.
 
+pub mod agents;
 pub mod builder;
 pub mod commands;
 pub mod error;
@@ -103,6 +104,7 @@ pub mod error;
 pub mod fake;
 pub mod flow;
 pub mod gate;
+pub mod json;
 pub mod node;
 pub mod nodes;
 pub mod task;

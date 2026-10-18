@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use domain::block::{Block, BlockError, BlockId, BlockKind};
-use domain::conversation::{ContentPart, Message};
+use domain::conversation::{ContentPart, Message, Session};
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
 use domain::research::{ResearchState, Stage};
 use futures::StreamExt;
@@ -14,8 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::gate::RESERVED_PREFIX;
+use super::json::{final_text, invalid_answer, parse_valid, retry_message, text_of};
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use crate::ports::llm::{LlmError, LlmPort, LlmRequest, MessageAssembler, SystemBlock};
+use crate::ports::llm::{Citation, LlmError, LlmPort, LlmRequest, MessageAssembler, SystemBlock};
 use crate::usecases::run_turn::{AgentService, TurnError, TurnOptions};
 
 /// Stages that `/skip` may jump over: the optional ones.
@@ -95,6 +96,8 @@ pub struct NodeDeps {
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     agent: Option<Arc<AgentService>>,
+    explore_agent: Option<Arc<AgentService>>,
+    workspace_root: String,
     clock: fn() -> u64,
 }
 
@@ -102,6 +105,8 @@ impl std::fmt::Debug for NodeDeps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeDeps")
             .field("agent", &self.agent.is_some())
+            .field("explore_agent", &self.explore_agent.is_some())
+            .field("workspace_root", &self.workspace_root)
             .finish_non_exhaustive()
     }
 }
@@ -115,6 +120,8 @@ impl NodeDeps {
             models,
             events,
             agent: None,
+            explore_agent: None,
+            workspace_root: ".".to_owned(),
             clock: system_now_ms,
         }
     }
@@ -123,6 +130,23 @@ impl NodeDeps {
     #[must_use]
     pub fn with_agent(mut self, agent: Arc<AgentService>) -> Self {
         self.agent = Some(agent);
+        self
+    }
+
+    /// The read-only agent of the stages that only explore (Observación,
+    /// Datos, Investigación); see [`explore_agent`](super::agents::explore_agent).
+    /// Without it they use the agent of [`NodeDeps::with_agent`].
+    #[must_use]
+    pub fn with_explore_agent(mut self, agent: Arc<AgentService>) -> Self {
+        self.explore_agent = Some(agent);
+        self
+    }
+
+    /// The workspace root the agent sessions of the nodes are opened in
+    /// (`.` by default).
+    #[must_use]
+    pub fn with_workspace_root(mut self, root: impl Into<String>) -> Self {
+        self.workspace_root = root.into();
         self
     }
 
@@ -165,6 +189,7 @@ pub struct NodeContext {
     problem: String,
     reply: Option<String>,
     flow: graph_flow::Context,
+    stages: Option<Arc<[Stage]>>,
 }
 
 impl std::fmt::Debug for NodeContext {
@@ -218,7 +243,15 @@ impl NodeContext {
             problem,
             reply,
             flow,
+            stages: None,
         }
+    }
+
+    /// The same context inside a graph of `stages` (in order).
+    #[must_use]
+    pub fn with_stages(mut self, stages: Arc<[Stage]>) -> Self {
+        self.stages = Some(stages);
+        self
     }
 
     /// The state as the node left it.
@@ -231,6 +264,42 @@ impl NodeContext {
     #[must_use]
     pub fn stage(&self) -> Stage {
         self.stage
+    }
+
+    /// The stages of the graph, in order; all of them outside a flow.
+    #[must_use]
+    pub fn stages(&self) -> &[Stage] {
+        self.stages.as_deref().unwrap_or(&Stage::ALL)
+    }
+
+    /// Whether the graph has a node for `stage` (where `Back` may go).
+    #[must_use]
+    pub fn has_stage(&self, stage: Stage) -> bool {
+        self.stages().contains(&stage)
+    }
+
+    /// The first of `candidates` that the graph has, else the first one:
+    /// where to go back for something several stages could provide.
+    #[must_use]
+    pub fn first_stage_of(&self, candidates: &[Stage]) -> Stage {
+        candidates
+            .iter()
+            .copied()
+            .find(|s| self.has_stage(*s))
+            .or_else(|| candidates.first().copied())
+            .unwrap_or(Stage::Intake)
+    }
+
+    /// The workspace root (as given to [`NodeDeps::with_workspace_root`]).
+    #[must_use]
+    pub fn workspace_root(&self) -> &str {
+        &self.deps.workspace_root
+    }
+
+    /// A new agent session in the workspace, for one node run.
+    #[must_use]
+    pub fn new_session(&self) -> Session {
+        Session::new(self.deps.workspace_root.clone(), self.now())
     }
 
     /// Model role of the stage ([`Stage::default_role`]).
@@ -329,6 +398,24 @@ impl NodeContext {
     ///
     /// The model's [`LlmError`], or [`NodeError::EmptyAnswer`].
     pub async fn complete(&self, req: LlmRequest) -> Result<String, NodeError> {
+        let (text, _) = self.complete_with_citations(req).await?;
+        if text.is_empty() {
+            return Err(NodeError::EmptyAnswer);
+        }
+        Ok(text)
+    }
+
+    /// Sends `req` (e.g. with web search) and returns the text of the
+    /// answer, trimmed, and its citations.
+    ///
+    /// # Errors
+    ///
+    /// The model's [`LlmError`], or [`NodeError::EmptyAnswer`] when the
+    /// answer has neither text nor citations.
+    pub async fn complete_with_citations(
+        &self,
+        req: LlmRequest,
+    ) -> Result<(String, Vec<Citation>), NodeError> {
         let mut stream = self.deps.llm.stream(req).await?;
         let mut assembler = MessageAssembler::new();
         while let Some(event) = stream.next().await {
@@ -339,21 +426,11 @@ impl NodeContext {
         let assembled = assembler
             .finish()
             .map_err(|e| LlmError::Decode(e.to_string()))?;
-        let text = assembled
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<String>()
-            .trim()
-            .to_owned();
-        if text.is_empty() {
+        let text = text_of(&assembled.message.content);
+        if text.is_empty() && assembled.citations.is_empty() {
             return Err(NodeError::EmptyAnswer);
         }
-        Ok(text)
+        Ok((text, assembled.citations))
     }
 
     /// One question to this stage's model, without tools.
@@ -363,6 +440,125 @@ impl NodeContext {
     /// As [`NodeContext::complete`].
     pub async fn ask(&self, system: &str, prompt: &str) -> Result<String, NodeError> {
         self.complete(self.request(system, vec![Message::user_text(prompt)]))
+            .await
+    }
+
+    /// Asks the stage's model for a JSON object of type `T`, without tools
+    /// (see [`NodeContext::ask_parsed`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`NodeContext::ask_parsed`].
+    pub async fn ask_json<T: DeserializeOwned>(
+        &self,
+        system: &str,
+        prompt: &str,
+        validate: impl Fn(&T) -> Result<(), String>,
+    ) -> Result<T, NodeError> {
+        self.ask_parsed(system, prompt, |text| parse_valid(text, &validate))
+            .await
+    }
+
+    /// Asks `prompt` and turns the answer into `T` with `parse`; an answer
+    /// it rejects is sent back once with the error, in the same
+    /// conversation, and a second rejection is a [`NodeError::Failed`].
+    ///
+    /// # Errors
+    ///
+    /// The model's errors, or the invalid answer.
+    pub async fn ask_parsed<T>(
+        &self,
+        system: &str,
+        prompt: &str,
+        parse: impl Fn(&str) -> Result<T, String>,
+    ) -> Result<T, NodeError> {
+        let answer = self.ask(system, prompt).await?;
+        self.fix_parsed(system, vec![Message::user_text(prompt)], answer, parse)
+            .await
+    }
+
+    /// [`NodeContext::fix_parsed`] for a JSON object of type `T`.
+    ///
+    /// # Errors
+    ///
+    /// As [`NodeContext::fix_parsed`].
+    pub async fn fix_json<T: DeserializeOwned>(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        answer: String,
+        validate: impl Fn(&T) -> Result<(), String>,
+    ) -> Result<T, NodeError> {
+        self.fix_parsed(system, messages, answer, |text| {
+            parse_valid(text, &validate)
+        })
+        .await
+    }
+
+    /// Turns `answer`, the model's reply to `messages`, into `T` with
+    /// `parse`; if it is rejected, sends the error back once in the same
+    /// conversation (without tools).
+    ///
+    /// # Errors
+    ///
+    /// The model's errors, or [`NodeError::Failed`] when the second answer
+    /// is rejected too.
+    pub async fn fix_parsed<T>(
+        &self,
+        system: &str,
+        mut messages: Vec<Message>,
+        answer: String,
+        parse: impl Fn(&str) -> Result<T, String>,
+    ) -> Result<T, NodeError> {
+        let error = match parse(&answer) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        messages.push(Message::assistant(vec![ContentPart::text(answer)]));
+        messages.push(Message::user_text(retry_message(&error)));
+        let again = self.complete(self.request(system, messages)).await?;
+        parse(&again).map_err(|e| invalid_answer(self.stage, &e))
+    }
+
+    /// Runs one turn of `agent` in `session` with `input` and turns its
+    /// last answer into `T` with `parse`; a rejected answer gets a second
+    /// turn in the same session with the error.
+    ///
+    /// # Errors
+    ///
+    /// The turn's errors, or [`NodeError::Failed`] when the second answer
+    /// is rejected too.
+    pub async fn agent_parsed<T>(
+        &self,
+        agent: &AgentService,
+        session: &mut Session,
+        input: impl Into<String>,
+        parse: impl Fn(&str) -> Result<T, String>,
+    ) -> Result<T, NodeError> {
+        agent.run_turn(session, input, self.turn_options()).await?;
+        let error = match parse(&final_text(session)) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        agent
+            .run_turn(session, retry_message(&error), self.turn_options())
+            .await?;
+        parse(&final_text(session)).map_err(|e| invalid_answer(self.stage, &e))
+    }
+
+    /// [`NodeContext::agent_parsed`] for a JSON object of type `T`.
+    ///
+    /// # Errors
+    ///
+    /// As [`NodeContext::agent_parsed`].
+    pub async fn agent_json<T: DeserializeOwned>(
+        &self,
+        agent: &AgentService,
+        session: &mut Session,
+        input: impl Into<String>,
+        validate: impl Fn(&T) -> Result<(), String>,
+    ) -> Result<T, NodeError> {
+        self.agent_parsed(agent, session, input, |text| parse_valid(text, &validate))
             .await
     }
 
@@ -376,6 +572,19 @@ impl NodeContext {
             .agent
             .as_ref()
             .ok_or(NodeError::Unavailable("the agent service"))
+    }
+
+    /// The read-only agent of [`NodeDeps::with_explore_agent`], else the
+    /// agent of [`NodeDeps::with_agent`].
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Unavailable`] when the flow has neither.
+    pub fn explore_agent(&self) -> Result<&Arc<AgentService>, NodeError> {
+        match &self.deps.explore_agent {
+            Some(agent) => Ok(agent),
+            None => self.agent(),
+        }
     }
 
     /// Turn options for [`AgentService::run_turn`] with this stage's role.
@@ -528,6 +737,71 @@ mod tests {
         assert_eq!(ctx.problem(), "el login es lento");
         ctx.state_mut().problem_statements.push("p".into());
         assert_eq!(ctx.into_state().problem_statements, ["p"]);
+    }
+
+    #[derive(Debug, serde::Deserialize, PartialEq)]
+    struct Items {
+        items: Vec<String>,
+    }
+
+    fn non_empty(a: &Items) -> Result<(), String> {
+        if a.items.is_empty() {
+            Err("`items` está vacío".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_json_retries_once_with_the_error() {
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::text("{\"items\": []}"),
+            ScriptedResponse::text("```json\n{\"items\": [\"a\"]}\n```"),
+        ]));
+        let ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()));
+        let answer: Items = ctx.ask_json("s", "dame items", non_empty).await.unwrap();
+        assert_eq!(answer.items, ["a"]);
+        let retry = llm.last_request().unwrap();
+        assert_eq!(retry.messages.len(), 3);
+        let ContentPart::Text { text } = &retry.messages[2].content[0] else {
+            panic!("expected text");
+        };
+        assert!(text.contains("`items` está vacío"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn ask_json_fails_after_two_invalid_answers() {
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::text("no"),
+            ScriptedResponse::text("tampoco"),
+        ]));
+        let ctx = context(llm, Arc::new(RecordingSink::new()));
+        let err = ctx
+            .ask_json::<Items>("s", "p", non_empty)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NodeError::Failed(m) if m.contains("Hipótesis")));
+    }
+
+    #[test]
+    fn stages_default_to_all_and_follow_the_graph() {
+        let ctx = context(
+            Arc::new(ScriptedLlm::new([])),
+            Arc::new(RecordingSink::new()),
+        );
+        assert_eq!(ctx.stages(), Stage::ALL);
+        assert_eq!(
+            ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
+            Stage::Data
+        );
+        assert_eq!(ctx.workspace_root(), ".");
+        assert!(ctx.explore_agent().is_err());
+        let ctx = ctx.with_stages([Stage::Observation, Stage::Hypotheses].into());
+        assert!(!ctx.has_stage(Stage::Data));
+        assert_eq!(
+            ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
+            Stage::Observation
+        );
     }
 
     #[test]
