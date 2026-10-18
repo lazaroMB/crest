@@ -27,3 +27,6 @@ pub mod nodes;
 pub mod scope;
 pub mod state;
 pub mod task;
+
+#[cfg(test)]
+mod tests;
