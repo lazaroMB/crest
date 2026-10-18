@@ -5,18 +5,18 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | ID | Estado | Depende de | Alcance |
 | --- | --- | --- | --- |
 | T0.1 ★ | integrada | — | raíz, `crates/*/Cargo.toml` |
-| T0.2 | pendiente | T0.1 | `Makefile` |
+| T0.2 | integrada | T0.1 | `Makefile` |
 | T0.3 | en curso | — | `scripts/install-deps.sh` |
-| T0.4 | pendiente | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
+| T0.4 | en curso | T0.1 | `scripts/check-arch.sh`, `tests/arch/` |
 | T0.5 | pendiente | T0.2, T0.3, T0.4 | `.github/workflows/` |
-| T1.1 ★ | en curso | T0.1 | `domain/src/conversation.rs` |
-| T1.2 | en curso | T0.1 | `domain/src/block.rs` |
-| T1.3 | en curso | T0.1 | `domain/src/model.rs` |
-| T1.4 | en curso | T0.1 | `domain/src/workspace.rs` |
-| T1.5 | en curso | T0.1 | `domain/src/permission.rs` |
-| T1.6a ★ | pendiente | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
-| T1.6b | pendiente | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
-| T1.6c | pendiente | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
+| T1.1 ★ | integrada | T0.1 | `domain/src/conversation.rs` |
+| T1.2 | integrada | T0.1 | `domain/src/block.rs` |
+| T1.3 | integrada | T0.1 | `domain/src/model.rs` |
+| T1.4 | integrada | T0.1 | `domain/src/workspace.rs` |
+| T1.5 | integrada | T0.1 | `domain/src/permission.rs` |
+| T1.6a ★ | en curso | T1.1, T1.3 | `application/src/ports/llm.rs`, `mcp.rs` |
+| T1.6b | en curso | T1.4 | `application/src/ports/{search,fs,shell}.rs` |
+| T1.6c | en curso | T1.1, T1.2, T1.5 | `application/src/ports/{approval,events,store,plugin,telemetry}.rs` |
 | T1.7a ★ | pendiente | T1.6a | `application/src/testing/llm.rs` |
 | T1.7b | pendiente | T1.6b | `application/src/testing/fs.rs` |
 | T1.7c | pendiente | T1.6c | `application/src/testing/system.rs` |
@@ -49,7 +49,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T2.F4 | pendiente | T0.1 | `application/src/keymap.rs` |
 | T2.G1 | pendiente | T1.6c | `adapters/telemetry/` |
 | T2.G2 | pendiente | T2.G1 | mismo crate |
-| T2.H1 ★ | pendiente | T0.1 | `ui/src/app.rs` |
+| T2.H1 ★ | en curso | T0.1 | `ui/src/app.rs` |
 | T2.H2 ★ | pendiente | T2.H1, T1.2, T1.7c | `ui/src/timeline/` |
 | T2.H3 | pendiente | T2.H1, T2.F4 | `ui/src/input.rs` |
 | T2.H4 | pendiente | T2.H1 | `ui/src/status.rs` |
