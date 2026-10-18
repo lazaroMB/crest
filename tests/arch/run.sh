@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Tests de scripts/check-arch.sh contra workspaces de juguete en fixtures/.
+# Tests for scripts/check-arch.sh against toy workspaces in fixtures/.
 #
-# Los fixtures no tienen dependencias externas reales: los crates de I/O de la
-# lista negra (tokio, opentelemetry-sdk) son crates vacíos en fixtures/_vendor,
-# referenciados por path desde fuera de cada workspace de prueba, así que
-# cargo metadata los ve como externos y no se descarga nada. La lista negra
-# compara por nombre de paquete, de modo que basta con el nombre.
+# The fixtures have no real external dependencies: the blacklisted I/O crates
+# (tokio, opentelemetry-sdk) are empty crates in fixtures/_vendor, referenced
+# by path from outside each test workspace, so cargo metadata sees them as
+# external and nothing is downloaded. The blacklist matches by package name,
+# so the name is enough.
 #
-# Uso: tests/arch/run.sh   (sale con 1 si algún caso no da lo esperado)
+# Usage: tests/arch/run.sh   (exits 1 if any case does not give the expected result)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +18,7 @@ fixtures="$here/fixtures"
 passed=0
 failed=0
 
-# check <nombre> <código esperado> <texto esperado en la salida> <args...>
+# check <name> <expected code> <expected text in the output> <args...>
 check() {
     local label="$1" want="$2" needle="$3" out code
     shift 3
@@ -27,11 +27,11 @@ check() {
     code=$?
     set -e
     if [ "$code" -ne "$want" ]; then
-        echo "FAIL $label: código $code, se esperaba $want"
+        echo "FAIL $label: exit code $code, expected $want"
         printf '%s\n' "$out" | sed 's/^/    /'
         failed=$((failed + 1))
     elif [ -n "$needle" ] && ! printf '%s\n' "$out" | grep -qF -- "$needle"; then
-        echo "FAIL $label: la salida no contiene '$needle'"
+        echo "FAIL $label: the output does not contain '$needle'"
         printf '%s\n' "$out" | sed 's/^/    /'
         failed=$((failed + 1))
     else
@@ -40,26 +40,26 @@ check() {
     fi
 }
 
-# fixture <nombre> <código esperado> <texto esperado>
+# fixture <name> <expected code> <expected text>
 fixture() {
     check "$1" "$2" "$3" "$script" --manifest-path "$fixtures/$1/Cargo.toml"
 }
 
 fixture valid 0 "check-arch: ok"
-fixture adapter-to-adapter 1 "crate adapter-fs (capa adapter) depende de adapter-shell (capa adapter) [normal]: prohibido"
-fixture adapter-to-adapter-dev 1 "depende de adapter-shell (capa adapter) [dev]: prohibido"
-fixture domain-to-application 1 "crate domain (capa domain) depende de application (capa app)"
-fixture app-to-adapter 1 "crate application (capa app) depende de adapter-fs (capa adapter)"
-fixture ui-to-adapter 1 "crate ui (capa ui) depende de adapter-fs (capa adapter)"
-fixture app-io-dep 1 "crate application (capa app) depende del crate de I/O tokio"
-fixture domain-io-glob 1 "crate domain (capa domain) depende del crate de I/O opentelemetry-sdk"
-fixture app-misnamed 1 "crate app (capa app) debe llamarse 'application'"
-fixture unknown-path 1 "crate misc (crates/misc) no pertenece a ninguna capa conocida"
+fixture adapter-to-adapter 1 "crate adapter-fs (layer adapter) depends on adapter-shell (layer adapter) [normal]: forbidden"
+fixture adapter-to-adapter-dev 1 "depends on adapter-shell (layer adapter) [dev]: forbidden"
+fixture domain-to-application 1 "crate domain (layer domain) depends on application (layer app)"
+fixture app-to-adapter 1 "crate application (layer app) depends on adapter-fs (layer adapter)"
+fixture ui-to-adapter 1 "crate ui (layer ui) depends on adapter-fs (layer adapter)"
+fixture app-io-dep 1 "crate application (layer app) depends on the I/O crate tokio"
+fixture domain-io-glob 1 "crate domain (layer domain) depends on the I/O crate opentelemetry-sdk"
+fixture app-misnamed 1 "crate app (layer app) must be named 'application'"
+fixture unknown-path 1 "crate misc (crates/misc) does not belong to any known layer"
 
-check "env CHECK_ARCH_MANIFEST" 1 "debe llamarse 'application'" \
+check "env CHECK_ARCH_MANIFEST" 1 "must be named 'application'" \
     env CHECK_ARCH_MANIFEST="$fixtures/app-misnamed/Cargo.toml" "$script"
-check "argumento desconocido" 2 "uso:" "$script" --bogus
-check "workspace real" 0 "check-arch: ok" "$script" --manifest-path "$repo/Cargo.toml"
+check "unknown argument" 2 "usage:" "$script" --bogus
+check "real workspace" 0 "check-arch: ok" "$script" --manifest-path "$repo/Cargo.toml"
 
-echo "$passed ok, $failed fallidos"
+echo "$passed ok, $failed failed"
 [ "$failed" -eq 0 ]

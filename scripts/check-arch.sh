@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
-# check-arch.sh: verifica las reglas de dependencia de la arquitectura hexagonal.
+# check-arch.sh: checks the dependency rules of the hexagonal architecture.
 #
-# Capas (por la ruta del manifest relativa a la raíz del workspace):
+# Layers (by the manifest path relative to the workspace root):
 #   domain   crates/domain
-#   app      crates/app            (el paquete debe llamarse "application")
+#   app      crates/app            (the package must be named "application")
 #   adapter  crates/adapters/<x>
 #   ui       crates/ui
 #   bin      crates/bin
 #
-# Uso: scripts/check-arch.sh [--manifest-path <Cargo.toml>]
-#      (o la variable de entorno CHECK_ARCH_MANIFEST)
-# Reglas de dependencias internas (crates con path dentro del workspace):
-#   domain -> ninguna; app -> domain; adapter, ui -> app, domain; bin -> todas.
-# domain y app tampoco pueden usar crates de I/O (ver IO_CRATES).
+# Usage: scripts/check-arch.sh [--manifest-path <Cargo.toml>]
+#      (or the CHECK_ARCH_MANIFEST environment variable)
+# Internal dependency rules (path crates inside the workspace):
+#   domain -> none; app -> domain; adapter, ui -> app, domain; bin -> all.
+# domain and app cannot use I/O crates either (see IO_CRATES).
 #
-# Sale con 0 si todo cumple, 1 si hay alguna violación, 2 si hay un error de uso.
-# Requiere cargo y jq. Compatible con bash 3.2.
+# Exits 0 if everything complies, 1 on any violation, 2 on a usage error.
+# Requires cargo and jq. Compatible with bash 3.2.
 set -euo pipefail
-set -f # sin globbing de rutas: IO_CRATES contiene patrones como opentelemetry*
+set -f # no pathname globbing: IO_CRATES holds patterns such as opentelemetry*
 
-# Crates de I/O prohibidos en [dependencies] y [build-dependencies] de domain y
-# app (se compara el nombre del paquete; admite globs). En [dev-dependencies] sí
-# se permiten: los tests pueden usar un runtime o un fs real sin que el código
-# de producción quede acoplado a ellos. futures, async-trait, tracing (fachada)
-# y similar son puros y están permitidos.
+# I/O crates forbidden in the [dependencies] and [build-dependencies] of domain
+# and app (matched by package name; globs allowed). They are allowed in
+# [dev-dependencies]: tests may use a runtime or a real fs without coupling the
+# production code to them. futures, async-trait, tracing (the facade) and the
+# like are pure and allowed.
 IO_CRATES="tokio reqwest reqwest-eventsource hyper gpui gpui-component mlua
 rusqlite sqlx rmcp notify keyring opentelemetry* tracing-opentelemetry"
 
 manifest="${CHECK_ARCH_MANIFEST:-}"
 
 usage() {
-    echo "uso: $0 [--manifest-path <Cargo.toml>]" >&2
+    echo "usage: $0 [--manifest-path <Cargo.toml>]" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -60,7 +60,7 @@ done
 
 for tool in cargo jq; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "check-arch: falta '$tool' en el PATH" >&2
+        echo "check-arch: '$tool' is not in the PATH" >&2
         exit 2
     fi
 done
@@ -80,7 +80,7 @@ fail() {
     errors=$((errors + 1))
 }
 
-# Imprime la capa de un directorio (absoluto) o "unknown" si no es clasificable.
+# Prints the layer of an (absolute) directory, or "unknown" if it fits none.
 layer_of() {
     local rel="${1#"$root"/}"
     case "$rel" in
@@ -94,7 +94,7 @@ layer_of() {
     esac
 }
 
-# Una línea por paquete del workspace: nombre<TAB>directorio.
+# One line per workspace package: name<TAB>directory.
 packages="$(printf '%s' "$metadata" | jq -r '
     .packages[] | [.name, (.manifest_path | sub("/Cargo.toml$"; ""))] | @tsv')"
 
@@ -102,15 +102,15 @@ while IFS="$(printf '\t')" read -r name dir; do
     [ -n "$name" ] || continue
     layer="$(layer_of "$dir")"
     if [ "$layer" = unknown ]; then
-        fail "crate $name (${dir#"$root"/}) no pertenece a ninguna capa conocida"
+        fail "crate $name (${dir#"$root"/}) does not belong to any known layer"
     elif [ "$layer" = app ] && [ "$name" != application ]; then
-        fail "crate $name (capa app) debe llamarse 'application'"
+        fail "crate $name (layer app) must be named 'application'"
     fi
 done <<EOF
 $packages
 EOF
 
-# ¿Puede la capa $1 depender de la capa $2?
+# May layer $1 depend on layer $2?
 internal_allowed() {
     case "$1:$2" in
         app:domain) return 0 ;;
@@ -121,8 +121,8 @@ internal_allowed() {
     esac
 }
 
-# Una línea por dependencia con path: crate<TAB>dir<TAB>dep<TAB>dir de dep<TAB>tipo.
-# Las reglas internas se aplican a todos los tipos (normal, dev y build).
+# One line per path dependency: crate<TAB>dir<TAB>dep<TAB>dep dir<TAB>kind.
+# The internal rules apply to every kind (normal, dev and build).
 path_deps="$(printf '%s' "$metadata" | jq -r '
     .packages[] | .name as $n | (.manifest_path | sub("/Cargo.toml$"; "")) as $d
     | .dependencies[] | select(.path != null)
@@ -132,15 +132,15 @@ while IFS="$(printf '\t')" read -r name dir dep dep_dir kind; do
     [ -n "$name" ] || continue
     case "$dep_dir" in
         "$root" | "$root"/*) ;;
-        *) continue ;; # path fuera del workspace: no es interna
+        *) continue ;; # path outside the workspace: not internal
     esac
     from="$(layer_of "$dir")"
     to="$(layer_of "$dep_dir")"
-    [ "$from" != unknown ] || continue # ya reportado arriba
+    [ "$from" != unknown ] || continue # already reported above
     if [ "$to" = unknown ]; then
-        fail "crate $name (capa $from) depende de $dep (${dep_dir#"$root"/}), que no pertenece a ninguna capa conocida"
+        fail "crate $name (layer $from) depends on $dep (${dep_dir#"$root"/}), which does not belong to any known layer"
     elif ! internal_allowed "$from" "$to"; then
-        fail "crate $name (capa $from) depende de $dep (capa $to) [$kind]: prohibido"
+        fail "crate $name (layer $from) depends on $dep (layer $to) [$kind]: forbidden"
     fi
 done <<EOF
 $path_deps
@@ -149,7 +149,7 @@ EOF
 is_io_crate() {
     local pattern
     for pattern in $IO_CRATES; do
-        # shellcheck disable=SC2254 # el patrón es un glob a propósito
+        # shellcheck disable=SC2254 # the pattern is a glob on purpose
         case "$1" in
             $pattern) return 0 ;;
         esac
@@ -157,7 +157,7 @@ is_io_crate() {
     return 1
 }
 
-# Una línea por dependencia no-dev: crate<TAB>dir<TAB>dep<TAB>tipo.
+# One line per non-dev dependency: crate<TAB>dir<TAB>dep<TAB>kind.
 non_dev_deps="$(printf '%s' "$metadata" | jq -r '
     .packages[] | .name as $n | (.manifest_path | sub("/Cargo.toml$"; "")) as $d
     | .dependencies[] | select(.kind != "dev")
@@ -171,14 +171,14 @@ while IFS="$(printf '\t')" read -r name dir dep kind; do
         *) continue ;;
     esac
     if is_io_crate "$dep"; then
-        fail "crate $name (capa $from) depende del crate de I/O $dep [$kind]: prohibido"
+        fail "crate $name (layer $from) depends on the I/O crate $dep [$kind]: forbidden"
     fi
 done <<EOF
 $non_dev_deps
 EOF
 
 if [ "$errors" -gt 0 ]; then
-    echo "check-arch: $errors violación(es) de arquitectura" >&2
+    echo "check-arch: $errors architecture violation(s)" >&2
     exit 1
 fi
 echo "check-arch: ok"
