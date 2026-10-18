@@ -19,6 +19,7 @@ use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};
 use crest::root::{App, Config, Overrides, build_app};
 use domain::block::BlockKind;
+use domain::model::ModelPolicy;
 use domain::permission::{PermissionMode, RuleDecision, RuleMatcher};
 use serde_json::json;
 
@@ -233,14 +234,14 @@ async fn a_failing_model_exits_with_1() {
 }
 
 /// The app over a workspace whose `.crest/init.lua` is `init`.
-async fn app_with_init(init: &str) -> (tempfile::TempDir, App) {
+async fn app_with_init(init: &str) -> (tempfile::TempDir, App, Buffer) {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("ws");
     std::fs::create_dir_all(workspace.join(".crest")).unwrap();
     let init_path = workspace.join(".crest/init.lua");
     std::fs::write(&init_path, init).unwrap();
     let output = Buffer::default();
-    let terminal = Terminal::new(Box::new(output), false);
+    let terminal = Terminal::new(Box::new(output.clone()), false);
     let approval = StdinApproval::new(terminal.clone(), Box::new(Cursor::new(Vec::new())), false);
     let overrides = Overrides {
         llm: Some(Arc::new(ScriptedLlm::new(Vec::new()))),
@@ -260,7 +261,7 @@ async fn app_with_init(init: &str) -> (tempfile::TempDir, App) {
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
         .unwrap();
-    (dir, app)
+    (dir, app, output)
 }
 
 #[tokio::test]
@@ -271,7 +272,27 @@ async fn cost_options_start_the_tracker_without_warnings() {
                 app.opt.max_session_cost = 5\n\
                 app.opt.pricing = { opus = { input = 5, output = 25, cache_read = 0.5, \
                 cache_write = 6.25 } }\n";
-    let (_dir, app) = app_with_init(init).await;
+    let (_dir, app, _) = app_with_init(init).await;
     let cost = |w: &&String| w.contains("costo") || w.contains("app.opt");
     assert_eq!(app.warnings.iter().find(cost), None);
+}
+
+#[tokio::test]
+async fn a_syntax_error_in_init_lua_is_an_error_and_the_defaults_apply() {
+    // The roles before the error never apply: the whole file is dropped.
+    let init = "local app = require('app')\n\
+                app.models.roles.main = { id = 'claude-otro' }\n\
+                esto no es lua\n";
+    let (dir, app, output) = app_with_init(init).await;
+    assert_eq!(app.model_policy(), &ModelPolicy::default());
+    let path = dir.path().join("ws/.crest/init.lua");
+    let expected = format!("{}:3:", path.display());
+    assert_eq!(app.config_errors.len(), 1, "{:?}", app.config_errors);
+    assert!(
+        app.config_errors[0].starts_with(&expected),
+        "{:?}",
+        app.config_errors
+    );
+    let out = output.text();
+    assert!(out.contains(&format!("error: {expected}")), "{out}");
 }

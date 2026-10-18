@@ -18,6 +18,7 @@ use application::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::gui::session_parts;
 use crest::root::{Config, Overrides};
 use domain::block::{BlockKind, ToolStatus};
+use domain::model::{ModelRole, default_spec};
 use domain::permission::PermissionMode;
 use gpui::{
     App, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
@@ -51,6 +52,15 @@ fn open(
     script: Vec<ScriptedResponse>,
     cx: &mut TestAppContext,
 ) -> (Window_, &mut VisualTestContext) {
+    open_with(script, None, cx)
+}
+
+/// The window over a new workspace whose `.crest/init.lua` is `init`.
+fn open_with<'a>(
+    script: Vec<ScriptedResponse>,
+    init: Option<&str>,
+    cx: &'a mut TestAppContext,
+) -> (Window_, &'a mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(gpui_component::init);
     let dir = tempfile::tempdir().unwrap();
@@ -58,10 +68,17 @@ fn open(
     std::fs::create_dir_all(workspace.join("src")).unwrap();
     std::fs::write(workspace.join("src/lib.rs"), LIB).unwrap();
     let db = dir.path().join("sessions.db");
+    let mut sources = ConfigSources::default();
+    if let Some(init) = init {
+        std::fs::create_dir_all(workspace.join(".crest")).unwrap();
+        let path = workspace.join(".crest/init.lua");
+        std::fs::write(&path, init).unwrap();
+        sources.workspace = Some(path);
+    }
     let llm = Arc::new(ScriptedLlm::new(script));
     let overrides = Overrides {
         llm: Some(llm.clone()),
-        config_sources: Some(ConfigSources::default()),
+        config_sources: Some(sources),
         db_path: Some(db.clone()),
         ..Overrides::default()
     };
@@ -224,5 +241,35 @@ fn ctrl_c_interrupts_the_real_agent(cx: &mut TestAppContext) {
         texts.last().map(String::as_str),
         Some("de nuevo"),
         "{texts:?}"
+    );
+}
+
+#[gpui::test]
+fn a_broken_init_lua_opens_with_an_error_block(cx: &mut TestAppContext) {
+    let (w, cx) = open_with(
+        vec![ScriptedResponse::text("hola")],
+        Some("local app = require('app')\nesto no es lua\n"),
+        cx,
+    );
+    let path = w.workspace.join(".crest/init.lua");
+    let prefix = format!("{}:2:", path.display());
+    let kinds = blocks(&w, cx);
+    assert!(
+        kinds.iter().any(
+            |kind| matches!(kind, BlockKind::Error { message, .. } if message.starts_with(&prefix))
+        ),
+        "{kinds:?}"
+    );
+    // The agent still answers, with the default model.
+    w.session.read_with(cx, |s, cx| {
+        let model = s.status().read(cx).state().model().cloned();
+        assert_eq!(model, Some(default_spec(ModelRole::Main).id));
+    });
+    cx.simulate_input("hola");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the turn", |s, _| !s.is_running());
+    assert_eq!(
+        texts(&blocks(&w, cx)).last().map(String::as_str),
+        Some("hola")
     );
 }

@@ -132,6 +132,9 @@ pub struct App {
     pub workspace: WorkspaceRoot,
     /// Startup warnings, also emitted as `Notice` events.
     pub warnings: Vec<String>,
+    /// Problems of the config files (`file:line: message`), also emitted as
+    /// `Error` blocks; crest runs without what those files define.
+    pub config_errors: Vec<String>,
     /// The MCP servers that were started, if any.
     pub mcp: Option<McpServers>,
     /// File search of the workspace (rg/fzf), for the tree and pickers.
@@ -232,6 +235,9 @@ pub async fn build_app(
     overrides: Overrides,
 ) -> anyhow::Result<App> {
     let timeline = Arc::new(Mutex::new(TimelineState::new()));
+    // Startup problems go straight to the front end: they belong to this
+    // run, not to the saved timeline of the session.
+    let startup_events = Arc::clone(&frontend.events);
     let events: Arc<dyn EventSink> = Arc::new(TimelineSink {
         timeline: Arc::clone(&timeline),
         inner: frontend.events,
@@ -361,8 +367,13 @@ pub async fn build_app(
         Err(err) => warnings.push(format!("costo: {err}; sin precios ni tope de gasto")),
     }
 
+    for error in &loaded.errors {
+        startup_events.emit(DomainEvent::BlockAdded {
+            block: startup::config_error_block(error),
+        });
+    }
     for warning in &warnings {
-        events.emit(DomainEvent::Notice {
+        startup_events.emit(DomainEvent::Notice {
             level: NoticeLevel::Warning,
             message: warning.clone(),
         });
@@ -377,6 +388,7 @@ pub async fn build_app(
         turn_options,
         workspace: root,
         warnings,
+        config_errors: loaded.errors.iter().map(startup::diagnostic).collect(),
         mcp,
         file_search,
         content_search,

@@ -7,14 +7,17 @@ use std::time::Duration;
 
 use application::ports::llm::ModelCatalogPort;
 use application::ports::plugin::{ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort};
+use domain::block::{Block, BlockKind};
 use domain::model::{ModelId, ModelPolicy};
 use domain::workspace::SensitivePathRules;
 
 /// How long the catalog may take before startup goes on without it.
 pub const CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Loads the global and workspace `init.lua` through `host`. Diagnostics
-/// become warnings; if loading fails altogether the defaults are used.
+/// Loads the global and workspace `init.lua` through `host`. Problems in
+/// single files stay in [`LoadedConfig::errors`] (each one an `Error`
+/// block, see [`config_error_block`]); if loading fails altogether the
+/// defaults are used with a warning.
 pub async fn load_config(
     host: Option<&dyn PluginHostPort>,
     sources: ConfigSources,
@@ -23,10 +26,7 @@ pub async fn load_config(
         return (LoadedConfig::default(), Vec::new());
     };
     match host.load_config(sources).await {
-        Ok(config) => {
-            let warnings = config.errors.iter().map(diagnostic).collect();
-            (config, warnings)
-        }
+        Ok(config) => (config, Vec::new()),
         Err(err) => (
             LoadedConfig::default(),
             vec![format!("config: {err}; uso los valores por defecto")],
@@ -34,11 +34,27 @@ pub async fn load_config(
     }
 }
 
-fn diagnostic(d: &PluginDiagnostic) -> String {
+/// `file:line: message`, or `file: message` without a line.
+#[must_use]
+pub fn diagnostic(d: &PluginDiagnostic) -> String {
     match d.line {
         Some(line) => format!("{}:{line}: {}", d.source, d.message),
         None => format!("{}: {}", d.source, d.message),
     }
+}
+
+/// The `Error` block that shows a problem of a config file: crest goes on
+/// without what that file defines.
+#[must_use]
+pub fn config_error_block(d: &PluginDiagnostic) -> Block {
+    Block::new(BlockKind::Error {
+        message: diagnostic(d),
+        hint: Some(
+            "crest arrancó sin lo que define ese archivo (valores por defecto); corrígelo y \
+             vuelve a abrir crest"
+                .into(),
+        ),
+    })
 }
 
 /// The sensitive path rules of `config`, or the defaults (with a warning)
@@ -116,6 +132,11 @@ mod tests {
             line: Some(3),
         };
         assert_eq!(diagnostic(&d), "init.lua:3: syntax error");
+        let block = config_error_block(&d);
+        assert!(
+            matches!(&block.kind, BlockKind::Error { message, hint: Some(_) } if message == "init.lua:3: syntax error"),
+            "{block:?}"
+        );
     }
 
     #[test]
