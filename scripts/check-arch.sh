@@ -10,6 +10,9 @@
 #
 # Uso: scripts/check-arch.sh [--manifest-path <Cargo.toml>]
 #      (o la variable de entorno CHECK_ARCH_MANIFEST)
+# Reglas de dependencias internas (crates con path dentro del workspace):
+#   domain -> ninguna; app -> domain; adapter, ui -> app, domain; bin -> todas.
+#
 # Sale con 0 si todo cumple, 1 si hay alguna violación, 2 si hay un error de uso.
 # Requiere cargo y jq. Compatible con bash 3.2.
 set -euo pipefail
@@ -93,6 +96,42 @@ while IFS="$(printf '\t')" read -r name dir; do
     fi
 done <<EOF
 $packages
+EOF
+
+# ¿Puede la capa $1 depender de la capa $2?
+internal_allowed() {
+    case "$1:$2" in
+        app:domain) return 0 ;;
+        adapter:app | adapter:domain) return 0 ;;
+        ui:app | ui:domain) return 0 ;;
+        bin:*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Una línea por dependencia con path: crate<TAB>dir<TAB>dep<TAB>dir de dep<TAB>tipo.
+# Las reglas internas se aplican a todos los tipos (normal, dev y build).
+path_deps="$(printf '%s' "$metadata" | jq -r '
+    .packages[] | .name as $n | (.manifest_path | sub("/Cargo.toml$"; "")) as $d
+    | .dependencies[] | select(.path != null)
+    | [$n, $d, .name, .path, (.kind // "normal")] | @tsv')"
+
+while IFS="$(printf '\t')" read -r name dir dep dep_dir kind; do
+    [ -n "$name" ] || continue
+    case "$dep_dir" in
+        "$root" | "$root"/*) ;;
+        *) continue ;; # path fuera del workspace: no es interna
+    esac
+    from="$(layer_of "$dir")"
+    to="$(layer_of "$dep_dir")"
+    [ "$from" != unknown ] || continue # ya reportado arriba
+    if [ "$to" = unknown ]; then
+        fail "crate $name (capa $from) depende de $dep (${dep_dir#"$root"/}), que no pertenece a ninguna capa conocida"
+    elif ! internal_allowed "$from" "$to"; then
+        fail "crate $name (capa $from) depende de $dep (capa $to) [$kind]: prohibido"
+    fi
+done <<EOF
+$path_deps
 EOF
 
 if [ "$errors" -gt 0 ]; then
