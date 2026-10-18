@@ -7,6 +7,7 @@
 //! - [`load`]: reading, validating and ordering `plan.json`; the branch.
 //! - [`node`]: the step contract ([`ImplementNode`](node::ImplementNode)).
 //! - [`task`]: [`StepTask`](task::StepTask), the graph-flow task of a step.
+//! - [`nodes`]: the steps after Cargar plan, one file each.
 //! - [`scope`]: file tools restricted to the files of a task.
 //! - [`state`]: the steps and what the session keeps
 //!   ([`ImplementState`](state::ImplementState)).
@@ -18,6 +19,7 @@ pub mod flow;
 pub mod gate;
 pub mod load;
 pub mod node;
+pub mod nodes;
 pub mod scope;
 pub mod state;
 pub mod task;
