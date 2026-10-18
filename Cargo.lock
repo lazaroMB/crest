@@ -8152,6 +8152,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "base64 0.23.1",
  "domain",
  "futures",
  "gpui-component",
