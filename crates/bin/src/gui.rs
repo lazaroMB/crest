@@ -35,6 +35,7 @@ use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::mcp::McpPort as _;
 use application::ports::plugin::{
     CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
 };
@@ -56,6 +57,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use ui::approval::UiApproval;
+use ui::help::HelpSnapshot;
 use ui::session::{
     ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
 };
@@ -612,6 +614,24 @@ impl SessionController for UiController {
         let id = self.commands.get(name)?;
         Some(self.run_callback(id.0, serde_json::Value::String(args.to_owned())))
     }
+
+    fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
+        let (app, trust) = (Arc::clone(&self.app), Arc::clone(&self.plugin_trust));
+        let task = self
+            .handle
+            .spawn(async move { help_snapshot(&app, &trust).await });
+        task.map(Result::unwrap_or_default).boxed()
+    }
+}
+
+/// The help's snapshot of `app`, with the MCP servers' states now.
+pub async fn help_snapshot(app: &tokio::sync::Mutex<App>, trust: &PluginTrust) -> HelpSnapshot {
+    let app = app.lock().await;
+    let statuses = match &app.mcp {
+        Some(mcp) => mcp.manager.servers().await,
+        None => Vec::new(),
+    };
+    crate::help::snapshot(&app, trust, &statuses)
 }
 
 /// The controller of a window whose agent could not start.

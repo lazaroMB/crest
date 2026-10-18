@@ -7,6 +7,7 @@
 pub mod args;
 pub mod gui;
 pub mod headless;
+pub mod help;
 pub mod images;
 pub mod keys;
 pub mod mcp;
