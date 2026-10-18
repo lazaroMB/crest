@@ -1,6 +1,6 @@
 //! In-memory fakes of the file ports: [`InMemoryFs`] implements
-//! [`FileSystemPort`] over a map of paths to bytes, so use cases can be
-//! tested without touching the disk.
+//! [`FileSystemPort`] and [`FileSearchPort`] over a map of paths to bytes,
+//! so use cases can be tested without touching the disk, `rg` or `fzf`.
 //!
 //! The fake applies the same guards the real adapter does (sensitive paths,
 //! binary files, the read size limit) and lets tests simulate what only a
@@ -20,6 +20,9 @@ use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceR
 use crate::ports::fs::{
     EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, MAX_READ_BYTES,
     PendingChange, ReadFileRequest, WriteFileRequest, replace_unique,
+};
+use crate::ports::search::{
+    FileList, FileSearchPort, FindFileRequest, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 
 /// A workspace held in memory. Directories are implied by the files below
@@ -362,6 +365,97 @@ fn hunk_range(start: usize, len: usize) -> String {
     format!("{first},{len}")
 }
 
+impl InMemoryFs {
+    /// The files `rg --files --hidden --glob '!.git'` would list: all but
+    /// those inside `.git` or behind an escaping link, sorted by path.
+    fn listed(&self) -> Vec<WorkspacePath> {
+        self.lock()
+            .keys()
+            .filter(|path| !path.components().any(|c| c == ".git"))
+            .filter(|path| self.check_inside(path).is_ok())
+            .cloned()
+            .collect()
+    }
+}
+
+/// Matches `path` against a glob as `rg --glob` does for the simple cases:
+/// a glob without `/` matches the file name at any depth, one with `/`
+/// matches the whole path. `*` and `?` stay within a component, `**`
+/// crosses them and `**/` also matches nothing. Character classes, braces
+/// and negation are not supported (they match literally).
+pub fn glob_matches(glob: &str, path: &WorkspacePath) -> bool {
+    let pattern: Vec<char> = glob.chars().collect();
+    let subject = if glob.contains('/') {
+        path.as_str()
+    } else {
+        path.file_name().unwrap_or_default()
+    };
+    let subject: Vec<char> = subject.chars().collect();
+    glob_rec(&pattern, &subject)
+}
+
+fn glob_rec(pattern: &[char], subject: &[char]) -> bool {
+    match pattern {
+        [] => subject.is_empty(),
+        ['*', '*', rest @ ..] => {
+            let after_slash = rest.strip_prefix(&['/']);
+            after_slash.is_some_and(|r| glob_rec(r, subject))
+                || (0..=subject.len()).any(|i| glob_rec(rest, &subject[i..]))
+        }
+        ['*', rest @ ..] => {
+            let component_end = subject
+                .iter()
+                .position(|c| *c == '/')
+                .unwrap_or(subject.len());
+            (0..=component_end).any(|i| glob_rec(rest, &subject[i..]))
+        }
+        ['?', rest @ ..] => match subject {
+            [c, tail @ ..] if *c != '/' => glob_rec(rest, tail),
+            _ => false,
+        },
+        [p, rest @ ..] => match subject {
+            [c, tail @ ..] if c == p => glob_rec(rest, tail),
+            _ => false,
+        },
+    }
+}
+
+#[async_trait]
+impl FileSearchPort for InMemoryFs {
+    async fn list_files(&self, request: ListFilesRequest) -> Result<FileList, SearchError> {
+        let matching = self
+            .listed()
+            .into_iter()
+            .filter(|path| request.glob.as_ref().is_none_or(|g| glob_matches(g, path)))
+            .collect();
+        Ok(FileList::from_matches(matching, request.limit))
+    }
+
+    /// Matches `request.query` as a case-insensitive substring (the
+    /// adapter's fallback without `fzf`), ranking paths whose file name
+    /// contains it first, then shorter paths, then by path.
+    async fn find_file(&self, request: FindFileRequest) -> Result<FileList, SearchError> {
+        let query = request.query.to_lowercase();
+        let contains = |s: &str| s.to_lowercase().contains(&query);
+        let mut matching: Vec<WorkspacePath> = self
+            .listed()
+            .into_iter()
+            .filter(|path| contains(path.as_str()))
+            .collect();
+        matching.sort_by_cached_key(|path| {
+            let in_name = path.file_name().is_some_and(contains);
+            (!in_name, path.as_str().len(), path.clone())
+        });
+        Ok(FileList::from_matches(matching, request.limit))
+    }
+
+    async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
+        let base = request.path.unwrap_or_else(WorkspacePath::root);
+        self.check_inside(&base)?;
+        Ok(TreeNode::from_files(&base, &self.listed(), request.depth))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,6 +764,107 @@ mod tests {
         assert_eq!(
             diff,
             "--- a/n.txt\n+++ b/n.txt\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n"
+        );
+    }
+
+    fn search_fs() -> InMemoryFs {
+        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            .with_file("Cargo.toml", "")
+            .with_file("src/main.rs", "")
+            .with_file("src/ports/fs.rs", "")
+            .with_file("crates/main/lib.rs", "")
+            .with_file(".github/ci.yml", "")
+            .with_file(".git/HEAD", "")
+            .with_file("out/x.rs", "")
+            .with_escaping_link("out")
+    }
+
+    fn names(list: &FileList) -> Vec<&str> {
+        list.paths.iter().map(WorkspacePath::as_str).collect()
+    }
+
+    #[tokio::test]
+    async fn list_files_skips_git_and_filters_by_glob() {
+        let fs = search_fs();
+        let all = fs.list_files(ListFilesRequest::default()).await.unwrap();
+        assert_eq!(
+            names(&all),
+            [
+                ".github/ci.yml",
+                "Cargo.toml",
+                "crates/main/lib.rs",
+                "src/main.rs",
+                "src/ports/fs.rs"
+            ]
+        );
+        let glob = |g: &str, limit| ListFilesRequest {
+            glob: Some(g.into()),
+            limit,
+        };
+        let rs = fs.list_files(glob("*.rs", 2)).await.unwrap();
+        assert_eq!(names(&rs), ["crates/main/lib.rs", "src/main.rs"]);
+        assert!(rs.truncated);
+        assert_eq!(rs.total, 3);
+        let nested = fs.list_files(glob("src/**/*.rs", 10)).await.unwrap();
+        assert_eq!(names(&nested), ["src/main.rs", "src/ports/fs.rs"]);
+        let top = fs.list_files(glob("src/*.rs", 10)).await.unwrap();
+        assert_eq!(names(&top), ["src/main.rs"]);
+    }
+
+    #[test]
+    fn glob_supports_simple_wildcards() {
+        for (glob, path, expected) in [
+            ("*.rs", "a/b/c.rs", true),
+            ("?.rs", "a/b.rs", true),
+            ("?.rs", "ab.rs", false),
+            ("**/*.rs", "c.rs", true),
+            ("**/*.rs", "a/b/c.rs", true),
+            ("a/*", "a/b/c", false),
+            ("a/**", "a/b/c", true),
+            ("Cargo.toml", "x/Cargo.toml", true),
+            ("x/Cargo.toml", "Cargo.toml", false),
+        ] {
+            assert_eq!(glob_matches(glob, &p(path)), expected, "{glob} vs {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn find_file_ranks_name_matches_first() {
+        let fs = search_fs();
+        let found = fs.find_file(FindFileRequest::new("MAIN")).await.unwrap();
+        assert_eq!(names(&found), ["src/main.rs", "crates/main/lib.rs"]);
+        let limited = FindFileRequest {
+            limit: 1,
+            ..FindFileRequest::new("")
+        };
+        let first = fs.find_file(limited).await.unwrap();
+        assert_eq!((names(&first), first.total), (vec!["Cargo.toml"], 5));
+    }
+
+    #[tokio::test]
+    async fn tree_is_built_from_the_listing() {
+        let fs = search_fs();
+        let tree = fs.tree(TreeRequest::default()).await.unwrap();
+        let top: Vec<_> = tree.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(top, [".github", "crates", "src", "Cargo.toml"]);
+
+        let src = TreeRequest {
+            path: Some(p("src")),
+            depth: 1,
+        };
+        let src = fs.tree(src).await.unwrap();
+        assert_eq!(src.children[0].name, "ports");
+        assert_eq!(src.children[0].omitted_files, 1);
+
+        let outside = TreeRequest {
+            path: Some(p("out")),
+            depth: 1,
+        };
+        assert_eq!(
+            fs.tree(outside).await,
+            Err(SearchError::Path(PathError::OutsideWorkspace {
+                path: "out".into()
+            }))
         );
     }
 }
