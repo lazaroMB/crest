@@ -135,8 +135,12 @@ impl TimelineView {
                     cx.write_to_clipboard(ClipboardItem::new_string(copy_text(&entry.block.kind)));
                 }
             }
-            // Charts are the only blocks with an alternate view (T3.8).
-            "block.toggle_view" => {}
+            "block.toggle_view" => {
+                if let Some(ix) = self.state.toggle_view_selected() {
+                    self.list.remeasure_items(ix..ix + 1);
+                    cx.notify();
+                }
+            }
             _ => return false,
         }
         true
@@ -345,6 +349,26 @@ mod tests {
             assert!(view.handle_action(&Action::builtin("block.last"), cx));
             assert_eq!(view.state().selected(), Some(2));
             assert!(!view.handle_action(&Action::builtin("picker.files"), cx));
+        });
+    }
+
+    #[gpui::test]
+    fn toggle_view_action_flips_the_selected_block(cx: &mut TestAppContext) {
+        let (sink, rx) = RecordingSink::with_channel();
+        let view = timeline(cx, rx);
+        sink.emit(DomainEvent::BlockAdded {
+            block: Block::new(BlockKind::Markdown {
+                title: Some("README.md".into()),
+                source: "# crest".into(),
+            }),
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            assert!(view.handle_action(&Action::builtin("block.toggle_view"), cx));
+            assert!(!view.state().entries()[0].alt_view, "nothing selected");
+            view.handle_action(&Action::builtin("block.last"), cx);
+            view.handle_action(&Action::builtin("block.toggle_view"), cx);
+            assert!(view.state().entries()[0].alt_view);
         });
     }
 }

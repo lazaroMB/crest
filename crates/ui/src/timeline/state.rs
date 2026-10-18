@@ -14,13 +14,28 @@ pub struct TimelineEntry {
     pub block: Block,
     /// Whether the block shows its details (tool input and output, thinking).
     pub expanded: bool,
+    /// Whether the block shows its alternate view (`t`): a chart's table, a
+    /// document's or diagram's source.
+    pub alt_view: bool,
 }
 
 impl TimelineEntry {
     fn new(block: Block) -> Self {
         let expanded = expanded_by_default(&block.kind);
-        Self { block, expanded }
+        Self {
+            block,
+            expanded,
+            alt_view: false,
+        }
     }
+}
+
+/// Whether blocks of this kind have an alternate view for `t`.
+pub fn has_alt_view(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::Chart(_) | BlockKind::Markdown { .. } | BlockKind::Mermaid(_)
+    )
 }
 
 /// Initial expansion of a block: tool calls start as one line and thinking
@@ -190,6 +205,18 @@ impl TimelineState {
         let ix = self.selected?;
         let entry = self.entries.get_mut(ix)?;
         entry.expanded = !entry.expanded;
+        Some(ix)
+    }
+
+    /// Switches the selected block between its main and alternate view
+    /// (`t`). Returns its index when it has an alternate view.
+    pub fn toggle_view_selected(&mut self) -> Option<usize> {
+        let ix = self.selected?;
+        let entry = self.entries.get_mut(ix)?;
+        if !has_alt_view(&entry.block.kind) {
+            return None;
+        }
+        entry.alt_view = !entry.alt_view;
         Some(ix)
     }
 
@@ -423,6 +450,28 @@ mod tests {
         assert!(state.entries()[0].expanded, "others untouched");
         state.toggle_selected();
         assert!(!state.entries()[1].expanded);
+    }
+
+    #[test]
+    fn toggle_view_only_flips_blocks_with_an_alternate_view() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&text("a")));
+        state.apply(&added(&Block::new(BlockKind::Markdown {
+            title: None,
+            source: "# doc".into(),
+        })));
+        state.select_first();
+        assert_eq!(state.toggle_view_selected(), None, "text has no alt view");
+        assert!(!state.entries()[0].alt_view);
+        state.select_last();
+        assert_eq!(state.toggle_view_selected(), Some(1));
+        assert!(state.entries()[1].alt_view);
+        state.apply(&DomainEvent::BlockUpdated {
+            block: state.entries()[1].block.clone(),
+        });
+        assert!(state.entries()[1].alt_view, "kept across updates");
+        state.toggle_view_selected();
+        assert!(!state.entries()[1].alt_view);
     }
 
     #[test]
