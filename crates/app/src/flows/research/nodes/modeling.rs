@@ -37,12 +37,13 @@ use domain::research::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::brainstorm::IDEAS_KEY;
 use crate::flows::research::json::parse_json;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
-/// Flow-data key where the brainstorm (node 9) leaves its options, as a
-/// `Vec<IdeaOption>`.
-pub const BRAINSTORM_OPTIONS_KEY: &str = "brainstorm.options";
+/// Flow-data key where the brainstorm (node 9) leaves its options
+/// ([`IDEAS_KEY`]), read as a `Vec<IdeaOption>`.
+pub const BRAINSTORM_OPTIONS_KEY: &str = IDEAS_KEY;
 
 /// Flow-data key with the [`DecisionId`] written by the last run.
 pub const DECISION_KEY: &str = "modeling.decision";
@@ -55,7 +56,9 @@ pub const BLACK_BOX_KEY: &str = "modeling.black_box";
 /// [`BRAINSTORM_OPTIONS_KEY`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdeaOption {
-    /// Short name, unique among the options.
+    /// Short name, unique among the options (`name` in the brainstorm's
+    /// [`Idea`](super::brainstorm::Idea)).
+    #[serde(alias = "name")]
     pub title: String,
     /// What the option does, in a few sentences.
     pub description: String,
@@ -444,6 +447,19 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn the_options_are_the_ideas_of_the_brainstorm() {
+        let idea = super::super::brainstorm::Idea {
+            name: "Caché".into(),
+            description: "una línea".into(),
+            evidence_ids: vec![EvidenceId::new(1).unwrap()],
+        };
+        let options: Vec<IdeaOption> =
+            serde_json::from_value(serde_json::to_value(vec![idea]).unwrap()).unwrap();
+        assert_eq!(options[0].title, "Caché");
+        assert_eq!(options[0].description, "una línea");
+    }
     use crate::flows::research::node::NodeDeps;
     use crate::ports::events::DomainEvent;
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
