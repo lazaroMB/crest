@@ -79,6 +79,10 @@ gpui-component = "=0.7.3"
 clap = { version = "4.6.7", features = ["derive"] }
 # File watching for the workspace tree panel (9.x is still a release candidate).
 notify = "8.2.0"
+# Mermaid: parse and lay out to a backend-agnostic Scene that the UI paints
+# itself. 0.2.0 publishes no `gpui` feature; `-core` names the primitives.
+rusty-mermaid = { version = "=0.2.0", default-features = false }
+rusty-mermaid-core = "=0.2.0"
 
 # Test-only crates
 insta = { version = "1.49.0", features = ["json"] }
