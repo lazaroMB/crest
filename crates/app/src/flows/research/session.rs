@@ -251,7 +251,9 @@ pub fn describe_status(status: &FlowStatus) -> String {
             stage.index(),
             domain::research::Stage::total()
         ),
-        FlowStatus::Completed => "research flow finished".to_owned(),
+        FlowStatus::Completed => "research flow finished; `:simulate <spec>` runs its solution on \
+                                  a board before `:implement <spec>`"
+            .to_owned(),
         FlowStatus::Aborted => "research flow aborted".to_owned(),
     }
 }
