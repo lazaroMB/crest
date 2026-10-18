@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::layout::{self, CHIP, Layout, P2};
 use super::model::{ComponentKind, PortDir, SysModel};
-use super::trace::{EventKind, Trace};
+use super::trace::{CompState, EventKind, Trace};
 
 /// A point or a size in world units.
 pub type V3 = [f32; 3];
@@ -350,6 +350,25 @@ fn along(points: &[V3], fraction: f32) -> V3 {
     [p.0, PACKET_Y, p.1]
 }
 
+/// How chip `id` looks in `state` (the state of its component).
+#[must_use]
+pub fn chip_look(model: &SysModel, id: &str, state: Option<&CompState>) -> ChipLook {
+    let name = state.map_or_else(String::new, |s| s.state.clone());
+    let up = state.is_none_or(|s| s.up);
+    let index = model
+        .component(id)
+        .and_then(|c| c.machine.states.iter().position(|s| *s == name))
+        .unwrap_or(0);
+    ChipLook {
+        id: id.to_owned(),
+        emissive: if up { palette(index) } else { DOWN },
+        state: name,
+        busy: state.is_some_and(|s| s.busy > 0),
+        up,
+        queued: state.map_or(0, |s| s.queue.len()),
+    }
+}
+
 /// Packets in flight and chip colours of `trace` at `t_us`.
 #[must_use]
 pub fn frame_at(model: &SysModel, scene: &Scene, trace: &Trace, t_us: u64) -> Frame {
@@ -390,23 +409,7 @@ pub fn frame_at(model: &SysModel, scene: &Scene, trace: &Trace, t_us: u64) -> Fr
     let chips = scene
         .chips
         .iter()
-        .map(|chip| {
-            let state = snap.components.get(&chip.id);
-            let name = state.map_or_else(String::new, |s| s.state.clone());
-            let up = state.is_none_or(|s| s.up);
-            let index = model
-                .component(&chip.id)
-                .and_then(|c| c.machine.states.iter().position(|s| *s == name))
-                .unwrap_or(0);
-            ChipLook {
-                id: chip.id.clone(),
-                emissive: if up { palette(index) } else { DOWN },
-                state: name,
-                busy: state.is_some_and(|s| s.busy > 0),
-                up,
-                queued: state.map_or(0, |s| s.queue.len()),
-            }
-        })
+        .map(|chip| chip_look(model, &chip.id, snap.components.get(&chip.id)))
         .collect();
     Frame {
         t_us,
