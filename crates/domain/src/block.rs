@@ -74,6 +74,41 @@ impl Block {
     }
 }
 
+impl Block {
+    /// Validates the payload (tables, charts, custom trees, sources and
+    /// stage progress); other kinds are always valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BlockError`] found.
+    pub fn validate(&self) -> Result<(), BlockError> {
+        match &self.kind {
+            BlockKind::Table(spec) => spec.validate(),
+            BlockKind::Chart(spec) => spec.validate(),
+            BlockKind::Custom { tree, .. } => tree.validate(),
+            BlockKind::Sources { sources } => sources.iter().try_for_each(SourceRef::validate),
+            BlockKind::Image { source, .. } => source.as_ref().map_or(Ok(()), SourceRef::validate),
+            BlockKind::StageHeader { index, total, .. } => {
+                if (1..=*total).contains(index) {
+                    Ok(())
+                } else {
+                    Err(BlockError::StageOutOfRange {
+                        index: *index,
+                        total: *total,
+                    })
+                }
+            }
+            BlockKind::Text { .. }
+            | BlockKind::Thinking { .. }
+            | BlockKind::ToolCall { .. }
+            | BlockKind::Diff(_)
+            | BlockKind::Mermaid(_)
+            | BlockKind::Markdown { .. }
+            | BlockKind::Error { .. } => Ok(()),
+        }
+    }
+}
+
 /// The payload of a [`Block`], tagged by `type`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -235,6 +270,14 @@ pub enum BlockError {
         start: Option<u32>,
         /// Last line.
         end: Option<u32>,
+    },
+    /// A stage header whose index is not within `1..=total`.
+    #[error("stage {index} out of range 1..={total}")]
+    StageOutOfRange {
+        /// Given index.
+        index: u32,
+        /// Number of stages.
+        total: u32,
     },
     /// A table without columns.
     #[error("table has no columns")]
@@ -1026,5 +1069,82 @@ mod tests {
         }));
         assert_eq!(value["type"], "stage_header");
         assert_eq!(value["index"], 5);
+    }
+
+    #[test]
+    fn block_validate_dispatches_to_payloads() {
+        let ok = [
+            BlockKind::Text {
+                markdown: String::new(),
+            },
+            BlockKind::Chart(chart(ChartKind::Pie, &["a"], &[("x", &[1.0])])),
+            BlockKind::StageHeader {
+                stage: "s".into(),
+                index: 1,
+                total: 1,
+            },
+        ];
+        for kind in ok {
+            assert_eq!(Block::new(kind).validate(), Ok(()));
+        }
+        let bad = [
+            (
+                BlockKind::Table(table(&[], vec![])),
+                BlockError::TableNoColumns,
+            ),
+            (
+                BlockKind::Chart(chart(ChartKind::Bar, &["a"], &[])),
+                BlockError::ChartNoSeries,
+            ),
+            (
+                BlockKind::Custom {
+                    plugin: "p".into(),
+                    name: "n".into(),
+                    tree: CustomNode::Table(table(&[], vec![])),
+                },
+                BlockError::TableNoColumns,
+            ),
+            (
+                BlockKind::Sources {
+                    sources: vec![file(Some(0), None)],
+                },
+                BlockError::InvalidLineRange {
+                    start: Some(0),
+                    end: None,
+                },
+            ),
+            (
+                BlockKind::Image {
+                    media_type: "image/png".into(),
+                    data_or_path: ImageData::Path {
+                        path: "a.png".into(),
+                    },
+                    source: Some(file(Some(3), Some(2))),
+                },
+                BlockError::InvalidLineRange {
+                    start: Some(3),
+                    end: Some(2),
+                },
+            ),
+            (
+                BlockKind::StageHeader {
+                    stage: "s".into(),
+                    index: 0,
+                    total: 3,
+                },
+                BlockError::StageOutOfRange { index: 0, total: 3 },
+            ),
+            (
+                BlockKind::StageHeader {
+                    stage: "s".into(),
+                    index: 4,
+                    total: 3,
+                },
+                BlockError::StageOutOfRange { index: 4, total: 3 },
+            ),
+        ];
+        for (kind, err) in bad {
+            assert_eq!(Block::new(kind).validate(), Err(err));
+        }
     }
 }
