@@ -11,6 +11,8 @@ use std::str::FromStr;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::model::ModelRole;
+
 /// Error returned when a string is not a valid research id.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid {kind} id `{value}`: expected `{prefix}` followed by a number from 1")]
@@ -198,6 +200,193 @@ fn bump(counter: &mut u32) -> u32 {
     *counter
 }
 
+/// One of the four phases of the X-Workflow.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Understand the current system and gather evidence (nodes 1-6).
+    Discovery,
+    /// State the problem and its constraints (node 7).
+    Definition,
+    /// Look for and choose a solution (nodes 8-11).
+    SolutionSearch,
+    /// Write the Spec and the plan, and review them (nodes 12-14).
+    Specification,
+}
+
+impl Phase {
+    /// All phases, in workflow order.
+    pub const ALL: [Self; 4] = [
+        Self::Discovery,
+        Self::Definition,
+        Self::SolutionSearch,
+        Self::Specification,
+    ];
+
+    /// Name shown to the user.
+    #[must_use]
+    pub const fn name_es(self) -> &'static str {
+        match self {
+            Self::Discovery => "Descubrimiento",
+            Self::Definition => "Definición",
+            Self::SolutionSearch => "Búsqueda de soluciones",
+            Self::Specification => "Especificación",
+        }
+    }
+}
+
+/// A node of the research graph, in workflow order.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// 1. Restate and classify the request; ask for what is missing.
+    Intake,
+    /// 2. Walk the repo and draw the current architecture.
+    Observation,
+    /// 3. Gather evidence: history, logs, metrics, issues, docs.
+    Data,
+    /// 4. Contrast ideas with the data.
+    Analysis,
+    /// 5. One-sentence hypotheses, cause diagram and priorities.
+    Hypotheses,
+    /// 6. Reproducible protocols: failing tests, benchmarks.
+    Experiments,
+    /// 7. Measurable problem statements and the constraint table.
+    Definition,
+    /// 8. Prior solutions: libraries, articles, patterns in the repo.
+    Research,
+    /// 9. Unfiltered options.
+    Brainstorm,
+    /// 10. Discard what violates constraints; decision matrix.
+    Modeling,
+    /// 11. Optional spike in a temporary worktree.
+    Prototype,
+    /// 12. Write the Spec.
+    Spec,
+    /// 13. Split the Spec into tasks.
+    Plan,
+    /// 14. A clean-context subagent looks for gaps.
+    CriticalReview,
+}
+
+impl Stage {
+    /// All stages, in workflow order.
+    pub const ALL: [Self; 14] = [
+        Self::Intake,
+        Self::Observation,
+        Self::Data,
+        Self::Analysis,
+        Self::Hypotheses,
+        Self::Experiments,
+        Self::Definition,
+        Self::Research,
+        Self::Brainstorm,
+        Self::Modeling,
+        Self::Prototype,
+        Self::Spec,
+        Self::Plan,
+        Self::CriticalReview,
+    ];
+
+    /// Number of stages (14).
+    #[must_use]
+    pub const fn total() -> u32 {
+        // The array length is a small constant, so the cast is lossless.
+        Self::ALL.len() as u32
+    }
+
+    /// 1-based position in the workflow, `1..=14`.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self as u32 + 1
+    }
+
+    /// The stage at a 1-based position, if any.
+    #[must_use]
+    pub fn from_index(index: u32) -> Option<Self> {
+        let i = usize::try_from(index.checked_sub(1)?).ok()?;
+        Self::ALL.get(i).copied()
+    }
+
+    /// The following stage, `None` after the critical review.
+    #[must_use]
+    pub fn next(self) -> Option<Self> {
+        Self::from_index(self.index() + 1)
+    }
+
+    /// Phase the stage belongs to.
+    #[must_use]
+    pub const fn phase(self) -> Phase {
+        match self {
+            Self::Intake
+            | Self::Observation
+            | Self::Data
+            | Self::Analysis
+            | Self::Hypotheses
+            | Self::Experiments => Phase::Discovery,
+            Self::Definition => Phase::Definition,
+            Self::Research | Self::Brainstorm | Self::Modeling | Self::Prototype => {
+                Phase::SolutionSearch
+            }
+            Self::Spec | Self::Plan | Self::CriticalReview => Phase::Specification,
+        }
+    }
+
+    /// Name shown to the user (e.g. in the `StageHeader` block).
+    #[must_use]
+    pub const fn name_es(self) -> &'static str {
+        match self {
+            Self::Intake => "Intake",
+            Self::Observation => "Observación",
+            Self::Data => "Datos",
+            Self::Analysis => "Análisis",
+            Self::Hypotheses => "Hipótesis",
+            Self::Experiments => "Experimentos",
+            Self::Definition => "Definición y restricciones",
+            Self::Research => "Investigación",
+            Self::Brainstorm => "Lluvia de ideas",
+            Self::Modeling => "Modelado",
+            Self::Prototype => "Prototipo",
+            Self::Spec => "Spec",
+            Self::Plan => "Plan",
+            Self::CriticalReview => "Revisión crítica",
+        }
+    }
+
+    /// Model role the stage runs with by default.
+    #[must_use]
+    pub const fn default_role(self) -> ModelRole {
+        match self {
+            Self::Intake | Self::Analysis | Self::Experiments | Self::Prototype => ModelRole::Main,
+            Self::Observation | Self::Data | Self::Research => ModelRole::Explore,
+            Self::Hypotheses
+            | Self::Definition
+            | Self::Brainstorm
+            | Self::Modeling
+            | Self::Spec
+            | Self::Plan
+            | Self::CriticalReview => ModelRole::Plan,
+        }
+    }
+
+    /// Whether the stage ends in a gate that waits for the user.
+    #[must_use]
+    pub const fn has_gate(self) -> bool {
+        matches!(
+            self,
+            Self::Intake
+                | Self::Hypotheses
+                | Self::Definition
+                | Self::Modeling
+                | Self::CriticalReview
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +456,49 @@ mod tests {
         assert_eq!(ids.next_hypothesis(), HypothesisId(1));
         assert_eq!(ids.next_constraint(), ConstraintId(2));
         assert_eq!(ids.next_decision(), DecisionId(1));
+    }
+
+    #[test]
+    fn stages_are_numbered_one_to_fourteen() {
+        assert_eq!(Stage::total(), 14);
+        for (i, stage) in Stage::ALL.into_iter().enumerate() {
+            let index = u32::try_from(i).unwrap() + 1;
+            assert_eq!(stage.index(), index);
+            assert_eq!(Stage::from_index(index), Some(stage));
+        }
+        assert_eq!(Stage::Intake.index(), 1);
+        assert_eq!(Stage::CriticalReview.index(), 14);
+        assert_eq!(Stage::from_index(0), None);
+        assert_eq!(Stage::from_index(15), None);
+        assert_eq!(Stage::Spec.next(), Some(Stage::Plan));
+        assert_eq!(Stage::CriticalReview.next(), None);
+    }
+
+    #[test]
+    fn stages_map_to_their_phase_role_and_gate() {
+        let count = |phase| Stage::ALL.iter().filter(|s| s.phase() == phase).count();
+        assert_eq!(count(Phase::Discovery), 6);
+        assert_eq!(count(Phase::Definition), 1);
+        assert_eq!(count(Phase::SolutionSearch), 4);
+        assert_eq!(count(Phase::Specification), 3);
+        assert_eq!(Stage::Experiments.phase(), Phase::Discovery);
+        assert_eq!(Stage::Prototype.phase(), Phase::SolutionSearch);
+        assert_eq!(Stage::Data.default_role(), ModelRole::Explore);
+        assert_eq!(Stage::CriticalReview.default_role(), ModelRole::Plan);
+        assert_eq!(Stage::ALL.iter().filter(|s| s.has_gate()).count(), 5);
+        assert_eq!(Stage::Definition.name_es(), "Definición y restricciones");
+        assert_eq!(Phase::SolutionSearch.name_es(), "Búsqueda de soluciones");
+    }
+
+    #[test]
+    fn stages_serialize_in_snake_case() {
+        assert_eq!(
+            serde_json::to_value(Stage::CriticalReview).unwrap(),
+            json!("critical_review")
+        );
+        assert_eq!(
+            serde_json::to_value(Phase::SolutionSearch).unwrap(),
+            json!("solution_search")
+        );
     }
 }
