@@ -2,6 +2,7 @@
 //! approved `plan.json` and runs it task by task.
 //!
 //! - [`builder`]: chains steps into an [`ImplementGraph`](builder::ImplementGraph).
+//! - [`checks`]: running the plan's checks through the shell.
 //! - [`flow`]: [`ImplementFlow`](flow::ImplementFlow), one session of the graph.
 //! - [`gate`]: the answers every gate accepts.
 //! - [`load`]: reading, validating and ordering `plan.json`; the branch.
@@ -13,6 +14,7 @@
 //!   ([`ImplementState`](state::ImplementState)).
 
 pub mod builder;
+pub mod checks;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
 pub mod flow;
