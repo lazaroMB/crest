@@ -54,11 +54,6 @@ impl Vm {
         Ok(())
     }
 
-    /// Keeps `f` alive in the VM and returns its id.
-    pub(crate) fn register(&self, f: mlua::Function) -> Result<CallbackId, PluginError> {
-        callbacks::register(&self.lua, f).map_err(|e| convert::runtime_error(&e))
-    }
-
     /// Calls the callback `id` with `args` and returns what it returned.
     pub(crate) fn call(&mut self, id: CallbackId, args: &Value) -> Result<Value, PluginError> {
         let lua = &self.lua;
@@ -155,7 +150,7 @@ fn hook_outcome(ret: &Value) -> HookOutcome {
 #[cfg(test)]
 pub(crate) fn register_code(vm: &Vm, code: &str) -> CallbackId {
     let f: mlua::Function = vm.lua.load(code).eval().unwrap();
-    vm.register(f).unwrap()
+    callbacks::register(&vm.lua, f).unwrap()
 }
 
 #[cfg(test)]

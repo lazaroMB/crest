@@ -18,6 +18,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::callbacks::CallbackIds;
+use crate::config;
 use crate::vm::Vm;
 
 /// Name of the VM thread, as shown by debuggers and panics.
@@ -100,9 +101,8 @@ impl LuaHandle {
 
 #[async_trait]
 impl PluginHostPort for LuaHandle {
-    async fn load_config(&self, _sources: ConfigSources) -> Result<LoadedConfig, PluginError> {
-        self.run(|vm| vm.reset().map(|()| LoadedConfig::default()))
-            .await?
+    async fn load_config(&self, sources: ConfigSources) -> Result<LoadedConfig, PluginError> {
+        self.run(move |vm| config::load(vm, &sources)).await?
     }
 
     async fn invoke_callback(
@@ -285,6 +285,28 @@ mod tests {
         assert_eq!(cut, Err(PluginError::InstructionLimit));
         let alive = host.invoke_callback(ok, Value::Null).await;
         assert_eq!(alive, Ok(PluginOutput::Value(json!("alive"))));
+    }
+
+    #[tokio::test]
+    async fn load_config_registers_tools_for_later_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("init.lua");
+        std::fs::write(
+            &global,
+            "app.tools.register({ name = 'echo', handler = function(i) return i.text end })",
+        )
+        .unwrap();
+        let host = spawn();
+        let config = host
+            .load_config(ConfigSources {
+                global: Some(global),
+                workspace: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(config.tools.len(), 1);
+        let out = host.call_tool("echo", json!({ "text": "hi" })).await;
+        assert_eq!(out, Ok(PluginOutput::Value(json!("hi"))));
     }
 
     #[tokio::test]
