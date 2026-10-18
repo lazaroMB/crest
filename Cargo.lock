@@ -104,6 +104,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-export"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "domain",
+ "serde_json",
+]
+
+[[package]]
 name = "adapter-fs"
 version = "0.1.0"
 dependencies = [

@@ -11,6 +11,7 @@ members = [
     "crates/adapters/lua",
     "crates/adapters/mcp",
     "crates/adapters/telemetry",
+    "crates/adapters/export",
     "crates/ui",
     "crates/bin",
 ]
@@ -34,6 +35,7 @@ adapter-store = { path = "crates/adapters/store" }
 adapter-lua = { path = "crates/adapters/lua" }
 adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
+adapter-export = { path = "crates/adapters/export" }
 ui = { path = "crates/ui" }
 
 # Shared external crates

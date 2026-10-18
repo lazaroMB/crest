@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root { --bg: #0b0f16; --panel: #111722; --fg: #dbe4ee; --muted: #8394a8; --border: #233044;
+        --ok: #34d399; --bad: #f87171; --accent: #38bdf8; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+             font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+#app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+header { display: flex; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border);
+         flex-wrap: wrap; }
+header h1 { font-size: 14px; margin: 0 12px 0 0; font-weight: 600; }
+button { background: #1a2333; color: var(--fg); border: 1px solid var(--border); border-radius: 5px;
+         padding: 3px 9px; font: inherit; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { background: #1e3a5f; border-color: var(--accent); }
+button.fail { color: var(--bad); }
+button.pass { color: var(--ok); }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+#stage { position: relative; overflow: hidden; min-width: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.label { position: absolute; width: 140px; margin-left: -70px; text-align: center; font-size: 11px;
+         text-shadow: 0 1px 2px #000; }
+.label b { display: block; color: #fff; font-weight: 600; }
+#hint { position: absolute; left: 8px; bottom: 4px; font-size: 11px; color: var(--muted); }
+aside { border-left: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 8px 10px; }
+aside h2 { font-size: 13px; margin: 6px 0; }
+.check { padding: 3px 5px; border-radius: 4px; margin: 2px 0; }
+.check.link { cursor: pointer; }
+.check.link:hover { background: #1a2333; }
+.check .p { font-size: 12px; }
+.check .d { font-size: 11px; color: var(--muted); }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+footer { display: flex; gap: 6px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--border); }
+#time { width: 190px; }
+#scrub { position: relative; flex: 1; height: 22px; }
+#scrub input { width: 100%; margin: 0; position: absolute; top: 3px; }
+.marker { position: absolute; top: 0; width: 3px; height: 22px; margin-left: -1px; background: var(--bad);
+          pointer-events: none; }
+#nogl { padding: 20px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 id="title"></h1>
+    <span id="tabs"></span>
+    <span class="spacer"></span>
+    <span id="summary" class="muted"></span>
+    <button id="iso" title="Isometric view (i)">iso</button>
+    <button id="persp" title="Perspective view">persp</button>
+  </header>
+  <main>
+    <div id="stage"><canvas id="board"></canvas><div id="labels"></div>
+      <div id="hint">drag: orbit · right-drag: pan · wheel: zoom · i: iso · click: inspect · space: play</div></div>
+    <aside><div id="inspector" class="muted">Click a chip to inspect it.</div><h2>Checks</h2><div id="checks"></div>
+      <p class="muted" style="font-size:11px">Replay of the runs recorded by crest (crest.sysmodel/v1). A behavioural sketch: latencies are the model's guesses unless backed by evidence.</p></aside>
+  </main>
+  <footer>
+    <button id="back" title="Previous event (←)">⏮</button>
+    <button id="play" title="Play / pause (space)">▶</button>
+    <button id="fwd" title="Next event (→)">⏭</button>
+    <button id="slower">−</button><span id="speed" class="mono">1×</span><button id="faster">+</button>
+    <span id="time" class="mono"></span>
+    <div id="scrub"><input id="range" type="range" min="0" max="1000" value="0"><div id="markers"></div></div>
+  </footer>
+</div>
+<script type="application/json" id="data">{{DATA}}</script>
+<script>
+{{THREE}}
+</script>
+<script>
+{{REPLAY}}
+</script>
+</body>
+</html>
