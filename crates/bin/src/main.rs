@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use application::usecases::cancel::CancelToken;
 use clap::Parser;
-use crest::args::Args;
+use crest::args::{Args, HeadlessRun};
 use crest::telemetry::Telemetry;
 use crest::{gui, headless};
 
@@ -28,10 +28,17 @@ fn main() -> ExitCode {
     for warning in warnings {
         eprintln!("aviso: {warning}");
     }
-    let code = match &args.headless {
-        Some(prompt) => runtime
+    let code = match args.headless_run() {
+        Some(Ok(HeadlessRun::Prompt(prompt))) => runtime
             .block_on(headless::run(&args, prompt, CancelToken::new()))
             .code(),
+        Some(Ok(HeadlessRun::Implement(target))) => runtime
+            .block_on(headless::implement::run(&args, target))
+            .code(),
+        Some(Err(message)) => {
+            eprintln!("error: {message}");
+            2
+        }
         None => gui::run(&args, runtime.handle()),
     };
     {

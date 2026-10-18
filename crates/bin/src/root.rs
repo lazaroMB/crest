@@ -15,10 +15,12 @@ use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
 use adapter_shell::LocalShell;
-use adapter_store::SqliteSessionStore;
+use adapter_store::{SqliteFlowStorage, SqliteSessionStore};
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
 use application::cost::CostTracker;
+use application::flows::implement::graph::{ImplementSession, plan_path};
+use application::flows::implement::node::{AgentKit, ImplementDeps};
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
@@ -27,6 +29,7 @@ use application::ports::plugin::{
     AppOptions, CommandSpec, ConfigSources, KeymapSpec, McpServerSpec, PluginHostPort,
 };
 use application::ports::search::{ContentSearchPort, FileSearchPort};
+use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
@@ -171,6 +174,8 @@ pub struct App {
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
     store: Option<Arc<dyn SessionStorePort>>,
+    implement: ImplementDeps,
+    flow_storage: Option<Arc<SqliteFlowStorage>>,
 }
 
 impl std::fmt::Debug for App {
@@ -251,6 +256,22 @@ impl App {
     pub fn permissions(&self) -> &SharedPermissions {
         self.service.permissions()
     }
+
+    /// Opens the implementation flow of the plan named by `target` (a Spec
+    /// folder, its name or a `plan.json`; see [`plan_path`]), resuming it
+    /// if it stopped before the end. Its checkpoints go to the SQLite flow
+    /// store; nothing runs yet.
+    ///
+    /// # Errors
+    ///
+    /// A target outside the workspace, no flow store, or a storage error.
+    pub async fn open_implementation(&self, target: &str) -> anyhow::Result<ImplementSession> {
+        let path = plan_path(self.workspace.as_path(), target)?;
+        let storage = self.flow_storage.clone().ok_or_else(|| {
+            anyhow!("no hay dónde guardar el flujo: la base de datos de crest no abrió")
+        })?;
+        Ok(ImplementSession::open(self.implement.clone(), storage, path).await?)
+    }
 }
 
 /// Builds the app over `config`.
@@ -325,6 +346,7 @@ pub async fn build_app(
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
+    let shell: Arc<dyn ShellPort> = Arc::new(LocalShell::new(root.clone()));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     let mut tools = ToolRegistry::new();
     register_file_tools(
@@ -333,7 +355,7 @@ pub async fn build_app(
             file_search: search.clone(),
             content_search: search.clone(),
             fs: Arc::clone(&fs),
-            shell: Arc::new(LocalShell::new(root.clone())),
+            shell: Arc::clone(&shell),
         },
     )
     .context("registro de tools")?;
@@ -345,7 +367,7 @@ pub async fn build_app(
             models: policy.clone(),
             file_search: search.clone(),
             content_search: search,
-            fs,
+            fs: Arc::clone(&fs),
         },
         tools.budget(),
     )
@@ -409,6 +431,21 @@ pub async fn build_app(
         telemetry,
     };
     let models = policy.clone();
+    let mut kit = AgentKit::new(
+        deps.clone(),
+        tools.clone(),
+        policy.clone(),
+        Arc::clone(&permissions),
+    );
+    kit.system_prompt = system_prompt(&root);
+    let implement = ImplementDeps::new(Arc::clone(&events), fs, shell).with_agent(kit);
+    let flow_storage = match open_flow_storage(overrides.db_path.as_deref()) {
+        Ok(storage) => Some(Arc::new(storage)),
+        Err(err) => {
+            warnings.push(format!("los flujos no se guardarán: {err}"));
+            None
+        }
+    };
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(system_prompt(&root))
         .with_compaction(CompactionPolicy::default());
@@ -463,6 +500,8 @@ pub async fn build_app(
         events,
         timeline,
         store,
+        implement,
+        flow_storage,
     })
 }
 
@@ -497,6 +536,13 @@ fn open_store(path: Option<&Path>) -> Result<SqliteSessionStore, StoreError> {
     match path {
         Some(path) => SqliteSessionStore::open(path),
         None => SqliteSessionStore::open_default(),
+    }
+}
+
+fn open_flow_storage(path: Option<&Path>) -> Result<SqliteFlowStorage, StoreError> {
+    match path {
+        Some(path) => SqliteFlowStorage::open(path),
+        None => SqliteFlowStorage::open_default(),
     }
 }
 

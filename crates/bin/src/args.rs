@@ -18,8 +18,15 @@ pub struct Args {
     pub workspace: Option<PathBuf>,
 
     /// Corre un solo turno con este prompt, sin UI, imprimiendo los eventos.
-    #[arg(long, value_name = "PROMPT")]
+    /// Sin prompt, junto a `--implement`.
+    #[arg(long, value_name = "PROMPT", num_args = 0..=1, default_missing_value = "")]
     pub headless: Option<String>,
+
+    /// En headless, implementa el plan de un Spec: su carpeta (o su nombre
+    /// en `.crest/specs/`) o la ruta a su `plan.json`. Las compuertas se
+    /// responden por stdin.
+    #[arg(long, value_name = "RUTA", requires = "headless")]
+    pub implement: Option<String>,
 
     /// Modelo del turno: alias (`opus`), rol (`plan`) o id completo.
     #[arg(long, value_name = "ALIAS|ID")]
@@ -49,7 +56,34 @@ pub struct Args {
     pub trust_mcp: Vec<String>,
 }
 
+/// What a headless run does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadlessRun<'a> {
+    /// One turn answering the prompt.
+    Prompt(&'a str),
+    /// The implementation flow of the plan named by the target.
+    Implement(&'a str),
+}
+
 impl Args {
+    /// What `--headless` runs, if given.
+    ///
+    /// # Errors
+    ///
+    /// A message when `--headless` gets neither a prompt nor `--implement`,
+    /// or both.
+    pub fn headless_run(&self) -> Option<Result<HeadlessRun<'_>, &'static str>> {
+        let prompt = self.headless.as_deref()?;
+        Some(
+            match (prompt.trim().is_empty(), self.implement.as_deref()) {
+                (false, None) => Ok(HeadlessRun::Prompt(prompt)),
+                (true, Some(target)) => Ok(HeadlessRun::Implement(target)),
+                (true, None) => Err("--headless necesita un prompt o --implement <ruta>"),
+                (false, Some(_)) => Err("--headless lleva un prompt o --implement, no ambos"),
+            },
+        )
+    }
+
     /// The workspace given on the command line, if any.
     #[must_use]
     pub fn workspace_dir(&self) -> Option<&PathBuf> {
@@ -105,6 +139,28 @@ mod tests {
         assert_eq!(args.model.as_deref(), Some("opus"));
         assert_eq!(args.mode, Some(PermissionMode::AutoEdit));
         assert!(args.yes);
+    }
+
+    #[test]
+    fn implement_runs_headless_without_a_prompt() {
+        let args = parse(&["--headless", "--implement", "0001-x"]).unwrap();
+        assert_eq!(
+            args.headless_run(),
+            Some(Ok(HeadlessRun::Implement("0001-x")))
+        );
+        let prompt = parse(&["--headless", "hola"]).unwrap();
+        assert_eq!(prompt.headless_run(), Some(Ok(HeadlessRun::Prompt("hola"))));
+        assert!(
+            parse(&["--headless"])
+                .unwrap()
+                .headless_run()
+                .unwrap()
+                .is_err()
+        );
+        let both = parse(&["--headless", "hola", "--implement", "x"]).unwrap();
+        assert!(both.headless_run().unwrap().is_err());
+        assert!(parse(&["--implement", "x"]).is_err());
+        assert_eq!(parse(&[]).unwrap().headless_run(), None);
     }
 
     #[test]
