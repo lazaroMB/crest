@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adapter_anthropic::{AnthropicCatalog, AnthropicClient, AnthropicLlm, ApiKey, ClientConfig};
+use adapter_export::HtmlExporter;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
@@ -40,11 +41,13 @@ use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
+use application::tools::simulate::SimulateTool;
 use application::tools::task::{TaskPorts, TaskTool};
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
 use application::usecases::resume::{restore_permission_rules, resume_latest};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
+use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
 use domain::conversation::Session;
 use domain::model::{ModelPolicy, ModelRole};
@@ -198,6 +201,9 @@ pub struct App {
     /// The research flow of the workspace (`:research`), when the flow
     /// store opened.
     pub research: Option<ResearchSession>,
+    /// Simulates the solution of a Spec (`:simulate`, `--simulate`, the
+    /// `simulate_solution` tool).
+    pub simulator: Simulator,
 }
 
 impl std::fmt::Debug for App {
@@ -428,6 +434,17 @@ pub async fn build_app(
     )
     .context("tool registration")?;
     tools.register_typed(task).context("tool registration")?;
+    let simulator = Simulator::new(SimulateDeps {
+        llm: Arc::clone(&llm),
+        models: policy.clone(),
+        fs: Arc::clone(&fs),
+        search: file_search.clone(),
+        events: Some(Arc::clone(&events)),
+        export: Some(Arc::new(HtmlExporter::new())),
+    });
+    tools
+        .register_typed(SimulateTool::new(simulator.clone(), now_ms))
+        .context("tool registration")?;
     if let Some(host) = &plugins {
         for spec in loaded.tools.iter().cloned() {
             let name = spec.name.clone();
@@ -601,6 +618,7 @@ pub async fn build_app(
         implement,
         flow_storage,
         research,
+        simulator,
     })
 }
 

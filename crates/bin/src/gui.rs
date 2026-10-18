@@ -44,6 +44,7 @@ use application::ports::search::{
 };
 use application::usecases::approval::lock_permissions;
 use application::usecases::run_turn::SharedPermissions;
+use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind};
 use domain::conversation::StopReason;
@@ -159,6 +160,7 @@ pub struct UiController {
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
     research: SharedResearch,
+    simulator: Simulator,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -191,6 +193,40 @@ async fn research_command(
         Ok(message) => Reply::Notice(NoticeLevel::Info, message),
         Err(message) => Reply::Notice(NoticeLevel::Warning, message),
     }
+}
+
+/// `:simulate <spec>`: simulates the Spec's solution; the use case opens
+/// the board (`SimulationReady`) and the timeline gets the verdicts.
+async fn simulate_command(simulator: Simulator, spec: String) -> Reply {
+    let request = SimulateRequest {
+        spec,
+        now_ms: crate::root::now_ms(),
+        open_board: true,
+    };
+    match simulator.run(request).await {
+        Ok(report) => Reply::Block(Block::new(BlockKind::Markdown {
+            title: Some(format!("Simulation of {}", report.folder)),
+            source: simulation_markdown(&report),
+        })),
+        Err(err) => Reply::Notice(NoticeLevel::Warning, format!(":simulate: {err}")),
+    }
+}
+
+/// The verdicts of a simulation as markdown.
+#[must_use]
+pub fn simulation_markdown(report: &SimulationReport) -> String {
+    let lines: String = report
+        .summary()
+        .lines()
+        .map(|line| {
+            if line.starts_with("  ") {
+                format!("  - {}\n", line.trim_start())
+            } else {
+                format!("- {line}\n")
+            }
+        })
+        .collect();
+    lines
 }
 
 /// Saves the chat session, warning on failure.
@@ -343,6 +379,7 @@ impl UiController {
             host: app.plugins.clone(),
         });
         let events = app.events();
+        let simulator = app.simulator.clone();
         let commands = app
             .commands
             .iter()
@@ -360,6 +397,7 @@ impl UiController {
             events,
             flow: Arc::new(tokio::sync::Mutex::new(None)),
             research,
+            simulator,
         }
     }
 }
@@ -516,6 +554,29 @@ impl SessionController for UiController {
                 task.map(|joined| {
                     joined.unwrap_or_else(|err| {
                         Reply::Notice(NoticeLevel::Warning, format!(":research: {err}"))
+                    })
+                })
+                .boxed(),
+            );
+        }
+        if name == "simulate" {
+            let spec = args.trim().to_owned();
+            if spec.is_empty() {
+                return Some(
+                    futures::future::ready(Reply::Notice(
+                        NoticeLevel::Warning,
+                        "usage: :simulate <spec> (a folder of .crest/specs/ or its number)".into(),
+                    ))
+                    .boxed(),
+                );
+            }
+            let task = self
+                .handle
+                .spawn(simulate_command(self.simulator.clone(), spec));
+            return Some(
+                task.map(|joined| {
+                    joined.unwrap_or_else(|err| {
+                        Reply::Notice(NoticeLevel::Warning, format!(":simulate: {err}"))
                     })
                 })
                 .boxed(),

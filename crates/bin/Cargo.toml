@@ -30,6 +30,7 @@ adapter-store.workspace = true
 adapter-lua.workspace = true
 adapter-mcp.workspace = true
 adapter-telemetry.workspace = true
+adapter-export.workspace = true
 ui.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
