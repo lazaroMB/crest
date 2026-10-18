@@ -66,7 +66,7 @@ fn main() {
     let id = table.id;
     sink.emit(DomainEvent::BlockAdded {
         block: Block::new(BlockKind::Text {
-            markdown: format!("Tamaños de **{ROWS}** archivos:"),
+            markdown: format!("Sizes of **{ROWS}** files:"),
         }),
     });
     sink.emit(DomainEvent::BlockAdded { block: table });

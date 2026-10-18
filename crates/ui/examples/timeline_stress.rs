@@ -86,8 +86,8 @@ fn sample_block(i: usize) -> Block {
     let kind = match i % 6 {
         0 => BlockKind::Text {
             markdown: format!(
-                "### Respuesta {i}\n\nEl archivo `src/lib.rs` define **{n}** funciones:\n\n\
-                 - `parse` lee la entrada\n- `apply` aplica el evento\n\n\
+                "### Answer {i}\n\nThe file `src/lib.rs` defines **{n}** functions:\n\n\
+                 - `parse` reads the input\n- `apply` applies the event\n\n\
                  ```rust\nfn main() {{ println!(\"{i}\"); }}\n```",
                 n = i % 17
             ),
@@ -101,14 +101,14 @@ fn sample_block(i: usize) -> Block {
             output: None,
         },
         2 => BlockKind::Text {
-            markdown: format!("Bloque corto número {i}."),
+            markdown: format!("Short block number {i}."),
         },
         4 => BlockKind::Error {
             message: format!("tool `bash` exited with status {}", i % 5 + 1),
-            hint: Some("revisa el comando o pide permisos con <leader>p".to_owned()),
+            hint: Some("check the command or ask for permissions with <leader>p".to_owned()),
         },
         _ => BlockKind::Thinking {
-            text: format!("pensando sobre {i}"),
+            text: format!("thinking about {i}"),
             collapsed: true,
         },
     };

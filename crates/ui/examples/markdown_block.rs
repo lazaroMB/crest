@@ -10,19 +10,19 @@ mod support;
 
 use domain::block::{Block, BlockKind};
 
-const DOC: &str = r#"# Informe de tamaños
+const DOC: &str = r#"# Size report
 
-Resumen del workspace por **extensión**, generado con `rg --files`.
+Workspace summary by **extension**, generated with `rg --files`.
 
-## Tabla
+## Table
 
-| Extensión | Archivos | Bytes |
+| Extension | Files | Bytes |
 | --- | ---: | ---: |
 | `.rs` | 142 | 812 340 |
 | `.toml` | 12 | 9 812 |
 | `.md` | 7 | 54 001 |
 
-## Código
+## Code
 
 ```rust
 fn bytes_by_extension(files: &[PathBuf]) -> BTreeMap<String, u64> {
@@ -39,13 +39,13 @@ fn bytes_by_extension(files: &[PathBuf]) -> BTreeMap<String, u64> {
 rg --files | awk -F. '{print $NF}' | sort | uniq -c
 ```
 
-> Los archivos ignorados por `.gitignore` no cuentan.
+> Files ignored by `.gitignore` do not count.
 "#;
 
 fn main() {
     let blocks = vec![
         Block::new(BlockKind::Text {
-            markdown: "Aquí está el informe:".into(),
+            markdown: "Here is the report:".into(),
         }),
         Block::new(BlockKind::Markdown {
             title: Some("informe.md".into()),

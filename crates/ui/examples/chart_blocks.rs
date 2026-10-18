@@ -28,10 +28,10 @@ fn chart(title: &str, kind: ChartKind, labels: &[&str], series: Vec<Series>) -> 
 
 fn main() {
     let exts = ["rs", "toml", "md", "lua", "json"];
-    let months = ["ene", "feb", "mar", "abr", "may", "jun"];
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
     let blocks = vec![
         chart(
-            "Tamaño por extensión (KB)",
+            "Size by extension (KB)",
             ChartKind::Bar,
             &exts,
             vec![
@@ -40,7 +40,7 @@ fn main() {
             ],
         ),
         chart(
-            "Commits por mes",
+            "Commits per month",
             ChartKind::Line,
             &months,
             vec![
@@ -49,7 +49,7 @@ fn main() {
             ],
         ),
         chart(
-            "Líneas de código",
+            "Lines of code",
             ChartKind::Area,
             &months,
             vec![
@@ -58,10 +58,10 @@ fn main() {
             ],
         ),
         chart(
-            "Archivos por extensión",
+            "Files by extension",
             ChartKind::Pie,
             &exts,
-            vec![series("archivos", &[142.0, 12.0, 7.0, 9.0, 21.0])],
+            vec![series("files", &[142.0, 12.0, 7.0, 9.0, 21.0])],
         ),
     ];
     let mut script = vec!["block.first"];

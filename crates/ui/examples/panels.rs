@@ -46,7 +46,7 @@ use ui::status::StatusView;
 use ui::timeline::TimelineView;
 use ui::tree::{TOGGLE_ACTION, TreePanel, TreePanelEvent};
 
-const LIB_RS: &str = "pub fn run() {\n    println!(\"hola\");\n}\n";
+const LIB_RS: &str = "pub fn run() {\n    println!(\"hello\");\n}\n";
 
 fn workspace() -> Arc<InMemoryFs> {
     let root = WorkspaceRoot::new("/workspace").unwrap_or_else(|err| panic!("{err}"));
@@ -128,7 +128,7 @@ impl Fakes {
     fn propose_edit(&self, id: u64) {
         let path = "src/lib.rs";
         let old = self.fs.file(path).unwrap_or_default();
-        let new = old.replace("hola", "hola, crest");
+        let new = old.replace("hello", "hello, crest");
         let Ok(workspace_path) = WorkspacePath::parse(path) else {
             return;
         };

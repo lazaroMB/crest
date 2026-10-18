@@ -13,23 +13,23 @@ use domain::block::{Block, BlockKind, MermaidSpec};
 use ui::blocks::mermaid::diagram;
 
 const FLOWCHART: &str = "flowchart LR
-    U[Usuario] -->|prompt| A(Agente)
-    A --> T{¿Tool?}
-    T -->|sí| R[rg / fzf]
-    T -->|no| M[Modelo]
+    U[User] -->|prompt| A(Agent)
+    A --> T{Tool?}
+    T -->|yes| R[rg / fzf]
+    T -->|no| M[Model]
     R --> A
-    M -.->|respuesta| U
+    M -.->|answer| U
 ";
 
 const SEQUENCE: &str = "sequenceDiagram
     participant UI
     participant Core
     participant API as Anthropic
-    UI->>Core: enviar prompt
+    UI->>Core: send prompt
     Core->>API: messages.create (stream)
     API-->>Core: text_delta
     Core-->>UI: BlockUpdated
-    Note over UI,Core: el timeline se repinta
+    Note over UI,Core: the timeline repaints
 ";
 
 fn mermaid(title: &str, source: &str) -> Block {
@@ -42,11 +42,11 @@ fn mermaid(title: &str, source: &str) -> Block {
 fn main() {
     let garbage = String::from_utf8_lossy(&[0, 0xff, 0xfe, 7, 27, b'g', b'r', 0x80, b'x']);
     let diagrams = [
-        ("Flujo del agente", FLOWCHART.to_owned()),
+        ("Agent flow", FLOWCHART.to_owned()),
         ("Streaming", SEQUENCE.to_owned()),
-        ("Inválido", "flowchart LR\n  A --> \n  [[[".to_owned()),
-        ("Vacío", String::new()),
-        ("Basura binaria", garbage.into_owned()),
+        ("Invalid", "flowchart LR\n  A --> \n  [[[".to_owned()),
+        ("Empty", String::new()),
+        ("Binary garbage", garbage.into_owned()),
     ];
     for (title, source) in &diagrams {
         match diagram::parse(source, true) {

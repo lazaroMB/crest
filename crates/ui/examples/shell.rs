@@ -104,7 +104,7 @@ impl FakeAgent {
         });
         let reply_id = reply.id;
         self.emit(DomainEvent::BlockAdded { block: reply });
-        let words = format!("**Eco:** {prompt}").replace('\n', " ");
+        let words = format!("**Echo:** {prompt}").replace('\n', " ");
         for word in words.split(' ') {
             std::thread::sleep(Duration::from_millis(60));
             self.emit(DomainEvent::TextDelta {
@@ -246,7 +246,7 @@ fn wire_input(
 
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
-    ("h o l a space c r e s t enter", 2500),
+    ("h e l l o space c r e s t enter", 2500),
     ("escape k k", 300),
     ("enter", 300),
     ("g g", 300),

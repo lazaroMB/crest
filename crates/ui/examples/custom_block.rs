@@ -19,12 +19,12 @@ fn text(s: &str) -> CustomNode {
 fn main() {
     let tree = CustomNode::Col {
         children: vec![
-            text("Tareas pendientes"),
+            text("Pending tasks"),
             CustomNode::List {
-                items: vec![text("arreglar el parser"), text("documentar app.ui")],
+                items: vec![text("fix the parser"), text("document app.ui")],
             },
             CustomNode::Table(TableSpec {
-                columns: vec![Column::new("tarea"), Column::new("hecha")],
+                columns: vec![Column::new("task"), Column::new("done")],
                 rows: vec![
                     vec![Cell::Text("parser".into()), Cell::Bool(false)],
                     vec![Cell::Text("docs".into()), Cell::Bool(true)],
@@ -37,16 +37,16 @@ fn main() {
                         source: "return app.ui.block(\"todo\", app.ui.list(items))".into(),
                     },
                     CustomNode::Markdown {
-                        source: "**2** tareas, *1* hecha".into(),
+                        source: "**2** tasks, *1* done".into(),
                     },
                 ],
             },
             CustomNode::Chart(ChartSpec {
-                title: "Avance".into(),
+                title: "Progress".into(),
                 kind: ChartKind::Bar,
-                labels: vec!["lun".into(), "mar".into(), "mié".into()],
+                labels: vec!["Mon".into(), "Tue".into(), "Wed".into()],
                 series: vec![Series {
-                    name: "hechas".into(),
+                    name: "done".into(),
                     values: vec![1.0, 3.0, 2.0],
                 }],
             }),

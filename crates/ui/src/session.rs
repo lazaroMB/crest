@@ -155,7 +155,7 @@ pub trait SessionController: Send + Sync {
         let _ = (id, args);
         futures::future::ready(Reply::Notice(
             NoticeLevel::Warning,
-            "no hay plugins cargados".into(),
+            "no plugins are loaded".into(),
         ))
         .boxed()
     }
@@ -344,7 +344,7 @@ impl Session {
         if let Some(dir) = &workspace_dir {
             tree.update(cx, |tree, cx| {
                 if let Err(err) = tree.watch_dir(dir, cx) {
-                    watch_error = Some(format!("el árbol no se refrescará solo: {err}"));
+                    watch_error = Some(format!("the tree will not refresh by itself: {err}"));
                 }
             });
         }
@@ -529,7 +529,7 @@ impl Session {
             let waiting = self.queue.len();
             self.notice(
                 NoticeLevel::Info,
-                format!("en cola: {waiting} (se envía al terminar el turno; Ctrl+C la descarta)"),
+                format!("queued: {waiting} (sent when the turn ends; Ctrl+C discards it)"),
                 cx,
             );
             return;
@@ -554,7 +554,7 @@ impl Session {
         self.turn = None;
         match end {
             TurnEnd::Finished(StopReason::Interrupted) => {
-                self.notice(NoticeLevel::Info, "turno interrumpido", cx);
+                self.notice(NoticeLevel::Info, "turn interrupted", cx);
             }
             TurnEnd::Finished(_) | TurnEnd::Failed(_) => {}
             TurnEnd::Unavailable(message) => {
@@ -563,7 +563,7 @@ impl Session {
                     DomainEvent::BlockAdded {
                         block: Block::new(BlockKind::Error {
                             message,
-                            hint: Some("corrige la configuración y vuelve a abrir crest".into()),
+                            hint: Some("fix the configuration and reopen crest".into()),
                         }),
                     },
                     cx,
@@ -588,7 +588,7 @@ impl Session {
             if dropped > 0 {
                 self.notice(
                     NoticeLevel::Info,
-                    format!("interrumpiendo; {dropped} mensajes en cola descartados"),
+                    format!("interrupting; {dropped} queued messages discarded"),
                     cx,
                 );
             }
@@ -611,8 +611,8 @@ impl Session {
     /// Sets (or clears) the override of the next turn.
     pub fn set_model_override(&mut self, model: Option<String>, cx: &mut Context<Self>) {
         let message = match &model {
-            Some(model) => format!("siguiente turno con `{model}`"),
-            None => "siguiente turno con el modelo por defecto".to_owned(),
+            Some(model) => format!("next turn with `{model}`"),
+            None => "next turn with the default model".to_owned(),
         };
         self.model_override = model;
         self.notice(NoticeLevel::Info, message, cx);
@@ -652,7 +652,7 @@ impl Session {
                     self.notice(
                         NoticeLevel::Warning,
                         format!(
-                            "comando desconocido :{command} (usa :model, :mode, :clear, :mcp, :implement, :research o :q)"
+                            "unknown command :{command} (use :model, :mode, :clear, :mcp, :implement, :research or :q)"
                         ),
                         cx,
                     );
@@ -698,9 +698,7 @@ impl Session {
                         }
                         PluginAction::Cmd { command } => self.notice(
                             NoticeLevel::Warning,
-                            format!(
-                                "app.cmd(\"{command}\") ignorado: demasiados comandos anidados"
-                            ),
+                            format!("app.cmd(\"{command}\") ignored: too many nested commands"),
                             cx,
                         ),
                     }
@@ -714,7 +712,7 @@ impl Session {
         if self.running.is_some() {
             self.notice(
                 NoticeLevel::Warning,
-                "hay un turno en curso; Ctrl+C para interrumpirlo antes de :clear",
+                "a turn is running; Ctrl+C to interrupt it before :clear",
                 cx,
             );
             return;
@@ -778,14 +776,14 @@ impl Session {
         match name {
             INTERRUPT_ACTION => {
                 if !self.interrupt(cx) {
-                    self.notice(NoticeLevel::Info, "no hay ningún turno en curso", cx);
+                    self.notice(NoticeLevel::Info, "no turn is running", cx);
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
             MODEL_ACTION => self.open_menu(window, cx),
             _ => self.notice(
                 NoticeLevel::Info,
-                format!("la acción {action:?} todavía no hace nada"),
+                format!("the action {action:?} does nothing yet"),
                 cx,
             ),
         }
@@ -838,7 +836,7 @@ impl Session {
         let rows = menu.choices.iter().enumerate().map(|(ix, choice)| {
             let label = match choice {
                 Some(choice) => format!("{:<10} {}", choice.alias, choice.model),
-                None => "default    (rol main)".to_owned(),
+                None => "default    (main role)".to_owned(),
             };
             let mut row = div()
                 .id(ix)
@@ -874,7 +872,7 @@ impl Session {
                     .child(
                         h_flex()
                             .text_color(theme.muted_foreground)
-                            .child("Modelo del siguiente turno  (j/k, Enter, Esc)"),
+                            .child("Model for the next turn  (j/k, Enter, Esc)"),
                     )
                     .children(rows),
             )

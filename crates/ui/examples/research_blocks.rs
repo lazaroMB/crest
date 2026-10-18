@@ -17,12 +17,12 @@ const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN
 fn main() {
     let blocks = vec![
         Block::new(BlockKind::StageHeader {
-            stage: "Hipótesis".into(),
+            stage: "Hypothesis".into(),
             index: 5,
             total: 14,
         }),
         Block::new(BlockKind::Text {
-            markdown: "El parser pierde el último token [1], introducido en [2]; ver [3].".into(),
+            markdown: "The parser drops the last token [1], introduced in [2]; see [3].".into(),
         }),
         Block::new(BlockKind::Sources {
             sources: vec![
