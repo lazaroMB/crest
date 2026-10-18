@@ -283,6 +283,8 @@ impl ImplementNode for CommitTask {
 mod tests {
     use std::sync::Arc;
 
+    use async_trait::async_trait;
+
     use super::*;
     use crate::flows::implement::nodes::tests::{Harness, exit, loaded_state};
     use crate::testing::fs::ScriptedShell;
@@ -399,6 +401,98 @@ mod tests {
             "{out:?}"
         );
         assert_eq!(ctx.state().current, 0);
+    }
+
+    /// A shell that runs real programs in `dir`, for the git test.
+    struct DirShell(std::path::PathBuf);
+
+    #[async_trait]
+    impl ShellPort for DirShell {
+        async fn run(
+            &self,
+            request: RunCommandRequest,
+        ) -> Result<CommandOutput, crate::ports::shell::ShellError> {
+            let out = std::process::Command::new(&request.command)
+                .args(&request.args)
+                .current_dir(&self.0)
+                .env("GIT_AUTHOR_NAME", "crest")
+                .env("GIT_AUTHOR_EMAIL", "crest@example.com")
+                .env("GIT_COMMITTER_NAME", "crest")
+                .env("GIT_COMMITTER_EMAIL", "crest@example.com")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .map_err(|e| crate::ports::shell::ShellError::Spawn(e.to_string()))?;
+            Ok(CommandOutput {
+                status: out.status.code(),
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                ..CommandOutput::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn commits_each_task_in_a_real_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = Arc::new(DirShell(dir.path().to_owned()));
+        let init = shell
+            .run(RunCommandRequest::new("git", ["init", "-q", "-b", "main"]))
+            .await;
+        if !init.is_ok_and(|o| o.success()) {
+            eprintln!("git is not available; skipping");
+            return;
+        }
+        std::fs::write(dir.path().join("README.md"), "hola\n").unwrap();
+        for args in [vec!["add", "README.md"], vec!["commit", "-q", "-m", "init"]] {
+            assert!(
+                shell
+                    .run(RunCommandRequest::new("git", args))
+                    .await
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let h = Harness::new([], Arc::clone(&shell) as _);
+        let mut state = loaded_state(&[("T1", &[]), ("T2", &["T1"])]);
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        for (i, task) in ["t1", "t2"].iter().enumerate() {
+            std::fs::write(dir.path().join(format!("src/{task}.rs")), "// x\n").unwrap();
+            // A stray change that must stay out of the task's commit.
+            std::fs::write(dir.path().join("stray.txt"), format!("{i}\n")).unwrap();
+            let mut ctx = h.ctx(Step::Commit, state);
+            let out = CommitTask::new().run(&mut ctx).await.unwrap();
+            assert_eq!(out, StepOutcome::GoTo(Step::Implement));
+            state = ctx.into_state();
+        }
+
+        let log = shell
+            .run(RunCommandRequest::new(
+                "git",
+                [
+                    "log",
+                    "--format=%s|%(trailers:key=Task,valueonly)",
+                    "--name-only",
+                ],
+            ))
+            .await
+            .unwrap()
+            .stdout;
+        let log: Vec<_> = log.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(
+            log,
+            [
+                "feat(src): Hacer T2|T2",
+                "src/t2.rs",
+                "feat(src): Hacer T1|T1",
+                "src/t1.rs",
+                "init|",
+                "README.md"
+            ]
+        );
+        for id in &state.order {
+            assert_eq!(state.record(id).unwrap().status, TaskStatus::Committed);
+        }
     }
 
     #[test]
