@@ -11,6 +11,7 @@ use std::fmt;
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 /// Stable identifier of a block in the timeline.
@@ -89,6 +90,22 @@ pub enum BlockKind {
         /// Whether the UI shows it collapsed (the default).
         collapsed: bool,
     },
+    /// A tool invocation: one line with name, key arguments and status.
+    ToolCall {
+        /// Id of the `tool_use` content block this call belongs to.
+        tool_use_id: String,
+        /// Tool name.
+        name: String,
+        /// Short human summary of the key arguments.
+        summary: String,
+        /// Raw tool input as sent by the model.
+        input: Value,
+        /// Lifecycle state.
+        status: ToolStatus,
+        /// Tool output shown when expanded, once available.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -97,6 +114,37 @@ pub enum BlockKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hint: Option<String>,
     },
+}
+
+/// Lifecycle of a [`BlockKind::ToolCall`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolStatus {
+    /// Requested by the model, not started yet.
+    Pending,
+    /// Waiting for the user to approve it.
+    AwaitingApproval,
+    /// Executing.
+    Running,
+    /// Finished successfully.
+    Succeeded,
+    /// Finished with an error.
+    Failed,
+    /// Rejected by the user or a permission rule.
+    Denied,
+    /// Interrupted before finishing.
+    Cancelled,
+}
+
+impl ToolStatus {
+    /// Whether the call has reached a final state.
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Denied | Self::Cancelled
+        )
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +204,32 @@ mod tests {
             message: "rate limited".into(),
             hint: Some("retry later".into()),
         }));
+    }
+
+    #[test]
+    fn tool_call_roundtrip_with_snake_case_status() {
+        let block = Block::new(BlockKind::ToolCall {
+            tool_use_id: "toolu_01".into(),
+            name: "read_file".into(),
+            summary: "src/main.rs".into(),
+            input: json!({"path": "src/main.rs"}),
+            status: ToolStatus::AwaitingApproval,
+            output: None,
+        });
+        let value = roundtrip(&block);
+        assert_eq!(value["type"], "tool_call");
+        assert_eq!(value["status"], "awaiting_approval");
+        assert!(value.get("output").is_none());
+    }
+
+    #[test]
+    fn tool_status_terminal_states() {
+        assert!(!ToolStatus::Pending.is_terminal());
+        assert!(!ToolStatus::AwaitingApproval.is_terminal());
+        assert!(!ToolStatus::Running.is_terminal());
+        assert!(ToolStatus::Succeeded.is_terminal());
+        assert!(ToolStatus::Failed.is_terminal());
+        assert!(ToolStatus::Denied.is_terminal());
+        assert!(ToolStatus::Cancelled.is_terminal());
     }
 }
