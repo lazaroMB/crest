@@ -1528,6 +1528,7 @@ dependencies = [
  "clap",
  "domain",
  "serde_json",
+ "tempfile",
  "tokio",
  "ui",
 ]
