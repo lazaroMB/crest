@@ -11,6 +11,7 @@ members = [
     "crates/adapters/lua",
     "crates/adapters/mcp",
     "crates/adapters/telemetry",
+    "crates/ui",
 ]
 
 [workspace.package]
@@ -32,6 +33,7 @@ adapter-store = { path = "crates/adapters/store" }
 adapter-lua = { path = "crates/adapters/lua" }
 adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
+ui = { path = "crates/ui" }
 
 # Shared external crates
 anyhow = "1.0.104"
