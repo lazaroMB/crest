@@ -1,0 +1,25 @@
+[package]
+name = "crest"
+description = "Composition root of crest: reads config, wires adapters and starts the UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "crest"
+path = "src/main.rs"
+
+[dependencies]
+domain.workspace = true
+application.workspace = true
+adapter-anthropic.workspace = true
+adapter-search.workspace = true
+adapter-fs.workspace = true
+adapter-shell.workspace = true
+adapter-store.workspace = true
+adapter-lua.workspace = true
+adapter-mcp.workspace = true
+adapter-telemetry.workspace = true
+ui.workspace = true

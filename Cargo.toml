@@ -12,6 +12,7 @@ members = [
     "crates/adapters/mcp",
     "crates/adapters/telemetry",
     "crates/ui",
+    "crates/bin",
 ]
 
 [workspace.package]

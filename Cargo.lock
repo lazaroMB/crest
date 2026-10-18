@@ -74,6 +74,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "crest"
+version = "0.1.0"
+dependencies = [
+ "adapter-anthropic",
+ "adapter-fs",
+ "adapter-lua",
+ "adapter-mcp",
+ "adapter-search",
+ "adapter-shell",
+ "adapter-store",
+ "adapter-telemetry",
+ "application",
+ "domain",
+ "ui",
+]
+
+[[package]]
 name = "domain"
 version = "0.1.0"
 
