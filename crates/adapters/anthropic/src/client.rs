@@ -48,14 +48,14 @@ impl KeySource {
     #[must_use]
     pub fn rejected_hint(self) -> String {
         match self {
-            Self::Env => "Anthropic rechazó la API key de la variable ANTHROPIC_API_KEY \
-                 (401); revisa que sea una key válida (empieza por `sk-ant-`)"
+            Self::Env => "Anthropic rejected the API key from the ANTHROPIC_API_KEY variable \
+                 (401); check that it is a valid key (it starts with `sk-ant-`)"
                 .to_owned(),
             Self::Keyring => format!(
-                "Anthropic rechazó la API key guardada en el llavero del sistema (servicio \
-                 `{KEYRING_SERVICE}`, entrada `{KEYRING_USER}`) (401); guarda la correcta o \
-                 bórrala (en Linux: `secret-tool clear service {KEYRING_SERVICE} username \
-                 {KEYRING_USER}`) y exporta ANTHROPIC_API_KEY"
+                "Anthropic rejected the API key stored in the system keyring (service \
+                 `{KEYRING_SERVICE}`, entry `{KEYRING_USER}`) (401); store the right one or \
+                 delete it (on Linux: `secret-tool clear service {KEYRING_SERVICE} username \
+                 {KEYRING_USER}`) and export ANTHROPIC_API_KEY"
             ),
             Self::Explicit => AUTH_HINT.to_owned(),
         }

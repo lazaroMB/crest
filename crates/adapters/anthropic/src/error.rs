@@ -6,8 +6,8 @@ use application::ports::llm::LlmError;
 use crate::wire::ApiError;
 
 /// Message of [`LlmError::Auth`]. Never includes the key itself.
-pub const AUTH_HINT: &str = "ANTHROPIC_API_KEY inválida o ausente; exporta una key válida \
-     en ANTHROPIC_API_KEY o guárdala en el llavero del sistema (servicio \"crest\")";
+pub const AUTH_HINT: &str = "ANTHROPIC_API_KEY is invalid or missing; export a valid key \
+     in ANTHROPIC_API_KEY or store it in the system keyring (service \"crest\")";
 
 /// Converts an API error to an [`LlmError`].
 ///
@@ -22,7 +22,7 @@ pub fn from_api(status: Option<u16>, error: &ApiError, retry_after_ms: Option<u6
             message: AUTH_HINT.to_owned(),
         },
         "permission_error" => LlmError::Auth {
-            message: format!("permiso denegado para esta API key: {message}"),
+            message: format!("permission denied for this API key: {message}"),
         },
         "rate_limit_error" => LlmError::RateLimited { retry_after_ms },
         "overloaded_error" => LlmError::Overloaded,
@@ -52,7 +52,7 @@ pub fn from_status(status: u16, message: String, retry_after_ms: Option<u64>) ->
             message: AUTH_HINT.to_owned(),
         },
         403 => LlmError::Auth {
-            message: format!("permiso denegado para esta API key: {message}"),
+            message: format!("permission denied for this API key: {message}"),
         },
         429 => LlmError::RateLimited { retry_after_ms },
         529 => LlmError::Overloaded,
@@ -80,7 +80,7 @@ mod tests {
     fn error_types_map_to_port_errors() {
         assert!(matches!(
             from_api(Some(401), &api("authentication_error", "invalid x-api-key"), None),
-            LlmError::Auth { message } if message.starts_with("ANTHROPIC_API_KEY inválida o ausente")
+            LlmError::Auth { message } if message.starts_with("ANTHROPIC_API_KEY is invalid or missing")
         ));
         assert_eq!(
             from_api(Some(429), &api("rate_limit_error", "slow"), Some(2000)),

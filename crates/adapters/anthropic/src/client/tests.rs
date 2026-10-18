@@ -131,7 +131,7 @@ async fn unauthorized_gives_a_clear_error_without_the_key() {
     let LlmError::Auth { message } = &err else {
         panic!("expected Auth, got {err:?}");
     };
-    assert!(message.starts_with("ANTHROPIC_API_KEY inválida o ausente;"));
+    assert!(message.starts_with("ANTHROPIC_API_KEY is invalid or missing;"));
     assert!(!err.to_string().contains(FAKE_KEY));
     assert!(!format!("{err:?}").contains(FAKE_KEY));
     assert!(!err.is_retryable());
@@ -152,8 +152,8 @@ async fn a_rejected_key_names_where_it_came_from() {
         ..ClientConfig::default()
     };
     for (source, expected) in [
-        (KeySource::Env, "variable ANTHROPIC_API_KEY"),
-        (KeySource::Keyring, "llavero del sistema"),
+        (KeySource::Env, "ANTHROPIC_API_KEY variable"),
+        (KeySource::Keyring, "system keyring"),
     ] {
         let key = ApiKey::from(FAKE_KEY.to_owned(), source).unwrap();
         assert_eq!(key.source(), source);
@@ -162,7 +162,7 @@ async fn a_rejected_key_names_where_it_came_from() {
             panic!("401 must be an Auth error");
         };
         assert!(message.contains(expected), "{source:?}: {message}");
-        assert!(message.contains("rechazó"), "{message}");
+        assert!(message.contains("rejected"), "{message}");
         assert!(!message.contains(FAKE_KEY));
     }
 }
