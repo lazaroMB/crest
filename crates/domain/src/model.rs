@@ -5,7 +5,7 @@
 //! according to layered configuration, so which model does what can change
 //! without touching code.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -440,6 +440,48 @@ pub struct ResolvedModel {
     pub spec: ModelSpec,
     /// Level that chose `spec.id`.
     pub source: SpecSource,
+    /// Problems found against the available models, if they are known.
+    #[serde(default)]
+    pub warnings: Vec<ModelWarning>,
+}
+
+impl ResolvedModel {
+    /// Models to try in order on 529/5xx errors: `spec.id`, then fallbacks.
+    pub fn fallback_chain(&self) -> impl Iterator<Item = &ModelId> {
+        std::iter::once(&self.spec.id).chain(self.spec.fallbacks.iter())
+    }
+}
+
+/// A role points to a model the provider does not offer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModelWarning {
+    /// The primary model is unavailable; `replacement` is the first
+    /// available fallback, or `None` if there is none (the id is kept).
+    #[error("role `{role}`: model `{model}` is not available{}", replacement_note(.replacement.as_ref()))]
+    UnavailableModel {
+        /// Role being resolved.
+        role: ModelRole,
+        /// Missing model.
+        model: ModelId,
+        /// Model used instead.
+        replacement: Option<ModelId>,
+    },
+    /// A fallback is unavailable and was dropped from the chain.
+    #[error("role `{role}`: fallback `{model}` is not available")]
+    UnavailableFallback {
+        /// Role being resolved.
+        role: ModelRole,
+        /// Missing model.
+        model: ModelId,
+    },
+}
+
+fn replacement_note(replacement: Option<&ModelId>) -> String {
+    replacement.map_or_else(
+        || "; no fallback available".to_owned(),
+        |id| format!("; using `{id}`"),
+    )
 }
 
 /// Pure policy that resolves a role to a model.
@@ -461,13 +503,69 @@ pub struct ModelPolicy {
     pub global: RoleConfig,
     /// Workspace configuration layer.
     pub workspace: RoleConfig,
+    /// Models the provider offers (`GET /v1/models`); `None` if unknown,
+    /// in which case no validation happens.
+    pub available: Option<BTreeSet<ModelId>>,
 }
 
 impl ModelPolicy {
     /// Policy with the given layers.
     #[must_use]
     pub const fn new(global: RoleConfig, workspace: RoleConfig) -> Self {
-        Self { global, workspace }
+        Self {
+            global,
+            workspace,
+            available: None,
+        }
+    }
+
+    /// Builder: records the models the provider offers, so that
+    /// [`Self::resolve`] replaces unavailable ids by their fallbacks.
+    #[must_use]
+    pub fn with_available_models(mut self, available: &[ModelId]) -> Self {
+        self.available = Some(available.iter().cloned().collect());
+        self
+    }
+
+    /// Warnings for every role whose models are not in `available`
+    /// (for the status bar at startup).
+    #[must_use]
+    pub fn validate_against(&self, available: &[ModelId]) -> Vec<ModelWarning> {
+        let checked = self.clone().with_available_models(available);
+        ModelRole::ALL
+            .into_iter()
+            .flat_map(|role| checked.resolve(&ResolveRequest::new(role)).warnings)
+            .collect()
+    }
+
+    fn check(resolved: &mut ResolvedModel, available: &BTreeSet<ModelId>) {
+        let role = resolved.role;
+        let spec = &mut resolved.spec;
+        let mut fallbacks = Vec::new();
+        for model in std::mem::take(&mut spec.fallbacks) {
+            if available.contains(&model) {
+                fallbacks.push(model);
+            } else {
+                resolved
+                    .warnings
+                    .push(ModelWarning::UnavailableFallback { role, model });
+            }
+        }
+        if !available.contains(&spec.id) {
+            let replacement = (!fallbacks.is_empty()).then(|| fallbacks.remove(0));
+            resolved.warnings.insert(
+                0,
+                ModelWarning::UnavailableModel {
+                    role,
+                    model: spec.id.clone(),
+                    replacement: replacement.clone(),
+                },
+            );
+            if let Some(id) = replacement {
+                spec.id = id;
+            }
+        }
+        spec.fallbacks = fallbacks;
     }
 
     /// Merged aliases of every layer.
@@ -516,7 +614,12 @@ impl ModelPolicy {
                 spec.fallbacks.push(fallback);
             }
         }
-        ResolvedModel { role, spec, source }
+        ResolvedModel {
+            role,
+            spec,
+            source,
+            warnings: Vec::new(),
+        }
     }
 
     /// Resolves a request following the five-level order.
@@ -525,8 +628,20 @@ impl ModelPolicy {
     /// whole spec. Otherwise it is an alias or a literal id that replaces
     /// only `spec.id`, keeping the role's `max_tokens`, thinking and
     /// fallbacks. Aliases are checked before role names.
+    ///
+    /// When the available models are known ([`Self::with_available_models`]),
+    /// unavailable fallbacks are dropped and an unavailable primary id is
+    /// replaced by the first available fallback, with a warning for each.
     #[must_use]
     pub fn resolve(&self, req: &ResolveRequest) -> ResolvedModel {
+        let mut resolved = self.resolve_unchecked(req);
+        if let Some(available) = &self.available {
+            Self::check(&mut resolved, available);
+        }
+        resolved
+    }
+
+    fn resolve_unchecked(&self, req: &ResolveRequest) -> ResolvedModel {
         let aliases = self.aliases();
         let role = req.pinned_role.unwrap_or(req.role);
         let over = req
@@ -1015,6 +1130,7 @@ mod tests {
                     .with_thinking(thinking)
                     .with_fallbacks(fallbacks),
                 source,
+                warnings: vec![],
             };
             assert_eq!(p.resolve(&r), want, "case {i}: {r:?}");
         }
@@ -1049,5 +1165,126 @@ mod tests {
         );
         assert_eq!(p.expand("haiku"), ModelId::from("claude-haiku-5-5"));
         assert_eq!(p.expand("x"), ModelId::from("x"));
+    }
+
+    fn ids(names: &[&str]) -> Vec<ModelId> {
+        names.iter().copied().map(ModelId::from).collect()
+    }
+
+    #[test]
+    fn unavailable_models_use_first_valid_fallback() {
+        let p = ModelPolicy::new(
+            layer(serde_json::json!({
+                "roles": {"main": {"id": "a", "fallbacks": ["b", "c", "d"]}}
+            })),
+            RoleConfig::default(),
+        );
+        let unavailable =
+            |role, model: &str, replacement: Option<&str>| ModelWarning::UnavailableModel {
+                role,
+                model: model.into(),
+                replacement: replacement.map(ModelId::from),
+            };
+        let dropped = |role, model: &str| ModelWarning::UnavailableFallback {
+            role,
+            model: model.into(),
+        };
+        let main = ModelRole::Main;
+        // (available, expected chain, expected warnings)
+        let cases: Vec<(Vec<&str>, Vec<&str>, Vec<ModelWarning>)> = vec![
+            (vec!["a", "b", "c", "d"], vec!["a", "b", "c", "d"], vec![]),
+            (
+                vec!["b", "c", "d"],
+                vec!["b", "c", "d"],
+                vec![unavailable(main, "a", Some("b"))],
+            ),
+            (
+                vec!["c", "d"],
+                vec!["c", "d"],
+                vec![unavailable(main, "a", Some("c")), dropped(main, "b")],
+            ),
+            (
+                vec!["a", "d"],
+                vec!["a", "d"],
+                vec![dropped(main, "b"), dropped(main, "c")],
+            ),
+            (
+                vec![],
+                vec!["a"],
+                vec![
+                    unavailable(main, "a", None),
+                    dropped(main, "b"),
+                    dropped(main, "c"),
+                    dropped(main, "d"),
+                ],
+            ),
+        ];
+        for (available, chain, warnings) in cases {
+            let got = p
+                .clone()
+                .with_available_models(&ids(&available))
+                .resolve(&ResolveRequest::new(main));
+            assert_eq!(
+                got.fallback_chain().cloned().collect::<Vec<_>>(),
+                ids(&chain),
+                "{available:?}"
+            );
+            assert_eq!(got.warnings, warnings, "{available:?}");
+        }
+    }
+
+    #[test]
+    fn turn_override_is_validated_too() {
+        let p = ModelPolicy::default().with_available_models(&ids(&["claude-haiku-5-5"]));
+        let got = p.resolve(&req(ModelRole::Main, Some("nope"), None));
+        assert_eq!(got.spec.id, ModelId::from("claude-haiku-5-5"));
+        assert_eq!(
+            got.warnings,
+            vec![ModelWarning::UnavailableModel {
+                role: ModelRole::Main,
+                model: "nope".into(),
+                replacement: Some("claude-haiku-5-5".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_against_reports_every_role() {
+        let p = ModelPolicy::default();
+        let all = ids(&[
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-haiku-5-5",
+            "claude-fable-5-1",
+        ]);
+        assert_eq!(p.validate_against(&all), vec![]);
+        let warnings = p.validate_against(&ids(&["claude-sonnet-5-5", "claude-haiku-5-5"]));
+        let text: Vec<String> = warnings.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "role `plan`: model `claude-opus-5-5` is not available; using `claude-sonnet-5-5`",
+                "role `deep`: model `claude-fable-5-1` is not available; using `claude-sonnet-5-5`",
+                "role `deep`: fallback `claude-opus-5-5` is not available",
+            ]
+        );
+        // validate_against does not change the policy itself.
+        assert_eq!(p.available, None);
+        assert_eq!(
+            p.validate_against(&[])[0].to_string(),
+            "role `main`: model `claude-sonnet-5-5` is not available; no fallback available"
+        );
+    }
+
+    #[test]
+    fn fallback_chain_without_validation() {
+        let got = ModelPolicy::default().resolve(&ResolveRequest::new(ModelRole::Deep));
+        assert_eq!(
+            got.fallback_chain()
+                .map(ModelId::as_str)
+                .collect::<Vec<_>>(),
+            ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+        );
+        assert!(got.warnings.is_empty());
     }
 }
