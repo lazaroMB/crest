@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Arma el tarball de release de crest a partir de un binario ya compilado.
+# Builds the crest release tarball from an already compiled binary.
 #
 #   make release && scripts/package.sh
 #   cargo build --release --locked --target <t> -p crest
 #   scripts/package.sh --target <t>
 #
-# Produce <out>/crest-<version>-<target>.tar.gz (un directorio con el
-# binario, README.txt con los requisitos de runtime y LICENSE* si existen)
-# y su checksum <archivo>.sha256 en el formato de `sha256sum -c`.
+# Produces <out>/crest-<version>-<target>.tar.gz (a directory with the
+# binary, README.txt with the runtime requirements, and LICENSE* if present)
+# and its checksum <file>.sha256 in the `sha256sum -c` format.
 #
-# Compatible con Bash 3.2 (macOS).
+# Compatible with Bash 3.2 (macOS).
 
 set -euo pipefail
 
@@ -20,12 +20,12 @@ out="dist"
 
 usage() {
     cat <<'EOF'
-Uso: scripts/package.sh [--target <triple>] [--version <v>] [--out <dir>]
+Usage: scripts/package.sh [--target <triple>] [--version <v>] [--out <dir>]
 
-  --target   Triple de Rust. Con él se empaqueta target/<triple>/release/crest;
-             sin él, target/release/crest y el triple del host (rustc -vV).
-  --version  Versión del nombre del archivo (por defecto, la del paquete crest).
-  --out      Directorio de salida (por defecto, dist).
+  --target   Rust target triple. With it, packages target/<triple>/release/crest;
+             without it, target/release/crest and the host triple (rustc -vV).
+  --version  Version in the file name (default: the crest package version).
+  --out      Output directory (default: dist).
 EOF
 }
 
@@ -36,33 +36,33 @@ die() {
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --target) [ $# -ge 2 ] || die "falta el valor de --target"; target="$2"; shift 2 ;;
-        --version) [ $# -ge 2 ] || die "falta el valor de --version"; version="$2"; shift 2 ;;
-        --out) [ $# -ge 2 ] || die "falta el valor de --out"; out="$2"; shift 2 ;;
+        --target) [ $# -ge 2 ] || die "--target needs a value"; target="$2"; shift 2 ;;
+        --version) [ $# -ge 2 ] || die "--version needs a value"; version="$2"; shift 2 ;;
+        --out) [ $# -ge 2 ] || die "--out needs a value"; out="$2"; shift 2 ;;
         -h | --help) usage; exit 0 ;;
-        *) usage >&2; die "argumento desconocido: $1" ;;
+        *) usage >&2; die "unknown argument: $1" ;;
     esac
 done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-# CARGO_TARGET_DIR respeta un target/ fuera del repo.
+# CARGO_TARGET_DIR honors a target/ outside the repo.
 target_dir="${CARGO_TARGET_DIR:-target}"
 if [ -n "$target" ]; then
     bin_path="$target_dir/$target/release/$BIN"
 else
     bin_path="$target_dir/release/$BIN"
     target="$(rustc -vV | sed -n 's/^host: //p')"
-    [ -n "$target" ] || die "no se pudo leer el triple del host con rustc -vV"
+    [ -n "$target" ] || die "could not read the host triple from rustc -vV"
 fi
-[ -x "$bin_path" ] || die "no existe $bin_path; compílalo antes (make release)"
+[ -x "$bin_path" ] || die "$bin_path does not exist; build it first (make release)"
 
 if [ -z "$version" ]; then
-    # `cargo pkgid` imprime ...#crest@0.1.0 (o ...#0.1.0 en cargos viejos).
+    # `cargo pkgid` prints ...#crest@0.1.0 (or ...#0.1.0 on old cargo versions).
     pkgid="$(cargo pkgid -p "$BIN")"
     version="${pkgid##*[#@]}"
-    [ -n "$version" ] || die "no se pudo leer la versión de $pkgid"
+    [ -n "$version" ] || die "could not read the version from $pkgid"
 fi
 
 name="$BIN-$version-$target"
@@ -83,39 +83,39 @@ case "$target" in
     *-apple-darwin)
         platform_notes="macOS
 -----
-- El binario no está firmado ni notarizado. Si Gatekeeper lo bloquea:
+- The binary is neither signed nor notarized. If Gatekeeper blocks it:
     xattr -d com.apple.quarantine ./crest
-- rg y fzf: brew install ripgrep fzf"
+- rg and fzf: brew install ripgrep fzf"
         ;;
     *)
         platform_notes="Linux
 -----
-- Vulkan: el loader (libvulkan1 / vulkan-loader) y el driver de la GPU
-  (mesa-vulkan-drivers o el del fabricante).
-- Bibliotecas de GPUI: libxkbcommon, libxkbcommon-x11, wayland, libxcb,
-  libx11-xcb, fontconfig y freetype (paquetes de la distro).
-- glibc igual o más nueva que la del sistema donde se compiló; los
-  tarballs del CI se compilan en Ubuntu 22.04 (glibc 2.35)."
+- Vulkan: the loader (libvulkan1 / vulkan-loader) and the GPU driver
+  (mesa-vulkan-drivers or the vendor's).
+- GPUI libraries: libxkbcommon, libxkbcommon-x11, wayland, libxcb,
+  libx11-xcb, fontconfig and freetype (distro packages).
+- glibc the same as or newer than the one on the build system; the CI
+  tarballs are built on Ubuntu 22.04 (glibc 2.35)."
         ;;
 esac
 
 cat >"$staging/$name/README.txt" <<EOF
 crest $version ($target)
 
-Instalación: copia \`crest\` a un directorio del PATH, por ejemplo ~/.local/bin.
+Installation: copy \`crest\` to a directory in the PATH, for example ~/.local/bin.
 
-Requisitos de runtime
----------------------
-- ripgrep (rg) 13.0 o más nuevo.
-- fzf 0.36 o más nuevo.
+Runtime requirements
+--------------------
+- ripgrep (rg) 13.0 or newer.
+- fzf 0.36 or newer.
 - git.
-SQLite y TLS (rustls) van dentro del binario: no hace falta libsqlite3 ni
-OpenSSL del sistema.
+SQLite and TLS (rustls) are built into the binary: no system libsqlite3 or
+OpenSSL is needed.
 
 $platform_notes
 
-Desde el repositorio, scripts/install-deps.sh instala o verifica (--check)
-estas dependencias.
+From the repository, scripts/install-deps.sh installs or checks (--check)
+these dependencies.
 EOF
 
 tarball="$name.tar.gz"
