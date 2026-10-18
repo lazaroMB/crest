@@ -33,6 +33,10 @@ use gpui::{
 use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+/// Action of `Up` in an empty prompt while prompts are queued: takes the
+/// last one back into the prompt.
+pub const QUEUE_EDIT_ACTION: &str = "queue.edit";
+
 /// Rows of the editor before it starts scrolling.
 const MAX_ROWS: usize = 8;
 
@@ -140,6 +144,7 @@ pub struct InputView {
     focus_handle: FocusHandle,
     command: String,
     timeout: Option<Task<()>>,
+    queued: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -179,6 +184,7 @@ impl InputView {
             focus_handle: cx.focus_handle(),
             command: String::new(),
             timeout: None,
+            queued: false,
             _subscriptions: vec![intercept, focus],
         }
     }
@@ -225,6 +231,23 @@ impl InputView {
         let text = text.to_owned();
         self.editor
             .update(cx, |editor, cx| editor.insert(text, window, cx));
+    }
+
+    /// Replaces the prompt with `text`, cursor at the end, in insert mode
+    /// (a queued prompt taken back with `Up`).
+    pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_mode(Mode::Insert, window, cx);
+        let text = text.to_owned();
+        self.editor.update(cx, |editor, cx| {
+            editor.set_value("", window, cx);
+            editor.insert(text, window, cx);
+        });
+    }
+
+    /// Tells the input whether prompts are queued: then `Up` in an empty
+    /// prompt emits [`QUEUE_EDIT_ACTION`] instead of moving the cursor.
+    pub fn set_queued(&mut self, queued: bool) {
+        self.queued = queued;
     }
 
     /// Switches mode, moving focus and notifying listeners.
@@ -297,6 +320,14 @@ impl InputView {
     /// Handles a live key no mapping wants; returns whether it was consumed.
     fn unmapped(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match self.mode() {
+            Mode::Insert
+                if self.queued
+                    && *key == Key::new(KeyCode::Up, Modifiers::default())
+                    && self.text(cx).is_empty() =>
+            {
+                cx.emit(InputEvent::Action(Action::builtin(QUEUE_EDIT_ACTION)));
+                true
+            }
             // The editor (insert) or the app bindings (normal) take it.
             Mode::Insert | Mode::Normal => false,
             Mode::Command => {
@@ -548,6 +579,23 @@ mod tests {
         view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), ""));
         cx.simulate_keystrokes("g");
         assert!(take(&events).is_empty(), "the timed-out g does not pair up");
+    }
+
+    #[gpui::test]
+    fn up_takes_back_a_queued_prompt_only_from_an_empty_prompt(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_keystrokes("up");
+        assert!(take(&events).is_empty(), "nothing is queued");
+        view.update(cx, |view, _| view.set_queued(true));
+        cx.simulate_input("x");
+        cx.simulate_keystrokes("up");
+        assert!(take(&events).is_empty(), "the prompt has text");
+        cx.simulate_keystrokes("backspace up");
+        assert_eq!(take(&events), [action(QUEUE_EDIT_ACTION)]);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.set_text("de vuelta", window, cx));
+        });
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "de vuelta"));
     }
 
     #[gpui::test]

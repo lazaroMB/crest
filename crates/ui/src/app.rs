@@ -229,6 +229,7 @@ pub struct RootView {
     focus_handle: FocusHandle,
     timeline: Option<AnyView>,
     input: Option<AnyView>,
+    activity: Option<AnyView>,
     status: Option<AnyView>,
     side_panel: Option<AnyView>,
     overlays: Vec<AnyView>,
@@ -241,6 +242,7 @@ impl RootView {
             focus_handle: cx.focus_handle(),
             timeline: None,
             input: None,
+            activity: None,
             status: None,
             side_panel: None,
             overlays: Vec::new(),
@@ -269,6 +271,13 @@ impl RootView {
     /// Fills the prompt input area.
     pub fn set_input(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
         self.input = Some(view.into());
+        cx.notify();
+    }
+
+    /// Fills the line between the timeline and the input (what the session
+    /// is doing, the queued prompts); it takes no room when unset.
+    pub fn set_activity(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.activity = Some(view.into());
         cx.notify();
     }
 
@@ -310,6 +319,7 @@ impl Render for RootView {
                 "timeline",
                 cx,
             )))
+            .children(self.activity.clone())
             .child(
                 div()
                     .min_h(px(64.0))

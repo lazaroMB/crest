@@ -35,7 +35,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. If you send a prompt while a turn is running, it is **queued**: the bar shows how many are waiting, and it is sent when the turn finishes. `Ctrl+C` interrupts the turn and clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `:q` quits crest.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `:research` or `:implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn and clears the queue; a running command cannot be interrupted, so there it only clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `:q` quits crest.
 
 ### Modes
 

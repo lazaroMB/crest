@@ -1,5 +1,6 @@
 //! GPUI views, blocks and modal input for crest.
 
+pub mod activity;
 pub mod app;
 pub mod approval;
 pub mod blocks;

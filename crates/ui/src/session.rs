@@ -10,12 +10,20 @@
 //!
 //! # Turns
 //!
-//! One turn runs at a time. A prompt submitted while a turn runs is
-//! **queued** (the input stays usable, the status bar says how many are
-//! waiting) and sent when the turn ends. `Ctrl+C` (`turn.interrupt`, in any
-//! mode and also while a picker or the approval dialog has focus) cancels
-//! the [`CancelToken`] of the running turn and drops the queue; the turn
-//! ends as `Interrupted` and the next prompt starts a new one.
+//! One turn runs at a time, and a `:` command answered by the controller
+//! (`:research`, `:implement`...) keeps the session busy too until it
+//! replies. A prompt submitted while the session is busy is **queued**: the
+//! input stays usable, the [`ActivityView`] above it lists what waits, and
+//! the prompts are sent one by one once the session is free. `Up` in an
+//! empty prompt takes the last queued one back to edit it. `Ctrl+C`
+//! (`turn.interrupt`, in any mode and also while a picker or the approval
+//! dialog has focus) cancels the [`CancelToken`] of the running turn and
+//! drops the queue; the turn ends as `Interrupted` and the next prompt
+//! starts a new one. A running command cannot be cancelled; `Ctrl+C` only
+//! drops the queue.
+//!
+//! While busy, the activity line says what goes on (spinner, stage, tool,
+//! elapsed time) from the events of the work.
 //!
 //! # Keys and commands
 //!
@@ -66,6 +74,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use crate::activity::{ActivityView, WorkKind};
 use crate::app::RootView;
 use crate::approval::{ApprovalInbox, ApprovalView};
 use crate::blocks::sources::{BlockEvent, block_events};
@@ -73,7 +82,7 @@ use crate::commands::unknown_command_hint;
 use crate::help::{
     HELP_ACTION, HelpSnapshot, HelpView, LocalHelp, Section, help_modal_id, parse_help_arg,
 };
-use crate::input::{InputEvent, InputView};
+use crate::input::{InputEvent, InputView, QUEUE_EDIT_ACTION};
 use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
@@ -266,12 +275,15 @@ pub struct Session {
     timeline: Entity<TimelineView>,
     input: Entity<InputView>,
     status: Entity<StatusView>,
+    activity: Entity<ActivityView>,
     tree: Entity<TreePanel>,
     picker: Entity<PickerView>,
     approval: Entity<ApprovalView>,
     modal: Entity<ModalHost>,
     focus_handle: FocusHandle,
     running: Option<CancelToken>,
+    /// Names of the `:` commands waiting for the controller's reply.
+    commands: Vec<String>,
     turn: Option<Task<()>>,
     queue: VecDeque<(String, Option<ModelRole>)>,
     model_override: Option<String>,
@@ -291,10 +303,11 @@ pub fn open(
     let root = cx.new(RootView::new);
     let session = cx.new(|cx| Session::new(parts, root.downgrade(), window, cx));
     let s = session.read(cx);
-    let (timeline, input, status, tree, picker, approval, modal) = (
+    let (timeline, input, status, activity, tree, picker, approval, modal) = (
         s.timeline.clone(),
         s.input.clone(),
         s.status.clone(),
+        s.activity.clone(),
         s.tree.clone(),
         s.picker.clone(),
         s.approval.clone(),
@@ -302,6 +315,7 @@ pub fn open(
     );
     root.update(cx, |root, cx| {
         root.set_timeline(timeline, cx);
+        root.set_activity(activity, cx);
         root.set_input(input.clone(), cx);
         root.set_status(status, cx);
         root.set_side_panel(tree, cx);
@@ -360,6 +374,7 @@ impl Session {
             }
             input
         });
+        let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
         let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
         let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
@@ -420,12 +435,14 @@ impl Session {
             timeline,
             input,
             status,
+            activity,
             tree,
             picker,
             approval,
             modal,
             focus_handle: cx.focus_handle(),
             running: None,
+            commands: Vec::new(),
             turn: None,
             queue: VecDeque::new(),
             model_override: None,
@@ -492,6 +509,11 @@ impl Session {
         &self.status
     }
 
+    /// The activity line and the queue.
+    pub fn activity(&self) -> &Entity<ActivityView> {
+        &self.activity
+    }
+
     /// The approval dialog.
     pub fn approval(&self) -> &Entity<ApprovalView> {
         &self.approval
@@ -507,7 +529,12 @@ impl Session {
         self.running.is_some()
     }
 
-    /// Prompts waiting for the running turn.
+    /// Whether a turn or a `:` command is running; prompts are queued.
+    pub fn is_busy(&self) -> bool {
+        self.running.is_some() || !self.commands.is_empty()
+    }
+
+    /// Prompts waiting for the session to be free.
     pub fn queued(&self) -> usize {
         self.queue.len()
     }
@@ -541,6 +568,11 @@ impl Session {
                 status.apply(event, cx);
             }
         });
+        self.activity.update(cx, |activity, cx| {
+            for event in &events {
+                activity.apply(event, cx);
+            }
+        });
         self.timeline
             .update(cx, |timeline, cx| timeline.apply_all(events, cx));
     }
@@ -561,16 +593,11 @@ impl Session {
     }
 
     /// Sends `prompt` answered with `role` (`main` when `None`), or queues
-    /// it while a turn runs.
+    /// it while the session is busy.
     pub fn submit_as(&mut self, prompt: String, role: Option<ModelRole>, cx: &mut Context<Self>) {
-        if self.running.is_some() {
+        if self.is_busy() {
             self.queue.push_back((prompt, role));
-            let waiting = self.queue.len();
-            self.notice(
-                NoticeLevel::Info,
-                format!("queued: {waiting} (sent when the turn ends; Ctrl+C discards it)"),
-                cx,
-            );
+            self.sync_activity(cx);
             return;
         }
         let cancel = CancelToken::new();
@@ -585,7 +612,50 @@ impl Session {
             let end = turn.await;
             this.update(cx, |this, cx| this.turn_ended(end, cx)).ok();
         }));
+        self.sync_activity(cx);
         cx.notify();
+    }
+
+    /// Sends the next queued prompt once the session is free.
+    fn drain_queue(&mut self, cx: &mut Context<Self>) {
+        if !self.is_busy()
+            && let Some((next, role)) = self.queue.pop_front()
+        {
+            self.submit_as(next, role, cx);
+        }
+        self.sync_activity(cx);
+    }
+
+    /// Shows the current work and the queue in the activity line, and tells
+    /// the input whether `Up` takes a queued prompt back.
+    fn sync_activity(&mut self, cx: &mut Context<Self>) {
+        let work = if self.running.is_some() {
+            Some(WorkKind::Turn)
+        } else {
+            self.commands.last().cloned().map(WorkKind::Command)
+        };
+        let queue: Vec<String> = self
+            .queue
+            .iter()
+            .map(|(prompt, _)| prompt.clone())
+            .collect();
+        let queued = !queue.is_empty();
+        self.activity.update(cx, |activity, cx| {
+            activity.set_work(work, cx);
+            activity.set_queue(queue, cx);
+        });
+        self.input.update(cx, |input, _| input.set_queued(queued));
+    }
+
+    /// `Up` in an empty prompt: the last queued prompt goes back to the
+    /// input to be edited (or emptied to drop it).
+    fn edit_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((prompt, _)) = self.queue.pop_back() else {
+            return;
+        };
+        self.input
+            .update(cx, |input, cx| input.set_text(&prompt, window, cx));
+        self.sync_activity(cx);
     }
 
     fn turn_ended(&mut self, end: TurnEnd, cx: &mut Context<Self>) {
@@ -609,9 +679,7 @@ impl Session {
                 );
             }
         }
-        if let Some((next, role)) = self.queue.pop_front() {
-            self.submit_as(next, role, cx);
-        }
+        self.drain_queue(cx);
         cx.notify();
     }
 
@@ -619,11 +687,22 @@ impl Session {
     /// whether a turn was running.
     pub fn interrupt(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(cancel) = &self.running else {
-            return false;
+            let Some(command) = self.commands.last().cloned() else {
+                return false;
+            };
+            let dropped = std::mem::take(&mut self.queue).len();
+            self.sync_activity(cx);
+            let message = match dropped {
+                0 => format!(":{command} cannot be interrupted; it stops at its next question"),
+                n => format!(":{command} cannot be interrupted; {n} queued messages discarded"),
+            };
+            self.notice(NoticeLevel::Info, message, cx);
+            return true;
         };
         if !cancel.is_cancelled() {
             cancel.cancel();
             let dropped = std::mem::take(&mut self.queue).len();
+            self.sync_activity(cx);
             if dropped > 0 {
                 self.notice(
                     NoticeLevel::Info,
@@ -698,7 +777,10 @@ impl Session {
             ),
             _ => {
                 if let Some(reply) = self.controller.run_command(name, arg) {
-                    self.await_reply(reply, depth, window, cx);
+                    self.commands.push(name.to_owned());
+                    self.sync_activity(cx);
+                    let name = name.to_owned();
+                    self.await_reply_then(reply, depth, Some(name), window, cx);
                 } else if name.contains('.') {
                     self.action(&Action::Builtin(name.to_owned()), window, cx);
                 } else {
@@ -716,10 +798,33 @@ impl Session {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.await_reply_then(reply, depth, None, window, cx);
+    }
+
+    /// [`Self::await_reply`] for the `:` command `command`, which keeps the
+    /// session busy until it replies.
+    fn await_reply_then(
+        &mut self,
+        reply: BoxFuture<'static, Reply>,
+        depth: usize,
+        command: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn_in(window, async move |this, cx| {
             let reply = reply.await;
-            this.update_in(cx, |this, window, cx| this.reply(reply, depth, window, cx))
-                .ok();
+            this.update_in(cx, |this, window, cx| {
+                if let Some(command) = &command
+                    && let Some(ix) = this.commands.iter().rposition(|c| c == command)
+                {
+                    this.commands.remove(ix);
+                }
+                this.reply(reply, depth, window, cx);
+                if command.is_some() {
+                    this.drain_queue(cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -762,6 +867,11 @@ impl Session {
                 "a turn is running; Ctrl+C to interrupt it before :clear",
                 cx,
             );
+            return;
+        }
+        if let Some(command) = self.commands.last() {
+            let message = format!(":{command} is running; :clear once it stops");
+            self.notice(NoticeLevel::Warning, message, cx);
             return;
         }
         let reset = self.controller.new_session();
@@ -827,6 +937,7 @@ impl Session {
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
+            QUEUE_EDIT_ACTION => self.edit_queued(window, cx),
             MODEL_ACTION => self.open_menu(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
             _ => self.notice(
@@ -1099,9 +1210,19 @@ mod tests {
             futures::future::ready(reply).boxed()
         }
 
-        /// `:review` sends a prompt with the plan role; `:loop` calls itself.
+        /// `:review` sends a prompt with the plan role; `:loop` calls itself;
+        /// `:slow` answers after 300 ms, like a flow running to its gate.
         fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
             let reply = match name {
+                "slow" => {
+                    let (tx, rx) = oneshot::channel();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(300));
+                        tx.send(Reply::Notice(NoticeLevel::Info, "slow done".into()))
+                            .ok();
+                    });
+                    return Some(rx.map(|reply| reply.unwrap_or(Reply::Done)).boxed());
+                }
                 "review" => Reply::Actions(vec![PluginAction::Send {
                     text: format!("revisa {args}"),
                     role: Some(ModelRole::Plan),
@@ -1325,6 +1446,51 @@ mod tests {
             kinds.iter().filter_map(text_of).next_back(),
             Some("de nuevo")
         );
+    }
+
+    #[gpui::test]
+    fn a_running_command_keeps_the_session_busy_and_queues_prompts(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("hecho")], cx);
+        cx.simulate_keystrokes("escape :");
+        cx.simulate_input("slow");
+        cx.simulate_keystrokes("enter i");
+        h.session.read_with(cx, |s, cx| {
+            assert!(s.is_busy() && !s.is_running());
+            assert!(s.activity().read(cx).state().is_working());
+        });
+        send("mientras", cx);
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.queued(), 1);
+            assert_eq!(s.activity().read(cx).state().queue(), ["mientras"]);
+        });
+        assert_eq!(h.llm.remaining(), 1, "nothing was sent yet");
+
+        // Up in the empty prompt takes it back; Enter queues it again.
+        cx.simulate_keystrokes("up");
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.queued(), 0);
+            assert_eq!(s.input().read(cx).text(cx), "mientras");
+        });
+        cx.simulate_input(" tanto");
+        cx.simulate_keystrokes("enter");
+        h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 1));
+
+        wait_until(&h, cx, "the command and the queued turn", |s, _| {
+            !s.is_busy() && s.queued() == 0
+        });
+        assert_eq!(h.llm.remaining(), 0, "the queued prompt was sent");
+        let kinds = blocks(&h, cx);
+        assert!(
+            kinds
+                .iter()
+                .filter_map(text_of)
+                .any(|text| text == "> mientras tanto\n"),
+            "{kinds:?}"
+        );
+        h.session.read_with(cx, |s, cx| {
+            let activity = s.activity().read(cx).state();
+            assert!(!activity.is_working() && activity.queue().is_empty());
+        });
     }
 
     #[gpui::test]
