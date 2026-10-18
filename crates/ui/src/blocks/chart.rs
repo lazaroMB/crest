@@ -1,6 +1,7 @@
 //! Renderer of the `chart` block kind: bar, line, area and pie charts from
 //! gpui-component, colored with the theme's chart palette, with a title and
-//! a legend.
+//! a legend. `t` ([`TimelineEntry::alt_view`]) shows the same data as a
+//! table ([`ChartSpec::to_table`] through the table block's renderer).
 //!
 //! gpui-component's `BarChart` and `LineChart` draw one series, so several
 //! series become grouped bars (one band per label and series, the label
@@ -209,7 +210,7 @@ fn chart_body(spec: &ChartSpec, id: &str, cx: &App) -> AnyElement {
     if let Err(err) = spec.validate() {
         return div()
             .text_color(theme.danger)
-            .child(format!("Invalid chart: {err}."))
+            .child(format!("Invalid chart: {err}. Press t to see the data."))
             .into_any_element();
     }
     if spec.labels.is_empty() {
@@ -234,13 +235,22 @@ fn chart_body(spec: &ChartSpec, id: &str, cx: &App) -> AnyElement {
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Chart(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
     let id = entry.block.id;
-    let body = chart_body(spec, &id.to_string(), cx);
+    let body = if entry.alt_view {
+        super::table::render_spec(id, &spec.to_table(), window, cx)
+    } else {
+        chart_body(spec, &id.to_string(), cx)
+    };
     let theme = cx.theme();
+    let hint = if entry.alt_view {
+        "table · t: chart"
+    } else {
+        "t: table"
+    };
     let title = if spec.title.trim().is_empty() {
         "Chart"
     } else {
@@ -270,7 +280,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child(kind_label(spec.kind)),
+                        .child(format!("{} · {hint}", kind_label(spec.kind))),
                 ),
         )
         .child(body)
@@ -321,7 +331,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn draws_every_kind(cx: &mut TestAppContext) {
+    fn draws_every_kind_and_its_table(cx: &mut TestAppContext) {
         cx.update(gpui_component::init);
         let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
         let mut invalid = chart(ChartKind::Pie, 2);
@@ -345,16 +355,24 @@ mod tests {
                 view.apply(&DomainEvent::BlockAdded { block }, cx);
             }
         });
-        for ix in 0..count {
-            view.update(cx, |view, cx| {
-                view.handle_action(&Action::builtin("block.first"), cx);
-                for _ in 0..ix {
-                    view.handle_action(&Action::builtin("block.next"), cx);
-                }
-            });
-            cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
-                div().size_full().child(view.clone())
-            });
+        for alt_view in [false, true] {
+            for ix in 0..count {
+                view.update(cx, |view, cx| {
+                    view.handle_action(&Action::builtin("block.first"), cx);
+                    for _ in 0..ix {
+                        view.handle_action(&Action::builtin("block.next"), cx);
+                    }
+                    if alt_view {
+                        view.handle_action(&Action::builtin("block.toggle_view"), cx);
+                    }
+                });
+                cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+                    div().size_full().child(view.clone())
+                });
+                view.read_with(cx, |view, _| {
+                    assert_eq!(view.state().entries()[ix].alt_view, alt_view);
+                });
+            }
         }
     }
 }
