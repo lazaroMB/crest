@@ -609,10 +609,10 @@ impl TurnRun<'_> {
         let Some(reached) = tracker.cap_reached(session) else {
             return true;
         };
-        let amounts = format!("${:.2} de ${:.2}", reached.spent, reached.cap);
+        let amounts = format!("${:.2} of ${:.2}", reached.spent, reached.cap);
         self.emit(DomainEvent::Notice {
             level: NoticeLevel::Warning,
-            message: format!("tope de gasto alcanzado ({amounts}); esperando confirmación"),
+            message: format!("spend cap reached ({amounts}); waiting for confirmation"),
         });
         let asked = self.service.deps.approval.request(tracker.request(reached));
         let Ok(answer) = self.cancel.run(asked).await else {
@@ -624,7 +624,7 @@ impl TurnRun<'_> {
             Ok(ApprovalResponse::Deny { .. }) | Err(_) => {
                 self.emit(DomainEvent::Notice {
                     level: NoticeLevel::Warning,
-                    message: format!("turno detenido por el tope de gasto ({amounts})"),
+                    message: format!("turn stopped by the spend cap ({amounts})"),
                 });
                 return false;
             }
@@ -713,7 +713,7 @@ impl TurnRun<'_> {
             Err(err) => {
                 self.emit(DomainEvent::Notice {
                     level: NoticeLevel::Warning,
-                    message: format!("no se pudo compactar el historial: {err}"),
+                    message: format!("could not compact the history: {err}"),
                 });
                 return Compaction::Skipped;
             }
@@ -723,7 +723,7 @@ impl TurnRun<'_> {
         self.context = None;
         self.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
-            message: format!("historial compactado: {count} turnos → resumen"),
+            message: format!("history compacted: {count} turns → summary"),
         });
         self.emit(DomainEvent::UsageUpdated {
             turn: self.turn.usage,

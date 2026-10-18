@@ -419,6 +419,6 @@ async fn tool_results_are_truncated_to_the_budget() {
     let (text, is_error) = &h.tool_results()[0];
     assert!(!is_error);
     assert!(text.starts_with("echo: línea 1\nlínea 2\n"), "{text}");
-    assert!(text.contains("líneas más omitidas"), "{text}");
+    assert!(text.contains("more lines omitted"), "{text}");
     assert!(text.len() < 200, "{text}");
 }

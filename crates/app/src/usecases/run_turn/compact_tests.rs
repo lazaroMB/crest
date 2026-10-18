@@ -185,7 +185,7 @@ async fn past_the_threshold_the_history_is_compacted_and_the_turn_goes_on() {
         notices(&h),
         vec![(
             NoticeLevel::Info,
-            "historial compactado: 2 turnos → resumen".to_owned()
+            "history compacted: 2 turns → summary".to_owned()
         )]
     );
     let llm_calls: Vec<_> = h
@@ -299,7 +299,7 @@ async fn a_failed_summary_is_a_warning_and_the_turn_goes_on() {
     let notices = notices(&h);
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].0, NoticeLevel::Warning);
-    assert!(notices[0].1.contains("no se pudo compactar"));
+    assert!(notices[0].1.contains("could not compact"));
 }
 
 #[tokio::test]

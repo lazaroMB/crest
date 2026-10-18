@@ -25,10 +25,14 @@ use crate::ports::llm::{LlmError, LlmPort, LlmRequest, MessageAssembler, SystemB
 pub const DEFAULT_CONTEXT_WINDOW_TOKENS: u64 = 200_000;
 
 /// Start of the user message that carries the summary.
-pub const SUMMARY_PREFIX: &str = "Resumen de la conversación anterior:";
+pub const SUMMARY_PREFIX: &str = "Summary of the previous conversation:";
+
+/// [`SUMMARY_PREFIX`] of sessions saved before crest spoke English, still
+/// recognized so their summaries are not summarized again.
+const LEGACY_SUMMARY_PREFIX: &str = "Resumen de la conversación anterior:";
 
 /// Assistant answer to the summary, so roles keep alternating.
-pub const SUMMARY_ACK: &str = "Entendido, continúo a partir de este resumen.";
+pub const SUMMARY_ACK: &str = "Understood, I will continue from this summary.";
 
 /// Longest text kept from one content part in the transcript, in chars.
 const MAX_PART_CHARS: usize = 2_000;
@@ -111,7 +115,8 @@ pub fn is_summary_turn(turn: &Turn) -> bool {
         m.role == Role::User
             && matches!(
                 m.content.first(),
-                Some(ContentPart::Text { text }) if text.starts_with(SUMMARY_PREFIX)
+                Some(ContentPart::Text { text })
+                    if text.starts_with(SUMMARY_PREFIX) || text.starts_with(LEGACY_SUMMARY_PREFIX)
             )
     })
 }

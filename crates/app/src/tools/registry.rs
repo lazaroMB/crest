@@ -550,7 +550,7 @@ mod tests {
             .dispatch("echo", json!({ "text": "uno\ndos" }), &ctx())
             .await
             .unwrap();
-        assert!(out.text_content().starts_with("uno\n[1 líneas más"));
+        assert!(out.text_content().starts_with("uno\n[1 more lines"));
     }
 
     #[test]

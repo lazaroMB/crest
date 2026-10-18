@@ -193,12 +193,12 @@ async fn at_the_cap_the_turn_pauses_and_asks_before_the_next_call() {
     assert_eq!(
         asked[0].preview,
         ApprovalPreview::Text {
-            text: "La sesión gastó $1.00 de $1.00; ¿continuar?".into()
+            text: "The session spent $1.00 of $1.00; continue?".into()
         }
     );
     assert_eq!(
         warnings(&h),
-        ["tope de gasto alcanzado ($1.00 de $1.00); esperando confirmación"]
+        ["spend cap reached ($1.00 of $1.00); waiting for confirmation"]
     );
 }
 
@@ -228,8 +228,8 @@ async fn approving_raises_the_cap_by_its_amount() {
     assert_eq!(
         asked,
         [
-            "La sesión gastó $1.00 de $1.00; ¿continuar?",
-            "La sesión gastó $2.10 de $2.00; ¿continuar?",
+            "The session spent $1.00 of $1.00; continue?",
+            "The session spent $2.10 of $2.00; continue?",
         ]
     );
 }
@@ -271,7 +271,7 @@ async fn denying_stops_the_turn_cleanly_and_the_session_goes_on() {
     assert_eq!(last.role, Role::User, "no tool_use left unanswered");
     assert_eq!(
         warnings(&h).last().map(String::as_str),
-        Some("turno detenido por el tope de gasto ($1.00 de $1.00)")
+        Some("turn stopped by the spend cap ($1.00 of $1.00)")
     );
     assert!(
         h.trace()

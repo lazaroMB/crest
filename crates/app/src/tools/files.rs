@@ -833,7 +833,7 @@ mod tests {
         let (_, out) = call(&tool, json!({})).await;
         assert_eq!(
             out.text_content(),
-            "Cargo.toml\ndocs/a/b/c.md\n3 resultados más; refina la búsqueda"
+            "Cargo.toml\ndocs/a/b/c.md\n3 more results; refine the search"
         );
     }
 
@@ -1163,7 +1163,7 @@ mod tests {
         ));
         let (_, out) = call(&tool, json!({ "command": "make" })).await;
         let text = out.text_content();
-        assert!(text.contains("líneas más omitidas"), "{text}");
+        assert!(text.contains("more lines omitted"), "{text}");
         assert!(text.ends_with("--- stderr ---\nwarning: x"), "{text}");
     }
 

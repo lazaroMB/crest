@@ -199,7 +199,7 @@ impl CapReached {
     #[must_use]
     pub fn question(&self) -> String {
         format!(
-            "La sesión gastó ${:.2} de ${:.2}; ¿continuar?",
+            "The session spent ${:.2} of ${:.2}; continue?",
             self.spent, self.cap
         )
     }
@@ -466,7 +466,7 @@ mod tests {
         );
         assert_eq!(
             reached.question(),
-            "La sesión gastó $2.50 de $2.00; ¿continuar?"
+            "The session spent $2.50 of $2.00; continue?"
         );
         tracker.raise_cap(s);
         assert_eq!(tracker.cap_reached(s), None);

@@ -25,7 +25,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 /// The line that ends a list cut by the budget.
 #[must_use]
 pub fn more_results_line(omitted: usize) -> String {
-    format!("{omitted} resultados más; refina la búsqueda")
+    format!("{omitted} more results; refine the search")
 }
 
 /// Token budget of a tool result.
@@ -55,7 +55,7 @@ impl ResultBudget {
     }
 
     /// Joins `items` with newlines, keeping only whole items that fit,
-    /// and ends with "N resultados más; refina la búsqueda" when some
+    /// and ends with "N more results; refine the search" when some
     /// were left out.
     #[must_use]
     pub fn truncate_list<S: AsRef<str>>(self, items: &[S]) -> String {
@@ -139,8 +139,8 @@ fn truncate_text_to(text: &str, max: usize) -> String {
         out.push('\n');
     }
     out.push_str(&format!(
-        "[{omitted} líneas más omitidas por el presupuesto de contexto; \
-         refina la búsqueda o pide un rango menor]"
+        "[{omitted} more lines omitted by the context budget; \
+         refine the search or ask for a smaller range]"
     ));
     out
 }
@@ -183,7 +183,7 @@ mod tests {
         // "src/a.rs\nsrc/b.rs" is 17 bytes; a third item would need 26.
         assert_eq!(
             bytes(20).truncate_list(&items),
-            "src/a.rs\nsrc/b.rs\n2 resultados más; refina la búsqueda"
+            "src/a.rs\nsrc/b.rs\n2 more results; refine the search"
         );
     }
 
@@ -191,7 +191,7 @@ mod tests {
     fn list_with_no_room_keeps_only_the_line() {
         assert_eq!(
             bytes(4).truncate_list(&["demasiado largo"]),
-            "1 resultados más; refina la búsqueda"
+            "1 more results; refine the search"
         );
     }
 
@@ -200,8 +200,8 @@ mod tests {
         let text = "uno\ndos\ntres\ncuatro";
         assert_eq!(
             bytes(12).truncate_text(text),
-            "uno\ndos\n[2 líneas más omitidas por el presupuesto de contexto; \
-             refina la búsqueda o pide un rango menor]"
+            "uno\ndos\n[2 more lines omitted by the context budget; \
+             refine the search or ask for a smaller range]"
         );
         assert_eq!(bytes(20).truncate_text(text), text);
     }
@@ -210,7 +210,7 @@ mod tests {
     fn a_long_first_line_is_cut_on_a_char_boundary() {
         let text = "ñññññññññ";
         let out = bytes(4).truncate_text(text);
-        assert!(out.starts_with("ññ\n[1 líneas más"), "{out}");
+        assert!(out.starts_with("ññ\n[1 more lines"), "{out}");
     }
 
     #[test]
@@ -232,10 +232,10 @@ mod tests {
         assert_eq!(out.content.len(), 4);
         assert_eq!(out.content[0], ToolResultContent::text("abcd"));
         assert!(matches!(out.content[1], ToolResultContent::Image { .. }));
-        assert!(out.text_content().contains("efgh\n[1 líneas más"));
+        assert!(out.text_content().contains("efgh\n[1 more lines"));
         assert_eq!(
             out.content[3],
-            ToolResultContent::text("1 resultados más; refina la búsqueda")
+            ToolResultContent::text("1 more results; refine the search")
         );
     }
 }
