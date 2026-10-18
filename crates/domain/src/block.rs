@@ -123,6 +123,15 @@ pub enum BlockKind {
         /// Markdown source.
         source: String,
     },
+    /// A block drawn by a Lua plugin from a declarative tree.
+    Custom {
+        /// Plugin that produced it.
+        plugin: String,
+        /// Block name within the plugin.
+        name: String,
+        /// Content to draw.
+        tree: CustomNode,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -429,6 +438,70 @@ pub struct MermaidSpec {
     pub title: Option<String>,
 }
 
+/// Declarative UI primitive of a `Custom` block, tagged by `type`.
+///
+/// Lua never touches GPUI: plugins return this tree and the UI turns it
+/// into components.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomNode {
+    /// Plain text.
+    Text {
+        /// The text.
+        text: String,
+    },
+    /// Children laid out horizontally.
+    Row {
+        /// Child nodes.
+        children: Vec<CustomNode>,
+    },
+    /// Children laid out vertically.
+    Col {
+        /// Child nodes.
+        children: Vec<CustomNode>,
+    },
+    /// A bulleted list.
+    List {
+        /// One node per item.
+        items: Vec<CustomNode>,
+    },
+    /// A table.
+    Table(TableSpec),
+    /// A chart.
+    Chart(ChartSpec),
+    /// A code snippet.
+    Code {
+        /// Language for highlighting.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lang: Option<String>,
+        /// Source code.
+        source: String,
+    },
+    /// Rendered markdown.
+    Markdown {
+        /// Markdown source.
+        source: String,
+    },
+}
+
+impl CustomNode {
+    /// Validates every table and chart in the tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BlockError`] found, depth first.
+    pub fn validate(&self) -> Result<(), BlockError> {
+        match self {
+            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
+                children.iter().try_for_each(Self::validate)
+            }
+            Self::Table(spec) => spec.validate(),
+            Self::Chart(spec) => spec.validate(),
+            Self::Text { .. } | Self::Code { .. } | Self::Markdown { .. } => Ok(()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,5 +780,56 @@ mod tests {
         }));
         assert_eq!(value["type"], "markdown");
         assert_eq!(value["title"], "spec.md");
+    }
+
+    #[test]
+    fn custom_block_roundtrip_with_nested_tree() {
+        let tree = CustomNode::Col {
+            children: vec![
+                CustomNode::Text {
+                    text: "todo".into(),
+                },
+                CustomNode::List {
+                    items: vec![CustomNode::Markdown {
+                        source: "*a*".into(),
+                    }],
+                },
+                CustomNode::Row {
+                    children: vec![CustomNode::Code {
+                        lang: Some("rust".into()),
+                        source: "fn a() {}".into(),
+                    }],
+                },
+                CustomNode::Table(table(&["a"], vec![vec![Cell::Number(1.0)]])),
+            ],
+        };
+        let value = roundtrip(&Block::new(BlockKind::Custom {
+            plugin: "todo".into(),
+            name: "todo".into(),
+            tree,
+        }));
+        assert_eq!(value["type"], "custom");
+        assert_eq!(value["tree"]["type"], "col");
+        assert_eq!(value["tree"]["children"][1]["type"], "list");
+        assert_eq!(value["tree"]["children"][3]["type"], "table");
+        assert_eq!(value["tree"]["children"][3]["columns"][0]["name"], "a");
+    }
+
+    #[test]
+    fn custom_validate_finds_nested_errors() {
+        let ok = CustomNode::Row {
+            children: vec![CustomNode::Chart(chart(
+                ChartKind::Bar,
+                &["a"],
+                &[("x", &[1.0])],
+            ))],
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        let bad = CustomNode::Col {
+            children: vec![CustomNode::List {
+                items: vec![CustomNode::Table(table(&[], vec![]))],
+            }],
+        };
+        assert_eq!(bad.validate(), Err(BlockError::TableNoColumns));
     }
 }
