@@ -3,5 +3,9 @@
 pub mod client;
 pub mod convert;
 pub mod error;
+pub mod retry;
 pub mod stream;
 pub mod wire;
+
+pub use client::{AnthropicClient, ApiKey, ClientConfig};
+pub use retry::{AnthropicLlm, RetryPolicy};
