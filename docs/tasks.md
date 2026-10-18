@@ -81,17 +81,17 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T5.4 | integrada | T2.H2, T1.2 | `ui/src/blocks/` |
 | T5.5a–f | integrada | T5.3 (Datos también T5.2) | `flows/research/nodes/<nodo>.rs` |
 | T5.6 | integrada | T5.3 | `nodes/define.rs` |
-| T5.7a–d | en curso | T5.3 (Investigación también T5.2) | `nodes/<nodo>.rs` |
+| T5.7a–d | integrada | T5.3 (Investigación también T5.2) | `nodes/<nodo>.rs` |
 | T5.8 ★ | integrada | T5.3, T2.I2 | `nodes/spec.rs`, `nodes/plan.rs` |
-| T5.9 ★ | en curso | T5.8 | `nodes/review.rs` |
-| T5.10 ★ | pendiente | T5.4–T5.9 | `flows/research/graph.rs` |
-| T6.1 ★ | en curso | T2.I2, T5.3 | `application/src/flows/implement/load.rs` |
-| T6.2 ★ | en curso | T6.1 | `nodes/implement.rs` |
-| T6.3 ★ | en curso | T6.2 | `nodes/test.rs` |
-| T6.4 | en curso | T6.2 | `nodes/commit.rs` |
-| T6.5 | en curso | T6.1, T3.8 | `nodes/verify.rs` |
-| T6.6 | en curso | T6.5 | `nodes/report.rs` |
-| T6.7 ★ | pendiente | T6.3–T6.6, T5.10 | `flows/implement/graph.rs` |
+| T5.9 ★ | integrada | T5.8 | `nodes/review.rs` |
+| T5.10 ★ | en curso | T5.4–T5.9 | `flows/research/graph.rs` |
+| T6.1 ★ | integrada | T2.I2, T5.3 | `application/src/flows/implement/load.rs` |
+| T6.2 ★ | integrada | T6.1 | `nodes/implement.rs` |
+| T6.3 ★ | integrada | T6.2 | `nodes/test.rs` |
+| T6.4 | integrada | T6.2 | `nodes/commit.rs` |
+| T6.5 | integrada | T6.1, T3.8 | `nodes/verify.rs` |
+| T6.6 | integrada | T6.5 | `nodes/report.rs` |
+| T6.7 ★ | en curso | T6.3–T6.6, T5.10 | `flows/implement/graph.rs` |
 | T7.1 | integrada | T1.6a, T2.A1 | `adapters/mcp/` |
 | T7.2 | integrada | T7.1, T2.F3 | `adapters/lua/src/api/mcp.rs` |
 | T7.3 | integrada | T2.A2 | `application/src/tools/task.rs` |
