@@ -1,0 +1,12 @@
+[package]
+name = "crest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+domain = { path = "../domain" }
+application = { path = "../app" }
+adapter-fs = { path = "../adapters/fs" }
+adapter-shell = { path = "../adapters/shell" }
+ui = { path = "../ui" }

@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/adapters/fs",
+    "crates/adapters/shell",
+]

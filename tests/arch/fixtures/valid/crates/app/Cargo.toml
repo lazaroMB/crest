@@ -1,0 +1,11 @@
+[package]
+name = "application"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+domain = { path = "../domain" }
+
+[dev-dependencies]
+tokio = { path = "../../../_vendor/tokio" }

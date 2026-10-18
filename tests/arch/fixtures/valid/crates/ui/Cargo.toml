@@ -1,0 +1,9 @@
+[package]
+name = "ui"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+application = { path = "../app" }
+domain = { path = "../domain" }

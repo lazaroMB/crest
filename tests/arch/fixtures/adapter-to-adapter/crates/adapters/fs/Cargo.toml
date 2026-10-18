@@ -1,0 +1,8 @@
+[package]
+name = "adapter-fs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+adapter-shell = { path = "../shell" }
