@@ -549,8 +549,8 @@ mod tests {
             (M::AutoEdit, "run_command", E::Execute, "cargo test", Allow),
             (M::Ask, "edit_file", E::Write, "src/lib.rs", Allow),
             // No matching rule: the mode decides.
-            (M::Ask, "edit_file", E::Write, "docs/PLAN.md", Ask),
-            (M::AutoEdit, "edit_file", E::Write, "docs/PLAN.md", Allow),
+            (M::Ask, "edit_file", E::Write, "docs/guia.md", Ask),
+            (M::AutoEdit, "edit_file", E::Write, "docs/guia.md", Allow),
             (M::Ask, "web_fetch", E::Network, "https://example.com", Ask),
             // Deny wins over a matching AllowAlways, in every mode.
             (

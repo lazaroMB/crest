@@ -547,7 +547,7 @@ impl Action {
     }
 }
 
-/// Builtin mappings from the plan's keymap table, with the default leader.
+/// Builtin mappings, with the default leader (documented in `docs/uso.md`).
 const DEFAULTS: &[(&[Mode], &str, &str)] = &[
     (&[Mode::Insert], "<Esc>", "mode.normal"),
     (&[Mode::Insert], "<CR>", "submit"),

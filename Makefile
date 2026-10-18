@@ -62,7 +62,6 @@ endif
 test-live: ## Tests contra la API real (ignorados; requiere ANTHROPIC_API_KEY)
 	ANTHROPIC_LIVE_TEST=1 $(CARGO) test --workspace -- --ignored live
 
-# scripts/install-deps.sh lo escribe T0.3.
 .PHONY: deps
 deps: ## Instala las dependencias externas (scripts/install-deps.sh)
 	$(BASH) $(SCRIPTS)/install-deps.sh

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # install-deps.sh: instala o verifica las dependencias externas de crest.
 #
-# Requisitos y tabla de dependencias: docs/PLAN.md, "Build y dependencias
-# externas".
+# Requisitos y tabla de dependencias: README.md, sección "Requisitos".
 #
 # Debe funcionar con Bash 3.2 (el de macOS): nada de arrays asociativos,
 # `mapfile`, `${var,,}`, `|&` ni `&>>`. Las listas son cadenas separadas por
