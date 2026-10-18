@@ -137,6 +137,16 @@ pub enum BlockKind {
         /// Cited sources, in citation order.
         sources: Vec<SourceRef>,
     },
+    /// An image (screenshot, exported chart, web image) with its source.
+    Image {
+        /// MIME type, e.g. `image/png`.
+        media_type: String,
+        /// Inline bytes or a path to read them from.
+        data_or_path: ImageData,
+        /// Where the image came from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceRef>,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -581,6 +591,22 @@ impl SourceRef {
     }
 }
 
+/// Bytes of an image block, tagged by `type`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ImageData {
+    /// Inline, base64 encoded.
+    Base64 {
+        /// Base64 payload.
+        data: String,
+    },
+    /// A file on disk.
+    Path {
+        /// File path.
+        path: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,5 +981,29 @@ mod tests {
                 Err(BlockError::InvalidLineRange { start, end })
             );
         }
+    }
+
+    #[test]
+    fn image_block_roundtrip() {
+        let value = roundtrip(&Block::new(BlockKind::Image {
+            media_type: "image/png".into(),
+            data_or_path: ImageData::Base64 {
+                data: "iVBORw0KGgo=".into(),
+            },
+            source: Some(SourceRef::Url {
+                url: "https://example.com/a.png".into(),
+                title: Some("a".into()),
+            }),
+        }));
+        assert_eq!(value["type"], "image");
+        assert_eq!(value["data_or_path"]["type"], "base64");
+        assert_eq!(value["source"]["type"], "url");
+        roundtrip(&Block::new(BlockKind::Image {
+            media_type: "image/svg+xml".into(),
+            data_or_path: ImageData::Path {
+                path: "out/chart.svg".into(),
+            },
+            source: None,
+        }));
     }
 }
