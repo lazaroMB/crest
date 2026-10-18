@@ -10,10 +10,12 @@ publish.workspace = true
 [dependencies]
 application.workspace = true
 domain.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-tracing-subscriber.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
