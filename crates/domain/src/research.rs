@@ -11,6 +11,7 @@ use std::str::FromStr;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::block::SourceRef;
 use crate::model::ModelRole;
 
 /// Error returned when a string is not a valid research id.
@@ -387,6 +388,129 @@ impl Stage {
     }
 }
 
+/// A piece of evidence and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Evidence {
+    /// Id cited by the Spec, e.g. `E3`.
+    pub id: EvidenceId,
+    /// What the evidence shows, in one sentence.
+    pub claim: String,
+    /// File lines, commit, URL or command output backing the claim.
+    pub source: SourceRef,
+    /// When it was collected, in Unix milliseconds.
+    pub collected_at: u64,
+}
+
+/// Where a hypothesis stands after the experiments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HypothesisStatus {
+    /// Stated, experiments pending.
+    #[default]
+    Open,
+    /// The experiments back it.
+    Supported,
+    /// The experiments contradict it.
+    Refuted,
+    /// Deliberately left without an experiment.
+    Untested,
+}
+
+/// A one-sentence hypothesis with its causes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Hypothesis {
+    /// Id, e.g. `H2`.
+    pub id: HypothesisId,
+    /// The hypothesis, in one sentence.
+    pub statement: String,
+    /// Candidate causes (the branches of the Ishikawa diagram).
+    #[serde(default)]
+    pub causes: Vec<String>,
+    /// Priority in the hypothesis table; 1 is the highest.
+    pub priority: u8,
+    /// Result of the experiments so far.
+    #[serde(default)]
+    pub status: HypothesisStatus,
+}
+
+/// Category of a constraint, as in the constraint table of the Spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintKind {
+    /// Operating systems, architectures, toolchains.
+    Platform,
+    /// Latency, throughput, memory.
+    Performance,
+    /// APIs, formats or versions that must keep working.
+    Compatibility,
+    /// Secrets, permissions, sandboxing.
+    Security,
+    /// Anything else.
+    Other,
+}
+
+/// How a test or check is run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TestKind {
+    /// A test of the project's suite; `ref` is the command that runs it.
+    Test,
+    /// Any other command (benchmark, script); `ref` is the command line.
+    Command,
+}
+
+/// A runnable check, serialized as `{"kind": "test", "ref": "..."}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TestRef {
+    /// How to run it.
+    pub kind: TestKind,
+    /// What to run, e.g. `cargo test -p store offline`.
+    #[serde(rename = "ref")]
+    pub reference: String,
+}
+
+/// A constraint the solution must respect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Constraint {
+    /// Id, e.g. `C3`.
+    pub id: ConstraintId,
+    /// Category.
+    pub kind: ConstraintKind,
+    /// The constraint, measurable when possible.
+    pub statement: String,
+    /// Check that proves it holds, once known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<TestRef>,
+}
+
+/// A choice between options, backed by evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Decision {
+    /// Id, e.g. `D1`.
+    pub id: DecisionId,
+    /// The option chosen.
+    pub chosen: String,
+    /// Options considered and discarded.
+    #[serde(default)]
+    pub discarded: Vec<String>,
+    /// Why the chosen option wins.
+    pub rationale: String,
+    /// Evidence the rationale relies on.
+    #[serde(default)]
+    pub evidence_ids: Vec<EvidenceId>,
+}
+
+/// An entry of the research journal, written by every node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JournalEntry {
+    /// When it was written, in Unix milliseconds.
+    pub at: u64,
+    /// Node that wrote it.
+    pub stage: Stage,
+    /// Markdown text.
+    pub text: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +624,64 @@ mod tests {
             serde_json::to_value(Phase::SolutionSearch).unwrap(),
             json!("solution_search")
         );
+    }
+
+    #[test]
+    fn records_have_a_stable_wire_shape() {
+        let evidence = Evidence {
+            id: EvidenceId(3),
+            claim: "p95 sube a 500 ms con 500 rps".into(),
+            source: SourceRef::Command {
+                command: "make bench".into(),
+                output_excerpt: "p95=500ms".into(),
+            },
+            collected_at: 1_700_000_000_000,
+        };
+        assert_eq!(
+            serde_json::to_value(&evidence).unwrap(),
+            json!({
+                "id": "E3",
+                "claim": "p95 sube a 500 ms con 500 rps",
+                "source": {"type": "command", "command": "make bench", "output_excerpt": "p95=500ms"},
+                "collected_at": 1_700_000_000_000_u64
+            })
+        );
+        let constraint = Constraint {
+            id: ConstraintId(2),
+            kind: ConstraintKind::Compatibility,
+            statement: "funciona sin red".into(),
+            test: Some(TestRef {
+                kind: TestKind::Test,
+                reference: "cargo test -p store offline".into(),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(&constraint).unwrap(),
+            json!({
+                "id": "C2",
+                "kind": "compatibility",
+                "statement": "funciona sin red",
+                "test": {"kind": "test", "ref": "cargo test -p store offline"}
+            })
+        );
+    }
+
+    #[test]
+    fn optional_record_fields_default() {
+        let hypothesis: Hypothesis =
+            serde_json::from_value(json!({"id": "H1", "statement": "s", "priority": 1})).unwrap();
+        assert_eq!(hypothesis.status, HypothesisStatus::Open);
+        assert!(hypothesis.causes.is_empty());
+        let decision: Decision =
+            serde_json::from_value(json!({"id": "D1", "chosen": "a", "rationale": "r"})).unwrap();
+        assert!(decision.discarded.is_empty() && decision.evidence_ids.is_empty());
+        let entry = JournalEntry {
+            at: 5,
+            stage: Stage::Data,
+            text: "t".into(),
+        };
+        let back: JournalEntry =
+            serde_json::from_value(json!({"at": 5, "stage": "data", "text": "t"})).unwrap();
+        assert_eq!(back, entry);
     }
 }
