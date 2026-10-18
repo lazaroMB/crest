@@ -310,6 +310,35 @@ pub enum StopReason {
     Interrupted,
 }
 
+/// One user request and everything the model did to answer it, including
+/// intermediate tool calls and results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Turn {
+    /// Local id of the turn.
+    pub id: TurnId,
+    /// Messages in the order they were exchanged.
+    pub messages: Vec<Message>,
+    /// Tokens consumed by every model call of the turn.
+    #[serde(default)]
+    pub usage: Usage,
+    /// Why the last model call stopped; `None` while the turn is running.
+    #[serde(default)]
+    pub stop_reason: Option<StopReason>,
+}
+
+impl Turn {
+    /// Starts a turn with its first message.
+    #[must_use]
+    pub fn new(first: Message) -> Self {
+        Self {
+            id: TurnId::new(),
+            messages: vec![first],
+            usage: Usage::default(),
+            stop_reason: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +513,43 @@ mod tests {
             assert_eq!(serde_json::to_value(reason).unwrap(), name);
             round_trip(&reason);
         }
+    }
+
+    fn sample_turn() -> Turn {
+        let mut turn = Turn::new(Message::user_text("busca main"));
+        turn.messages
+            .push(Message::assistant(vec![ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "grep".into(),
+                input: serde_json::json!({ "pattern": "fn main" }),
+            }]));
+        turn.messages.push(Message::new(
+            Role::User,
+            vec![ContentPart::tool_result_text(
+                ToolUseId::new("toolu_1"),
+                "src/main.rs:1",
+            )],
+        ));
+        turn.messages
+            .push(Message::assistant(vec![ContentPart::text(
+                "está en src/main.rs",
+            )]));
+        turn.usage = usage(100, 20, 50, 10);
+        turn.stop_reason = Some(StopReason::EndTurn);
+        turn
+    }
+
+    #[test]
+    fn new_turn_is_running() {
+        let turn = Turn::new(Message::user_text("hola"));
+        assert_eq!(turn.messages.len(), 1);
+        assert_eq!(turn.usage, Usage::default());
+        assert_eq!(turn.stop_reason, None);
+    }
+
+    #[test]
+    fn turn_round_trip() {
+        round_trip(&sample_turn());
+        round_trip(&Turn::new(Message::user_text("hola")));
     }
 }
