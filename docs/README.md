@@ -1,12 +1,12 @@
-# Documentación de crest
+# crest documentation
 
-Para la presentación general del proyecto, la instalación y el inicio rápido, ver el [README principal](../README.md).
+For the project overview, installation and quick start, see the [main README](../README.md).
 
-| Guía | Para quién | Contenido |
+| Guide | For | Contents |
 | --- | --- | --- |
-| [uso.md](uso.md) | Quien usa crest | La ventana, los modos, los atajos, los comandos `:`, las aprobaciones, los bloques, la CLI, el modo headless, las sesiones y los servidores MCP. |
-| [configuracion.md](configuracion.md) | Quien configura crest | Rutas y precedencia de `init.lua`, la API key, `app.opt`, los modelos por rol, los permisos, las variables de entorno, Langfuse y un ejemplo completo. |
-| [plugins.md](plugins.md) | Quien escribe plugins | El sandbox de Lua, la tabla `app` (keymaps, comandos, tools, hooks, `app.ui`, MCP), los diagnósticos y ejemplos paso a paso. |
-| [flujos.md](flujos.md) | Quien usa los flujos | El flujo investigativo (14 nodos, compuertas, `.crest/specs/`) y el flujo de implementación (pasos, compuertas, commits, `report.md`). |
-| [arquitectura.md](arquitectura.md) | Quien lee el código | Las capas hexagonales, los puertos y adaptadores, el loop de un turno, los eventos, los hilos, la persistencia y las reglas de dependencia. |
-| [desarrollo.md](desarrollo.md) | Quien contribuye | Los tests y los fakes, cómo añadir tools, bloques, adaptadores o nodos, las convenciones de commits y la CI. |
+| [usage.md](usage.md) | People using crest | The window, the modes, the key bindings, the `:` commands, approvals, blocks, the CLI, headless mode, sessions and MCP servers. |
+| [configuration.md](configuration.md) | People configuring crest | `init.lua` paths and precedence, the API key, `app.opt`, models by role, permissions, environment variables, Langfuse and a full example. |
+| [plugins.md](plugins.md) | People writing plugins | The Lua sandbox, the `app` table (keymaps, commands, tools, hooks, `app.ui`, MCP), diagnostics and step-by-step examples. |
+| [workflows.md](workflows.md) | People using the workflows | The research workflow (14 nodes, gates, `.crest/specs/`) and the implementation workflow (steps, gates, commits, `report.md`). |
+| [architecture.md](architecture.md) | People reading the code | The hexagonal layers, ports and adapters, the loop of a turn, events, threads, persistence and the dependency rules. |
+| [development.md](development.md) | Contributors | Tests and fakes, how to add tools, blocks, adapters or nodes, commit conventions and CI. |

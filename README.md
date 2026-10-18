@@ -1,228 +1,228 @@
 # crest
 
-crest es un agente de código al estilo de Claude Code, escrito en Rust. Se abre en una ventana a pantalla completa que parece una terminal y trabaja sobre un directorio, el *workspace*: lee, busca, edita archivos y ejecuta comandos con tu aprobación.
+crest is a coding agent in the style of Claude Code, written in Rust. It opens in a full-screen window that looks like a terminal and works on a directory, the *workspace*: it reads, searches and edits files and runs commands with your approval.
 
-Lo que lo distingue:
+What sets it apart:
 
-- **Timeline con bloques ricos.** El agente no solo responde con texto. Muestra gráficas (con su tabla, a una tecla `t`), tablas ordenables, diagramas Mermaid con pan y zoom, documentos markdown, diffs coloreados y bloques que definen tus propios plugins.
-- **Modelos de Anthropic por rol.** Cada llamada pide un rol (`main`, `plan`, `explore`, `compact`, `title`, `component`, `deep`), y la configuración decide qué modelo lo atiende, con sus fallbacks.
-- **Búsqueda con `rg` y `fzf`.** Las tools del agente y los selectores de la ventana usan los mismos procesos, así que tú ves lo mismo que ve el modelo.
-- **Config y plugins en Lua**, con atajos modales al estilo Neovim (insert, normal y command). Desde Lua se añaden tools, hooks, comandos y bloques, todo dentro de un sandbox con límite de instrucciones y de memoria.
-- **Flujos guiados.** El *investigativo* (X-Workflow, 14 nodos) va de un problema a un Spec con su plan. El *de implementación* ejecuta ese plan tarea por tarea, con un commit por tarea y un reporte final.
-- **Arquitectura hexagonal.** El dominio y los casos de uso no conocen GPUI, HTTP, Lua ni SQLite, y `make arch` lo verifica.
+- **A timeline with rich blocks.** The agent does not just answer with text. It shows charts (with their table, one `t` keypress away), sortable tables, Mermaid diagrams with pan and zoom, markdown documents, colored diffs and blocks defined by your own plugins.
+- **Anthropic models by role.** Every call asks for a role (`main`, `plan`, `explore`, `compact`, `title`, `component`, `deep`), and the configuration decides which model serves it, with its fallbacks.
+- **Search with `rg` and `fzf`.** The agent's tools and the window's pickers use the same processes, so you see what the model sees.
+- **Config and plugins in Lua**, with Neovim-style modal key bindings (insert, normal and command). From Lua you can add tools, hooks, commands and blocks, all inside a sandbox with instruction and memory limits.
+- **Guided workflows.** The *research* workflow (X-Workflow, 14 nodes) goes from a problem to a Spec with its plan. The *implementation* workflow runs that plan task by task, with one commit per task and a final report.
+- **Hexagonal architecture.** The domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, and `make arch` verifies it.
 
-## La pantalla
+## The screen
 
-No hay capturas todavía. La ventana tiene tres zonas apiladas y un panel lateral opcional:
+There are no screenshots yet. The window has three stacked areas and an optional side panel:
 
-- **Timeline.** Ocupa casi toda la pantalla. Cada respuesta, llamada a una tool, diff o gráfica es un bloque, y se navega con `j`/`k`.
-- **Input.** Es multilínea y está debajo del timeline. Muestra el modo actual (`INSERT`, `NORMAL` o `COMMAND`) y las teclas pendientes de una secuencia.
-- **Barra de estado.** Está al fondo: modo, modelo del turno, modo de permisos (`ask`, `auto-edit`, `plan`), costo de la sesión y nombre del workspace. Los avisos se muestran unos segundos.
-- **Árbol del workspace.** Panel opcional a la izquierda (`<Space>e`). Sobre todo lo anterior aparecen los selectores de archivo y texto, el menú de modelo y el diálogo de aprobación con el diff o el comando exacto.
+- **Timeline.** Takes up most of the screen. Every reply, tool call, diff or chart is a block, and you move between them with `j`/`k`.
+- **Input.** Multi-line, below the timeline. It shows the current mode (`INSERT`, `NORMAL` or `COMMAND`) and the pending keys of a sequence.
+- **Status bar.** At the bottom: mode, the turn's model, permission mode (`ask`, `auto-edit`, `plan`), session cost and workspace name. Notices are shown for a few seconds.
+- **Workspace tree.** Optional panel on the left (`<Space>e`). On top of all of this appear the file and text pickers, the model menu and the approval dialog with the diff or the exact command.
 
-El tema es oscuro y la fuente monoespaciada (JetBrains Mono si está instalada).
+The theme is dark and the font monospace (JetBrains Mono if installed).
 
-## Requisitos
+## Requirements
 
-| Componente | Versión | Notas |
+| Component | Version | Notes |
 | --- | --- | --- |
-| Linux o macOS | — | Windows queda fuera de alcance. |
-| Rust (rustup, rustfmt, clippy) | estable, ≥ 1.99 | Edición 2024. `rust-toolchain.toml` fija `stable`. |
-| Compilador C, `pkg-config`, `cmake`, `clang` | — | En macOS, las Xcode Command Line Tools. |
-| Librerías de GPUI en Linux | — | `libxkbcommon`, `libxkbcommon-x11`, `wayland`, `libxcb`, `libx11-xcb`, `fontconfig`, `freetype`. |
-| Vulkan en Linux | — | El loader y un driver de la GPU (GPUI dibuja con Vulkan). |
-| macOS | ≥ 11 | Xcode con el compilador Metal (`make doctor` lo verifica). |
-| `ripgrep` (`rg`) | ≥ 13.0 | Tools `grep`, `list_files`, `find_file`, `tree`. |
-| `fzf` | ≥ 0.36 | `find_file` (`--filter --scheme=path`). Sin `fzf`, cae a búsqueda por subcadena. |
-| `git` | — | Datos del repo y flujos. |
-| `jq` | — | Solo para `scripts/check-arch.sh`. |
-| API key de Anthropic | — | `ANTHROPIC_API_KEY` o el llavero del sistema (servicio `crest`, entrada `ANTHROPIC_API_KEY`). |
+| Linux or macOS | — | Windows is out of scope. |
+| Rust (rustup, rustfmt, clippy) | stable, ≥ 1.99 | Edition 2024. `rust-toolchain.toml` pins `stable`. |
+| C compiler, `pkg-config`, `cmake`, `clang` | — | On macOS, the Xcode Command Line Tools. |
+| GPUI libraries on Linux | — | `libxkbcommon`, `libxkbcommon-x11`, `wayland`, `libxcb`, `libx11-xcb`, `fontconfig`, `freetype`. |
+| Vulkan on Linux | — | The loader and a GPU driver (GPUI renders with Vulkan). |
+| macOS | ≥ 11 | Xcode with the Metal compiler (`make doctor` checks it). |
+| `ripgrep` (`rg`) | ≥ 13.0 | The `grep`, `list_files`, `find_file` and `tree` tools. |
+| `fzf` | ≥ 0.36 | `find_file` (`--filter --scheme=path`). Without `fzf`, it falls back to substring search. |
+| `git` | — | Repo data and workflows. |
+| `jq` | — | Only for `scripts/check-arch.sh`. |
+| Anthropic API key | — | `ANTHROPIC_API_KEY` or the system keyring (service `crest`, entry `ANTHROPIC_API_KEY`). |
 
-SQLite se compila dentro del binario y TLS usa rustls, así que no hacen falta ni `libsqlite3` ni OpenSSL.
+SQLite is compiled into the binary and TLS uses rustls, so neither `libsqlite3` nor OpenSSL is needed.
 
-## Instalación
+## Installation
 
 ```bash
 git clone <repo> crest && cd crest
-make deps      # instala lo que falta (apt, dnf, yum, pacman, zypper, apk, xbps o Homebrew)
-make doctor    # verifica sin instalar nada; sale con 1 si falta algo
-make release   # target/release/crest (o `make build` para debug)
-make install   # copia el binario a ~/.local/bin (PREFIX=/otra/ruta para cambiarlo)
+make deps      # installs what is missing (apt, dnf, yum, pacman, zypper, apk, xbps or Homebrew)
+make doctor    # checks without installing anything; exits with 1 if something is missing
+make release   # target/release/crest (or `make build` for debug)
+make install   # copies the binary to ~/.local/bin (PREFIX=/other/path to change it)
 ```
 
-`make deps` usa `scripts/install-deps.sh`, que acepta:
+`make deps` uses `scripts/install-deps.sh`, which accepts:
 
-- `--check`: solo verifica;
-- `--yes`: no pregunta antes de instalar;
-- `--dev`: añade `cargo-insta` y `cargo-nextest`;
-- `--no-rust`: no verifica ni instala Rust.
+- `--check`: only checks;
+- `--yes`: does not ask before installing;
+- `--dev`: adds `cargo-insta` and `cargo-nextest`;
+- `--no-rust`: neither checks nor installs Rust.
 
-Si el `rg` o el `fzf` de tu distro son más viejos que el mínimo (el `fzf` de Ubuntu 22.04 es 0.29), el script descarga los binarios oficiales a `~/.local/bin`. `make deps-dev` es lo mismo que `make deps` con `--dev`.
+If your distro's `rg` or `fzf` is older than the minimum (Ubuntu 22.04's `fzf` is 0.29), the script downloads the official binaries to `~/.local/bin`. `make deps-dev` is the same as `make deps` with `--dev`.
 
-Después, configura la clave:
+Then set the key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Para guardarla en el llavero en vez de usar la variable, ver [docs/configuracion.md](docs/configuracion.md#api-key-de-anthropic).
+To store it in the keyring instead of using the variable, see [docs/configuration.md](docs/configuration.md#anthropic-api-key).
 
-## Inicio rápido
+## Quick start
 
 ```bash
 cd ~/src/mi-proyecto
-crest                         # o: crest ~/src/mi-proyecto, o make run WORKSPACE=~/src/mi-proyecto
+crest                         # or: crest ~/src/mi-proyecto, or make run WORKSPACE=~/src/mi-proyecto
 ```
 
-1. Escribe un prompt, por ejemplo «¿qué hace src/main.rs?», y pulsa `Enter`. `Shift+Enter` inserta una nueva línea.
-2. Cuando el agente quiera editar un archivo o ejecutar un comando, aparece el diálogo de aprobación:
-   - `y` aprueba;
-   - `a` aprueba siempre (ese mismo archivo o comando);
-   - `n` rechaza.
-3. `Esc` pasa a modo normal:
-   - `j`/`k` mueven entre bloques;
-   - `Enter` expande una llamada a una tool;
-   - `t` alterna una gráfica con su tabla;
-   - `<Space>ff` busca archivos;
-   - `<Space>p` cambia el modo de permisos;
-   - `:q` sale.
-4. Al volver a abrir crest en el mismo directorio, se reanuda la última sesión. `crest --new` empieza una nueva.
+1. Type a prompt, for example "what does src/main.rs do?", and press `Enter`. `Shift+Enter` inserts a new line.
+2. When the agent wants to edit a file or run a command, the approval dialog appears:
+   - `y` approves;
+   - `a` always approves (that same file or command);
+   - `n` rejects.
+3. `Esc` switches to normal mode:
+   - `j`/`k` move between blocks;
+   - `Enter` expands a tool call;
+   - `t` toggles a chart and its table;
+   - `<Space>ff` searches files;
+   - `<Space>p` changes the permission mode;
+   - `:q` quits.
+4. When you open crest again in the same directory, the last session is resumed. `crest --new` starts a new one.
 
-Sin ventana (headless), crest corre un turno y lo imprime en la terminal, con las aprobaciones por stdin:
+Without a window (headless), crest runs one turn and prints it to the terminal, with approvals on stdin:
 
 ```bash
-crest --headless "encuentra dónde se parsea la config y explícalo" --workspace .
-crest --headless "arregla el test que falla" --mode auto-edit --yes
-make run-headless PROMPT="lista los TODO" WORKSPACE=.
+crest --headless "find where the config is parsed and explain it" --workspace .
+crest --headless "fix the failing test" --mode auto-edit --yes
+make run-headless PROMPT="list the TODOs" WORKSPACE=.
 ```
 
-Para investigar un problema y luego implementarlo:
+To research a problem and then implement the fix:
 
 ```text
-:research los tests de add() fallan con números negativos
-…responde «sí» en cada compuerta…
+:research the add() tests fail with negative numbers
+…answer «sí» at each gate…
 :implement 0001-<slug>
 ```
 
-## Documentación
+## Documentation
 
-| Guía | Contenido |
+| Guide | Contents |
 | --- | --- |
-| [docs/uso.md](docs/uso.md) | Ventana, modos, todos los atajos y comandos `:`, aprobaciones, bloques, CLI completa, headless, sesiones y MCP. |
-| [docs/configuracion.md](docs/configuracion.md) | Rutas, precedencia, API key, `app.opt`, modelos por rol, permisos, variables de entorno, Langfuse y un `init.lua` completo. |
-| [docs/plugins.md](docs/plugins.md) | Cómo escribir plugins Lua: sandbox, la tabla `app`, tools, hooks, bloques `Custom`, MCP y ejemplos. |
-| [docs/flujos.md](docs/flujos.md) | Flujo investigativo (14 nodos, compuertas, Specs) y flujo de implementación (pasos, compuertas, commits, reporte). |
-| [docs/arquitectura.md](docs/arquitectura.md) | Capas, puertos y adaptadores, el loop de un turno, eventos, hilos y persistencia. |
-| [docs/desarrollo.md](docs/desarrollo.md) | Tests, fakes y cómo añadir tools, bloques, adaptadores o nodos; convenciones de commits y CI. |
+| [docs/usage.md](docs/usage.md) | Window, modes, every key binding and `:` command, approvals, blocks, the full CLI, headless mode, sessions and MCP. |
+| [docs/configuration.md](docs/configuration.md) | Paths, precedence, API key, `app.opt`, models by role, permissions, environment variables, Langfuse and a full `init.lua`. |
+| [docs/plugins.md](docs/plugins.md) | How to write Lua plugins: sandbox, the `app` table, tools, hooks, `Custom` blocks, MCP and examples. |
+| [docs/workflows.md](docs/workflows.md) | The research workflow (14 nodes, gates, Specs) and the implementation workflow (steps, gates, commits, report). |
+| [docs/architecture.md](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, events, threads and persistence. |
+| [docs/development.md](docs/development.md) | Tests, fakes and how to add tools, blocks, adapters or nodes; commit conventions and CI. |
 
-## Arquitectura en resumen
+## Architecture at a glance
 
 ```mermaid
 flowchart TB
-    bin["crates/bin · crest<br/>composition root: CLI, ventana o headless"]
-    ui["crates/ui<br/>GPUI: timeline, bloques, input modal"]
+    bin["crates/bin · crest<br/>composition root: CLI, window or headless"]
+    ui["crates/ui<br/>GPUI: timeline, blocks, modal input"]
     subgraph adapters["crates/adapters"]
         direction LR
         anthropic["anthropic"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"]
         store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"]
     end
-    app["crates/app · application<br/>puertos, casos de uso, tools, flujos"]
-    domain["crates/domain<br/>tipos y reglas puras"]
+    app["crates/app · application<br/>ports, use cases, tools, workflows"]
+    domain["crates/domain<br/>pure types and rules"]
     bin --> ui & adapters & app & domain
     ui --> app & domain
     adapters --> app & domain
     app --> domain
 ```
 
-- `domain` no depende de ningún crate del proyecto, y `application` solo de `domain`.
-- Cada adaptador y `ui` dependen solo de `application` y `domain`. Solo `bin` los conecta.
-- Los casos de uso hablan con el mundo a través de puertos (`LlmPort`, `FileSystemPort`, `ShellPort`, `ApprovalPort`, `EventSink`...), y cada puerto tiene un fake en `application::testing`.
+- `domain` depends on no crate of the project, and `application` only on `domain`.
+- Each adapter and `ui` depend only on `application` and `domain`. Only `bin` wires them together.
+- The use cases talk to the world through ports (`LlmPort`, `FileSystemPort`, `ShellPort`, `ApprovalPort`, `EventSink`...), and every port has a fake in `application::testing`.
 
-Los detalles están en [docs/arquitectura.md](docs/arquitectura.md).
+The details are in [docs/architecture.md](docs/architecture.md).
 
-## Estructura del repo
+## Repository layout
 
 ```text
-Cargo.toml              workspace, dependencias y lints compartidos
-Makefile                objetivos de build, test y verificación
-rust-toolchain.toml     toolchain estable con rustfmt y clippy
+Cargo.toml              workspace, shared dependencies and lints
+Makefile                build, test and check targets
+rust-toolchain.toml     stable toolchain with rustfmt and clippy
 crates/
-  domain/               tipos y reglas puras
-  app/                  `application`: puertos, casos de uso, tools, flujos, fakes
+  domain/               pure types and rules
+  app/                  `application`: ports, use cases, tools, workflows, fakes
   adapters/             anthropic, search, fs, shell, store, lua, mcp, telemetry
-  ui/                   vistas GPUI (más examples/ ejecutables)
-  bin/                  binario `crest` y tests de integración de punta a punta
+  ui/                   GPUI views (plus runnable examples/)
+  bin/                  the `crest` binary and end-to-end integration tests
 scripts/
-  install-deps.sh       instala o verifica dependencias (Bash 3.2+)
-  check-arch.sh         reglas de la arquitectura hexagonal
-  package.sh            arma el tarball de release
+  install-deps.sh       installs or checks dependencies (Bash 3.2+)
+  check-arch.sh         hexagonal architecture rules
+  package.sh            builds the release tarball
 tests/
-  arch/                 fixtures y tests de check-arch.sh
-  install-deps/         tests de install-deps.sh
-docs/                   guías de usuario y de desarrollo
+  arch/                 fixtures and tests for check-arch.sh
+  install-deps/         tests for install-deps.sh
+docs/                   user and developer guides
 .github/workflows/      ci.yml, live.yml, release.yml
 ```
 
-## Objetivos del Makefile
+## Makefile targets
 
-| Objetivo | Qué hace |
+| Target | What it does |
 | --- | --- |
-| `make help` | Lista los objetivos (por defecto). |
-| `make deps` / `make deps-dev` | Instala las dependencias (con herramientas de desarrollo en el segundo). |
-| `make doctor` | Verifica las dependencias sin instalar. |
-| `make build` / `make release` | Compila el workspace (debug) / el binario optimizado `target/release/crest`. |
-| `make run WORKSPACE=<dir>` | Abre la ventana sobre un directorio (por defecto `.`). |
-| `make run-headless PROMPT="..." [WORKSPACE=<dir>]` | Un turno sin ventana. |
-| `make fmt` / `make fmt-check` | Formatea / verifica el formato. |
-| `make lint` | Clippy estricto (`-D warnings`). |
-| `make test` / `make test-live` | Tests sin red / tests contra la API real (necesita `ANTHROPIC_API_KEY`). |
-| `make arch` / `make test-arch` | Reglas de arquitectura / sus tests. |
-| `make test-deps` | Tests de `install-deps.sh`. |
-| `make check` | `fmt-check`, `lint`, `test`, `arch`, `test-arch` y `test-deps`. |
+| `make help` | Lists the targets (default). |
+| `make deps` / `make deps-dev` | Installs the dependencies (with development tools in the second). |
+| `make doctor` | Checks the dependencies without installing. |
+| `make build` / `make release` | Builds the workspace (debug) / the optimized `target/release/crest` binary. |
+| `make run WORKSPACE=<dir>` | Opens the window on a directory (`.` by default). |
+| `make run-headless PROMPT="..." [WORKSPACE=<dir>]` | One turn without a window. |
+| `make fmt` / `make fmt-check` | Formats / checks the formatting. |
+| `make lint` | Strict Clippy (`-D warnings`). |
+| `make test` / `make test-live` | Offline tests / tests against the real API (needs `ANTHROPIC_API_KEY`). |
+| `make arch` / `make test-arch` | Architecture rules / their tests. |
+| `make test-deps` | Tests for `install-deps.sh`. |
+| `make check` | `fmt-check`, `lint`, `test`, `arch`, `test-arch` and `test-deps`. |
 | `make ci` | `doctor` + `check`. |
-| `make package` | Tarball de release en `dist/`. |
-| `make install` | Copia el binario a `$(PREFIX)/bin` (`PREFIX=~/.local`). |
+| `make package` | Release tarball in `dist/`. |
+| `make install` | Copies the binary to `$(PREFIX)/bin` (`PREFIX=~/.local`). |
 | `make clean` | `cargo clean`. |
 
-## Desarrollo
+## Development
 
 ```bash
 make deps-dev
-make check        # lo que debe pasar antes de cada commit
-make test-live    # opcional: tests contra la API real
+make check        # what must pass before every commit
+make test-live    # optional: tests against the real API
 ```
 
-- Los tests no usan la red: los casos de uso se prueban con los fakes de `application::testing`, la API con `wiremock` y la UI con el contexto de tests de GPUI.
-- Los tests contra la API real están marcados `#[ignore]` y necesitan `ANTHROPIC_LIVE_TEST=1` (que pone `make test-live`) y `ANTHROPIC_API_KEY`.
-- La CI (`.github/workflows/ci.yml`) corre `make ci` en Ubuntu 24.04 y macOS 15. `live.yml` corre `make test-live` a mano, y `release.yml` publica tarballs para Linux x86_64 y macOS (arm64 y x86_64) con cada tag `v*`.
+- The tests use no network: use cases are tested with the fakes from `application::testing`, the API with `wiremock` and the UI with GPUI's test context.
+- Tests against the real API are marked `#[ignore]` and need `ANTHROPIC_LIVE_TEST=1` (set by `make test-live`) and `ANTHROPIC_API_KEY`.
+- CI (`.github/workflows/ci.yml`) runs `make ci` on Ubuntu 24.04 and macOS 15. `live.yml` runs `make test-live` manually, and `release.yml` publishes tarballs for Linux x86_64 and macOS (arm64 and x86_64) on every `v*` tag.
 
-Las convenciones y los puntos de extensión están en [docs/desarrollo.md](docs/desarrollo.md).
+The conventions and extension points are in [docs/development.md](docs/development.md).
 
-## Estado del proyecto y limitaciones conocidas
+## Project status and known limitations
 
-Las 11 fases del plan original están implementadas y `make check` pasa en Linux. Antes de confiar en crest para trabajo real, ten en cuenta lo que no se ha probado y lo que todavía falta:
+All 11 phases of the original plan are implemented and `make check` passes on Linux. Before relying on crest for real work, keep in mind what has not been tested and what is still missing:
 
-**Sin verificar**
+**Unverified**
 
-- No se ha probado contra la API real de Anthropic en el entorno de desarrollo: todos los tests usan modelos guionados o `wiremock`, y `make test-live` no se ha ejecutado aquí. Los ids de modelo por defecto (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`) se validan contra `GET /v1/models` al arrancar.
-- macOS no se ha probado en una máquina real. El código y la CI lo contemplan, pero nada se ha ejecutado ahí.
-- La CI nunca se ha ejecutado en GitHub: el repositorio no tiene remoto configurado.
-- No se ha probado la lectura de la API key desde el llavero del sistema.
+- It has not been tested against the real Anthropic API in the development environment: every test uses scripted models or `wiremock`, and `make test-live` has not been run here. The default model ids (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`) are validated against `GET /v1/models` at startup.
+- macOS has not been tested on a real machine. The code and the CI account for it, but nothing has been run there.
+- CI has never run on GitHub: the repository has no remote configured.
+- Reading the API key from the system keyring has not been tested.
 
-**Comportamiento a tener en cuenta**
+**Behavior to keep in mind**
 
-- `Ctrl+C` no interrumpe un flujo en curso (`:research`, `:implement`). En la ventana no llega al paso que está corriendo, y en headless mata el proceso. Para detener un flujo de forma ordenada, usa `/abort` en una compuerta. Sí interrumpe los turnos normales, en la ventana y en headless.
-- En las compuertas de los flujos, una línea vacía cuenta como «sí / continuar». En el flujo de implementación eso puede hacer commit con criterios fallando o cerrar el flujo.
-- En el flujo de implementación, solo `edit_file` y `write_file` están restringidos a los archivos de la tarea: `run_command` puede tocar otros (aunque el commit solo incluye los de la tarea).
-- crest no trae precios de modelos: hasta que configuras `app.opt.pricing`, el costo se muestra como `$?`. El costo vive en memoria, así que una sesión reanudada vuelve a empezar en `$0.00` frente al tope.
+- `Ctrl+C` does not interrupt a running workflow (`:research`, `:implement`). In the window it does not reach the running step, and in headless mode it kills the process. To stop a workflow in an orderly way, use `/abort` at a gate. It does interrupt normal turns, in the window and in headless mode.
+- At workflow gates, an empty line counts as «sí / continuar». In the implementation workflow that can commit with failing criteria or close the workflow.
+- In the implementation workflow, only `edit_file` and `write_file` are restricted to the task's files: `run_command` can touch others (although the commit only includes the task's files).
+- crest ships no model prices: until you set `app.opt.pricing`, the cost shows as `$?`. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
 
-**Aún no disponible**
+**Not available yet**
 
-- `app.opt.theme` se lee pero no tiene efecto: no hay tema claro ni fuente configurable.
-- `app.opt.leader` solo afecta a los atajos definidos en Lua; los integrados siempre usan el espacio. Acciones como `session.resume` no están implementadas.
-- No hay un comando para listar o elegir sesiones antiguas: se reanuda siempre la última del workspace.
-- La compactación supone una ventana de contexto de 200 000 tokens, sea cual sea el modelo, y su umbral no es configurable.
-- `:mcp trust` surte efecto la próxima vez que abres crest; `--trust-mcp` arranca el servidor en la misma ejecución.
-- La exportación a Langfuse requiere compilar con `--features langfuse`; los binarios de `make release` no la incluyen.
-- Los binarios de macOS de `release.yml` no están firmados ni notarizados.
-- Algunos mensajes (errores de los comandos `/` del flujo investigativo, diagnósticos de `init.lua`) están en inglés y el resto en español.
+- `app.opt.theme` is read but has no effect: there is no light theme and no configurable font.
+- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use space. Actions such as `session.resume` are not implemented.
+- There is no command to list or pick older sessions: the workspace's last one is always resumed.
+- Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
+- `:mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run.
+- Langfuse export requires building with `--features langfuse`; the `make release` binaries do not include it.
+- The macOS binaries from `release.yml` are not signed or notarized.
+- Some messages (errors from the research workflow's `/` commands, `init.lua` diagnostics) are in English and the rest in Spanish.
