@@ -20,9 +20,9 @@ use domain::permission::{PermissionRule, RuleDecision, RuleMatcher};
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui::{
-    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight,
+    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -163,6 +163,37 @@ pub enum ApprovalEvent {
     Cancelled(ApprovalRequestId),
 }
 
+/// The dialog the diff blocks' buttons answer: the last one created.
+struct ActiveDialog(WeakEntity<ApprovalView>);
+
+impl Global for ActiveDialog {}
+
+/// Answers the open request when it previews a change to `path`: approves
+/// it once, or rejects it without a reason. Returns whether it answered.
+/// Used by the buttons of a pending `Diff` block.
+pub fn answer_diff(path: &str, approve: bool, window: &mut Window, cx: &mut App) -> bool {
+    let Some(view) = cx
+        .try_global::<ActiveDialog>()
+        .and_then(|active| active.0.upgrade())
+    else {
+        return false;
+    };
+    view.update(cx, |view, cx| {
+        let matches = matches!(
+            view.current().map(|request| &request.preview),
+            Some(ApprovalPreview::Diff(spec)) if spec.path == path
+        );
+        if matches {
+            if approve {
+                view.approve(window, cx);
+            } else {
+                view.reject(None, window, cx);
+            }
+        }
+        matches
+    })
+}
+
 /// A request on screen or in the queue.
 struct Shown {
     key: u64,
@@ -191,8 +222,11 @@ pub struct ApprovalView {
 impl EventEmitter<ApprovalEvent> for ApprovalView {}
 
 impl ApprovalView {
-    /// A dialog fed by `inbox`.
+    /// A dialog fed by `inbox`. It becomes the one that [`answer_diff`]
+    /// answers.
     pub fn new(mut inbox: ApprovalInbox, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let this = cx.entity().downgrade();
+        cx.set_global(ActiveDialog(this));
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Some(pending) = inbox.next().await {
                 if this
@@ -815,5 +849,21 @@ mod tests {
                 |_, _| div().relative().size_full().child(view.clone()),
             );
         }
+    }
+
+    #[gpui::test]
+    fn diff_buttons_answer_only_their_diff(cx: &mut TestAppContext) {
+        let (port, _view, cx) = dialog(cx);
+        let answer = ask(&port, diff_request(1), cx);
+        let other = cx.update(|window, cx| answer_diff("src/main.rs", true, window, cx));
+        assert!(!other, "another path is not the open request");
+        let done = cx.update(|window, cx| answer_diff("src/lib.rs", false, window, cx));
+        assert!(done);
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
+        let idle = cx.update(|window, cx| answer_diff("src/lib.rs", true, window, cx));
+        assert!(!idle, "nothing is open");
     }
 }

@@ -6,9 +6,10 @@
 
 use domain::block::{ApprovalState, BlockKind, DiffSpec};
 use gpui::{
-    AnyElement, App, FontWeight, Hsla, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, div,
+    AnyElement, App, ElementId, FontWeight, Hsla, IntoElement as _, ParentElement as _,
+    SharedString, Styled as _, div,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::timeline::TimelineEntry;
@@ -153,6 +154,35 @@ pub fn render_header(spec: &DiffSpec, cx: &App) -> AnyElement {
     header.into_any_element()
 }
 
+/// Approve and reject buttons of a pending diff; they answer the approval
+/// dialog when it is showing this file's change.
+fn render_buttons(entry: &TimelineEntry, path: &str) -> AnyElement {
+    let id = entry.block.id;
+    let button_id = |name: &str| ElementId::Name(SharedString::from(format!("diff-{name}-{id}")));
+    let (approve_path, reject_path) = (path.to_owned(), path.to_owned());
+    h_flex()
+        .gap_2()
+        .child(
+            Button::new(button_id("approve"))
+                .primary()
+                .compact()
+                .label("Approve")
+                .on_click(move |_, window, cx| {
+                    crate::approval::answer_diff(&approve_path, true, window, cx);
+                }),
+        )
+        .child(
+            Button::new(button_id("reject"))
+                .danger()
+                .compact()
+                .label("Reject")
+                .on_click(move |_, window, cx| {
+                    crate::approval::answer_diff(&reject_path, false, window, cx);
+                }),
+        )
+        .into_any_element()
+}
+
 /// Draws the block held by `entry`: the header, and the diff while the
 /// block is expanded.
 pub fn render(entry: &TimelineEntry, cx: &App) -> AnyElement {
@@ -160,6 +190,9 @@ pub fn render(entry: &TimelineEntry, cx: &App) -> AnyElement {
         return super::placeholder(entry, cx);
     };
     let mut block = v_flex().gap_1().child(render_header(spec, cx));
+    if spec.approval == Some(ApprovalState::Pending) {
+        block = block.child(render_buttons(entry, &spec.path));
+    }
     if entry.expanded {
         block = block.child(
             div()
