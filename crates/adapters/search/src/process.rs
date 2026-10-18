@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
+use application::ports::search::SearchError;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -134,6 +135,28 @@ pub enum ProcessError {
     /// Reading from or writing to the process failed.
     #[error("process I/O error: {0}")]
     Io(String),
+}
+
+impl ProcessError {
+    /// Converts to the port error, using `install_hint` to tell the user how
+    /// to get a missing program.
+    pub fn into_search_error(self, install_hint: impl Into<String>) -> SearchError {
+        match self {
+            Self::NotFound { program } => SearchError::ToolMissing {
+                tool: program,
+                hint: install_hint.into(),
+            },
+            Self::Spawn(message) | Self::Io(message) => SearchError::Io(message),
+        }
+    }
+}
+
+/// Uses a generic install hint; prefer [`ProcessError::into_search_error`]
+/// when a tool-specific one is known.
+impl From<ProcessError> for SearchError {
+    fn from(err: ProcessError) -> Self {
+        err.into_search_error("install it and make sure it is in PATH")
+    }
 }
 
 impl From<io::Error> for ProcessError {
@@ -752,6 +775,29 @@ mod tests {
             wait_until_dead(pid).await,
             "process {pid} survived the drop"
         );
+    }
+
+    #[test]
+    fn process_errors_map_to_search_errors() {
+        let missing = ProcessError::NotFound {
+            program: "fzf".into(),
+        };
+        assert_eq!(
+            missing.into_search_error("pacman -S fzf"),
+            SearchError::ToolMissing {
+                tool: "fzf".into(),
+                hint: "pacman -S fzf".into()
+            }
+        );
+        let spawn: SearchError = ProcessError::Spawn("denied".into()).into();
+        assert_eq!(spawn, SearchError::Io("denied".into()));
+        let io: SearchError = ProcessError::Io("broken".into()).into();
+        assert_eq!(io, SearchError::Io("broken".into()));
+        let generic: SearchError = ProcessError::NotFound {
+            program: "rg".into(),
+        }
+        .into();
+        assert!(matches!(generic, SearchError::ToolMissing { tool, .. } if tool == "rg"));
     }
 
     #[tokio::test]
