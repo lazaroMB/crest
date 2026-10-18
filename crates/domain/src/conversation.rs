@@ -211,6 +211,41 @@ impl ToolResultContent {
     }
 }
 
+/// A single message exchanged with the model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Message {
+    /// Local id of the message.
+    pub id: MessageId,
+    /// Who wrote it.
+    pub role: Role,
+    /// Ordered content parts.
+    pub content: Vec<ContentPart>,
+}
+
+impl Message {
+    /// Builds a message with a fresh id.
+    #[must_use]
+    pub fn new(role: Role, content: Vec<ContentPart>) -> Self {
+        Self {
+            id: MessageId::new(),
+            role,
+            content,
+        }
+    }
+
+    /// Builds a user message with a single text part.
+    #[must_use]
+    pub fn user_text(text: impl Into<String>) -> Self {
+        Self::new(Role::User, vec![ContentPart::text(text)])
+    }
+
+    /// Builds an assistant message from its content parts.
+    #[must_use]
+    pub fn assistant(content: Vec<ContentPart>) -> Self {
+        Self::new(Role::Assistant, content)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +350,22 @@ mod tests {
             part,
             ContentPart::tool_result_text(ToolUseId::new("toolu_9"), "ok")
         );
+    }
+
+    #[test]
+    fn message_constructors_set_role_and_content() {
+        let user = Message::user_text("hola");
+        assert_eq!(user.role, Role::User);
+        assert_eq!(user.content, vec![ContentPart::text("hola")]);
+
+        let assistant = Message::assistant(all_parts());
+        assert_eq!(assistant.role, Role::Assistant);
+        assert_ne!(assistant.id, user.id);
+    }
+
+    #[test]
+    fn message_round_trip() {
+        round_trip(&Message::user_text("hola"));
+        round_trip(&Message::assistant(all_parts()));
     }
 }
