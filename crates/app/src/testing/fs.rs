@@ -1,6 +1,7 @@
 //! In-memory fakes of the file ports: [`InMemoryFs`] implements
-//! [`FileSystemPort`] and [`FileSearchPort`] over a map of paths to bytes,
-//! so use cases can be tested without touching the disk, `rg` or `fzf`.
+//! [`FileSystemPort`], [`FileSearchPort`] and [`ContentSearchPort`] over a
+//! map of paths to bytes, so use cases can be tested with a single fake
+//! without touching the disk, `rg` or `fzf`.
 //!
 //! The fake applies the same guards the real adapter does (sensitive paths,
 //! binary files, the read size limit) and lets tests simulate what only a
@@ -22,7 +23,8 @@ use crate::ports::fs::{
     PendingChange, ReadFileRequest, WriteFileRequest, replace_unique,
 };
 use crate::ports::search::{
-    FileList, FileSearchPort, FindFileRequest, ListFilesRequest, SearchError, TreeNode, TreeRequest,
+    ColumnRange, ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit,
+    GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 
 /// A workspace held in memory. Directories are implied by the files below
@@ -456,6 +458,106 @@ impl FileSearchPort for InMemoryFs {
     }
 }
 
+/// Regex metacharacters the fake grep cannot interpret.
+const REGEX_META: &str = ".^$*+?()[]{}|";
+
+/// The literal text a grep pattern stands for. The fake has no regex
+/// engine: a non-`fixed` pattern may only escape punctuation (`\.`), and
+/// any other metacharacter fails with [`SearchError::InvalidPattern`], so a
+/// test never silently gets literal matching where it expected a regex.
+fn literal_pattern(request: &GrepRequest) -> Result<String, SearchError> {
+    if request.fixed {
+        return Ok(request.pattern.clone());
+    }
+    let unsupported = |what: String| {
+        SearchError::InvalidPattern(format!(
+            "{what} in `{}`: the fake grep only matches literals",
+            request.pattern
+        ))
+    };
+    let mut literal = String::new();
+    let mut chars = request.pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(escaped) if escaped.is_ascii_punctuation() => literal.push(escaped),
+                Some(escaped) => return Err(unsupported(format!("escape `\\{escaped}`"))),
+                None => return Err(unsupported("trailing `\\`".into())),
+            },
+            c if REGEX_META.contains(c) => return Err(unsupported(format!("`{c}`"))),
+            c => literal.push(c),
+        }
+    }
+    Ok(literal)
+}
+
+#[async_trait]
+impl ContentSearchPort for InMemoryFs {
+    /// Searches the listed text files (binary ones are skipped, as `rg`
+    /// does) for a literal (see [`literal_pattern`]); `ignore_case` folds
+    /// ASCII letters only. Each hit carries its own neighbouring lines as
+    /// context, even when they are matches themselves.
+    async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
+        let needle = literal_pattern(&request)?;
+        let fold = |s: &str| {
+            if request.ignore_case {
+                s.to_ascii_lowercase()
+            } else {
+                s.to_owned()
+            }
+        };
+        let needle = fold(&needle);
+        let base = request.path.clone().unwrap_or_else(WorkspacePath::root);
+        self.check_inside(&base)?;
+        let context = usize::try_from(request.context).unwrap_or(usize::MAX);
+        let paths: Vec<WorkspacePath> = self
+            .listed()
+            .into_iter()
+            .filter(|path| is_within(path, &base))
+            .filter(|path| request.glob.as_ref().is_none_or(|g| glob_matches(g, path)))
+            .collect();
+
+        let files = self.lock();
+        let mut result = GrepResult::default();
+        for path in paths {
+            let Some(text) = files.get(&path).and_then(|bytes| as_text(bytes)) else {
+                continue;
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
+                let Some(start) = fold(line).find(&needle) else {
+                    continue;
+                };
+                result.total += 1;
+                if result.hits.len() == request.limit {
+                    result.truncated = true;
+                    continue;
+                }
+                let after_end = index
+                    .saturating_add(context)
+                    .saturating_add(1)
+                    .min(lines.len());
+                result.hits.push(GrepHit {
+                    path: path.clone(),
+                    line_number: index as u64 + 1,
+                    column_range: ColumnRange {
+                        start,
+                        end: start + needle.len(),
+                    },
+                    line: (*line).to_owned(),
+                    context_before: to_owned(&lines[index.saturating_sub(context)..index]),
+                    context_after: to_owned(&lines[index + 1..after_end]),
+                });
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn to_owned(lines: &[&str]) -> Vec<String> {
+    lines.iter().map(|line| (*line).to_owned()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -864,6 +966,121 @@ mod tests {
             fs.tree(outside).await,
             Err(SearchError::Path(PathError::OutsideWorkspace {
                 path: "out".into()
+            }))
+        );
+    }
+
+    fn grep_fs() -> InMemoryFs {
+        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            .with_file("src/a.rs", "fn one() {}\nlet x = 1;\nfn two() {}\nend\n")
+            .with_file("src/b.txt", "FN upper\n")
+            .with_file("docs/c.md", "fn in docs\n")
+            .with_bytes("src/bin.rs", b"fn \0 binary".to_vec())
+            .with_file(".git/config", "fn hidden\n")
+    }
+
+    fn grep_at(pattern: &str, context: u32) -> GrepRequest {
+        GrepRequest {
+            context,
+            ..GrepRequest::new(pattern)
+        }
+    }
+
+    fn hits(result: &GrepResult) -> Vec<(&str, u64)> {
+        result
+            .hits
+            .iter()
+            .map(|h| (h.path.as_str(), h.line_number))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn grep_returns_hits_with_context() {
+        let fs = grep_fs();
+        let result = fs.grep(grep_at("fn", 1)).await.unwrap();
+        assert_eq!(
+            hits(&result),
+            [("docs/c.md", 1), ("src/a.rs", 1), ("src/a.rs", 3)]
+        );
+        assert_eq!((result.total, result.truncated), (3, false));
+        let two = &result.hits[2];
+        assert_eq!(two.column_range, ColumnRange { start: 0, end: 2 });
+        assert_eq!(two.line, "fn two() {}");
+        assert_eq!(two.context_before, ["let x = 1;"]);
+        assert_eq!(two.context_after, ["end"]);
+        assert!(result.hits[1].context_before.is_empty());
+    }
+
+    #[tokio::test]
+    async fn grep_honors_case_path_glob_and_limit() {
+        let fs = grep_fs();
+        let upper = GrepRequest {
+            ignore_case: true,
+            path: Some(p("src")),
+            ..GrepRequest::new("fn")
+        };
+        let result = fs.grep(upper).await.unwrap();
+        assert_eq!(
+            hits(&result),
+            [("src/a.rs", 1), ("src/a.rs", 3), ("src/b.txt", 1)]
+        );
+
+        let globbed = GrepRequest {
+            glob: Some("*.md".into()),
+            ..GrepRequest::new("fn")
+        };
+        assert_eq!(hits(&fs.grep(globbed).await.unwrap()), [("docs/c.md", 1)]);
+
+        let limited = GrepRequest {
+            limit: 1,
+            ..GrepRequest::new("fn")
+        };
+        let result = fs.grep(limited).await.unwrap();
+        assert_eq!(
+            (result.hits.len(), result.total, result.truncated),
+            (1, 3, true)
+        );
+
+        let none = fs.grep(GrepRequest::new("absent")).await.unwrap();
+        assert_eq!(none, GrepResult::default());
+    }
+
+    #[tokio::test]
+    async fn grep_matches_literals_only() {
+        let fs = grep_fs();
+        let escaped = fs.grep(GrepRequest::new(r"one\(\)")).await.unwrap();
+        assert_eq!(hits(&escaped), [("src/a.rs", 1)]);
+        assert_eq!(
+            escaped.hits[0].column_range,
+            ColumnRange { start: 3, end: 8 }
+        );
+        let fixed = GrepRequest {
+            fixed: true,
+            ..GrepRequest::new("() {")
+        };
+        assert_eq!(fs.grep(fixed).await.unwrap().total, 2);
+        for pattern in ["fn (", r"\d", "a.b"] {
+            assert!(
+                matches!(
+                    fs.grep(GrepRequest::new(pattern)).await,
+                    Err(SearchError::InvalidPattern(_))
+                ),
+                "{pattern}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_rejects_paths_outside_the_workspace() {
+        let fs = grep_fs().with_escaping_link("docs");
+        let request = GrepRequest {
+            path: Some(p("docs")),
+            ..GrepRequest::new("fn")
+        };
+        assert_eq!(
+            fs.grep(request).await,
+            Err(SearchError::Path(PathError::OutsideWorkspace {
+                path: "docs".into()
             }))
         );
     }
