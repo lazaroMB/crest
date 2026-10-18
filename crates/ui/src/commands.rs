@@ -18,7 +18,7 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "help",
         usage: ":help [section|search]",
-        description: "Open this help, on a section (commands, keys, tools, plugins, mcp, models, \
+        description: "Open this help (also :h), on a section (commands, keys, tools, plugins, mcp, models, \
                       cli, files) or filtered by a search",
     },
     CommandInfo {
