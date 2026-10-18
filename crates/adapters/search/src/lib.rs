@@ -21,6 +21,7 @@
 //! of the model's context. Hidden files are listed; `.git` never is.
 
 use std::ffi::OsString;
+use std::sync::Arc;
 use std::time::Duration;
 
 use application::ports::search::{
@@ -29,10 +30,13 @@ use application::ports::search::{
 use async_trait::async_trait;
 use domain::workspace::{SensitivePathRules, WorkspaceRoot};
 
-use crate::detect::{Tool, ToolReport};
+use tokio::sync::OnceCell;
+
+use crate::detect::{Tool, ToolReport, ToolStatus};
 
 pub mod detect;
 pub mod files;
+pub mod find;
 pub mod grep;
 pub mod process;
 
@@ -47,6 +51,9 @@ pub struct RipgrepSearch {
     fzf: OsString,
     timeout: Duration,
     rules: SensitivePathRules,
+    /// `fzf --version`, checked on the first `find_file` and shared by
+    /// clones.
+    fzf_status: Arc<OnceCell<ToolStatus>>,
 }
 
 impl RipgrepSearch {
@@ -60,6 +67,7 @@ impl RipgrepSearch {
             fzf: Tool::Fzf.program().into(),
             timeout: DEFAULT_SEARCH_TIMEOUT,
             rules: SensitivePathRules::default(),
+            fzf_status: Arc::default(),
         }
     }
 
@@ -74,6 +82,7 @@ impl RipgrepSearch {
     #[must_use]
     pub fn with_fzf_program(mut self, program: impl Into<OsString>) -> Self {
         self.fzf = program.into();
+        self.fzf_status = Arc::default();
         self
     }
 
