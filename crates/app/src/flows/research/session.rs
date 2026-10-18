@@ -150,13 +150,15 @@ impl ResearchSession {
     }
 
     /// Continues the last flow of the workspace at its pending node: runs
-    /// it on, or shows its gate again.
+    /// it on, or shows its gate again. A finished flow is reopened only for
+    /// `/back <nodo>` (e.g. back to the Spec when its plan proved
+    /// unfeasible): it stays active until the next line.
     ///
     /// # Errors
     ///
     /// [`FlowError::SessionNotFound`] when there is no flow to resume,
-    /// [`FlowError::Completed`] or [`FlowError::Aborted`] when it ended,
-    /// a storage error or the error of a node.
+    /// [`FlowError::Aborted`] when it was aborted, a storage error or the
+    /// error of a node.
     pub async fn resume(&mut self) -> Result<FlowStatus, FlowError> {
         let id = self
             .last_flow_id()
@@ -164,8 +166,13 @@ impl ResearchSession {
             .ok_or_else(|| FlowError::SessionNotFound(self.index_id()))?;
         let flow = ResearchFlow::resume(self.graph.clone(), Arc::clone(&self.storage), id).await?;
         let status = match flow.status().await? {
-            FlowStatus::Completed => return Err(FlowError::Completed),
             FlowStatus::Aborted => return Err(FlowError::Aborted),
+            // Only `/back <nodo>` makes sense now (e.g. back to the Spec
+            // when its plan proved unfeasible); any other line releases it.
+            FlowStatus::Completed => {
+                self.active = Some(flow);
+                return Ok(FlowStatus::Completed);
+            }
             FlowStatus::WaitingForInput { stage, prompt } => {
                 // The gate was shown before the restart; show it again.
                 let _ = self.graph.deps().emit(BlockKind::Text {
@@ -300,7 +307,12 @@ mod tests {
         assert_eq!(reply, FlowReply::Status(FlowStatus::Completed));
         assert!(!reopened.is_active());
         assert!(reopened.pending().await.unwrap().is_none());
-        assert!(matches!(reopened.resume().await, Err(FlowError::Completed)));
+        // A finished flow reopens for `/back`, e.g. to redo the Spec.
+        assert_eq!(reopened.resume().await.unwrap(), FlowStatus::Completed);
+        assert!(reopened.is_active());
+        let reply = reopened.handle_line("/back spec").await.unwrap();
+        assert_eq!(reply, FlowReply::Status(FlowStatus::Completed));
+        assert!(!reopened.is_active());
         // Another workspace has its own flows.
         let other = ResearchSession::new(graph(), storage, "/otro");
         assert!(other.pending().await.unwrap().is_none());
