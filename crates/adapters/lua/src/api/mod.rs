@@ -4,4 +4,5 @@
 //! The rest of the `app` table (options, keymaps, commands) lives in the
 //! config loader; these modules hold the parts the agent loop calls into.
 
+pub(crate) mod hooks;
 pub(crate) mod tools;

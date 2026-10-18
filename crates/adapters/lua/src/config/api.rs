@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use application::ports::plugin::{
-    CallbackId, CommandSpec, HookKind, HookSpec, KeyAction, KeyMode, KeymapSpec, PluginDiagnostic,
+    CallbackId, CommandSpec, HookSpec, KeyAction, KeyMode, KeymapSpec, PluginDiagnostic,
     PluginToolSpec,
 };
 use mlua::{Function, Lua, Table, Value};
@@ -115,7 +115,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     let tools = lua.create_table()?;
     tools.set("register", crate::api::tools::register(lua, sink, origin)?)?;
     app.set("tools", tools)?;
-    app.set("on", on(lua, sink, origin)?)?;
+    app.set("on", crate::api::hooks::on(lua, sink, origin)?)?;
     Ok(app)
 }
 
@@ -226,42 +226,9 @@ fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Resu
     })
 }
 
-fn hook_kind(name: &str) -> Option<HookKind> {
-    match name {
-        "before_tool" => Some(HookKind::BeforeTool),
-        "after_tool" => Some(HookKind::AfterTool),
-        _ => None,
-    }
-}
-
-fn on(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
-    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, (event, f): (String, Value)| {
-        let Some(kind) = hook_kind(&event) else {
-            report(
-                lua,
-                &sink,
-                &origin,
-                format!("app.on: unknown event `{event}` (use \"before_tool\" or \"after_tool\")"),
-            );
-            return Ok(());
-        };
-        let Value::Function(f) = f else {
-            report(lua, &sink, &origin, "app.on expects a function".into());
-            return Ok(());
-        };
-        let callback = callbacks::register(lua, f)?;
-        lock(&sink).hooks.push(HookSpec {
-            kind,
-            callback,
-            plugin: origin.plugin.clone(),
-        });
-        Ok(())
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use application::ports::plugin::HookKind;
     use serde_json::json;
 
     use super::*;

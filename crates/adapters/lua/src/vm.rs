@@ -8,6 +8,7 @@ use application::ports::plugin::{
 use mlua::Lua;
 use serde_json::Value;
 
+use crate::api::hooks;
 use crate::callbacks::{self, CallbackIds};
 use crate::convert;
 use crate::host::HostOptions;
@@ -105,7 +106,7 @@ impl Vm {
             let ev = serde_json::to_value(&event)
                 .map_err(|e| PluginError::Runtime(format!("cannot encode hook event: {e}")))?;
             let ret = self.call(id, &ev)?;
-            match hook_outcome(&ret) {
+            match hooks::outcome(&ret) {
                 HookOutcome::Continue => {}
                 deny @ HookOutcome::Deny { .. } => return Ok(deny),
                 HookOutcome::ReplaceInput(input) => {
@@ -128,21 +129,6 @@ fn new_lua(options: &HostOptions, ids: &CallbackIds) -> Result<(Lua, Limiter), P
         Ok((lua, limiter))
     };
     setup().map_err(|e| convert::runtime_error(&e))
-}
-
-/// Reads what a hook returned.
-fn hook_outcome(ret: &Value) -> HookOutcome {
-    let Value::Object(map) = ret else {
-        return HookOutcome::Continue;
-    };
-    if map.get("deny").and_then(Value::as_bool) == Some(true) {
-        let reason = map.get("reason").and_then(Value::as_str).map(str::to_owned);
-        return HookOutcome::Deny { reason };
-    }
-    match map.get("input") {
-        Some(input) => HookOutcome::ReplaceInput(input.clone()),
-        None => HookOutcome::Continue,
-    }
 }
 
 /// Test helper: evaluates `code`, which must return a function, and
