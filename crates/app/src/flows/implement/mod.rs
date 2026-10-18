@@ -6,6 +6,7 @@
 //! - [`flow`]: [`ImplementFlow`](flow::ImplementFlow), one session of the graph.
 //! - [`gate`]: the answers every gate accepts.
 //! - [`load`]: reading, validating and ordering `plan.json`; the branch.
+//! - [`measure`]: expected against obtained in check outputs.
 //! - [`node`]: the step contract ([`ImplementNode`](node::ImplementNode)).
 //! - [`task`]: [`StepTask`](task::StepTask), the graph-flow task of a step.
 //! - [`nodes`]: the steps after Cargar plan, one file each.
@@ -20,6 +21,7 @@ pub mod fake;
 pub mod flow;
 pub mod gate;
 pub mod load;
+pub mod measure;
 pub mod node;
 pub mod nodes;
 pub mod scope;
