@@ -172,7 +172,8 @@ detect_system() {
         DISTRO_NAME=$(os_release_field PRETTY_NAME)
         [ -n "$DISTRO_NAME" ] || DISTRO_NAME="Linux ${DISTRO_ID:-desconocido}"
     elif [ "$PLATFORM" = macos ]; then
-        DISTRO_NAME="macOS $(sw_vers -productVersion 2>/dev/null)"
+        DISTRO_NAME=$(sw_vers -productVersion 2>/dev/null)
+        DISTRO_NAME="macOS${DISTRO_NAME:+ $DISTRO_NAME}"
     else
         DISTRO_NAME=$(uname -s)
     fi
@@ -367,14 +368,85 @@ check_cargo_sub() {
     fi
 }
 
+# --- macOS ------------------------------------------------------------------
+
+clt_installed() {
+    local dir
+    dir=$(xcode-select -p 2>/dev/null) && [ -n "$dir" ] && [ -d "$dir" ]
+}
+
+check_macos() {
+    local ver
+    if clt_installed; then
+        report_ok "Command Line Tools" "$(xcode-select -p 2>/dev/null)"
+        # xcrun no abre diálogos; falla si solo están las CLT (sin Xcode).
+        ver=$(xcrun -sdk macosx metal --version </dev/null 2>/dev/null | extract_version)
+        if [ -n "$ver" ]; then
+            report_ok "compilador Metal" "$ver"
+        else
+            report_missing metal "compilador Metal" "'xcrun -sdk macosx metal' no disponible (hace falta Xcode completo)"
+        fi
+    else
+        report_missing clt "Command Line Tools" "'xcode-select -p' no encuentra las herramientas"
+        report_missing metal "compilador Metal" "requiere Xcode"
+    fi
+    if find_brew; then
+        report_ok Homebrew "$(tool_version brew) ($(command -v brew))"
+    else
+        report_missing brew Homebrew "no se encuentra 'brew'"
+    fi
+}
+
+# Explica cómo instalar lo que este script no instala solo en macOS
+# (IDs clt, metal y brew de la lista $1).
+print_macos_help() {
+    case " $1 " in
+        *" clt "*)
+            cat <<'EOF'
+Command Line Tools de Xcode (compilador C, clang, git):
+    xcode-select --install
+EOF
+            ;;
+    esac
+    case " $1 " in
+        *" metal "*)
+            cat <<'EOF'
+Compilador Metal (shaders de GPUI): instala Xcode completo desde la App Store y luego
+    sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+    sudo xcodebuild -runFirstLaunch
+    xcodebuild -downloadComponent MetalToolchain   # Xcode 26 o posterior
+EOF
+            ;;
+    esac
+    case " $1 " in
+        *" brew "*)
+            cat <<'EOF'
+Homebrew (https://brew.sh):
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+EOF
+            ;;
+    esac
+}
+
 run_checks() {
     MISSING=''
     info "Verificando dependencias"
-    check_c_compiler
+    if [ "$PLATFORM" = macos ]; then
+        check_macos
+    fi
+    if [ "$PLATFORM" = macos ] && ! clt_installed; then
+        # Sin las Command Line Tools, cc/clang/git de /usr/bin son shims que
+        # abren un diálogo de instalación: no se ejecutan.
+        report_missing cc "compilador C" "requiere las Command Line Tools"
+        report_missing clang clang "requiere las Command Line Tools"
+        report_missing git git "requiere las Command Line Tools"
+    else
+        check_c_compiler
+        check_tool clang clang clang
+        check_tool git git git
+    fi
     check_tool pkg-config pkg-config pkg-config
     check_tool cmake cmake cmake
-    check_tool clang clang clang
-    check_tool git git git
     check_tool jq jq jq
     check_tool rg rg ripgrep "$RG_MIN"
     check_tool fzf fzf fzf "$FZF_MIN"
@@ -586,6 +658,9 @@ print_summary() {
     if [ -n "$pkgs" ]; then
         printf 'Paquetes de %s que las proveen: %s\n' "$PKG_MGR" "$pkgs"
     fi
+    if [ "$PLATFORM" = macos ]; then
+        print_macos_help "$MISSING"
+    fi
     printf 'Para instalarlas: %s%s%s\n' "$0" \
         "$([ "$OPT_DEV" = 1 ] && printf ' --dev')" \
         "$([ "$OPT_NO_RUST" = 1 ] && printf ' --no-rust')"
@@ -751,8 +826,15 @@ run_install() {
     if [ -z "$MISSING" ] && [ -z "$pkgs" ]; then
         return 0
     fi
-    if [ "$PKG_MGR" = none ] && [ -n "$ids" ]; then
-        warn "no se encontró un gestor de paquetes soportado; instala a mano: $ids"
+    if [ "$PLATFORM" = macos ]; then
+        if ! clt_installed; then
+            print_macos_help clt
+            die "instala las Command Line Tools y vuelve a ejecutar este script"
+        fi
+        # Xcode y Homebrew no se instalan solos: se explica cómo.
+        print_macos_help "$MISSING"
+    elif [ "$PKG_MGR" = none ] && [ -n "$ids" ]; then
+        warn "no hay un gestor de paquetes soportado; instala a mano: $ids"
     fi
     info "Plan de instalación"
     [ -n "$pkgs" ] && printf '  paquetes (%s): %s\n' "$PKG_MGR" "$pkgs"
