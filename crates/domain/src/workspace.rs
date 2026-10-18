@@ -262,6 +262,136 @@ impl JsonSchema for WorkspacePath {
     }
 }
 
+/// Default patterns denied for reading, see [`SensitivePathRules::default`].
+pub const DEFAULT_SENSITIVE_PATTERNS: [&str; 4] = [".env*", "*.pem", "id_rsa*", ".git/"];
+
+/// Why a sensitive-path pattern was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SensitivePatternError {
+    /// The pattern is empty (or only `/`).
+    #[error("sensitive path pattern is empty")]
+    Empty,
+    /// The pattern has a `/` other than a single trailing one.
+    #[error("sensitive path pattern must be a single name, optionally ending in `/`: {pattern}")]
+    ContainsSlash {
+        /// The rejected pattern.
+        pattern: String,
+    },
+    /// The pattern contains a NUL byte.
+    #[error("sensitive path pattern contains a NUL byte")]
+    ContainsNul,
+}
+
+/// Name globs of paths that tools must not read.
+///
+/// Each pattern matches a single path component with `*` and `?`; a path is
+/// denied when **any** of its components matches, so `.env*` denies both
+/// `.env` and `config/.env.local`, and everything inside a matching
+/// directory is denied too. A trailing `/` (as in `.git/`) marks a directory
+/// pattern; since this check is lexical and cannot tell files from
+/// directories, it matches the same components as the pattern without the
+/// slash (a `.git` file of a git worktree is denied as well).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensitivePathRules {
+    patterns: Vec<String>,
+}
+
+impl SensitivePathRules {
+    /// Builds rules from user-provided patterns (e.g. from the Lua config).
+    pub fn new<I, S>(patterns: I) -> Result<Self, SensitivePatternError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let patterns = patterns
+            .into_iter()
+            .map(|p| {
+                let pattern = p.into();
+                validate_pattern(&pattern)?;
+                Ok(pattern)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { patterns })
+    }
+
+    /// The patterns as they were given.
+    pub fn patterns(&self) -> impl Iterator<Item = &str> {
+        self.patterns.iter().map(String::as_str)
+    }
+
+    /// Whether reading `path` is denied.
+    pub fn is_denied(&self, path: &WorkspacePath) -> bool {
+        self.matching_pattern(path).is_some()
+    }
+
+    /// The first pattern that denies `path`, to explain the refusal.
+    pub fn matching_pattern(&self, path: &WorkspacePath) -> Option<&str> {
+        self.patterns().find(|pattern| {
+            let glob = pattern.strip_suffix('/').unwrap_or(pattern);
+            path.components().any(|c| glob_match(glob, c))
+        })
+    }
+}
+
+impl Default for SensitivePathRules {
+    /// Denies `.env*`, `*.pem`, `id_rsa*` and `.git/`.
+    fn default() -> Self {
+        Self {
+            patterns: DEFAULT_SENSITIVE_PATTERNS.map(str::to_owned).to_vec(),
+        }
+    }
+}
+
+fn validate_pattern(pattern: &str) -> Result<(), SensitivePatternError> {
+    if pattern.contains('\0') {
+        return Err(SensitivePatternError::ContainsNul);
+    }
+    let glob = pattern.strip_suffix('/').unwrap_or(pattern);
+    if glob.is_empty() {
+        return Err(SensitivePatternError::Empty);
+    }
+    if glob.contains('/') {
+        return Err(SensitivePatternError::ContainsSlash {
+            pattern: pattern.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Matches a single path component against a glob with `*` (any run of
+/// characters, including none) and `?` (exactly one character). Matching is
+/// case-sensitive and `*` also matches a leading dot.
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let (mut p, mut n) = (0, 0);
+    // Position of the last `*` seen and the name index it is retried from.
+    let mut backtrack: Option<(usize, usize)> = None;
+    while n < name.len() {
+        match pattern.get(p) {
+            Some('*') => {
+                backtrack = Some((p, n));
+                p += 1;
+            }
+            Some(c) if *c == '?' || Some(c) == name.get(n) => {
+                p += 1;
+                n += 1;
+            }
+            _ => match backtrack {
+                Some((star, from)) => {
+                    p = star + 1;
+                    n = from + 1;
+                    backtrack = Some((star, from + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    pattern
+        .get(p..)
+        .is_some_and(|rest| rest.iter().all(|c| *c == '*'))
+}
+
 fn check_input(input: &str) -> Result<(), PathError> {
     if input.is_empty() {
         return Err(InvalidPathReason::Empty.into());
@@ -587,6 +717,126 @@ mod tests {
     fn json_schema_is_inline_string() {
         let schema = schemars::schema_for!(WorkspacePath);
         assert_eq!(schema.get("type"), Some(&serde_json::json!("string")));
+    }
+
+    #[test]
+    fn glob_matches_literals() {
+        assert!(glob_match("id_rsa", "id_rsa"));
+        assert!(!glob_match("id_rsa", "id_rsa2"));
+        assert!(!glob_match("id_rsa", "id_rs"));
+        assert!(!glob_match("Env", "env"));
+    }
+
+    #[test]
+    fn glob_star_matches_any_run() {
+        assert!(glob_match(".env*", ".env"));
+        assert!(glob_match(".env*", ".env.local"));
+        assert!(!glob_match(".env*", "x.env"));
+        assert!(glob_match("*.pem", "cert.pem"));
+        assert!(glob_match("*.pem", ".pem"));
+        assert!(!glob_match("*.pem", "cert.pem.bak"));
+        assert!(glob_match("a*b*c", "aXXbYYc"));
+        assert!(glob_match("a*b*c", "abbbc"));
+        assert!(!glob_match("a*b*c", "aXXbYY"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("**", "x"));
+    }
+
+    #[test]
+    fn glob_question_matches_one_char() {
+        assert!(glob_match("?.rs", "a.rs"));
+        assert!(glob_match("?.rs", "ñ.rs"));
+        assert!(!glob_match("?.rs", ".rs"));
+        assert!(!glob_match("?.rs", "ab.rs"));
+    }
+
+    fn denied(path: &str) -> bool {
+        SensitivePathRules::default().is_denied(&wp(path))
+    }
+
+    #[test]
+    fn default_rules_deny_secrets() {
+        for path in [
+            ".env",
+            ".env.local",
+            "config/.env.production",
+            "certs/server.pem",
+            "key.pem",
+            "id_rsa",
+            "home/.ssh/id_rsa.pub",
+            ".git",
+            ".git/config",
+            "vendor/lib/.git/HEAD",
+        ] {
+            assert!(denied(path), "{path} should be denied");
+        }
+    }
+
+    #[test]
+    fn default_rules_allow_ordinary_files() {
+        for path in [
+            "src/main.rs",
+            "env.rs",
+            "docs/envy/x.md",
+            "x.env",
+            "cert.pem.md",
+            "my_id_rsa",
+            ".github/workflows/ci.yml",
+            ".gitignore",
+            "ñandú/日本.md",
+        ] {
+            assert!(!denied(path), "{path} should be allowed");
+        }
+        assert!(!SensitivePathRules::default().is_denied(&WorkspacePath::root()));
+    }
+
+    #[test]
+    fn matching_pattern_explains_denial() {
+        let rules = SensitivePathRules::default();
+        assert_eq!(rules.matching_pattern(&wp(".git/HEAD")), Some(".git/"));
+        assert_eq!(rules.matching_pattern(&wp("a/b.pem")), Some("*.pem"));
+        assert_eq!(rules.matching_pattern(&wp("a/b.rs")), None);
+    }
+
+    #[test]
+    fn custom_rules_replace_defaults() {
+        let rules = SensitivePathRules::new(["secret?.txt", "private/"]).unwrap();
+        assert!(rules.is_denied(&wp("secret1.txt")));
+        assert!(rules.is_denied(&wp("a/private/b.rs")));
+        assert!(!rules.is_denied(&wp("secret12.txt")));
+        assert!(!rules.is_denied(&wp(".env")));
+        assert_eq!(
+            rules.patterns().collect::<Vec<_>>(),
+            ["secret?.txt", "private/"]
+        );
+    }
+
+    #[test]
+    fn empty_rules_deny_nothing() {
+        let rules = SensitivePathRules::new(Vec::<String>::new()).unwrap();
+        assert!(!rules.is_denied(&wp(".env")));
+    }
+
+    #[test]
+    fn invalid_patterns_are_rejected() {
+        assert_eq!(
+            SensitivePathRules::new([""]),
+            Err(SensitivePatternError::Empty)
+        );
+        assert_eq!(
+            SensitivePathRules::new(["/"]),
+            Err(SensitivePatternError::Empty)
+        );
+        assert_eq!(
+            SensitivePathRules::new(["a/b"]),
+            Err(SensitivePatternError::ContainsSlash {
+                pattern: "a/b".into()
+            })
+        );
+        assert_eq!(
+            SensitivePathRules::new(["a\0"]),
+            Err(SensitivePatternError::ContainsNul)
+        );
     }
 
     #[test]
