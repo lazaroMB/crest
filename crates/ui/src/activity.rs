@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use application::ports::events::DomainEvent;
 use domain::block::BlockKind;
 use gpui::{
-    Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task, Window, div,
+    App, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task, Window,
+    div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -221,7 +222,7 @@ impl ActivityView {
     }
 
     /// The line as drawn now.
-    pub fn line(&self, cx: &Context<Self>) -> Option<String> {
+    pub fn line(&self, cx: &App) -> Option<String> {
         self.state.line(cx.background_executor().now(), self.frame)
     }
 

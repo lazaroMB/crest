@@ -322,8 +322,8 @@ impl Render for RootView {
             .children(self.activity.clone())
             .child(
                 div()
-                    .min_h(px(64.0))
-                    .p_2()
+                    .px_2()
+                    .pb_1()
                     .border_t_1()
                     .border_color(border)
                     .child(slot(&self.input, "input", cx)),

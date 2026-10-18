@@ -15,6 +15,7 @@ bytemuck.workspace = true
 domain.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui-base.workspace = true
 gpui_platform.workspace = true
 image.workspace = true
 # Tree-sitter highlighting for code blocks in markdown and the markdown

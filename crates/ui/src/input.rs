@@ -12,6 +12,11 @@
 //!   [`InputEvent::Command`], `<Esc>` (or backspace on an empty line) goes
 //!   back to normal.
 //!
+//! It looks like a terminal prompt: a `❯` colored by mode, the text in the
+//! monospace font with no field around it, and a blinking block cursor
+//! ([`cursor`]); in normal mode the block is an outline, and in command mode
+//! it blinks at the end of the `:` line.
+//!
 //! Keys are read with a keystroke interceptor, which runs before GPUI's own
 //! key bindings and the editor, while this view or its editor has focus.
 //! A pending prefix (`g` of `gg`) is settled by a GPUI timer at the
@@ -22,15 +27,20 @@
 //! other non-character keys of such a failed prefix are dropped. Text that
 //! an IME commits directly, without key events, bypasses the sequencer.
 
+pub mod cursor;
+
 use application::keymap::{
     Action, Feed, Key, KeyCode, KeySequencer, Keymap, Mode, Modifiers, default_keymap,
 };
+use gpui::canvas;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, Task, Window, div,
 };
 use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
+
+use cursor::{BLINK_INTERVAL, Blink, CursorShape, HiddenCaret, paint_cursor};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
@@ -145,6 +155,8 @@ pub struct InputView {
     command: String,
     timeout: Option<Task<()>>,
     queued: bool,
+    blink: Blink,
+    _blink: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -165,7 +177,7 @@ impl InputView {
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, MAX_ROWS)
-                .placeholder("Ask crest…  (Enter sends, Shift+Enter new line, Esc normal mode)")
+                .placeholder("Ask crest…")
         });
         let weak = cx.entity().downgrade();
         let intercept = cx.intercept_keystrokes(move |event, window, cx| {
@@ -185,8 +197,37 @@ impl InputView {
             command: String::new(),
             timeout: None,
             queued: false,
+            blink: Blink::default(),
+            _blink: Self::blink_loop(window, cx),
             _subscriptions: vec![intercept, focus],
         }
+    }
+
+    /// Toggles the cursor every [`BLINK_INTERVAL`] while the window is
+    /// active and the input has focus.
+    fn blink_loop(window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(BLINK_INTERVAL).await;
+                let alive = this.update_in(cx, |this, window, cx| {
+                    if !window.is_window_active() || !this.owns_focus(window, cx) {
+                        return;
+                    }
+                    let now = cx.background_executor().now();
+                    if this.blink.tick(now) {
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Whether the blinking cursor is on.
+    pub fn cursor_visible(&self) -> bool {
+        self.blink.visible()
     }
 
     /// Current mode.
@@ -278,6 +319,7 @@ impl InputView {
             return;
         };
         let now = cx.background_executor().now();
+        self.blink.keyed(now);
         let feeds = self.sequencer.feed(key, now);
         if self.process(feeds, true, window, cx) {
             cx.stop_propagation();
@@ -438,37 +480,85 @@ impl Render for InputView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let mode = self.mode();
-        let badge_color = match mode {
+        let mode_color = match mode {
             Mode::Insert => theme.success,
             Mode::Normal => theme.primary,
             Mode::Command => theme.warning,
         };
+        let (block, inverted, muted) = (theme.foreground, theme.background, theme.muted_foreground);
+        let blink_on = self.blink.visible();
+        let shape = match mode {
+            Mode::Insert => blink_on.then_some(CursorShape::Block),
+            Mode::Normal => Some(CursorShape::Hollow),
+            Mode::Command => None,
+        };
+        let editor = self.editor.clone();
+        // Painted after the textarea, from the caret it laid out this frame.
+        let cursor = canvas(
+            |_, _, _| {},
+            move |_, (), window, cx| {
+                let focused = editor.read(cx).focus_handle(cx).is_focused(window);
+                if let Some(shape) = shape.filter(|s| *s == CursorShape::Hollow || focused) {
+                    paint_cursor(&editor, shape, block, inverted, window, cx);
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        let prompt = h_flex()
+            .items_start()
+            .child(
+                div()
+                    .pt_2()
+                    .text_color(mode_color)
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child("❯"),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .child(HiddenCaret::new(
+                        Textarea::new(&self.editor).appearance(false),
+                        self.editor.clone(),
+                    ))
+                    .child(cursor),
+            );
+        let command_line = (mode == Mode::Command).then(|| {
+            let mut caret = div().child(" ");
+            if blink_on {
+                caret = caret.bg(block).text_color(inverted);
+            }
+            h_flex()
+                .flex_1()
+                .child(SharedString::from(format!(":{}", self.command)))
+                .child(caret)
+        });
         let status = h_flex()
             .gap_2()
-            .text_sm()
+            .text_xs()
+            .text_color(muted)
+            .children(command_line)
+            .child(
+                div()
+                    .flex_1()
+                    .child(SharedString::from(self.pending_keys())),
+            )
             .child(
                 div()
                     .id("input-mode")
-                    .px_1()
-                    .text_color(theme.background)
-                    .bg(badge_color)
-                    .child(mode_label(mode)),
-            )
-            .child(match mode {
-                Mode::Command => div()
-                    .flex_1()
-                    .child(SharedString::from(format!(":{}▏", self.command))),
-                _ => div()
-                    .flex_1()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(self.pending_keys())),
-            });
+                    .text_color(mode_color)
+                    .child(SharedString::from(format!("-- {} --", mode_label(mode)))),
+            );
         v_flex()
             .id("crest-input")
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
-            .gap_1()
-            .child(Textarea::new(&self.editor))
+            .font_family(theme.mono_font_family.clone())
+            .child(prompt)
             .child(status)
     }
 }
@@ -596,6 +686,26 @@ mod tests {
             view.update(cx, |view, cx| view.set_text("de vuelta", window, cx));
         });
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "de vuelta"));
+    }
+
+    #[gpui::test]
+    fn the_cursor_blinks_and_stays_on_while_typing(cx: &mut TestAppContext) {
+        let (view, cx, _events) = input(cx);
+        let visible = |cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.cursor_visible());
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(visible(cx));
+        cx.executor().advance_clock(BLINK_INTERVAL);
+        cx.run_until_parked();
+        assert!(!visible(cx), "blinked off");
+        cx.simulate_input("a");
+        assert!(visible(cx), "a key turns it on");
+        cx.executor().advance_clock(BLINK_INTERVAL / 2);
+        cx.run_until_parked();
+        assert!(visible(cx), "still typing");
+        cx.executor().advance_clock(BLINK_INTERVAL / 2);
+        cx.run_until_parked();
+        assert!(!visible(cx), "blinks again a whole interval after the key");
     }
 
     #[gpui::test]
