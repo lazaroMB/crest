@@ -297,7 +297,7 @@ pub async fn start(
     }
 
     let port: Arc<dyn McpPort> = Arc::new(TimedMcp {
-        inner: Arc::clone(&manager),
+        inner: Arc::clone(&manager) as Arc<dyn McpPort>,
         timeouts,
     });
     match port.list_tools().await {
@@ -319,9 +319,9 @@ pub async fn start(
     (Some(McpServers { manager, statuses }), warnings)
 }
 
-/// The manager with a time limit per server for each call.
+/// A port with a time limit per server for each call.
 struct TimedMcp {
-    inner: Arc<McpManager>,
+    inner: Arc<dyn McpPort>,
     timeouts: HashMap<String, Duration>,
 }
 
@@ -447,6 +447,58 @@ mod tests {
         let msg = pending_warning(&stdio("repo", "b", ConfigOrigin::Workspace));
         assert!(msg.contains("`b --x`"), "{msg}");
         assert!(msg.contains("crest --trust-mcp repo"), "{msg}");
+    }
+
+    /// A server whose `slow` tool never answers.
+    struct Hanging;
+
+    #[async_trait]
+    impl McpPort for Hanging {
+        async fn list_tools(&self) -> Result<Vec<application::ports::mcp::McpTool>, McpError> {
+            Ok(Vec::new())
+        }
+
+        async fn call_tool(
+            &self,
+            _server: &str,
+            name: &str,
+            _input: serde_json::Value,
+        ) -> Result<McpToolResult, McpError> {
+            if name == "slow" {
+                std::future::pending::<()>().await;
+            }
+            Ok(McpToolResult {
+                content: Vec::new(),
+                is_error: false,
+            })
+        }
+
+        async fn servers(&self) -> Vec<McpServerStatus> {
+            Vec::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn each_server_has_its_own_call_timeout() {
+        let port = TimedMcp {
+            inner: Arc::new(Hanging),
+            timeouts: HashMap::from([("short".to_owned(), Duration::from_millis(50))]),
+        };
+        let err = port
+            .call_tool("short", "slow", serde_json::Value::Null)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            McpError::Timeout {
+                server: "short".into()
+            }
+        );
+        assert!(
+            port.call_tool("short", "fast", serde_json::Value::Null)
+                .await
+                .is_ok()
+        );
     }
 
     #[test]
