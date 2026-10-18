@@ -17,5 +17,12 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+application = { workspace = true, features = ["testing"] }
+# The example server (`examples/echo_server.rs`) is an rmcp server.
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+schemars.workspace = true
+serde.workspace = true
+
 [lints]
 workspace = true
