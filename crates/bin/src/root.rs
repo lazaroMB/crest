@@ -23,6 +23,7 @@ use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{ConfigSources, PluginHostPort};
+use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
@@ -34,7 +35,7 @@ use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use domain::conversation::Session;
-use domain::model::ModelRole;
+use domain::model::{ModelPolicy, ModelRole};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -132,6 +133,11 @@ pub struct App {
     pub warnings: Vec<String>,
     /// The MCP servers that were started, if any.
     pub mcp: Option<McpServers>,
+    /// File search of the workspace (rg/fzf), for the tree and pickers.
+    pub file_search: Arc<dyn FileSearchPort>,
+    /// Text search of the workspace (rg), for the `<leader>fg` picker.
+    pub content_search: Arc<dyn ContentSearchPort>,
+    models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
     store: Option<Arc<dyn SessionStorePort>>,
@@ -147,12 +153,31 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
+    /// Emits an event to the front end (and records it in the timeline
+    /// that is saved).
+    pub fn emit(&self, event: DomainEvent) {
+        self.events.emit(event);
+    }
+
     /// Emits a warning to the front end.
     pub fn warn(&self, message: impl Into<String>) {
-        self.events.emit(DomainEvent::Notice {
+        self.emit(DomainEvent::Notice {
             level: NoticeLevel::Warning,
             message: message.into(),
         });
+    }
+
+    /// The model policy the agent resolves models with.
+    #[must_use]
+    pub fn model_policy(&self) -> &ModelPolicy {
+        &self.models
+    }
+
+    /// Replaces the session with a new, empty one (`:clear`). The old one
+    /// stays in the store.
+    pub fn new_session(&mut self) {
+        self.session = Session::new(self.workspace.as_path().display().to_string(), now_ms());
+        *self.timeline.lock().unwrap_or_else(PoisonError::into_inner) = TimelineState::new();
     }
 
     /// The session as it would be stored: history, timeline and the
@@ -259,6 +284,8 @@ pub async fn build_app(
     };
 
     let search = Arc::new(search);
+    let file_search: Arc<dyn FileSearchPort> = search.clone();
+    let content_search: Arc<dyn ContentSearchPort> = search.clone();
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     let mut tools = ToolRegistry::new();
@@ -320,6 +347,7 @@ pub async fn build_app(
         approval: frontend.approval,
         telemetry,
     };
+    let models = policy.clone();
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(system_prompt(&root))
         .with_compaction(CompactionPolicy::default());
@@ -344,6 +372,9 @@ pub async fn build_app(
         workspace: root,
         warnings,
         mcp,
+        file_search,
+        content_search,
+        models,
         events,
         timeline,
         store,
