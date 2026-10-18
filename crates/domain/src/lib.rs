@@ -1,0 +1,4 @@
+//! Domain types and pure rules for crest.
+//!
+//! This crate must not depend on any other crate of the project, nor on
+//! tokio or any I/O.
