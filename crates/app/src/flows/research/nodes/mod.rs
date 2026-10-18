@@ -55,7 +55,7 @@ pub mod experiments;
 // pub mod prototype;
 
 // T5.8: Spec
-// pub mod spec;
+pub mod spec;
 
 // T5.8: Plan
 // pub mod plan;
@@ -101,7 +101,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Prototype => None,
 
         // T5.8: Some(Arc::new(spec::<Type>::new()))
-        Stage::Spec => None,
+        Stage::Spec => Some(Arc::new(spec::Spec::new())),
 
         // T5.8: Some(Arc::new(plan::<Type>::new()))
         Stage::Plan => None,
