@@ -3,7 +3,11 @@
 //! [`LocalShell`] runs `run_command` requests as child processes of crest:
 //! the program is spawned directly (never through `sh -c`, so arguments are
 //! passed verbatim and nothing is expanded), with the workspace root as
-//! working directory and an empty stdin.
+//! working directory and an empty stdin. Stdout and stderr are captured up
+//! to [`MAX_CAPTURE_BYTES`] each; the rest is discarded and the output is
+//! marked `truncated`.
+
+mod capture;
 
 use std::process::Stdio;
 
@@ -11,6 +15,9 @@ use application::ports::shell::{CommandOutput, RunCommandRequest, ShellError, Sh
 use async_trait::async_trait;
 use domain::workspace::WorkspaceRoot;
 use tokio::process::Command;
+
+use crate::capture::Capture;
+pub use crate::capture::MAX_CAPTURE_BYTES;
 
 /// [`ShellPort`] backed by [`tokio::process`], running every command in the
 /// workspace root.
@@ -47,20 +54,26 @@ impl LocalShell {
 #[async_trait]
 impl ShellPort for LocalShell {
     async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
-        let child = self
+        let mut child = self
             .command(&request)
             .spawn()
             .map_err(|err| ShellError::Spawn(format!("{}: {err}", request.command)))?;
-        let output = child
-            .wait_with_output()
-            .await
-            .map_err(|err| ShellError::Io(err.to_string()))?;
+        let mut stdout = Capture::new(MAX_CAPTURE_BYTES);
+        let mut stderr = Capture::new(MAX_CAPTURE_BYTES);
+        let (read_out, read_err) = tokio::join!(
+            stdout.read_from(child.stdout.take()),
+            stderr.read_from(child.stderr.take())
+        );
+        let io = |err: std::io::Error| ShellError::Io(err.to_string());
+        read_out.map_err(io)?;
+        read_err.map_err(io)?;
+        let status = child.wait().await.map_err(io)?;
         Ok(CommandOutput {
-            status: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: status.code(),
+            truncated: stdout.truncated() || stderr.truncated(),
+            stdout: stdout.text(),
+            stderr: stderr.text(),
             timed_out: false,
-            truncated: false,
         })
     }
 }
@@ -111,5 +124,20 @@ mod tests {
         assert!(!out.success());
         assert!(out.status.is_some_and(|code| code != 0));
         assert!(out.stderr.contains("crest-missing-file"), "{}", out.stderr);
+    }
+
+    #[tokio::test]
+    async fn huge_output_is_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = shell(&dir)
+            .run(RunCommandRequest::new(
+                "head",
+                ["-c", "5000000", "/dev/zero"],
+            ))
+            .await
+            .unwrap();
+        assert!(out.success());
+        assert!(out.truncated);
+        assert_eq!(out.stdout.len(), MAX_CAPTURE_BYTES);
     }
 }
