@@ -27,6 +27,7 @@ adapter-lua.workspace = true
 adapter-mcp.workspace = true
 adapter-telemetry.workspace = true
 ui.workspace = true
+anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
 
