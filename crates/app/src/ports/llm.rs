@@ -517,7 +517,8 @@ enum BlockState {
 /// [`Message`], its usage and its stop reason.
 ///
 /// Feed every event with [`push`](Self::push) and call
-/// [`finish`](Self::finish) after the stream ends. A new
+/// [`finish`](Self::finish) after the stream ends (or
+/// [`interrupt`](Self::interrupt) if the user cancelled it). A new
 /// [`LlmEvent::MessageStart`] discards everything accumulated so far.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MessageAssembler {
@@ -624,6 +625,32 @@ impl MessageAssembler {
             stop_reason,
             citations: self.citations,
         })
+    }
+
+    /// Builds what was received before the user interrupted the stream,
+    /// with [`StopReason::Interrupted`].
+    ///
+    /// Text and thinking are kept; tool uses are dropped, finished or not,
+    /// because a tool call without its result cannot be sent back to the
+    /// model.
+    #[must_use]
+    pub fn interrupt(self) -> AssembledMessage {
+        let parts = self
+            .blocks
+            .into_iter()
+            .filter_map(|(index, state)| match state {
+                BlockState::Open(block) => close(index, block).ok().flatten(),
+                BlockState::Stopped(part) => part,
+            })
+            .filter(|part| !matches!(part, ContentPart::ToolUse { .. }))
+            .collect();
+        AssembledMessage {
+            message: Message::assistant(parts),
+            model: self.model,
+            usage: self.usage,
+            stop_reason: StopReason::Interrupted,
+            citations: self.citations,
+        }
     }
 
     /// The open block at `index`.
@@ -1019,5 +1046,25 @@ mod tests {
         .unwrap();
         assert_eq!(out.message.content, vec![ContentPart::text("ok")]);
         assert_eq!(out.model, Some(ModelId::new("claude-haiku-5-5")));
+    }
+
+    #[test]
+    fn interrupt_keeps_text_and_drops_tool_uses() {
+        let mut asm = MessageAssembler::new();
+        for event in [
+            start(),
+            text(0, "voy a buscar"),
+            block_stop(0),
+            tool_start(1, "toolu_a", "grep"),
+            json(1, "{}"),
+            block_stop(1),
+            tool_start(2, "toolu_b", "grep"),
+            json(2, "{\"pat"),
+        ] {
+            asm.push(event).unwrap();
+        }
+        let out = asm.interrupt();
+        assert_eq!(out.message.content, vec![ContentPart::text("voy a buscar")]);
+        assert_eq!(out.stop_reason, StopReason::Interrupted);
     }
 }
