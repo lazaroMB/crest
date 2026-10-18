@@ -262,6 +262,62 @@ impl TypedTool for ShowMermaidTool {
     }
 }
 
+/// Input of `show_markdown`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowMarkdown {
+    /// Optional document title, shown in its header.
+    pub title: Option<String>,
+    /// Markdown source (CommonMark with tables and fenced code).
+    pub source: String,
+}
+
+/// `show_markdown`: shows a markdown document with document typography.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowMarkdownTool;
+
+const SHOW_MARKDOWN: &str = "show_markdown";
+
+#[async_trait]
+impl TypedTool for ShowMarkdownTool {
+    type Input = ShowMarkdown;
+
+    fn name(&self) -> &str {
+        SHOW_MARKDOWN
+    }
+
+    fn description(&self) -> &str {
+        "Shows a markdown document in the user's timeline as a separate, \
+         well typeset page the user can toggle to source. Use it for long, \
+         self-contained documents worth reading on their own: a report, a \
+         plan, a design or review write-up. Short answers belong in your \
+         normal reply. Returns only a short confirmation: do not repeat the \
+         document in your reply."
+    }
+
+    fn effect(&self, _input: &ShowMarkdown) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowMarkdown,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        if input.source.trim().is_empty() {
+            return Err(invalid(SHOW_MARKDOWN, "document source is empty"));
+        }
+        let title = input.title.as_deref();
+        let confirmation = source_confirmation("Markdown document", title, &input.source);
+        let subject = source_subject(title, &input.source);
+        let block = BlockKind::Markdown {
+            title: input.title,
+            source: input.source,
+        };
+        Ok(show(subject, block, confirmation))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -506,5 +562,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(prepared.subject, "sequenceDiagram");
+    }
+
+    #[test]
+    fn show_markdown_definition() {
+        insta::assert_json_snapshot!("show_markdown_definition", definition(ShowMarkdownTool));
+    }
+
+    #[tokio::test]
+    async fn show_markdown_adds_a_document_and_confirms_briefly() {
+        let source = "# Plan\n\n- one\n- two\n";
+        let out = call(
+            ShowMarkdownTool,
+            json!({ "title": "plan.md", "source": source }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out.text_content(),
+            "Markdown document 'plan.md' shown to the user (4 lines)."
+        );
+        assert_eq!(
+            out.block_update,
+            Some(BlockKind::Markdown {
+                title: Some("plan.md".into()),
+                source: source.into(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn show_markdown_rejects_an_empty_source() {
+        assert_eq!(
+            invalid_message(call(ShowMarkdownTool, json!({ "source": "" })).await),
+            "document source is empty"
+        );
     }
 }

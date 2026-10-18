@@ -1,0 +1,31 @@
+---
+source: crates/app/src/tools/components.rs
+expression: definition(ShowMarkdownTool)
+---
+{
+  "name": "show_markdown",
+  "description": "Shows a markdown document in the user's timeline as a separate, well typeset page the user can toggle to source. Use it for long, self-contained documents worth reading on their own: a report, a plan, a design or review write-up. Short answers belong in your normal reply. Returns only a short confirmation: do not repeat the document in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Optional document title, shown in its header."
+      },
+      "source": {
+        "type": "string",
+        "description": "Markdown source (CommonMark with tables and fenced code)."
+      }
+    },
+    "required": [
+      "source"
+    ],
+    "description": "Input of `show_markdown`.",
+    "title": "ShowMarkdown",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}
