@@ -167,6 +167,19 @@ pub enum ContentPart {
         /// Base64-encoded image bytes.
         data: String,
     },
+    /// A provider-specific block kept opaque, such as a server tool call
+    /// and its result (`server_tool_use`, `web_search_tool_result`,
+    /// `web_fetch_tool_result` in the Anthropic API).
+    ///
+    /// The provider requires these blocks, including their encrypted
+    /// fields, to be sent back unchanged in later turns. The domain does not
+    /// interpret them: `raw` is the block's JSON exactly as the provider
+    /// sent it, and the adapter that produced it echoes it verbatim. Other
+    /// adapters should drop blocks they do not recognise.
+    ProviderBlock {
+        /// The block as provider JSON.
+        raw: serde_json::Value,
+    },
 }
 
 impl ContentPart {
@@ -468,6 +481,14 @@ mod tests {
                 media_type: "image/jpeg".into(),
                 data: "/9j/4AAQ".into(),
             },
+            ContentPart::ProviderBlock {
+                raw: serde_json::json!({
+                    "type": "server_tool_use",
+                    "id": "srvtoolu_1",
+                    "input": { "query": "rust" },
+                    "name": "web_search"
+                }),
+            },
         ]
     }
 
@@ -476,6 +497,22 @@ mod tests {
         for part in all_parts() {
             round_trip(&part);
         }
+    }
+
+    #[test]
+    fn provider_block_keeps_raw_json_verbatim() {
+        let raw = serde_json::json!({
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_1",
+            "content": [{ "type": "web_search_result", "encrypted_content": "Eq..." }]
+        });
+        let part = ContentPart::ProviderBlock { raw: raw.clone() };
+        let json = serde_json::to_value(&part).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "type": "provider_block", "raw": raw })
+        );
+        round_trip(&part);
     }
 
     #[test]

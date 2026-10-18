@@ -70,6 +70,8 @@ pub fn content_part(part: &ContentPart) -> Option<WireContentBlock> {
             cache_control: None,
         },
         ContentPart::Image { media_type, data } => image(media_type, data),
+        // Echoed verbatim: `Unknown` serialises its JSON unchanged.
+        ContentPart::ProviderBlock { raw } => WireContentBlock::Unknown(raw.clone()),
     })
 }
 
@@ -92,12 +94,17 @@ fn image(media_type: &str, data: &str) -> WireContentBlock {
 
 /// Converts a response block to a domain content part.
 ///
-/// Returns `None` for blocks the domain does not model yet: server tool
-/// calls and results, client-only blocks (`tool_result`) and unknown
-/// types. Citations on text are not kept; read them with [`citation`].
+/// Server tool calls and results become [`ContentPart::ProviderBlock`]
+/// with their full JSON, since the API requires them back unchanged in
+/// later turns. Returns `None` for client-only blocks (`tool_result`) and
+/// unknown types. Citations on text are not kept; read them with
+/// [`citation`].
 #[must_use]
 pub fn response_block(block: WireContentBlock) -> Option<ContentPart> {
     match block {
+        block @ (WireContentBlock::ServerToolUse { .. }
+        | WireContentBlock::WebSearchToolResult { .. }
+        | WireContentBlock::WebFetchToolResult { .. }) => provider_block(&block),
         WireContentBlock::Text { text, .. } => Some(ContentPart::Text { text }),
         WireContentBlock::Thinking {
             thinking,
@@ -116,12 +123,16 @@ pub fn response_block(block: WireContentBlock) -> Option<ContentPart> {
             source: ImageSource::Base64 { media_type, data },
             ..
         } => Some(ContentPart::Image { media_type, data }),
-        WireContentBlock::ToolResult { .. }
-        | WireContentBlock::ServerToolUse { .. }
-        | WireContentBlock::WebSearchToolResult { .. }
-        | WireContentBlock::WebFetchToolResult { .. }
-        | WireContentBlock::Unknown(_) => None,
+        WireContentBlock::ToolResult { .. } | WireContentBlock::Unknown(_) => None,
     }
+}
+
+/// Wraps a wire block as an opaque [`ContentPart::ProviderBlock`].
+#[must_use]
+pub fn provider_block(block: &WireContentBlock) -> Option<ContentPart> {
+    serde_json::to_value(block)
+        .ok()
+        .map(|raw| ContentPart::ProviderBlock { raw })
 }
 
 /// Converts a web search citation to the port's [`Citation`]. Document
@@ -460,7 +471,6 @@ mod tests {
             {"type": "thinking", "thinking": "", "signature": ""},
             {"type": "text", "text": "hi", "citations": null},
             {"type": "tool_use", "id": "toolu_1", "name": "grep", "input": {"q": "x"}},
-            {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}},
             {"type": "container_upload", "file_id": "f"}
         ]))
         .unwrap();
@@ -508,6 +518,32 @@ mod tests {
         for part in parts {
             assert_eq!(content_part(&part).and_then(response_block), Some(part));
         }
+    }
+
+    #[test]
+    fn server_tool_blocks_round_trip_as_provider_blocks() {
+        let raw = json!([
+            {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "q"}, "caller": {"type": "direct"}},
+            {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": [
+                {"type": "web_search_result", "url": "https://a.b", "title": "A", "encrypted_content": "Eq", "page_age": null}
+            ]},
+            {"type": "web_fetch_tool_result", "tool_use_id": "srvtoolu_2", "content": {"type": "web_fetch_tool_result_error", "error_code": "url_not_accessible"}}
+        ]);
+        let blocks: Vec<WireContentBlock> = serde_json::from_value(raw.clone()).unwrap();
+        let parts: Vec<ContentPart> = blocks.into_iter().filter_map(response_block).collect();
+        assert_eq!(parts.len(), 3);
+        assert!(
+            matches!(&parts[0], ContentPart::ProviderBlock { raw } if raw["name"] == "web_search")
+        );
+        let echoed = message(&Message::assistant(parts));
+        // `page_age: null` is dropped by the typed model; everything the API
+        // needs back (ids, encrypted content, caller) is kept.
+        let mut expected = raw;
+        expected[1]["content"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("page_age");
+        assert_eq!(serde_json::to_value(&echoed.content).unwrap(), expected);
     }
 
     #[test]

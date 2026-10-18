@@ -55,5 +55,16 @@ expression: all_parts()
     "type": "image",
     "media_type": "image/jpeg",
     "data": "/9j/4AAQ"
+  },
+  {
+    "type": "provider_block",
+    "raw": {
+      "type": "server_tool_use",
+      "id": "srvtoolu_1",
+      "input": {
+        "query": "rust"
+      },
+      "name": "web_search"
+    }
   }
 ]
