@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use application::ports::plugin::ConfigSources;
 
 mod api;
+mod merge;
 mod parse;
 
 /// Directory under the config home that holds crest's files.
