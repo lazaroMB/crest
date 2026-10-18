@@ -523,6 +523,38 @@ pub struct ServerToolDef {
     /// models without programmatic tool calling must send `["direct"]`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub allowed_callers: Vec<&'static str>,
+    /// Only these domains may be searched or fetched. The API rejects a
+    /// tool with both `allowed_domains` and `blocked_domains`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_domains: Vec<String>,
+    /// These domains are never searched or fetched.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocked_domains: Vec<String>,
+    /// Approximate location to localise search results (web search only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_location: Option<UserLocation>,
+    /// Cap on the tokens of a fetched document (web fetch only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_content_tokens: Option<u32>,
+}
+
+/// `user_location` of the web search tool: `{"type": "approximate", ...}`.
+/// Every field is optional.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "approximate")]
+pub struct UserLocation {
+    /// City, e.g. `San Francisco`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    /// Region or state, e.g. `California`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// ISO 3166-1 alpha-2 country code, e.g. `US`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// IANA time zone, e.g. `America/Los_Angeles`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 /// `allowed_callers` value for direct calls (no dynamic filtering).
@@ -539,6 +571,10 @@ impl ServerToolDef {
             citations: None,
             cache_control: None,
             allowed_callers: Vec::new(),
+            allowed_domains: Vec::new(),
+            blocked_domains: Vec::new(),
+            user_location: None,
+            max_content_tokens: None,
         }
     }
 
@@ -553,6 +589,10 @@ impl ServerToolDef {
             citations: Some(CitationsConfig { enabled: true }),
             cache_control: None,
             allowed_callers: Vec::new(),
+            allowed_domains: Vec::new(),
+            blocked_domains: Vec::new(),
+            user_location: None,
+            max_content_tokens: None,
         }
     }
 }
@@ -1238,6 +1278,39 @@ mod request_tests {
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
             })
+        );
+    }
+
+    #[test]
+    fn server_tool_filters_use_api_shapes() {
+        let mut search = ServerToolDef::web_search(None);
+        search.allowed_domains = vec!["docs.rs".into()];
+        search.user_location = Some(UserLocation {
+            country: Some("MX".into()),
+            timezone: Some("America/Mexico_City".into()),
+            ..UserLocation::default()
+        });
+        let mut fetch = ServerToolDef::web_fetch(Some(3));
+        fetch.blocked_domains = vec!["example.com".into()];
+        fetch.max_content_tokens = Some(50_000);
+        assert_eq!(
+            serde_json::to_value([search, fetch]).unwrap(),
+            json!([
+                {
+                    "type": "web_search_20260318",
+                    "name": "web_search",
+                    "allowed_domains": ["docs.rs"],
+                    "user_location": {"type": "approximate", "country": "MX", "timezone": "America/Mexico_City"}
+                },
+                {
+                    "type": "web_fetch_20260318",
+                    "name": "web_fetch",
+                    "max_uses": 3,
+                    "citations": {"enabled": true},
+                    "blocked_domains": ["example.com"],
+                    "max_content_tokens": 50000
+                }
+            ])
         );
     }
 
