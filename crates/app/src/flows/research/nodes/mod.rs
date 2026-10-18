@@ -52,7 +52,7 @@ pub mod brainstorm;
 pub mod modeling;
 
 // T5.7d: Prototype
-// pub mod prototype;
+pub mod prototype;
 
 // T5.8: Spec
 pub mod spec;
@@ -98,7 +98,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Modeling => Some(Arc::new(modeling::Modeling::new())),
 
         // T5.7d: Some(Arc::new(prototype::<Type>::new()))
-        Stage::Prototype => None,
+        Stage::Prototype => Some(Arc::new(prototype::Prototype::new())),
 
         // T5.8: Some(Arc::new(spec::<Type>::new()))
         Stage::Spec => Some(Arc::new(spec::Spec::new())),
