@@ -500,4 +500,18 @@ mod tests {
         assert_eq!((grep.context, grep.limit), (2, 100));
         assert!(!grep.fixed && !grep.ignore_case);
     }
+
+    #[test]
+    fn ports_are_object_safe_and_schemas_carry_defaults() {
+        fn assert_dyn(
+            _: Option<std::sync::Arc<dyn FileSearchPort>>,
+            _: Option<std::sync::Arc<dyn ContentSearchPort>>,
+        ) {
+        }
+        assert_dyn(None, None);
+
+        let schema = serde_json::to_value(schemars::schema_for!(GrepRequest)).unwrap();
+        assert_eq!(schema["properties"]["context"]["default"], 2);
+        assert_eq!(schema["required"], serde_json::json!(["pattern"]));
+    }
 }

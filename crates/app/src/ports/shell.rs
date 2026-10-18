@@ -261,4 +261,10 @@ mod tests {
             assert_eq!(effect("git", &["diff", arg]), ToolEffect::Execute, "{arg}");
         }
     }
+
+    #[test]
+    fn port_is_object_safe() {
+        fn assert_dyn(_: Option<std::sync::Arc<dyn ShellPort>>) {}
+        assert_dyn(None);
+    }
 }

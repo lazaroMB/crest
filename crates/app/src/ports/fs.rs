@@ -418,4 +418,10 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn port_is_object_safe() {
+        fn assert_dyn(_: Option<std::sync::Arc<dyn FileSystemPort>>) {}
+        assert_dyn(None);
+    }
 }
