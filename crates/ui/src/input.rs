@@ -213,6 +213,15 @@ impl InputView {
         }
     }
 
+    /// Inserts `text` at the cursor of the prompt editor, switching to
+    /// insert mode (e.g. a `@path` reference chosen in a picker).
+    pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_mode(Mode::Insert, window, cx);
+        let text = text.to_owned();
+        self.editor
+            .update(cx, |editor, cx| editor.insert(text, window, cx));
+    }
+
     /// Switches mode, moving focus and notifying listeners.
     pub fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if mode == Mode::Command {
