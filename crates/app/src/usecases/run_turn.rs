@@ -33,6 +33,15 @@
 //! turn finishes with [`StopReason::Interrupted`]. The session can then be
 //! sent to the model again.
 //!
+//! With a [`CompactionPolicy`] ([`AgentService::with_compaction`]) the
+//! context is estimated before each model call (the input tokens reported
+//! by the previous call plus the messages added since, or ~4 bytes per
+//! token when nothing was reported yet). Past the threshold, the oldest
+//! finished turns are summarized by the `compact` role (see
+//! [`super::compact`]) and the call goes on with the shorter history; an
+//! `Info` `Notice` reports it. A failed summary is a warning `Notice`, not
+//! an error.
+//!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::HashMap;
@@ -61,6 +70,11 @@ use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, T
 pub use super::approval::SharedPermissions;
 use super::approval::{ApprovalGate, PendingApproval, UserVerdict, policy_denial};
 use super::cancel::{CancelToken, Interrupted};
+pub use super::compact::CompactionPolicy;
+use super::compact::{
+    compactable_turns, context_tokens, estimate_tokens, replace_turns,
+    summarize as summarize_history, summary_request, summary_turn, transcript,
+};
 
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
@@ -163,6 +177,7 @@ pub struct AgentService {
     models: ModelPolicy,
     gate: ApprovalGate,
     plugins: Option<Arc<dyn PluginHostPort>>,
+    compaction: Option<CompactionPolicy>,
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
@@ -198,6 +213,7 @@ impl AgentService {
             models,
             gate: ApprovalGate::new(Arc::clone(&deps.approval), permissions),
             plugins: None,
+            compaction: None,
             deps,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
@@ -217,6 +233,14 @@ impl AgentService {
     #[must_use]
     pub fn with_plugin_host(mut self, host: Arc<dyn PluginHostPort>) -> Self {
         self.plugins = Some(host);
+        self
+    }
+
+    /// Compacts the history with the `compact` role when it passes the
+    /// threshold of `policy`, or when the model reports it too long.
+    #[must_use]
+    pub fn with_compaction(mut self, policy: CompactionPolicy) -> Self {
+        self.compaction = Some(policy);
         self
     }
 
@@ -296,6 +320,7 @@ impl AgentService {
             model: &model,
             span,
             model_calls: 0,
+            context: None,
             cancel: opts.cancel,
         };
         let result = run.run().await;
@@ -335,12 +360,33 @@ impl AgentService {
 /// State of one running turn.
 struct TurnRun<'a> {
     service: &'a AgentService,
-    session: &'a Session,
+    session: &'a mut Session,
     turn: &'a mut Turn,
     model: &'a ResolvedModel,
     span: SpanId,
     model_calls: u32,
+    /// Context reported by the last model call, for compaction.
+    context: Option<ContextMark>,
     cancel: CancelToken,
+}
+
+/// Context size reported by a model call.
+#[derive(Debug, Clone, Copy)]
+struct ContextMark {
+    /// Tokens read and written by the call.
+    tokens: u64,
+    /// Messages of the turn the call already accounts for.
+    messages: usize,
+}
+
+/// What an attempt to compact the history did.
+enum Compaction {
+    /// The oldest turns were replaced by a summary.
+    Done,
+    /// Nothing to compact, or the summary failed.
+    Skipped,
+    /// The turn was cancelled meanwhile.
+    Interrupted,
 }
 
 /// One answer of the model, complete or cut by a cancellation.
@@ -379,11 +425,15 @@ impl TurnRun<'_> {
                     limit: self.service.max_iterations,
                 });
             }
+            if self.compact_if_needed().await {
+                return Ok(StopReason::Interrupted);
+            }
+            let answer = self.call_model().await?;
             let Answer {
                 assembled,
                 blocks,
                 interrupted,
-            } = self.call_model().await?;
+            } = answer;
             if interrupted {
                 for block_id in blocks.tool_calls.values() {
                     self.emit_cancelled(*block_id);
@@ -497,6 +547,14 @@ impl TurnRun<'_> {
             error,
         });
         let answer = result?;
+        let usage = answer.assembled.usage;
+        let tokens = context_tokens(&usage).saturating_add(usage.output_tokens);
+        if tokens > 0 {
+            self.context = Some(ContextMark {
+                tokens,
+                messages: self.turn.messages.len() + 1,
+            });
+        }
         self.turn.usage += answer.assembled.usage;
         self.emit(DomainEvent::UsageUpdated {
             turn: self.turn.usage,
@@ -504,6 +562,83 @@ impl TurnRun<'_> {
             cost_usd: None,
         });
         Ok(answer)
+    }
+
+    /// Estimated tokens of the next request.
+    fn context_estimate(&self) -> u64 {
+        if let Some(mark) = self.context {
+            let added = self.turn.messages.get(mark.messages..).unwrap_or_default();
+            return mark.tokens.saturating_add(estimate_tokens(added));
+        }
+        let history = estimate_tokens(self.session.history().chain(&self.turn.messages));
+        let tools = serde_json::to_string(&self.service.tools.definitions()).map_or(0, |s| s.len());
+        let fixed = self.service.system_prompt.len() + tools;
+        history.saturating_add(u64::try_from(fixed.div_ceil(4)).unwrap_or(u64::MAX))
+    }
+
+    /// Compacts before a model call when the history passes the threshold.
+    /// Returns `true` when the turn was cancelled meanwhile.
+    async fn compact_if_needed(&mut self) -> bool {
+        let Some(policy) = self.service.compaction else {
+            return false;
+        };
+        if !policy.exceeded(self.context_estimate()) {
+            return false;
+        }
+        matches!(self.compact(policy).await, Compaction::Interrupted)
+    }
+
+    /// Replaces the oldest finished turns of the session by a summary made
+    /// with the `compact` role.
+    async fn compact(&mut self, policy: CompactionPolicy) -> Compaction {
+        let Some(count) = compactable_turns(self.session, policy.keep_recent_turns) else {
+            return Compaction::Skipped;
+        };
+        let model = self.service.models.resolve(&ResolveRequest {
+            role: ModelRole::Compact,
+            turn_override: None,
+            pinned_role: Some(ModelRole::Compact),
+        });
+        let req = summary_request(model.clone(), &transcript(&self.session.turns[..count]));
+        let started = Instant::now();
+        let call = summarize_history(self.service.deps.llm.as_ref(), req);
+        let Ok(result) = self.cancel.run(call).await else {
+            return Compaction::Interrupted;
+        };
+        self.service.deps.telemetry.llm_call(LlmCallRecord {
+            parent: self.span,
+            model: result
+                .as_ref()
+                .ok()
+                .and_then(|summary| summary.model.clone())
+                .unwrap_or_else(|| model.spec.id.clone()),
+            usage: result.as_ref().map(|s| s.usage).unwrap_or_default(),
+            latency_ms: elapsed_ms(started),
+            error: result.as_ref().err().map(ToString::to_string),
+        });
+        let summary = match result {
+            Ok(summary) => summary,
+            Err(err) => {
+                self.emit(DomainEvent::Notice {
+                    level: NoticeLevel::Warning,
+                    message: format!("no se pudo compactar el historial: {err}"),
+                });
+                return Compaction::Skipped;
+            }
+        };
+        let turn = summary_turn(&summary.text, &self.session.turns[..count], summary.usage);
+        replace_turns(self.session, count, turn);
+        self.context = None;
+        self.emit(DomainEvent::Notice {
+            level: NoticeLevel::Info,
+            message: format!("historial compactado: {count} turnos → resumen"),
+        });
+        self.emit(DomainEvent::UsageUpdated {
+            turn: self.turn.usage,
+            session: self.session.total_usage() + self.turn.usage,
+            cost_usd: None,
+        });
+        Compaction::Done
     }
 
     /// Streams one answer. On cancellation the stream is dropped (closing
@@ -868,6 +1003,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod approval_tests;
 #[cfg(test)]
 mod cancel_tests;
+#[cfg(test)]
+mod compact_tests;
 #[cfg(test)]
 mod hook_tests;
 #[cfg(test)]
