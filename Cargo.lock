@@ -15,7 +15,12 @@ name = "adapter-fs"
 version = "0.1.0"
 dependencies = [
  "application",
+ "async-trait",
  "domain",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
