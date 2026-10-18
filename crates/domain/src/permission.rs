@@ -138,6 +138,86 @@ pub enum Decision {
     },
 }
 
+/// Tool name in a [`PermissionRule`] that matches every tool.
+pub const ANY_TOOL: &str = "*";
+
+/// Which subjects (paths or commands) a rule covers.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub enum RuleMatcher {
+    /// Exactly this path or command.
+    Exact(String),
+    /// This path or command and anything below or after it, on a word or
+    /// path boundary: `cargo test` covers `cargo test -p domain` but not
+    /// `cargo testx`; `src` and `src/` cover `src/main.rs` but not `srcx`.
+    Prefix(String),
+    /// Every subject.
+    Any,
+}
+
+impl RuleMatcher {
+    /// Whether `subject` is covered by this matcher.
+    #[must_use]
+    pub fn matches(&self, subject: &str) -> bool {
+        match self {
+            Self::Exact(exact) => subject == exact,
+            Self::Prefix(prefix) => prefix_matches(prefix, subject),
+            Self::Any => true,
+        }
+    }
+}
+
+const fn is_boundary(c: char) -> bool {
+    matches!(c, ' ' | '/')
+}
+
+fn prefix_matches(prefix: &str, subject: &str) -> bool {
+    let Some(rest) = subject.strip_prefix(prefix) else {
+        return false;
+    };
+    rest.is_empty() || prefix.ends_with(is_boundary) || rest.starts_with(is_boundary)
+}
+
+/// What a matching rule does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuleDecision {
+    /// "Allow always": turns an `Ask` into `Allow`.
+    AllowAlways,
+    /// Always deny, whatever the mode.
+    Deny,
+}
+
+/// A user rule, persisted per workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct PermissionRule {
+    /// Tool name the rule applies to, or [`ANY_TOOL`].
+    pub tool: String,
+    /// Subjects covered.
+    pub matcher: RuleMatcher,
+    /// Effect of the rule.
+    pub decision: RuleDecision,
+}
+
+impl PermissionRule {
+    /// A rule for `tool` on subjects covered by `matcher`.
+    #[must_use]
+    pub fn new(tool: impl Into<String>, matcher: RuleMatcher, decision: RuleDecision) -> Self {
+        Self {
+            tool: tool.into(),
+            matcher,
+            decision,
+        }
+    }
+
+    /// Whether the rule covers `request`.
+    #[must_use]
+    pub fn applies_to(&self, request: &ActionRequest) -> bool {
+        (self.tool == ANY_TOOL || self.tool == request.tool)
+            && self.matcher.matches(&request.subject)
+    }
+}
+
 /// Decides, per action, whether to allow, ask or deny.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PermissionPolicy {
@@ -268,5 +348,88 @@ mod tests {
             policy.cycle_mode();
             assert_eq!(policy.decide(&write), decision, "{}", policy.mode);
         }
+    }
+
+    #[test]
+    fn matcher_table() {
+        use RuleMatcher::{Any, Exact, Prefix};
+        let p = |s: &str| Prefix(s.to_owned());
+        let e = |s: &str| Exact(s.to_owned());
+        let cases = [
+            (e("cargo test"), "cargo test", true),
+            (e("cargo test"), "cargo test -p domain", false),
+            (e("src/main.rs"), "src/main.rs", true),
+            (e("src/main.rs"), "src/main.rs.bak", false),
+            (p("cargo test"), "cargo test", true),
+            (p("cargo test"), "cargo test -p domain", true),
+            (p("cargo test"), "cargo testx", false),
+            (p("cargo test"), "cargo tes", false),
+            (p("cargo "), "cargo build", true),
+            (p("src/"), "src/main.rs", true),
+            (p("src/"), "src/a/b.rs", true),
+            (p("src"), "src/main.rs", true),
+            (p("src"), "srcx/main.rs", false),
+            (p("src/"), "src", false),
+            (p(""), "anything", false),
+            (Any, "anything", true),
+            (Any, "", true),
+        ];
+        for (matcher, subject, expected) in cases {
+            assert_eq!(
+                matcher.matches(subject),
+                expected,
+                "{matcher:?} vs {subject:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rule_applies_by_tool_and_subject() {
+        let rule = |tool: &str| {
+            PermissionRule::new(tool, RuleMatcher::Prefix("src/".into()), RuleDecision::Deny)
+        };
+        let cases = [
+            (rule("edit_file"), "edit_file", "src/lib.rs", true),
+            (rule("edit_file"), "write_file", "src/lib.rs", false),
+            (rule("edit_file"), "edit_file", "docs/a.md", false),
+            (rule(ANY_TOOL), "write_file", "src/lib.rs", true),
+            (rule(ANY_TOOL), "write_file", "docs/a.md", false),
+        ];
+        for (rule, tool, subject, expected) in cases {
+            let request = ActionRequest::new(tool, ToolEffect::Write, subject);
+            assert_eq!(
+                rule.applies_to(&request),
+                expected,
+                "{rule:?} vs {request:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rule_serde_round_trip() {
+        let rule = PermissionRule::new(
+            "run_command",
+            RuleMatcher::Prefix("cargo test".into()),
+            RuleDecision::AllowAlways,
+        );
+        let json = serde_json::to_value(&rule).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "tool": "run_command",
+                "matcher": { "kind": "prefix", "value": "cargo test" },
+                "decision": "allow-always",
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<PermissionRule>(json).unwrap(),
+            rule
+        );
+        let any = serde_json::to_value(RuleMatcher::Any).unwrap();
+        assert_eq!(any, serde_json::json!({ "kind": "any" }));
+        assert_eq!(
+            serde_json::from_value::<RuleMatcher>(any).unwrap(),
+            RuleMatcher::Any
+        );
     }
 }
