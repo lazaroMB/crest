@@ -302,6 +302,7 @@ mod tests {
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
     use crate::tools::files::{FileToolPorts, register_file_tools};
+    use crate::usecases::cancel::CancelToken;
     use crate::usecases::run_turn::TurnOutcome;
 
     const LIB: &str = "pub fn check(x: u32) -> bool {\n    x > 3\n}\n";
@@ -584,5 +585,42 @@ mod tests {
             task.input_schema()["required"],
             json!(["description", "prompt"])
         );
+    }
+
+    #[tokio::test]
+    async fn cancelling_the_parent_cancels_the_subagent() {
+        use futures::FutureExt as _;
+
+        let mut parent = Parent::new(vec![
+            task_call(),
+            ScriptedResponse::text("still searching").hang_after(1),
+        ]);
+        let token = CancelToken::new();
+        let opts = TurnOptions::default().with_cancel(token.clone());
+        let llm = parent.llm.clone();
+        let outcome = {
+            let turn = parent.service.run_turn(&mut parent.session, "busca", opts);
+            let mut turn = std::pin::pin!(turn);
+            // Drive the turn until the subagent's stream hangs, then cancel.
+            loop {
+                futures::select_biased! {
+                    outcome = turn.as_mut().fuse() => panic!("finished early: {outcome:?}"),
+                    () = tokio::task::yield_now().fuse() => {}
+                }
+                if llm.requests().len() == 2 && llm.open_streams() == 1 {
+                    break;
+                }
+            }
+            token.cancel();
+            turn.await.unwrap()
+        };
+        assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+        assert_eq!(llm.open_streams(), 0, "the subagent's stream was dropped");
+        assert_eq!(llm.requests().len(), 2);
+        let last = parent.session.history().last().unwrap();
+        assert!(matches!(
+            &last.content[..],
+            [ContentPart::ToolResult { is_error: true, .. }]
+        ));
     }
 }
