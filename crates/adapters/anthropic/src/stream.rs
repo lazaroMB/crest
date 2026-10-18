@@ -19,8 +19,12 @@
 //!   (calls only), accumulate their input internally and, at
 //!   `content_block_stop`, emit [`LlmEvent::ProviderBlock`] with the full
 //!   block JSON followed by [`LlmEvent::BlockStop`].
-//! - `ping`, unknown events, unknown deltas and unknown block types are
-//!   ignored (unknown blocks also swallow their `content_block_stop`).
+//! - Block types this crate does not model (e.g. the code execution
+//!   results that dynamic filtering adds to a web search) are treated like
+//!   server tool results: their JSON is emitted as a `ProviderBlock` so it
+//!   goes back to the API unchanged, as the API requires for every
+//!   assistant block. Their deltas, if any, are ignored.
+//! - `ping`, unknown events and unknown deltas are ignored.
 //! - A stream `error` event becomes a typed [`LlmError`] and ends the
 //!   stream; so does a stream that ends without `message_stop`.
 
@@ -52,7 +56,8 @@ enum Block {
     },
     /// A complete server tool result.
     Provider(WireContentBlock),
-    /// A block type this crate does not handle; ignored.
+    /// A request-only block type (`tool_result`, `image`) in a response;
+    /// ignored.
     Ignored,
 }
 
@@ -200,10 +205,9 @@ impl StreamDecoder {
                 }
             }
             block @ (WireContentBlock::WebSearchToolResult { .. }
-            | WireContentBlock::WebFetchToolResult { .. }) => Block::Provider(block),
-            WireContentBlock::ToolResult { .. }
-            | WireContentBlock::Image { .. }
-            | WireContentBlock::Unknown(_) => {
+            | WireContentBlock::WebFetchToolResult { .. }
+            | WireContentBlock::Unknown(_)) => Block::Provider(block),
+            WireContentBlock::ToolResult { .. } | WireContentBlock::Image { .. } => {
                 tracing::debug!(index, "ignoring content block of an unhandled type");
                 Block::Ignored
             }

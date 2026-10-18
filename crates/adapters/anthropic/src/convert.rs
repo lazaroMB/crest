@@ -94,17 +94,18 @@ fn image(media_type: &str, data: &str) -> WireContentBlock {
 
 /// Converts a response block to a domain content part.
 ///
-/// Server tool calls and results become [`ContentPart::ProviderBlock`]
-/// with their full JSON, since the API requires them back unchanged in
-/// later turns. Returns `None` for client-only blocks (`tool_result`) and
-/// unknown types. Citations on text are not kept; read them with
-/// [`citation`].
+/// Server tool calls and results, and block types this crate does not
+/// model, become [`ContentPart::ProviderBlock`] with their full JSON, since
+/// the API requires assistant blocks back unchanged in later turns. Returns
+/// `None` for request-only blocks (`tool_result`). Citations on text are
+/// not kept; read them with [`citation`].
 #[must_use]
 pub fn response_block(block: WireContentBlock) -> Option<ContentPart> {
     match block {
         block @ (WireContentBlock::ServerToolUse { .. }
         | WireContentBlock::WebSearchToolResult { .. }
         | WireContentBlock::WebFetchToolResult { .. }) => provider_block(&block),
+        WireContentBlock::Unknown(raw) => Some(ContentPart::ProviderBlock { raw }),
         WireContentBlock::Text { text, .. } => Some(ContentPart::Text { text }),
         WireContentBlock::Thinking {
             thinking,
@@ -123,7 +124,7 @@ pub fn response_block(block: WireContentBlock) -> Option<ContentPart> {
             source: ImageSource::Base64 { media_type, data },
             ..
         } => Some(ContentPart::Image { media_type, data }),
-        WireContentBlock::ToolResult { .. } | WireContentBlock::Unknown(_) => None,
+        WireContentBlock::ToolResult { .. } => None,
     }
 }
 
@@ -471,7 +472,8 @@ mod tests {
             {"type": "thinking", "thinking": "", "signature": ""},
             {"type": "text", "text": "hi", "citations": null},
             {"type": "tool_use", "id": "toolu_1", "name": "grep", "input": {"q": "x"}},
-            {"type": "container_upload", "file_id": "f"}
+            {"type": "tool_result", "tool_use_id": "toolu_0"},
+            {"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_1", "content": {}}
         ]))
         .unwrap();
         let parts: Vec<ContentPart> = blocks.into_iter().filter_map(response_block).collect();
@@ -491,6 +493,9 @@ mod tests {
                     id: ToolUseId::new("toolu_1"),
                     name: "grep".into(),
                     input: json!({"q": "x"})
+                },
+                ContentPart::ProviderBlock {
+                    raw: json!({"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_1", "content": {}})
                 },
             ]
         );

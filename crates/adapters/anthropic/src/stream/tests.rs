@@ -217,13 +217,30 @@ fn delta_for_unknown_block_is_a_decode_error() {
 }
 
 #[test]
-fn unknown_blocks_and_events_are_ignored() {
+fn unknown_events_are_ignored_and_unknown_blocks_kept_verbatim() {
     let mut decoder = StreamDecoder::new(ModelId::new("m"));
     for data in [
         r#"{"type":"future_event","x":1}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"container_upload","file_id":"f"}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_1","content":{"stdout":"ok"}}}"#,
         r#"{"type":"content_block_delta","index":0,"delta":{"type":"future_delta"}}"#,
-        r#"{"type":"content_block_stop","index":0}"#,
+    ] {
+        assert_eq!(decoder.decode(parse_event(data).unwrap()), Ok(vec![]));
+    }
+    let stop = parse_event(r#"{"type":"content_block_stop","index":0}"#).unwrap();
+    assert_eq!(
+        decoder.decode(stop),
+        Ok(vec![
+            LlmEvent::ProviderBlock {
+                index: 0,
+                raw: json!({"type": "bash_code_execution_tool_result", "tool_use_id": "srvtoolu_1", "content": {"stdout": "ok"}}),
+            },
+            LlmEvent::BlockStop { index: 0 },
+        ])
+    );
+    // A request-only block in a response is dropped with its stop.
+    for data in [
+        r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_result","tool_use_id":"t"}}"#,
+        r#"{"type":"content_block_stop","index":1}"#,
     ] {
         assert_eq!(decoder.decode(parse_event(data).unwrap()), Ok(vec![]));
     }
