@@ -316,9 +316,7 @@ async fn execute(run: Run) -> mlua::Result<Output> {
     };
     let (status, timed_out) = match tokio::time::timeout(run.timeout, work).await {
         Ok(status) => (
-            status
-                .map_err(|e| error(format!("{shown}: {e}")))?
-                .code(),
+            status.map_err(|e| error(format!("{shown}: {e}")))?.code(),
             false,
         ),
         Err(_) => {

@@ -37,7 +37,10 @@ pub(crate) fn declare(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Res
     lua.create_function(move |lua, def: Value| {
         let say = |message: String| report(lua, &sink, &origin, message);
         let Value::Table(def) = def else {
-            say("app.plugin expects a table: app.plugin{ name = ..., capabilities = { ... } }".into());
+            say(
+                "app.plugin expects a table: app.plugin{ name = ..., capabilities = { ... } }"
+                    .into(),
+            );
             return Ok(());
         };
         if origin.grant.declared().is_some() {
@@ -97,7 +100,8 @@ pub(crate) fn declare(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Res
             if !known {
                 say(format!(
                     "app.plugin: unknown field `{}` (use `name` and `capabilities`)",
-                    key.to_string().unwrap_or_else(|_| key.type_name().to_owned())
+                    key.to_string()
+                        .unwrap_or_else(|_| key.type_name().to_owned())
                 ));
             }
         }
@@ -135,10 +139,8 @@ mod tests {
 
     #[test]
     fn records_valid_capabilities_sorted() {
-        let (phase, errors) = run(
-            r#"app.plugin{ name = "jira", capabilities = {
-                 "shell:jq", "network:jira.example.com", "shell:jq" } }"#,
-        );
+        let (phase, errors) = run(r#"app.plugin{ name = "jira", capabilities = {
+                 "shell:jq", "network:jira.example.com", "shell:jq" } }"#);
         assert!(errors.is_empty(), "{errors:?}");
         let declared = phase.origin().grant.declared().unwrap();
         assert_eq!(declared.name.as_deref(), Some("jira"));

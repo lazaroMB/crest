@@ -69,7 +69,9 @@ fn lookup(ctx: &Context, plugin: &str, name: &str) -> Option<String> {
             .and_then(|entry| entry.get_password())
         {
             Ok(value) => return Some(value),
-            Err(err) => tracing::debug!(plugin, name, error = %err, "plugin secret not in the keyring"),
+            Err(err) => {
+                tracing::debug!(plugin, name, error = %err, "plugin secret not in the keyring")
+            }
         }
     }
     ctx.var(&env_var(plugin, name))
@@ -84,7 +86,10 @@ mod tests {
     #[test]
     fn names_map_to_keyring_entries_and_env_vars() {
         assert_eq!(keyring_user("jira", "token"), "plugin:jira:token");
-        assert_eq!(env_var("jira-cloud", "api.token"), "CREST_PLUGIN_JIRA_CLOUD_API_TOKEN");
+        assert_eq!(
+            env_var("jira-cloud", "api.token"),
+            "CREST_PLUGIN_JIRA_CLOUD_API_TOKEN"
+        );
         assert!(valid("api.token-2"));
         assert!(!valid("a b") && !valid(""));
     }

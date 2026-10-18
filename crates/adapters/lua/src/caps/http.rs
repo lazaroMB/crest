@@ -242,10 +242,7 @@ fn client() -> Result<reqwest::Client, String> {
 
 /// Sends `request`, following redirects to allowed URLs, within its
 /// timeout.
-async fn send(
-    request: Request,
-    allowed: &dyn Fn(&Url) -> bool,
-) -> mlua::Result<Response> {
+async fn send(request: Request, allowed: &dyn Fn(&Url) -> bool) -> mlua::Result<Response> {
     let limit = request.timeout;
     let shown = request.url.clone();
     let exchange = async move {

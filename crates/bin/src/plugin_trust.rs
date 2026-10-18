@@ -168,7 +168,9 @@ pub async fn start(
     let mut store = match trust.store.as_deref().map(PluginTrustStore::load) {
         Some(Ok(store)) => store,
         Some(Err(err)) => {
-            warnings.push(format!("cannot read the approved plugin capabilities: {err}"));
+            warnings.push(format!(
+                "cannot read the approved plugin capabilities: {err}"
+            ));
             PluginTrustStore::default()
         }
         None => PluginTrustStore::default(),
@@ -274,7 +276,9 @@ impl PluginTrust {
             .filter(|d| !granted.contains(d))
             .collect();
         if new.is_empty() {
-            return Ok(format!("the capabilities of plugin `{name}` were already approved"));
+            return Ok(format!(
+                "the capabilities of plugin `{name}` were already approved"
+            ));
         }
         let path = self.store.clone().ok_or_else(|| {
             "nowhere to save the approval (no data directory); use --trust-plugin".to_owned()
@@ -330,9 +334,16 @@ mod tests {
     fn the_store_round_trips_through_a_private_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("deep").join(TRUST_FILE);
-        assert_eq!(PluginTrustStore::load(&path).unwrap(), PluginTrustStore::default());
+        assert_eq!(
+            PluginTrustStore::load(&path).unwrap(),
+            PluginTrustStore::default()
+        );
         let mut store = PluginTrustStore::default();
-        store.trust(&decl("jira", &["network:jira.example.com"], ConfigOrigin::Global));
+        store.trust(&decl(
+            "jira",
+            &["network:jira.example.com"],
+            ConfigOrigin::Global,
+        ));
         store.save(&path).unwrap();
         assert_eq!(PluginTrustStore::load(&path).unwrap(), store);
         let text = std::fs::read_to_string(&path).unwrap();
@@ -350,18 +361,28 @@ mod tests {
         let old = decl("jira", &["network:jira.example.com"], ConfigOrigin::Global);
         let mut store = PluginTrustStore::default();
         store.trust(&old);
-        assert_eq!(admit(std::slice::from_ref(&old), &store, &[]).granted, [old.clone()]);
+        assert_eq!(
+            admit(std::slice::from_ref(&old), &store, &[]).granted,
+            std::slice::from_ref(&old)
+        );
 
-        let more = decl("jira", &["network:jira.example.com", "shell:jq"], ConfigOrigin::Global);
+        let more = decl(
+            "jira",
+            &["network:jira.example.com", "shell:jq"],
+            ConfigOrigin::Global,
+        );
         let got = admit(std::slice::from_ref(&more), &store, &[]);
         assert!(got.granted.is_empty());
-        assert_eq!(got.pending, [more.clone()]);
+        assert_eq!(got.pending, std::slice::from_ref(&more));
 
         let moved = PluginCapabilities {
             source: PathBuf::from("/elsewhere/init.lua"),
             ..old.clone()
         };
-        assert_eq!(admit(&[moved.clone()], &store, &[]).pending, [moved]);
+        assert_eq!(
+            admit(std::slice::from_ref(&moved), &store, &[]).pending,
+            [moved]
+        );
 
         store.trust(&more);
         assert!(store.is_trusted(&more) && !store.is_trusted(&old));
@@ -370,8 +391,12 @@ mod tests {
     #[test]
     fn trusting_now_grants_and_asks_to_save() {
         let d = decl("jira", &["shell:jq"], ConfigOrigin::Workspace);
-        let got = admit(std::slice::from_ref(&d), &PluginTrustStore::default(), &["jira".into()]);
-        assert_eq!(got.granted, [d.clone()]);
+        let got = admit(
+            std::slice::from_ref(&d),
+            &PluginTrustStore::default(),
+            &["jira".into()],
+        );
+        assert_eq!(got.granted, std::slice::from_ref(&d));
         assert_eq!(got.newly_trusted, [d]);
     }
 

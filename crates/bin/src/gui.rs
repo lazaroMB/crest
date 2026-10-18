@@ -535,9 +535,10 @@ impl SessionController for UiController {
             );
         }
         if name == "plugin" {
-            let task = self
-                .handle
-                .spawn(plugin_command(Arc::clone(&self.plugin_trust), args.to_owned()));
+            let task = self.handle.spawn(plugin_command(
+                Arc::clone(&self.plugin_trust),
+                args.to_owned(),
+            ));
             return Some(
                 task.map(|joined| {
                     joined.unwrap_or_else(|err| {

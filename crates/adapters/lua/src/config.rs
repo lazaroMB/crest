@@ -442,12 +442,19 @@ end)
     #[test]
     fn capability_declarations_carry_who_declared_them() {
         let fx = Fixture::new();
-        fx.plugin("jira", r#"app.plugin{ name = "other", capabilities = { "shell:jq" } }"#)
-            .plugin("quiet", "app.plugin{}")
-            .workspace(r#"app.plugin{ name = "repo", capabilities = { "network:x.dev" } }"#);
+        fx.plugin(
+            "jira",
+            r#"app.plugin{ name = "other", capabilities = { "shell:jq" } }"#,
+        )
+        .plugin("quiet", "app.plugin{}")
+        .workspace(r#"app.plugin{ name = "repo", capabilities = { "network:x.dev" } }"#);
         let (_vm, config) = fx.load();
         assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
-        assert!(config.errors[0].message.contains("differs from the plugin's folder"));
+        assert!(
+            config.errors[0]
+                .message
+                .contains("differs from the plugin's folder")
+        );
         let decls = &config.plugin_capabilities;
         assert_eq!(decls.len(), 2, "{decls:?}");
         assert_eq!(decls[0].plugin, "jira");

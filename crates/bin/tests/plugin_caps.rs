@@ -139,7 +139,10 @@ async fn a_trusted_plugin_tool_calls_the_api() {
     let mut fx = fixture(&server, &["jira"]).await;
     assert!(fx.app.warnings.is_empty(), "{:?}", fx.app.warnings);
     let store = PluginTrustStore::load(&fx.trust_file).unwrap();
-    assert!(store.is_trusted(&fx.app.plugin_capabilities[0]), "the approval is saved");
+    assert!(
+        store.is_trusted(&fx.app.plugin_capabilities[0]),
+        "the approval is saved"
+    );
 
     let exit = run_turn(&mut fx.app, "what is CR-7?", CancelToken::new()).await;
     let out = fx.output.text();

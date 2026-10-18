@@ -183,6 +183,10 @@ fn calling_source(lua: &Lua) -> Option<String> {
         .and_then(|(_, source)| source)
 }
 
+/// What a call needs: its capability as shown to the user, and a test
+/// that a declared capability allows it.
+pub(crate) type Wanted<'a> = (&'a str, &'a dyn Fn(&Capability) -> bool);
+
 /// Checks that the code calling `api` belongs to the file of `origin` and
 /// that its declaration was approved and includes what `wanted` looks for.
 /// Returns the approved declaration.
@@ -190,7 +194,7 @@ pub(crate) fn authorize(
     lua: &Lua,
     origin: &Origin,
     api: &str,
-    wanted: Option<(&str, &dyn Fn(&Capability) -> bool)>,
+    wanted: Option<Wanted<'_>>,
 ) -> mlua::Result<PluginCapabilities> {
     let expected = format!("@{}", origin.file);
     if calling_source(lua).as_deref() != Some(expected.as_str()) {
@@ -291,6 +295,9 @@ mod tests {
             .set_name("@b.lua")
             .exec()
             .unwrap_err();
-        assert!(err.to_string().contains("only code written in a.lua"), "{err}");
+        assert!(
+            err.to_string().contains("only code written in a.lua"),
+            "{err}"
+        );
     }
 }

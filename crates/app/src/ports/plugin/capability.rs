@@ -279,7 +279,10 @@ impl PluginCapabilities {
     pub fn summary(&self) -> String {
         let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
         for capability in &self.capabilities {
-            match groups.iter_mut().find(|(kind, _)| *kind == capability.kind()) {
+            match groups
+                .iter_mut()
+                .find(|(kind, _)| *kind == capability.kind())
+            {
                 Some((_, targets)) => targets.push(capability.target()),
                 None => groups.push((capability.kind(), vec![capability.target()])),
             }

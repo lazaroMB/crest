@@ -2,6 +2,9 @@
 //! local server, `app.shell.run` with real programs and `app.secret` from
 //! the environment, before and after the declaration is granted.
 
+// Helpers outside #[test] functions unwrap too: a failure is a test failure.
+#![allow(clippy::unwrap_used)]
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -119,7 +122,10 @@ fn local_cap(server: &MockServer) -> String {
 
 #[tokio::test]
 async fn the_declaration_is_reported_and_inactive_until_granted() {
-    let fx = Fixture::new(&plugin(&["shell:echo".into(), "network:api.example.com".into()]));
+    let fx = Fixture::new(&plugin(&[
+        "shell:echo".into(),
+        "network:api.example.com".into(),
+    ]));
     let (host, config) = fx.load().await;
     let decl = &config.plugin_capabilities[0];
     assert_eq!(decl.plugin, "jira");
@@ -201,7 +207,10 @@ async fn http_refuses_other_hosts_and_redirects_to_them() {
         "{other}"
     );
     let https = err_text(call(&host, "get", json!(["https://example.com/"])).await);
-    assert!(https.contains("did not declare network:example.com"), "{https}");
+    assert!(
+        https.contains("did not declare network:example.com"),
+        "{https}"
+    );
 
     let redirect = err_text(call(&host, "get", json!([format!("{}/away", server.uri())])).await);
     assert!(redirect.contains("redirect from"), "{redirect}");
@@ -252,7 +261,10 @@ async fn shell_runs_granted_programs_in_the_workspace() {
     assert_eq!(out["timed_out"], false);
 
     let pwd = call(&host, "shell", json!(["pwd"])).await.unwrap();
-    assert_eq!(pwd["stdout"].as_str().unwrap().trim_end(), path_str(&fx.workspace));
+    assert_eq!(
+        pwd["stdout"].as_str().unwrap().trim_end(),
+        path_str(&fx.workspace)
+    );
     let sub = call(&host, "shell", json!(["pwd", [], { "cwd": "sub" }]))
         .await
         .unwrap();
@@ -276,9 +288,13 @@ fn path_str(path: &Path) -> &str {
 async fn shell_hides_credentials_from_programs() {
     let fx = Fixture::new(&shell_plugin());
     let host = fx.granted().await;
-    let out = call(&host, "shell", json!(["env", [], { "env": { "EXTRA": "1" } }]))
-        .await
-        .unwrap();
+    let out = call(
+        &host,
+        "shell",
+        json!(["env", [], { "env": { "EXTRA": "1" } }]),
+    )
+    .await
+    .unwrap();
     let env = out["stdout"].as_str().unwrap();
     assert!(env.contains("CREST_PROBE=visible"), "{env}");
     assert!(env.contains("EXTRA=1"), "{env}");
