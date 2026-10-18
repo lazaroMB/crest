@@ -858,6 +858,347 @@ mod error_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Streaming events
+// ---------------------------------------------------------------------------
+
+/// The JSON `data` of one server-sent event of a streaming response. The
+/// SSE `event:` name repeats the `type`, so only `data` needs parsing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
+pub enum StreamEvent {
+    /// First event: the message with empty `content`.
+    MessageStart {
+        /// Message skeleton (id, model, initial usage).
+        message: MessagesResponse,
+    },
+    /// A content block opens at `index`.
+    ContentBlockStart {
+        /// Position in the final `content` array.
+        index: usize,
+        /// Initial block (empty text, `{}` tool input, ...). Server tool
+        /// results arrive complete here, with no deltas.
+        content_block: WireContentBlock,
+    },
+    /// Incremental update of the block at `index`.
+    ContentBlockDelta {
+        /// Block position.
+        index: usize,
+        /// The update.
+        delta: ContentDelta,
+    },
+    /// The block at `index` is complete.
+    ContentBlockStop {
+        /// Block position.
+        index: usize,
+    },
+    /// Top-level changes to the message (stop reason, usage).
+    MessageDelta {
+        /// Changed fields.
+        delta: MessageDeltaBody,
+        /// Cumulative usage, when present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<WireUsage>,
+    },
+    /// Last event.
+    MessageStop,
+    /// Keep-alive.
+    Ping,
+    /// Mid-stream error (e.g. `overloaded_error`).
+    Error {
+        /// The error.
+        error: ApiError,
+    },
+    /// Any event type this crate does not model, kept verbatim.
+    #[serde(skip)]
+    Unknown(Value),
+}
+
+tolerant_tagged!(
+    StreamEvent,
+    [
+        "message_start",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+        "ping",
+        "error",
+    ]
+);
+
+/// `delta` of a `content_block_delta` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
+pub enum ContentDelta {
+    /// More text for a `text` block.
+    TextDelta {
+        /// Text to append.
+        text: String,
+    },
+    /// More reasoning for a `thinking` block.
+    ThinkingDelta {
+        /// Reasoning to append.
+        thinking: String,
+    },
+    /// The signature of a `thinking` block, sent just before its stop.
+    SignatureDelta {
+        /// Full signature.
+        signature: String,
+    },
+    /// A fragment of a `tool_use`/`server_tool_use` input. Concatenate the
+    /// fragments and parse once the block stops.
+    InputJsonDelta {
+        /// JSON fragment (may be empty).
+        partial_json: String,
+    },
+    /// One citation to add to the current `text` block.
+    CitationsDelta {
+        /// The citation.
+        citation: WireCitation,
+    },
+    /// Any delta type this crate does not model, kept verbatim.
+    #[serde(skip)]
+    Unknown(Value),
+}
+
+tolerant_tagged!(
+    ContentDelta,
+    [
+        "text_delta",
+        "thinking_delta",
+        "signature_delta",
+        "input_json_delta",
+        "citations_delta",
+    ]
+);
+
+/// `delta` of a `message_delta` event.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MessageDeltaBody {
+    /// Why generation stopped.
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    /// The custom stop sequence produced, if any.
+    #[serde(default)]
+    pub stop_sequence: Option<String>,
+    /// Details of a `refusal` stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_details: Option<StopDetails>,
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn events(sse: &str) -> Vec<StreamEvent> {
+        sse.lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn parses_basic_text_stream() {
+        // From the streaming docs ("Basic streaming request").
+        let sse = r#"
+event: message_start
+data: {"type": "message_start", "message": {"id": "msg_1nZdL29xx5MUA1yADyHTEsnR8uuvGzszyY", "type": "message", "role": "assistant", "content": [], "model": "claude-opus-5-5", "stop_reason": null, "stop_sequence": null, "usage": {"input_tokens": 25, "output_tokens": 1}}}
+
+event: content_block_start
+data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+
+event: content_block_stop
+data: {"type": "content_block_stop", "index": 0}
+
+event: message_delta
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence":null}, "usage": {"output_tokens": 15}}
+
+event: message_stop
+data: {"type": "message_stop"}
+"#;
+        let ev = events(sse);
+        assert!(
+            matches!(&ev[0], StreamEvent::MessageStart { message } if message.usage.input_tokens == Some(25))
+        );
+        assert_eq!(
+            ev[1],
+            StreamEvent::ContentBlockStart {
+                index: 0,
+                content_block: WireContentBlock::text("")
+            }
+        );
+        assert_eq!(ev[2], StreamEvent::Ping);
+        assert_eq!(
+            ev[3],
+            StreamEvent::ContentBlockDelta {
+                index: 0,
+                delta: ContentDelta::TextDelta {
+                    text: "Hello".into()
+                }
+            }
+        );
+        assert_eq!(ev[4], StreamEvent::ContentBlockStop { index: 0 });
+        assert_eq!(
+            ev[5],
+            StreamEvent::MessageDelta {
+                delta: MessageDeltaBody {
+                    stop_reason: Some("end_turn".into()),
+                    ..Default::default()
+                },
+                usage: Some(WireUsage {
+                    output_tokens: 15,
+                    ..Default::default()
+                }),
+            }
+        );
+        assert_eq!(ev[6], StreamEvent::MessageStop);
+    }
+
+    #[test]
+    fn parses_tool_use_and_thinking_deltas() {
+        // From the streaming docs (tool use and thinking examples).
+        let sse = r#"
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01T1x1fJ34qAmk2tNTrN7Up6","name":"get_weather","input":{}}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"location\":"}}
+data: {"type": "message_start", "message": {"id": "msg_01...", "type": "message", "role": "assistant", "content": [], "model": "claude-opus-5-5", "stop_reason": null, "stop_sequence": null}}
+data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "", "signature": ""}}
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "\n462 = 3 × 147 + 21"}}
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds..."}}
+data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}}
+"#;
+        let ev = events(sse);
+        assert!(matches!(
+            &ev[0],
+            StreamEvent::ContentBlockStart { index: 1, content_block: WireContentBlock::ToolUse { name, .. } } if name == "get_weather"
+        ));
+        assert_eq!(
+            ev[1],
+            StreamEvent::ContentBlockDelta {
+                index: 1,
+                delta: ContentDelta::InputJsonDelta {
+                    partial_json: "{\"location\":".into()
+                }
+            }
+        );
+        assert!(
+            matches!(&ev[2], StreamEvent::MessageStart { message } if message.usage == WireUsage::default())
+        );
+        assert!(matches!(
+            &ev[4],
+            StreamEvent::ContentBlockDelta {
+                delta: ContentDelta::ThinkingDelta { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &ev[5],
+            StreamEvent::ContentBlockDelta {
+                delta: ContentDelta::SignatureDelta { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &ev[6],
+            StreamEvent::MessageDelta { usage: None, .. }
+        ));
+    }
+
+    #[test]
+    fn parses_web_search_stream() {
+        // From the streaming docs ("Streaming request with web search tool use").
+        let sse = r#"
+data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_014hJH82Qum7Td6UV8gDXThB","name":"web_search","input":{}}}
+data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_014hJH82Qum7Td6UV8gDXThB","content":[{"type":"web_search_result","title":"Weather in New York City in May 2025 (New York) - detailed Weather Forecast for a month","url":"https://world-weather.info/forecast/usa/new_york/may-2025/","encrypted_content":"Ev0DCioIAxgCIiQ3NmU4ZmI4OC1k...","page_age":null}]}}
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":10682,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":510,"server_tool_use":{"web_search_requests":1}}}
+"#;
+        let ev = events(sse);
+        assert!(matches!(
+            &ev[0],
+            StreamEvent::ContentBlockStart {
+                content_block: WireContentBlock::ServerToolUse { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &ev[1],
+            StreamEvent::ContentBlockStart {
+                content_block: WireContentBlock::WebSearchToolResult { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &ev[2],
+            StreamEvent::MessageDelta { usage: Some(u), .. } if u.server_tool_use.is_some_and(|s| s.web_search_requests == 1)
+        ));
+    }
+
+    #[test]
+    fn parses_citations_delta_and_error() {
+        let ev = events(
+            r#"
+data: {"type": "content_block_delta", "index": 0, "delta": {"type": "citations_delta", "citation": {"type": "char_location", "cited_text": "The grass is green.", "document_index": 0, "document_title": "My Document", "start_char_index": 0, "end_char_index": 20}}}
+data: {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+"#,
+        );
+        assert!(matches!(
+            &ev[0],
+            StreamEvent::ContentBlockDelta {
+                delta: ContentDelta::CitationsDelta {
+                    citation: WireCitation::CharLocation { .. }
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            ev[1],
+            StreamEvent::Error {
+                error: ApiError {
+                    kind: "overloaded_error".into(),
+                    message: "Overloaded".into()
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_event_and_delta_are_tolerated() {
+        let raw = r#"{"type": "future_event", "payload": {"x": 1}}"#;
+        let event: StreamEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            event,
+            StreamEvent::Unknown(serde_json::from_str(raw).unwrap())
+        );
+
+        let raw = r#"{"type": "content_block_delta", "index": 3, "delta": {"type": "future_delta", "x": 1}}"#;
+        let event: StreamEvent = serde_json::from_str(raw).unwrap();
+        assert!(matches!(
+            event,
+            StreamEvent::ContentBlockDelta {
+                index: 3,
+                delta: ContentDelta::Unknown(_)
+            }
+        ));
+
+        let raw = r#"{"type": "content_block_start", "index": 0, "content_block": {"type": "fallback", "from": {"model": "a"}}}"#;
+        let event: StreamEvent = serde_json::from_str(raw).unwrap();
+        assert!(matches!(
+            event,
+            StreamEvent::ContentBlockStart {
+                content_block: WireContentBlock::Unknown(_),
+                ..
+            }
+        ));
+    }
+}
+
 #[cfg(test)]
 mod request_tests {
     use super::*;
