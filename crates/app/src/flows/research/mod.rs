@@ -13,6 +13,10 @@
 //!   graph: `start`, `resume`, `step`, `run`, `provide_input` and the chat
 //!   commands of [`commands`] through `handle_line`.
 //! - [`nodes`]: the registry, one file per node.
+//! - [`graph`]: [`research_graph`](graph::research_graph), the 14 nodes
+//!   wired to the workspace.
+//! - [`agents`]: the read-only agent of the exploring stages and the
+//!   filtered agent of the stages that act.
 //!
 //! # Node contract
 //!
@@ -104,6 +108,7 @@ pub mod error;
 pub mod fake;
 pub mod flow;
 pub mod gate;
+pub mod graph;
 pub mod json;
 pub mod node;
 pub mod nodes;
