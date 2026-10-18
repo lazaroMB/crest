@@ -428,6 +428,54 @@ impl Plan {
     }
 }
 
+impl Plan {
+    /// Mermaid flowchart of the task dependencies, arrows from each
+    /// dependency to the task that needs it.
+    ///
+    /// Nodes are named `t1`, `t2`, ... by position, so any task id is safe,
+    /// and labelled `<id>: <title>`. Dependencies on unknown tasks are left
+    /// out; [`Plan::validate`] reports them.
+    #[must_use]
+    pub fn to_mermaid(&self) -> String {
+        let node: BTreeMap<&TaskId, usize> = self
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (&t.id, i + 1))
+            .collect();
+        let mut out = String::from("flowchart TD\n");
+        for (i, task) in self.tasks.iter().enumerate() {
+            let label = mermaid_label(&format!("{}: {}", task.id, task.title));
+            out.push_str(&format!("    t{}[\"{label}\"]\n", i + 1));
+        }
+        for (i, task) in self.tasks.iter().enumerate() {
+            let mut seen = BTreeSet::new();
+            for dep in task.depends_on.iter().filter(|d| seen.insert(*d)) {
+                if let Some(from) = node.get(dep) {
+                    out.push_str(&format!("    t{from} --> t{}\n", i + 1));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Text safe inside a quoted Mermaid label: one line, entities for the
+/// characters Mermaid would parse.
+fn mermaid_label(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("#quot;"),
+            '<' => out.push_str("#lt;"),
+            '>' => out.push_str("#gt;"),
+            '\n' | '\r' | '\t' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,5 +709,22 @@ mod tests {
             ])
         );
         assert_eq!(plan(vec![]).validate(), Err(vec![PlanError::NoTasks]));
+    }
+
+    #[test]
+    fn mermaid_draws_one_edge_per_known_dependency() {
+        let mut t3 = task("T3", &["T1", "T2", "T1", "T9"]);
+        t3.title = "Usa \"cache\" <rápido>\nya".into();
+        let p = plan(vec![task("T1", &[]), task("T2", &["T1"]), t3]);
+        assert_eq!(
+            p.to_mermaid(),
+            "flowchart TD\n\
+             \x20   t1[\"T1: Tarea T1\"]\n\
+             \x20   t2[\"T2: Tarea T2\"]\n\
+             \x20   t3[\"T3: Usa #quot;cache#quot; #lt;rápido#gt; ya\"]\n\
+             \x20   t1 --> t2\n\
+             \x20   t1 --> t3\n\
+             \x20   t2 --> t3\n"
+        );
     }
 }
