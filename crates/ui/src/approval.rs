@@ -25,6 +25,26 @@ pub fn allow_always_rule(request: &ApprovalRequest) -> PermissionRule {
     )
 }
 
+/// The command line as shown to the user: the program and its arguments,
+/// with arguments that need it in single quotes.
+pub fn command_line(command: &str, args: &[String]) -> String {
+    let quote = |arg: &str| {
+        let plain = !arg.is_empty()
+            && arg
+                .chars()
+                .all(|c| c.is_alphanumeric() || "-_./=:,+@%".contains(c));
+        if plain {
+            arg.to_owned()
+        } else {
+            format!("'{}'", arg.replace('\'', r"'\''"))
+        }
+    };
+    std::iter::once(quote(command))
+        .chain(args.iter().map(|arg| quote(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// One request waiting for the user, as received by the dialog.
 #[derive(Debug)]
 pub struct PendingApproval {
@@ -189,5 +209,18 @@ mod tests {
         assert_eq!(rule.tool, "run_command");
         assert_eq!(rule.matcher, RuleMatcher::Exact("cargo test".into()));
         assert_eq!(rule.decision, RuleDecision::AllowAlways);
+    }
+
+    #[test]
+    fn command_line_quotes_only_when_needed() {
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            command_line("cargo", &args(&["test", "-p", "ui"])),
+            "cargo test -p ui"
+        );
+        assert_eq!(
+            command_line("git", &args(&["commit", "-m", "it's done", ""])),
+            r"git commit -m 'it'\''s done' ''"
+        );
     }
 }
