@@ -122,7 +122,13 @@ pub(crate) fn merge(
         for tool in collected.tools {
             upsert(&mut tools, tool, |t| t.spec.name.clone());
         }
-        for server in declared.mcp_servers {
+        // `app.mcp.add` runs while the file runs, the table form is read
+        // after it, but an explicit `add` is the more deliberate one.
+        for server in declared
+            .mcp_servers
+            .into_iter()
+            .chain(collected.mcp_servers)
+        {
             upsert(&mut config.mcp_servers, server, |s| s.name.clone());
         }
     }

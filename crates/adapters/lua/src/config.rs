@@ -446,6 +446,28 @@ end)
     }
 
     #[test]
+    fn mcp_servers_come_from_the_table_and_from_add() {
+        let fx = Fixture::new();
+        fx.global(
+            r#"app.mcp.git = { command = "mcp-git", args = { "--repo", "." } }
+               app.mcp.add("echo", { command = "echo-server", effect = "read", timeout = 5 })
+               app.mcp.add("docs", { url = "https://example.test/mcp", headers = { A = "1" } })
+               app.mcp.add("bad__name", { command = "x" })
+               app.mcp.add("both", { command = "x", url = "https://h" })"#,
+        );
+        let (_, config) = fx.load();
+        let names: Vec<_> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["git", "echo", "docs"]);
+        let echo = &config.mcp_servers[1];
+        assert_eq!(echo.effect, domain::permission::ToolEffect::Read);
+        assert_eq!(echo.timeout_ms, Some(5000));
+        let lines: Vec<_> = config.errors.iter().map(|e| e.line).collect();
+        assert_eq!(lines, [Some(4), Some(5)], "{:?}", config.errors);
+        assert!(config.errors[0].message.contains("invalid MCP server name"));
+        assert!(config.errors[1].message.contains("both"));
+    }
+
+    #[test]
     fn a_syntax_error_is_reported_and_the_rest_still_loads() {
         let fx = Fixture::new();
         fx.global("app.opt.theme = 'dark'\n\napp.opt.leader = = ','")

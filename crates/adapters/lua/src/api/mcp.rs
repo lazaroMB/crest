@@ -7,6 +7,8 @@
 //! }
 //! ```
 //!
+//! or, one at a time, `app.mcp.add("git", { command = "mcp-git" })`.
+//!
 //! Each server has either `command` (a child process speaking over stdio,
 //! with optional `args` and `env`) or `url` (streamable HTTP, with optional
 //! `headers`). Both take:
@@ -21,9 +23,15 @@
 
 use std::collections::BTreeMap;
 
+use std::sync::Arc;
+
 use application::ports::plugin::{McpServerSpec, McpTransport};
 use domain::permission::ToolEffect;
+use mlua::{Function, Lua, Table};
 use serde_json::{Map, Value};
+
+use crate::config::api::{Origin, Sink, lock, report};
+use crate::convert;
 
 fn as_map(value: &Value) -> Option<&Map<String, Value>> {
     static EMPTY: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
@@ -207,6 +215,40 @@ pub(crate) fn servers(value: &Value, problems: &mut Vec<String>) -> Vec<McpServe
     map.iter()
         .filter_map(|(name, def)| server(name, def, problems))
         .collect()
+}
+
+/// Builds the `app.mcp` table of one phase, with its `add` function.
+pub(crate) fn table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table> {
+    let mcp = lua.create_table()?;
+    mcp.set("add", add(lua, sink, origin)?)?;
+    Ok(mcp)
+}
+
+/// `app.mcp.add(name, definition)`.
+fn add(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
+    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
+    lua.create_function(move |lua, (name, def): (mlua::Value, mlua::Value)| {
+        let (mlua::Value::String(name), mlua::Value::Table(_)) = (&name, &def) else {
+            report(
+                lua,
+                &sink,
+                &origin,
+                "mcp.add expects a name and a table with `command` or `url`".into(),
+            );
+            return Ok(());
+        };
+        let name = name.to_str()?.to_owned();
+        let def = convert::to_json(lua, def)?;
+        let mut problems = Vec::new();
+        let spec = server(&name, &def, &mut problems);
+        for message in problems {
+            report(lua, &sink, &origin, message);
+        }
+        if let Some(spec) = spec {
+            lock(&sink).mcp_servers.push(spec);
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]

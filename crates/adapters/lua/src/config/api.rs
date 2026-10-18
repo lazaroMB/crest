@@ -3,15 +3,15 @@
 //! Declarative fields (`app.opt`, `app.models`, `app.mcp`, ...) are plain
 //! tables read after the file runs; see [`super::parse`]. The functions
 //! (`app.keymap.set`, `app.commands.register`, `app.tools.register`,
-//! `app.on`) record what they receive here and keep the Lua functions as
+//! `app.on`, `app.mcp.add`) record what they receive here and keep the Lua functions as
 //! callbacks. Bad arguments become diagnostics with the caller's line instead
 //! of aborting the file.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use application::ports::plugin::{
-    CallbackId, CommandSpec, HookSpec, KeyAction, KeyMode, KeymapSpec, PluginDiagnostic,
-    PluginToolSpec,
+    CallbackId, CommandSpec, HookSpec, KeyAction, KeyMode, KeymapSpec, McpServerSpec,
+    PluginDiagnostic, PluginToolSpec,
 };
 use mlua::{Function, Lua, Table, Value};
 
@@ -43,6 +43,8 @@ pub(crate) struct Collected {
     pub(crate) commands: Vec<CommandSpec>,
     pub(crate) tools: Vec<ToolReg>,
     pub(crate) hooks: Vec<HookSpec>,
+    /// Servers from `app.mcp.add`, in call order.
+    pub(crate) mcp_servers: Vec<McpServerSpec>,
     pub(crate) diagnostics: Vec<PluginDiagnostic>,
 }
 
@@ -103,7 +105,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     models.set("aliases", lua.create_table()?)?;
     app.set("models", models)?;
     app.set("permissions", lua.create_table()?)?;
-    app.set("mcp", lua.create_table()?)?;
+    app.set("mcp", crate::api::mcp::table(lua, sink, origin)?)?;
     app.set("plugins", lua.create_table()?)?;
 
     let keymap = lua.create_table()?;
