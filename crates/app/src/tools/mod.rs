@@ -3,5 +3,6 @@
 pub mod budget;
 pub mod components;
 pub mod files;
+pub mod plugin;
 pub mod registry;
 pub mod task;
