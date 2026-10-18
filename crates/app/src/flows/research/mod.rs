@@ -2,6 +2,7 @@
 //! graph-flow adapter, gates in the chat and conditional returns.
 
 pub mod builder;
+pub mod commands;
 pub mod error;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
