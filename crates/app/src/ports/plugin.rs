@@ -16,6 +16,10 @@ use domain::permission::ToolEffect;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+mod capability;
+
+pub use capability::{Capability, HostPattern, NetworkTarget, PluginCapabilities, Scheme};
+
 /// Handle to a Lua function kept alive by the host (keymap, command or hook).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -244,6 +248,10 @@ pub struct LoadedConfig {
     pub mcp_servers: Vec<McpServerSpec>,
     /// Sensitive path patterns; `None` keeps the built-in defaults.
     pub sensitive_paths: Option<Vec<String>>,
+    /// Capabilities declared with `app.plugin{ capabilities = ... }`, one
+    /// entry per file that declared any; inactive until granted with
+    /// [`PluginHostPort::grant_capabilities`].
+    pub plugin_capabilities: Vec<PluginCapabilities>,
     /// Problems found while loading; empty when everything loaded.
     pub errors: Vec<PluginDiagnostic>,
 }
@@ -392,6 +400,18 @@ pub trait PluginHostPort: Send + Sync {
     /// Runs every hook registered for `event`, in order. The first `Deny`
     /// stops the chain; each `ReplaceInput` feeds the next hook.
     async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError>;
+
+    /// Activates the capabilities of the declarations in `granted` (as
+    /// found in [`LoadedConfig::plugin_capabilities`], compared exactly)
+    /// and deactivates every other one. Until this is called nothing is
+    /// granted. A host without capabilities ignores it.
+    async fn grant_capabilities(
+        &self,
+        granted: Vec<PluginCapabilities>,
+    ) -> Result<(), PluginError> {
+        let _ = granted;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
