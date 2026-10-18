@@ -70,6 +70,116 @@ impl FromStr for PermissionMode {
     }
 }
 
+/// The kind of side effect a tool has; every tool declares one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolEffect {
+    /// Reads the workspace or repo (`read_file`, `grep`, `git log`...).
+    Read,
+    /// Creates or modifies files (`edit_file`, `write_file`).
+    Write,
+    /// Runs a process (`run_command`).
+    Execute,
+    /// Talks to the network (web fetch, remote MCP servers).
+    Network,
+}
+
+/// A concrete action a tool wants to perform, as shown to the user.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ActionRequest {
+    /// Tool name, e.g. `edit_file`.
+    pub tool: String,
+    /// The tool's declared effect.
+    pub effect: ToolEffect,
+    /// Exact path or command the action applies to.
+    pub subject: String,
+}
+
+impl ActionRequest {
+    /// Builds a request for `tool` with `effect` on `subject`.
+    #[must_use]
+    pub fn new(tool: impl Into<String>, effect: ToolEffect, subject: impl Into<String>) -> Self {
+        Self {
+            tool: tool.into(),
+            effect,
+            subject: subject.into(),
+        }
+    }
+}
+
+/// Why an action was denied.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum DenyReason {
+    /// The policy is in plan (read-only) mode.
+    PlanMode,
+}
+
+impl fmt::Display for DenyReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PlanMode => f.write_str("plan mode is read-only"),
+        }
+    }
+}
+
+/// Outcome of evaluating an [`ActionRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "decision", rename_all = "kebab-case")]
+pub enum Decision {
+    /// Run without asking.
+    Allow,
+    /// Ask the user, showing the diff or exact command.
+    Ask,
+    /// Refuse; the reason is reported back to the model.
+    Deny {
+        /// Why it was denied.
+        reason: DenyReason,
+    },
+}
+
+/// Decides, per action, whether to allow, ask or deny.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PermissionPolicy {
+    /// Current mode.
+    pub mode: PermissionMode,
+}
+
+impl PermissionPolicy {
+    /// A policy in `mode`.
+    #[must_use]
+    pub const fn new(mode: PermissionMode) -> Self {
+        Self { mode }
+    }
+
+    /// Advances to the next mode (`<leader>p`) and returns it.
+    pub fn cycle_mode(&mut self) -> PermissionMode {
+        self.mode = self.mode.next();
+        self.mode
+    }
+
+    /// Decides what to do with `request`.
+    #[must_use]
+    pub fn decide(&self, request: &ActionRequest) -> Decision {
+        mode_decision(self.mode, request.effect)
+    }
+}
+
+/// Base decision table, before rules.
+const fn mode_decision(mode: PermissionMode, effect: ToolEffect) -> Decision {
+    use PermissionMode as M;
+    use ToolEffect as E;
+    match (effect, mode) {
+        (E::Read, _) | (E::Write, M::AutoEdit) => Decision::Allow,
+        (E::Write | E::Execute | E::Network, M::Ask) | (E::Execute | E::Network, M::AutoEdit) => {
+            Decision::Ask
+        }
+        (E::Write | E::Execute | E::Network, M::Plan) => Decision::Deny {
+            reason: DenyReason::PlanMode,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +224,49 @@ mod tests {
     #[test]
     fn default_mode_is_ask() {
         assert_eq!(PermissionMode::default(), PermissionMode::Ask);
+    }
+
+    const PLAN_DENY: Decision = Decision::Deny {
+        reason: DenyReason::PlanMode,
+    };
+
+    #[test]
+    fn base_decision_table_by_mode_and_effect() {
+        use Decision::{Allow, Ask};
+        use PermissionMode as M;
+        use ToolEffect as E;
+        let cases = [
+            (M::Ask, E::Read, Allow),
+            (M::Ask, E::Write, Ask),
+            (M::Ask, E::Execute, Ask),
+            (M::Ask, E::Network, Ask),
+            (M::AutoEdit, E::Read, Allow),
+            (M::AutoEdit, E::Write, Allow),
+            (M::AutoEdit, E::Execute, Ask),
+            (M::AutoEdit, E::Network, Ask),
+            (M::Plan, E::Read, Allow),
+            (M::Plan, E::Write, PLAN_DENY),
+            (M::Plan, E::Execute, PLAN_DENY),
+            (M::Plan, E::Network, PLAN_DENY),
+        ];
+        for (mode, effect, expected) in cases {
+            let request = ActionRequest::new("tool", effect, "subject");
+            assert_eq!(
+                PermissionPolicy::new(mode).decide(&request),
+                expected,
+                "{mode} / {effect:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cycle_mode_changes_decisions() {
+        let mut policy = PermissionPolicy::default();
+        let write = ActionRequest::new("edit_file", ToolEffect::Write, "src/main.rs");
+        let expected = [Decision::Allow, PLAN_DENY, Decision::Ask];
+        for decision in expected {
+            policy.cycle_mode();
+            assert_eq!(policy.decide(&write), decision, "{}", policy.mode);
+        }
     }
 }
