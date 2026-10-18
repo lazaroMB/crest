@@ -113,6 +113,8 @@ impl ActionRequest {
 pub enum DenyReason {
     /// The policy is in plan (read-only) mode.
     PlanMode,
+    /// The policy is read-only (subagents).
+    ReadOnly,
     /// A user rule denies it.
     Rule {
         /// The rule that matched.
@@ -124,6 +126,7 @@ impl fmt::Display for DenyReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PlanMode => f.write_str("plan mode is read-only"),
+            Self::ReadOnly => f.write_str("this agent is read-only"),
             Self::Rule { rule } => write!(f, "denied by a rule for `{}`", rule.tool),
         }
     }
@@ -232,6 +235,9 @@ pub struct PermissionPolicy {
     /// User rules, in the order they were added.
     #[serde(default)]
     pub rules: Vec<PermissionRule>,
+    /// Locked to reads regardless of `mode` and rules (subagents).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 impl PermissionPolicy {
@@ -241,6 +247,19 @@ impl PermissionPolicy {
         Self {
             mode,
             rules: Vec::new(),
+            read_only: false,
+        }
+    }
+
+    /// A locked read-only policy for subagents: everything that is not a
+    /// read is denied, whatever the mode or rules, and the mode cannot be
+    /// cycled.
+    #[must_use]
+    pub const fn read_only() -> Self {
+        Self {
+            mode: PermissionMode::Plan,
+            rules: Vec::new(),
+            read_only: true,
         }
     }
 
@@ -252,9 +271,12 @@ impl PermissionPolicy {
         }
     }
 
-    /// Advances to the next mode (`<leader>p`) and returns it.
+    /// Advances to the next mode (`<leader>p`) and returns it. A
+    /// [`read_only`](Self::read_only) policy stays where it is.
     pub fn cycle_mode(&mut self) -> PermissionMode {
-        self.mode = self.mode.next();
+        if !self.read_only {
+            self.mode = self.mode.next();
+        }
         self.mode
     }
 
@@ -263,8 +285,14 @@ impl PermissionPolicy {
     /// Priority: a matching `Deny` rule always wins (even for reads); then
     /// the mode decides, except that a matching `AllowAlways` rule turns an
     /// `Ask` into `Allow`. `AllowAlways` never lifts a mode denial.
+    /// A read-only policy denies every non-read before looking at rules.
     #[must_use]
     pub fn decide(&self, request: &ActionRequest) -> Decision {
+        if self.read_only && request.effect != ToolEffect::Read {
+            return Decision::Deny {
+                reason: DenyReason::ReadOnly,
+            };
+        }
         let mut matching = self.rules.iter().filter(|rule| rule.applies_to(request));
         if let Some(rule) = matching
             .clone()
@@ -557,6 +585,7 @@ mod tests {
             let policy = PermissionPolicy {
                 mode,
                 rules: rules.clone(),
+                read_only: false,
             };
             let request = ActionRequest::new(tool, effect, subject);
             assert_eq!(policy.decide(&request), expected, "{mode} / {request:?}");
@@ -587,5 +616,53 @@ mod tests {
         let policy: PermissionPolicy =
             serde_json::from_value(serde_json::json!({ "mode": "auto-edit" })).unwrap();
         assert_eq!(policy, PermissionPolicy::new(PermissionMode::AutoEdit));
+    }
+
+    #[test]
+    fn read_only_policy_table() {
+        use PermissionMode as M;
+        use ToolEffect as E;
+        const RO_DENY: Decision = Decision::Deny {
+            reason: DenyReason::ReadOnly,
+        };
+        let allow_everything =
+            PermissionRule::new(ANY_TOOL, RuleMatcher::Any, RuleDecision::AllowAlways);
+        let deny_env = PermissionRule::new(
+            ANY_TOOL,
+            RuleMatcher::Exact(".env".into()),
+            RuleDecision::Deny,
+        );
+        let cases = [
+            (E::Read, "src/lib.rs", Decision::Allow),
+            (
+                E::Read,
+                ".env",
+                Decision::Deny {
+                    reason: DenyReason::Rule {
+                        rule: deny_env.clone(),
+                    },
+                },
+            ),
+            (E::Write, "src/lib.rs", RO_DENY),
+            (E::Execute, "cargo test", RO_DENY),
+            (E::Network, "https://example.com", RO_DENY),
+        ];
+        for mode in M::ALL {
+            let mut policy = PermissionPolicy::read_only();
+            policy.mode = mode;
+            policy.remember(allow_everything.clone());
+            policy.remember(deny_env.clone());
+            for (effect, subject, expected) in &cases {
+                let request = ActionRequest::new("tool", *effect, *subject);
+                assert_eq!(&policy.decide(&request), expected, "{mode} / {request:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn read_only_policy_cannot_cycle_mode() {
+        let mut policy = PermissionPolicy::read_only();
+        assert_eq!(policy.cycle_mode(), PermissionMode::Plan);
+        assert_eq!(policy, PermissionPolicy::read_only());
     }
 }
