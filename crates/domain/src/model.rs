@@ -5,6 +5,7 @@
 //! according to layered configuration, so which model does what can change
 //! without touching code.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -236,6 +237,117 @@ impl ModelPricing {
     }
 }
 
+/// Partial [`ModelSpec`] as written in one configuration layer.
+///
+/// Layers merge field by field: a `Some` field in a higher layer replaces the
+/// same field of the lower one, a `None` field keeps it. `fallbacks` is
+/// replaced as a whole list, never concatenated.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ModelSpecPatch {
+    /// Primary model id or alias.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<ModelId>,
+    /// `max_tokens` override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// Thinking override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+    /// Fallback list override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallbacks: Option<Vec<ModelId>>,
+}
+
+impl ModelSpecPatch {
+    /// Returns a patch where every `Some` field of `higher` wins over `self`.
+    #[must_use]
+    pub fn overlay(&self, higher: &Self) -> Self {
+        Self {
+            id: higher.id.clone().or_else(|| self.id.clone()),
+            max_tokens: higher.max_tokens.or(self.max_tokens),
+            thinking: higher.thinking.or(self.thinking),
+            fallbacks: higher.fallbacks.clone().or_else(|| self.fallbacks.clone()),
+        }
+    }
+
+    /// Applies the `Some` fields of this patch onto `spec`.
+    pub fn apply_to(&self, spec: &mut ModelSpec) {
+        if let Some(id) = &self.id {
+            spec.id = id.clone();
+        }
+        if let Some(max_tokens) = self.max_tokens {
+            spec.max_tokens = max_tokens;
+        }
+        if let Some(thinking) = self.thinking {
+            spec.thinking = thinking;
+        }
+        if let Some(fallbacks) = &self.fallbacks {
+            spec.fallbacks.clone_from(fallbacks);
+        }
+    }
+
+    /// `true` if the patch sets no field.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+impl From<ModelSpec> for ModelSpecPatch {
+    fn from(spec: ModelSpec) -> Self {
+        Self {
+            id: Some(spec.id),
+            max_tokens: Some(spec.max_tokens),
+            thinking: Some(spec.thinking),
+            fallbacks: Some(spec.fallbacks),
+        }
+    }
+}
+
+/// One configuration layer (`app.models` of a single `init.lua`).
+///
+/// Ids anywhere in the layer (role ids and fallbacks) may be aliases; they
+/// are expanded when the policy resolves a role.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RoleConfig {
+    /// Per-role partial specs.
+    pub roles: BTreeMap<ModelRole, ModelSpecPatch>,
+    /// Short names (`opus`) to model ids.
+    pub aliases: BTreeMap<String, ModelId>,
+}
+
+impl RoleConfig {
+    /// Merges `higher` over `self`: roles field by field, aliases key by key.
+    #[must_use]
+    pub fn overlay(&self, higher: &Self) -> Self {
+        let mut out = self.clone();
+        for (role, patch) in &higher.roles {
+            let merged = out
+                .roles
+                .get(role)
+                .map_or_else(|| patch.clone(), |p| p.overlay(patch));
+            out.roles.insert(*role, merged);
+        }
+        out.aliases
+            .extend(higher.aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        out
+    }
+
+    /// The patch for `role`, if this layer has one.
+    #[must_use]
+    pub fn role(&self, role: ModelRole) -> Option<&ModelSpecPatch> {
+        self.roles.get(&role)
+    }
+
+    /// Expands `name` if it is an alias of this layer.
+    #[must_use]
+    pub fn alias(&self, name: &str) -> Option<&ModelId> {
+        self.aliases.get(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +463,115 @@ mod tests {
             );
         }
         assert!(ModelPricing::default().cost(9, 9, 9, 9).abs() < f64::EPSILON);
+    }
+
+    fn patch(
+        id: Option<&str>,
+        max_tokens: Option<u32>,
+        thinking: Option<ThinkingConfig>,
+        fallbacks: Option<&[&str]>,
+    ) -> ModelSpecPatch {
+        ModelSpecPatch {
+            id: id.map(ModelId::from),
+            max_tokens,
+            thinking,
+            fallbacks: fallbacks.map(|f| f.iter().copied().map(ModelId::from).collect()),
+        }
+    }
+
+    #[test]
+    fn patch_overlay_is_field_by_field() {
+        let on = Some(ThinkingConfig::Enabled { budget_tokens: 1 });
+        let cases = [
+            // (lower, higher, expected)
+            (
+                patch(None, None, None, None),
+                patch(None, None, None, None),
+                patch(None, None, None, None),
+            ),
+            (
+                patch(Some("a"), Some(1), None, None),
+                patch(None, None, None, None),
+                patch(Some("a"), Some(1), None, None),
+            ),
+            (
+                patch(Some("a"), Some(1), None, None),
+                patch(Some("b"), None, None, None),
+                patch(Some("b"), Some(1), None, None),
+            ),
+            (
+                patch(Some("a"), None, on, Some(&["x"])),
+                patch(None, Some(2), None, None),
+                patch(Some("a"), Some(2), on, Some(&["x"])),
+            ),
+            (
+                patch(None, None, None, Some(&["x", "y"])),
+                patch(None, None, None, Some(&[])),
+                patch(None, None, None, Some(&[])),
+            ),
+            (
+                patch(None, None, on, None),
+                patch(None, None, Some(ThinkingConfig::Disabled), None),
+                patch(None, None, Some(ThinkingConfig::Disabled), None),
+            ),
+        ];
+        for (i, (lower, higher, want)) in cases.into_iter().enumerate() {
+            assert_eq!(lower.overlay(&higher), want, "case {i}");
+        }
+    }
+
+    #[test]
+    fn patch_apply_and_empty() {
+        let mut spec = ModelSpec::new("a", 10).with_fallbacks(["x"]);
+        patch(None, Some(20), None, None).apply_to(&mut spec);
+        assert_eq!(spec, ModelSpec::new("a", 20).with_fallbacks(["x"]));
+        patch(Some("b"), None, Some(ThinkingConfig::Adaptive), Some(&[])).apply_to(&mut spec);
+        assert_eq!(
+            spec,
+            ModelSpec::new("b", 20).with_thinking(ThinkingConfig::Adaptive)
+        );
+        assert!(ModelSpecPatch::default().is_empty());
+        assert!(!ModelSpecPatch::from(spec).is_empty());
+    }
+
+    #[test]
+    fn role_config_overlay_and_json_shape() {
+        let lower: RoleConfig = serde_json::from_value(serde_json::json!({
+            "roles": {
+                "main": {"id": "sonnet", "max_tokens": 16000, "fallbacks": ["haiku"]},
+                "plan": {"id": "opus"}
+            },
+            "aliases": {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5"}
+        }))
+        .unwrap();
+        let higher: RoleConfig = serde_json::from_value(serde_json::json!({
+            "roles": {"main": {"max_tokens": 4000}, "explore": {"id": "haiku"}},
+            "aliases": {"opus": "claude-opus-6"}
+        }))
+        .unwrap();
+        let merged = lower.overlay(&higher);
+        assert_eq!(
+            merged.role(ModelRole::Main),
+            Some(&patch(Some("sonnet"), Some(4000), None, Some(&["haiku"])))
+        );
+        assert_eq!(
+            merged.role(ModelRole::Plan),
+            Some(&patch(Some("opus"), None, None, None))
+        );
+        assert_eq!(
+            merged.role(ModelRole::Explore),
+            Some(&patch(Some("haiku"), None, None, None))
+        );
+        assert_eq!(merged.role(ModelRole::Deep), None);
+        assert_eq!(merged.alias("opus"), Some(&ModelId::from("claude-opus-6")));
+        assert_eq!(
+            merged.alias("sonnet"),
+            Some(&ModelId::from("claude-sonnet-5-5"))
+        );
+        assert_eq!(merged.alias("haiku"), None);
+        assert_eq!(
+            serde_json::from_value::<RoleConfig>(serde_json::json!({})).unwrap(),
+            RoleConfig::default()
+        );
     }
 }
