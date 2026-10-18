@@ -5,14 +5,20 @@
 //! it received so tests can assert on it afterwards.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::fmt;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use domain::conversation::SessionId;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use serde_json::Value;
 
 use crate::ports::approval::{ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink};
+use crate::ports::plugin::{
+    CallbackId, ConfigSources, HookEvent, HookKind, HookOutcome, LoadedConfig, PluginError,
+    PluginHostPort, PluginOutput,
+};
 use crate::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
 
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
@@ -515,5 +521,356 @@ mod store_tests {
         );
         assert!(store.is_empty());
         store.save(&session).await.unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PluginHostPort
+// ---------------------------------------------------------------------------
+
+/// Programmed body of a fake Lua callback or plugin tool.
+pub type FakeHandler = Arc<dyn Fn(Value) -> Result<PluginOutput, PluginError> + Send + Sync>;
+
+/// Programmed body of a fake hook.
+pub type FakeHook = Arc<dyn Fn(&HookEvent) -> Result<HookOutcome, PluginError> + Send + Sync>;
+
+/// A call received by a [`FakePluginHost`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginInvocation {
+    /// [`PluginHostPort::load_config`].
+    LoadConfig(ConfigSources),
+    /// [`PluginHostPort::invoke_callback`].
+    Callback {
+        /// Callback invoked.
+        id: CallbackId,
+        /// Its arguments.
+        args: Value,
+    },
+    /// [`PluginHostPort::call_tool`].
+    Tool {
+        /// Tool called.
+        name: String,
+        /// Its input.
+        input: Value,
+    },
+    /// [`PluginHostPort::run_hook`].
+    Hook(HookEvent),
+}
+
+/// [`PluginHostPort`] without Lua: a fixed [`LoadedConfig`], callbacks and
+/// tools programmed as closures, and hooks with the real chaining rules
+/// (the first `Deny` stops; each `ReplaceInput` feeds the next hook).
+///
+/// Unknown callbacks and tools fail with [`PluginError::NotFound`]. Every
+/// call is recorded, see [`invocations`](Self::invocations).
+#[derive(Default)]
+pub struct FakePluginHost {
+    config: Option<Result<LoadedConfig, PluginError>>,
+    callbacks: HashMap<CallbackId, FakeHandler>,
+    tools: HashMap<String, FakeHandler>,
+    hooks: Vec<(HookKind, FakeHook)>,
+    invocations: Mutex<Vec<PluginInvocation>>,
+}
+
+impl fmt::Debug for FakePluginHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FakePluginHost")
+            .field("config", &self.config)
+            .field("callbacks", &self.callbacks.keys().collect::<Vec<_>>())
+            .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .field("hooks", &self.hooks.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl FakePluginHost {
+    /// Creates a host that loads [`LoadedConfig::default`] and knows no
+    /// callbacks, tools or hooks.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes `load_config` return `config`.
+    #[must_use]
+    pub fn with_config(mut self, config: LoadedConfig) -> Self {
+        self.config = Some(Ok(config));
+        self
+    }
+
+    /// Makes `load_config` fail with `error`.
+    #[must_use]
+    pub fn with_load_error(mut self, error: PluginError) -> Self {
+        self.config = Some(Err(error));
+        self
+    }
+
+    /// Registers the body of the callback `id`.
+    #[must_use]
+    pub fn on_callback(
+        mut self,
+        id: CallbackId,
+        f: impl Fn(Value) -> Result<PluginOutput, PluginError> + Send + Sync + 'static,
+    ) -> Self {
+        self.callbacks.insert(id, Arc::new(f));
+        self
+    }
+
+    /// Registers the handler of the tool `name`.
+    #[must_use]
+    pub fn on_tool(
+        mut self,
+        name: impl Into<String>,
+        f: impl Fn(Value) -> Result<PluginOutput, PluginError> + Send + Sync + 'static,
+    ) -> Self {
+        self.tools.insert(name.into(), Arc::new(f));
+        self
+    }
+
+    /// Appends a hook for events of `kind`; hooks run in registration order.
+    #[must_use]
+    pub fn on_hook(
+        mut self,
+        kind: HookKind,
+        f: impl Fn(&HookEvent) -> Result<HookOutcome, PluginError> + Send + Sync + 'static,
+    ) -> Self {
+        self.hooks.push((kind, Arc::new(f)));
+        self
+    }
+
+    /// Appends a `before_tool` hook that denies the tool `name`.
+    #[must_use]
+    pub fn deny_tool(self, name: impl Into<String>, reason: Option<String>) -> Self {
+        let name = name.into();
+        self.on_hook(HookKind::BeforeTool, move |event| match event {
+            HookEvent::BeforeTool { name: tool, .. } if *tool == name => Ok(HookOutcome::Deny {
+                reason: reason.clone(),
+            }),
+            _ => Ok(HookOutcome::Continue),
+        })
+    }
+
+    /// Calls received so far, in order.
+    #[must_use]
+    pub fn invocations(&self) -> Vec<PluginInvocation> {
+        lock(&self.invocations).clone()
+    }
+
+    fn record(&self, invocation: PluginInvocation) {
+        lock(&self.invocations).push(invocation);
+    }
+}
+
+/// Replaces the input carried by `event`.
+fn set_hook_input(event: &mut HookEvent, value: Value) {
+    match event {
+        HookEvent::BeforeTool { input, .. } | HookEvent::AfterTool { input, .. } => *input = value,
+    }
+}
+
+#[async_trait]
+impl PluginHostPort for FakePluginHost {
+    async fn load_config(&self, sources: ConfigSources) -> Result<LoadedConfig, PluginError> {
+        self.record(PluginInvocation::LoadConfig(sources));
+        self.config
+            .clone()
+            .unwrap_or_else(|| Ok(LoadedConfig::default()))
+    }
+
+    async fn invoke_callback(
+        &self,
+        id: CallbackId,
+        args: Value,
+    ) -> Result<PluginOutput, PluginError> {
+        self.record(PluginInvocation::Callback {
+            id,
+            args: args.clone(),
+        });
+        let handler = self
+            .callbacks
+            .get(&id)
+            .ok_or_else(|| PluginError::NotFound(format!("callback {id}")))?;
+        handler(args)
+    }
+
+    async fn call_tool(&self, name: &str, input: Value) -> Result<PluginOutput, PluginError> {
+        self.record(PluginInvocation::Tool {
+            name: name.to_owned(),
+            input: input.clone(),
+        });
+        let handler = self
+            .tools
+            .get(name)
+            .ok_or_else(|| PluginError::NotFound(format!("tool {name}")))?;
+        handler(input)
+    }
+
+    async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError> {
+        self.record(PluginInvocation::Hook(event.clone()));
+        let kind = event.kind();
+        let mut event = event;
+        let mut replaced = None;
+        for (_, hook) in self.hooks.iter().filter(|(k, _)| *k == kind) {
+            match hook(&event)? {
+                HookOutcome::Continue => {}
+                deny @ HookOutcome::Deny { .. } => return Ok(deny),
+                HookOutcome::ReplaceInput(value) => {
+                    set_hook_input(&mut event, value.clone());
+                    replaced = Some(value);
+                }
+            }
+        }
+        Ok(replaced.map_or(HookOutcome::Continue, HookOutcome::ReplaceInput))
+    }
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::ports::plugin::AppOptions;
+
+    fn before(name: &str, input: Value) -> HookEvent {
+        HookEvent::BeforeTool {
+            name: name.into(),
+            input,
+        }
+    }
+
+    #[tokio::test]
+    async fn load_config_returns_the_fixed_config() {
+        let config = LoadedConfig {
+            options: AppOptions {
+                theme: Some("tokyonight".into()),
+                ..AppOptions::default()
+            },
+            ..LoadedConfig::default()
+        };
+        let host: Arc<dyn PluginHostPort> =
+            Arc::new(FakePluginHost::new().with_config(config.clone()));
+        let loaded = host.load_config(ConfigSources::default()).await.unwrap();
+        assert_eq!(loaded, config);
+    }
+
+    #[tokio::test]
+    async fn load_config_can_fail() {
+        let host = FakePluginHost::new().with_load_error(PluginError::Unavailable("gone".into()));
+        let result = host.load_config(ConfigSources::default()).await;
+        assert_eq!(result, Err(PluginError::Unavailable("gone".into())));
+    }
+
+    #[tokio::test]
+    async fn callbacks_and_tools_run_their_closures() {
+        let host = FakePluginHost::new()
+            .on_callback(CallbackId(1), |args| Ok(PluginOutput::Value(args)))
+            .on_tool("echo", |input| {
+                Ok(PluginOutput::Value(json!({ "got": input })))
+            })
+            .on_tool("boom", |_| Err(PluginError::Runtime("nil value".into())));
+        assert_eq!(
+            host.invoke_callback(CallbackId(1), json!([1])).await,
+            Ok(PluginOutput::Value(json!([1])))
+        );
+        assert_eq!(
+            host.call_tool("echo", json!("x")).await,
+            Ok(PluginOutput::Value(json!({ "got": "x" })))
+        );
+        assert_eq!(
+            host.call_tool("boom", Value::Null).await,
+            Err(PluginError::Runtime("nil value".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_callbacks_and_tools_are_not_found() {
+        let host = FakePluginHost::new();
+        let callback = host.invoke_callback(CallbackId(9), Value::Null).await;
+        assert!(matches!(callback, Err(PluginError::NotFound(_))));
+        let tool = host.call_tool("nope", Value::Null).await;
+        assert!(matches!(tool, Err(PluginError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn deny_tool_only_denies_that_tool() {
+        let host = FakePluginHost::new().deny_tool("rm", Some("no".into()));
+        assert_eq!(
+            host.run_hook(before("rm", Value::Null)).await,
+            Ok(HookOutcome::Deny {
+                reason: Some("no".into())
+            })
+        );
+        assert_eq!(
+            host.run_hook(before("grep", Value::Null)).await,
+            Ok(HookOutcome::Continue)
+        );
+    }
+
+    #[tokio::test]
+    async fn replaced_input_feeds_the_next_hook() {
+        let host = FakePluginHost::new()
+            .on_hook(HookKind::BeforeTool, |_| {
+                Ok(HookOutcome::ReplaceInput(json!({ "step": 1 })))
+            })
+            .on_hook(HookKind::BeforeTool, |event| match event {
+                HookEvent::BeforeTool { input, .. } if *input == json!({ "step": 1 }) => {
+                    Ok(HookOutcome::ReplaceInput(json!({ "step": 2 })))
+                }
+                _ => Ok(HookOutcome::Continue),
+            });
+        assert_eq!(
+            host.run_hook(before("edit", Value::Null)).await,
+            Ok(HookOutcome::ReplaceInput(json!({ "step": 2 })))
+        );
+    }
+
+    #[tokio::test]
+    async fn deny_stops_the_chain_and_errors_propagate() {
+        let host = FakePluginHost::new()
+            .deny_tool("rm", None)
+            .on_hook(HookKind::BeforeTool, |_| Err(PluginError::InstructionLimit));
+        assert_eq!(
+            host.run_hook(before("rm", Value::Null)).await,
+            Ok(HookOutcome::Deny { reason: None })
+        );
+        assert_eq!(
+            host.run_hook(before("ls", Value::Null)).await,
+            Err(PluginError::InstructionLimit)
+        );
+    }
+
+    #[tokio::test]
+    async fn hooks_only_run_for_their_kind() {
+        let host = FakePluginHost::new().on_hook(HookKind::AfterTool, |_| {
+            Ok(HookOutcome::Deny { reason: None })
+        });
+        assert_eq!(
+            host.run_hook(before("ls", Value::Null)).await,
+            Ok(HookOutcome::Continue)
+        );
+    }
+
+    #[tokio::test]
+    async fn records_every_invocation() {
+        let host = FakePluginHost::new();
+        let _ = host.load_config(ConfigSources::default()).await;
+        let _ = host.call_tool("t", json!(1)).await;
+        let _ = host.invoke_callback(CallbackId(2), json!(2)).await;
+        let _ = host.run_hook(before("t", json!(3))).await;
+        assert_eq!(
+            host.invocations(),
+            [
+                PluginInvocation::LoadConfig(ConfigSources::default()),
+                PluginInvocation::Tool {
+                    name: "t".into(),
+                    input: json!(1)
+                },
+                PluginInvocation::Callback {
+                    id: CallbackId(2),
+                    args: json!(2)
+                },
+                PluginInvocation::Hook(before("t", json!(3))),
+            ]
+        );
     }
 }
