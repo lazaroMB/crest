@@ -11,7 +11,12 @@ use application::ports::mcp::{
 };
 use application::ports::plugin::McpServerSpec;
 use async_trait::async_trait;
-use rmcp::model::CallToolRequestParams;
+use rmcp::model::{
+    CallToolRequest, CallToolRequestParams, CallToolResult, CancelledNotificationParam,
+    ClientRequest, RequestId, ServerResult,
+};
+use rmcp::service::PeerRequestOptions;
+use rmcp::{Peer, RoleClient, ServiceError};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
@@ -244,6 +249,49 @@ async fn run_connect(spec: McpServerSpec, state: watch::Sender<State>, options: 
     });
 }
 
+/// Sends `cancelled` for a request whose caller went away before the
+/// answer, so the server can stop working on it.
+struct CancelOnDrop {
+    peer: Peer<RoleClient>,
+    id: Option<RequestId>,
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            let peer = self.peer.clone();
+            let params =
+                CancelledNotificationParam::new(Some(id), Some("cancelled by user".into()));
+            tokio::spawn(async move {
+                let _ = peer.notify_cancelled(params).await;
+            });
+        }
+    }
+}
+
+/// `tools/call` limited to `timeout` (rmcp then cancels it on the server)
+/// and cancelled on the server too when the returned future is dropped.
+async fn call_tool(
+    peer: &Peer<RoleClient>,
+    params: CallToolRequestParams,
+    timeout: Duration,
+) -> Result<CallToolResult, ServiceError> {
+    let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
+    let handle = peer
+        .send_cancellable_request(request, PeerRequestOptions::with_timeout(timeout))
+        .await?;
+    let mut guard = CancelOnDrop {
+        peer: peer.clone(),
+        id: Some(handle.id.clone()),
+    };
+    let response = handle.await_response().await;
+    guard.id = None;
+    match response? {
+        ServerResult::CallToolResult(result) => Ok(result),
+        _ => Err(ServiceError::UnexpectedResponse),
+    }
+}
+
 #[async_trait]
 impl McpPort for McpManager {
     async fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
@@ -297,10 +345,9 @@ impl McpPort for McpManager {
                 });
             }
         }
-        let call = conn.client.peer().call_tool(params);
-        match tokio::time::timeout(self.options.call_timeout, call).await {
-            Ok(Ok(result)) => Ok(convert::result(result)),
-            Ok(Err(err)) => {
+        match call_tool(conn.client.peer(), params, self.options.call_timeout).await {
+            Ok(result) => Ok(convert::result(result)),
+            Err(err) => {
                 if convert::is_disconnect(&err) {
                     entry.state.send_if_modified(|current| {
                         let same = matches!(current, State::Ready(c) if Arc::ptr_eq(c, &conn));
@@ -312,9 +359,6 @@ impl McpPort for McpManager {
                 }
                 Err(convert::error(server, err))
             }
-            Err(_) => Err(McpError::Timeout {
-                server: server.to_owned(),
-            }),
         }
     }
 
