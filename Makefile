@@ -83,8 +83,13 @@ arch: ## Reglas de la arquitectura hexagonal (scripts/check-arch.sh)
 test-arch: ## Tests de scripts/check-arch.sh
 	$(BASH) tests/arch/run.sh
 
+.PHONY: test-deps
+test-deps: ## Tests de scripts/install-deps.sh
+	$(BASH) tests/install-deps/test-helpers.sh
+	$(BASH) tests/install-deps/test-macos-sim.sh
+
 .PHONY: check
-check: fmt-check lint test arch test-arch ## Lo que debe pasar para cerrar una fase
+check: fmt-check lint test arch test-arch test-deps ## Lo que debe pasar para cerrar una fase
 
 .PHONY: ci
 ci: doctor check ## doctor + check
