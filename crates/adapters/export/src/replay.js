@@ -116,7 +116,7 @@
       const dir = new THREE.Vector3(Math.cos(view.pitch) * Math.sin(view.yaw), Math.sin(view.pitch), Math.cos(view.pitch) * Math.cos(view.yaw));
       let cam;
       if (view.ortho) {
-        const vh = (radius * 1.25) / view.zoom;
+        const vh = Math.max(radius * 1.4, (radius * 2.4) / aspect) / view.zoom;
         ortho.left = (-vh * aspect) / 2; ortho.right = (vh * aspect) / 2; ortho.top = vh / 2; ortho.bottom = -vh / 2;
         ortho.position.copy(view.target).addScaledVector(dir, radius * 4);
         cam = ortho;
@@ -195,7 +195,8 @@
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX; drag.y = e.clientY;
       if (drag.pan) {
-        const vh = view.ortho ? (radius * 1.25) / view.zoom : 2 * ((radius * 2.6) / view.zoom) * Math.tan(0.3);
+        const aspect = (canvas.clientWidth || 1) / (canvas.clientHeight || 1);
+        const vh = view.ortho ? Math.max(radius * 1.4, (radius * 2.4) / aspect) / view.zoom : 2 * ((radius * 2.6) / view.zoom) * Math.tan(0.3);
         const per = vh / (canvas.clientHeight || 1);
         const right = new THREE.Vector3(Math.cos(view.yaw), 0, -Math.sin(view.yaw));
         const fwd = new THREE.Vector3(-Math.sin(view.yaw), 0, -Math.cos(view.yaw));
@@ -342,6 +343,14 @@
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "i" && scene3) { scene3.iso(); redraw(); }
   });
+  // Deep links: #scenario=<id>&t=<0..1>&chip=<id>&play
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const wanted = DATA.scenarios.findIndex((s) => s.id === hash.get("scenario"));
+  if (wanted >= 0) state.scenario = wanted;
+  if (hash.has("t")) state.t = Math.min(1, Math.max(0, +hash.get("t") || 0)) * run().until_us;
+  const chip = DATA.scene.chips.findIndex((c) => c.id === hash.get("chip"));
+  if (chip >= 0) state.selected = chip;
+  if (hash.has("play")) state.playing = true;
   tabs();
   redraw();
   requestAnimationFrame(tick);
