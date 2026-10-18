@@ -561,6 +561,7 @@ impl TurnRun<'_> {
             | LlmEvent::RedactedThinking { .. }
             | LlmEvent::ToolInputDelta { .. }
             | LlmEvent::ServerToolUse { .. }
+            | LlmEvent::ProviderBlock { .. }
             | LlmEvent::Citation { .. }
             | LlmEvent::BlockStop { .. }
             | LlmEvent::Usage(_)

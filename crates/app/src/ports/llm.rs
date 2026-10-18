@@ -189,8 +189,8 @@ pub struct RequestMetadata {
 ///
 /// `index` is the position of the content block in the provider's answer.
 /// Blocks start with their first event (`TextDelta`, `ThinkingDelta`,
-/// `RedactedThinking`, `ToolUseStart` or `ServerToolUse`) and end with
-/// `BlockStop`. Events of different blocks may interleave.
+/// `RedactedThinking`, `ToolUseStart`, `ServerToolUse` or `ProviderBlock`)
+/// and end with `BlockStop`. Events of different blocks may interleave.
 ///
 /// `Retrying` and `ModelFallback` are emitted by the adapter between
 /// attempts, before the `MessageStart` of the attempt that succeeds; an
@@ -248,14 +248,28 @@ pub enum LlmEvent {
     },
     /// The provider runs one of its server tools (web search or fetch).
     ///
-    /// Informational: lets the UI show progress. Server tool blocks and
-    /// their results are not part of the domain `Message`; what matters
-    /// for evidence are the [`LlmEvent::Citation`]s they produce.
+    /// Informational: lets the UI show progress. The block's content for
+    /// the history arrives later as an [`LlmEvent::ProviderBlock`] at the
+    /// same index; what matters for evidence are the
+    /// [`LlmEvent::Citation`]s the search produces.
     ServerToolUse {
         /// Block index.
         index: usize,
         /// Server tool name (e.g. `web_search`).
         name: String,
+    },
+    /// The complete JSON of a provider-specific block (a server tool call
+    /// or its result), emitted once, right before the block's `BlockStop`.
+    ///
+    /// It becomes a [`ContentPart::ProviderBlock`] at position `index` of
+    /// the assistant message, so the adapter can send it back unchanged in
+    /// later turns. It may follow a [`LlmEvent::ServerToolUse`] of the same
+    /// index or start the block itself (results have no deltas).
+    ProviderBlock {
+        /// Block index.
+        index: usize,
+        /// The block as provider JSON.
+        raw: serde_json::Value,
     },
     /// A citation attached to the text block at `index`.
     Citation {
@@ -524,8 +538,11 @@ enum OpenBlock {
         name: String,
         json: String,
     },
-    /// A server tool block; produces no domain content part.
+    /// A server tool block whose content has not arrived yet; produces no
+    /// domain content part unless a `ProviderBlock` fills it.
     ServerTool,
+    /// A provider block with its full JSON.
+    Provider(serde_json::Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -608,6 +625,13 @@ impl MessageAssembler {
                 _ => return Err(AssembleError::BlockKindMismatch { index }),
             },
             LlmEvent::ServerToolUse { index, .. } => self.start(index, OpenBlock::ServerTool)?,
+            LlmEvent::ProviderBlock { index, raw } => {
+                match self.open_or_start(index, || OpenBlock::ServerTool)? {
+                    block @ OpenBlock::ServerTool => *block = OpenBlock::Provider(raw),
+                    OpenBlock::Provider(_) => return Err(AssembleError::DuplicateBlock { index }),
+                    _ => return Err(AssembleError::BlockKindMismatch { index }),
+                }
+            }
             LlmEvent::Citation { citation, .. } => self.citations.push(citation),
             LlmEvent::BlockStop { index } => {
                 let block = std::mem::replace(self.open(index)?, OpenBlock::ServerTool);
@@ -651,9 +675,9 @@ impl MessageAssembler {
     /// Builds what was received before the user interrupted the stream,
     /// with [`StopReason::Interrupted`].
     ///
-    /// Text and thinking are kept; tool uses are dropped, finished or not,
-    /// because a tool call without its result cannot be sent back to the
-    /// model.
+    /// Text and thinking are kept; tool uses and provider blocks are
+    /// dropped, finished or not, because a tool call without its result
+    /// cannot be sent back to the model.
     #[must_use]
     pub fn interrupt(self) -> AssembledMessage {
         let parts = self
@@ -663,7 +687,12 @@ impl MessageAssembler {
                 BlockState::Open(block) => close(index, block).ok().flatten(),
                 BlockState::Stopped(part) => part,
             })
-            .filter(|part| !matches!(part, ContentPart::ToolUse { .. }))
+            .filter(|part| {
+                !matches!(
+                    part,
+                    ContentPart::ToolUse { .. } | ContentPart::ProviderBlock { .. }
+                )
+            })
             .collect();
         AssembledMessage {
             message: Message::assistant(parts),
@@ -736,6 +765,7 @@ fn close(index: usize, block: OpenBlock) -> Result<Option<ContentPart>, Assemble
             Some(ContentPart::ToolUse { id, name, input })
         }
         OpenBlock::ServerTool => None,
+        OpenBlock::Provider(raw) => Some(ContentPart::ProviderBlock { raw }),
     })
 }
 
@@ -1016,6 +1046,74 @@ mod tests {
             Err(AssembleError::BlockAlreadyStopped { index: 0 })
         );
         assert_eq!(asm.finish(), Err(AssembleError::Incomplete));
+    }
+
+    #[test]
+    fn provider_blocks_take_their_index_position() {
+        let call = serde_json::json!({"type": "server_tool_use", "id": "srvtoolu_1"});
+        let result =
+            serde_json::json!({"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1"});
+        let out = assemble(vec![
+            start(),
+            text(0, "Busco."),
+            block_stop(0),
+            LlmEvent::ServerToolUse {
+                index: 1,
+                name: "web_search".into(),
+            },
+            LlmEvent::ProviderBlock {
+                index: 1,
+                raw: call.clone(),
+            },
+            block_stop(1),
+            LlmEvent::ProviderBlock {
+                index: 2,
+                raw: result.clone(),
+            },
+            block_stop(2),
+            text(3, "Listo."),
+            block_stop(3),
+            stop(StopReason::EndTurn),
+        ])
+        .unwrap();
+        assert_eq!(
+            out.message.content,
+            vec![
+                ContentPart::text("Busco."),
+                ContentPart::ProviderBlock { raw: call },
+                ContentPart::ProviderBlock { raw: result },
+                ContentPart::text("Listo."),
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_block_protocol_violations() {
+        let raw = serde_json::json!({"type": "server_tool_use"});
+        let provider = |index| LlmEvent::ProviderBlock {
+            index,
+            raw: raw.clone(),
+        };
+        let mut asm = MessageAssembler::new();
+        asm.push(start()).unwrap();
+        asm.push(text(0, "x")).unwrap();
+        assert_eq!(
+            asm.push(provider(0)),
+            Err(AssembleError::BlockKindMismatch { index: 0 })
+        );
+        asm.push(provider(1)).unwrap();
+        assert_eq!(
+            asm.push(provider(1)),
+            Err(AssembleError::DuplicateBlock { index: 1 })
+        );
+        asm.push(block_stop(1)).unwrap();
+        assert_eq!(
+            asm.push(provider(1)),
+            Err(AssembleError::BlockAlreadyStopped { index: 1 })
+        );
+        // Interrupted answers drop provider blocks like tool uses.
+        let out = asm.interrupt();
+        assert_eq!(out.message.content, vec![ContentPart::text("x")]);
     }
 
     #[test]
