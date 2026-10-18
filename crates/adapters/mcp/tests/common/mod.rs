@@ -28,14 +28,14 @@ pub fn echo_server_path() -> PathBuf {
 
 /// A stdio spec running the example echo server as `name`.
 pub fn echo_spec(name: &str) -> McpServerSpec {
-    McpServerSpec {
-        name: name.into(),
-        transport: McpTransport::Stdio {
+    McpServerSpec::new(
+        name,
+        McpTransport::Stdio {
             command: echo_server_path().display().to_string(),
             args: Vec::new(),
             env: BTreeMap::new(),
         },
-    }
+    )
 }
 
 /// Starts the example server on a free local port; returns it with its URL.

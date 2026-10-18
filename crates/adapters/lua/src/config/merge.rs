@@ -269,13 +269,13 @@ mod tests {
                 callback: CallbackId(1),
             });
             c.tools.push(tool("todo", "config", 2));
-            d.mcp_servers.push(McpServerSpec {
-                name: "git".into(),
-                transport: McpTransport::Http {
+            d.mcp_servers.push(McpServerSpec::new(
+                "git",
+                McpTransport::Http {
                     url: "a".into(),
                     headers: BTreeMap::new(),
                 },
-            });
+            ));
         });
         let ws = layer(|d, c| {
             c.keymaps.push(keymap("<leader>r", "session.new"));
@@ -284,13 +284,13 @@ mod tests {
                 callback: CallbackId(3),
             });
             c.tools.push(tool("todo", "workspace", 4));
-            d.mcp_servers.push(McpServerSpec {
-                name: "git".into(),
-                transport: McpTransport::Http {
+            d.mcp_servers.push(McpServerSpec::new(
+                "git",
+                McpTransport::Http {
                     url: "b".into(),
                     headers: BTreeMap::new(),
                 },
-            });
+            ));
         });
         let merged = merge(Some(global), Vec::new(), Some(ws));
         let c = &merged.config;

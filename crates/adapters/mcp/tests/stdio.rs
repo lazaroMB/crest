@@ -85,14 +85,14 @@ async fn calls_tools_and_reports_errors() {
 
 #[tokio::test]
 async fn a_failing_server_does_not_affect_the_others() {
-    let missing = McpServerSpec {
-        name: "missing".into(),
-        transport: McpTransport::Stdio {
+    let missing = McpServerSpec::new(
+        "missing",
+        McpTransport::Stdio {
             command: "/nonexistent/crest-mcp-server".into(),
             args: Vec::new(),
             env: BTreeMap::new(),
         },
-    };
+    );
     let manager = McpManager::start(vec![missing, echo_spec("echo"), echo_spec("echo")]);
     manager.wait_ready().await;
     let servers = manager.servers().await;

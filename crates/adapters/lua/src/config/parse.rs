@@ -315,10 +315,7 @@ fn mcp(value: Value, report: &mut Report<'_>) -> Vec<McpServerSpec> {
                 continue;
             }
         };
-        out.push(McpServerSpec {
-            name: name.clone(),
-            transport,
-        });
+        out.push(McpServerSpec::new(name.clone(), transport));
     }
     out
 }
@@ -513,21 +510,21 @@ mod tests {
         assert_eq!(
             declared.mcp_servers,
             vec![
-                McpServerSpec {
-                    name: "docs".into(),
-                    transport: McpTransport::Http {
+                McpServerSpec::new(
+                    "docs",
+                    McpTransport::Http {
                         url: "https://example.test/mcp".into(),
                         headers: BTreeMap::new(),
                     },
-                },
-                McpServerSpec {
-                    name: "git".into(),
-                    transport: McpTransport::Stdio {
+                ),
+                McpServerSpec::new(
+                    "git",
+                    McpTransport::Stdio {
                         command: "mcp-git".into(),
                         args: vec!["--repo".into(), ".".into()],
                         env: BTreeMap::from([("A".into(), "1".into())]),
                     },
-                },
+                ),
             ]
         );
         assert_eq!(

@@ -160,6 +160,18 @@ pub enum McpTransport {
     },
 }
 
+/// Config layer an item was declared in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigOrigin {
+    /// The user's global config or one of its plugins.
+    #[default]
+    Global,
+    /// `<workspace>/.crest/init.lua`, which comes with the repository and
+    /// is therefore not trusted by default.
+    Workspace,
+}
+
 /// An MCP server declared in the config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerSpec {
@@ -167,6 +179,30 @@ pub struct McpServerSpec {
     pub name: String,
     /// How to connect.
     pub transport: McpTransport,
+    /// Side effect of calling its tools, for the permission policy;
+    /// `execute` (asks like a command) unless the config says otherwise.
+    #[serde(default = "default_tool_effect")]
+    pub effect: ToolEffect,
+    /// Limit for one tool call, in milliseconds; `None` keeps the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    /// Layer that declared it (the last one, when several did).
+    #[serde(default)]
+    pub origin: ConfigOrigin,
+}
+
+impl McpServerSpec {
+    /// A server of the global config with the default effect and timeout.
+    #[must_use]
+    pub fn new(name: impl Into<String>, transport: McpTransport) -> Self {
+        Self {
+            name: name.into(),
+            transport,
+            effect: default_tool_effect(),
+            timeout_ms: None,
+            origin: ConfigOrigin::Global,
+        }
+    }
 }
 
 /// A problem found while loading a config file or plugin. Loading goes on
@@ -450,12 +486,16 @@ mod tests {
                 },
             ],
             mcp_servers: vec![McpServerSpec {
-                name: "git".into(),
-                transport: McpTransport::Stdio {
-                    command: "mcp-git".into(),
-                    args: Vec::new(),
-                    env: BTreeMap::new(),
-                },
+                timeout_ms: Some(5000),
+                origin: ConfigOrigin::Workspace,
+                ..McpServerSpec::new(
+                    "git",
+                    McpTransport::Stdio {
+                        command: "mcp-git".into(),
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
+                    },
+                )
             }],
             errors: vec![PluginDiagnostic {
                 source: "init.lua".into(),
