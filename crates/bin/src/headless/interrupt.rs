@@ -26,7 +26,7 @@ pub async fn on_interrupt<S, F>(
     cancel.cancel();
     terminal.lock().line(
         Some(Style::Yellow),
-        "^C interrumpiendo el turno (otra vez para salir)",
+        "^C interrupting the turn (again to quit)",
     );
     if signals().await {
         exit(i32::from(Exit::Interrupted.code()));
@@ -64,7 +64,7 @@ mod tests {
         let (term, buf) = terminal(false);
         on_interrupt(|| async { true }, cancel.clone(), term, record_exit).await;
         assert!(cancel.is_cancelled());
-        assert!(buf.text().contains("interrumpiendo"));
+        assert!(buf.text().contains("interrupting"));
         assert_eq!(EXITED.load(Ordering::SeqCst), 130);
     }
 

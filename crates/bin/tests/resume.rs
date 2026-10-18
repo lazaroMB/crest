@@ -130,7 +130,7 @@ async fn a_reopened_app_resumes_history_timeline_and_rules() {
         saved.permission_rules
     );
     assert!(
-        output.text().contains("sesión anterior reanudada"),
+        output.text().contains("previous session resumed"),
         "{}",
         output.text()
     );

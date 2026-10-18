@@ -132,7 +132,7 @@ async fn finds_edits_after_approval_and_explains() {
     assert!(out.contains("→ read_file src/lib.rs"), "{out}");
     assert!(out.contains("  -    a - b\n  +    a + b\n"), "{out}");
     assert!(
-        out.contains("¿Permitir edit_file src/lib.rs? [y]es / [a]lways / [n]o: y\n"),
+        out.contains("Allow edit_file src/lib.rs? [y]es / [a]lways / [n]o: y\n"),
         "{out}"
     );
     assert!(out.contains("✓ edit_file"), "{out}");
@@ -209,7 +209,7 @@ async fn auto_edit_does_not_ask() {
     let out = demo.output.text();
     assert_eq!(exit, Exit::Success, "{out}");
     assert_eq!(lib(&demo.workspace), LIB.replace("a - b", "a + b"));
-    assert!(!out.contains("¿Permitir"), "{out}");
+    assert!(!out.contains("Allow"), "{out}");
     assert!(out.contains("  +    a + b\n"), "{out}");
 }
 
@@ -221,7 +221,7 @@ async fn an_interrupted_turn_exits_with_130() {
     let exit = run_turn(&mut demo.app, "arregla add", cancel).await;
     assert_eq!(exit, Exit::Interrupted);
     assert_eq!(lib(&demo.workspace), LIB);
-    assert!(demo.output.text().contains("(interrumpido)"));
+    assert!(demo.output.text().contains("(interrupted)"));
 }
 
 #[tokio::test]

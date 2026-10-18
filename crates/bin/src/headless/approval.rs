@@ -115,7 +115,7 @@ impl StdinApproval {
                     line.push_str(&shell_quote(arg));
                 }
                 w.line(Some(Style::Bold), &line);
-                w.line(Some(Style::Dim), &format!("    en {cwd}"));
+                w.line(Some(Style::Dim), &format!("    in {cwd}"));
             }
             ApprovalPreview::Text { text } => w.line(None, &format!("  {text}")),
         }
@@ -127,7 +127,7 @@ impl StdinApproval {
         w.styled(
             Style::Bold,
             &format!(
-                "¿Permitir {} {}? [y]es / [a]lways / [n]o: ",
+                "Allow {} {}? [y]es / [a]lways / [n]o: ",
                 req.tool, req.subject
             ),
         );
@@ -164,7 +164,7 @@ impl ApprovalPort for StdinApproval {
         if self.approve_all {
             self.terminal.lock().line(
                 Some(Style::Dim),
-                &format!("  aprobado por --yes: {} {}", req.tool, req.subject),
+                &format!("  approved by --yes: {} {}", req.tool, req.subject),
             );
             return Ok(ApprovalResponse::Approve);
         }
@@ -186,7 +186,7 @@ impl ApprovalPort for StdinApproval {
                 None => self
                     .terminal
                     .lock()
-                    .line(Some(Style::Yellow), "responde y, a o n"),
+                    .line(Some(Style::Yellow), "answer y, a or n"),
             }
         }
     }
@@ -233,10 +233,10 @@ mod tests {
         assert_eq!(response, ApprovalResponse::Approve);
         let text = buf.text();
         assert!(
-            text.starts_with("  $ cargo test 'a b'\n    en /ws\n"),
+            text.starts_with("  $ cargo test 'a b'\n    in /ws\n"),
             "{text}"
         );
-        assert!(text.contains("responde y, a o n"), "{text}");
+        assert!(text.contains("answer y, a or n"), "{text}");
         assert_eq!(
             approval.request(command_request()).await.unwrap(),
             ApprovalResponse::ApproveAlways {

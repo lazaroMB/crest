@@ -375,7 +375,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
         open(&ws, script_after_reopening(), answers).await;
     let startup = output.text();
     assert!(
-        startup.contains("flujo investigativo pendiente") && startup.contains("6/14"),
+        startup.contains("research flow is pending") && startup.contains("6/14"),
         "{startup}"
     );
     let exit = run_flow(&mut app, "resume", &input, &terminal).await;
@@ -389,7 +389,7 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
             .contains("Experimentos"),
         "the first call after reopening is node 6"
     );
-    assert!(out.contains("¿Permitir run_command"), "{out}");
+    assert!(out.contains("Allow run_command"), "{out}");
     // The agents' final JSON stays out of the timeline; their tool calls
     // (the acting nodes') do not.
     assert!(

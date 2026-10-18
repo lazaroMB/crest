@@ -1,7 +1,7 @@
-//! `crest --headless --research "<problema>"`: the research flow in the
+//! `crest --headless --research "<problem>"`: the research flow in the
 //! terminal, from the problem to the Spec folder. Each gate is answered on
-//! stdin, one line each, on the same input as the approvals: "sí" moves on,
-//! any other text redoes the stage, and `/stage`, `/back <nodo>`, `/skip`
+//! stdin, one line each, on the same input as the approvals: "yes" moves on,
+//! any other text redoes the stage, and `/stage`, `/back <stage>`, `/skip`
 //! and `/abort` work as in the chat. `resume` as the problem continues the
 //! flow left halfway in the workspace.
 
@@ -32,7 +32,7 @@ pub async fn run_flow(
     let Some(mut session) = app.research.take() else {
         terminal.lock().line(
             Some(Style::Red),
-            "error: el flujo investigativo no está disponible (la base de datos de crest no abrió)",
+            "error: the research flow is unavailable (the crest database did not open)",
         );
         return Exit::Config;
     };
@@ -71,8 +71,8 @@ pub async fn run_flow(
             Ok(None) | Err(_) => {
                 terminal.lock().line(
                     Some(Style::Yellow),
-                    "sin respuesta (stdin cerrado): el flujo queda en esta compuerta; \
-                     `crest --headless --research resume` lo retoma",
+                    "no answer (stdin closed): the flow stays at this gate; \
+                     `crest --headless --research resume` resumes it",
                 );
                 break Exit::TurnFailed;
             }
@@ -80,7 +80,7 @@ pub async fn run_flow(
         result = research::line(&mut session, &line).await;
     };
     if let Err(err) = app.save().await {
-        app.warn(format!("no pude guardar la sesión: {err}"));
+        app.warn(format!("could not save the session: {err}"));
     }
     app.research = Some(session);
     exit

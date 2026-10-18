@@ -34,10 +34,7 @@ pub async fn run_flow(app: &App, target: &str, input: &StdinApproval, terminal: 
     if session.resumed() {
         app.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
-            message: format!(
-                "flujo de implementación de {} reanudado",
-                session.plan_path()
-            ),
+            message: format!("implementation flow of {} resumed", session.plan_path()),
         });
     }
     let mut status = session.run().await;
@@ -60,8 +57,8 @@ pub async fn run_flow(app: &App, target: &str, input: &StdinApproval, terminal: 
                     Ok(None) | Err(_) => {
                         terminal.lock().line(
                             Some(Style::Yellow),
-                            "sin respuesta (stdin cerrado): el flujo queda en esta compuerta; \
-                             el mismo comando lo reanuda",
+                            "no answer (stdin closed): the flow stays at this gate; \
+                             the same command resumes it",
                         );
                         return Exit::TurnFailed;
                     }

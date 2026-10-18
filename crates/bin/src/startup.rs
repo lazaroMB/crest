@@ -29,7 +29,7 @@ pub async fn load_config(
         Ok(config) => (config, Vec::new()),
         Err(err) => (
             LoadedConfig::default(),
-            vec![format!("config: {err}; uso los valores por defecto")],
+            vec![format!("config: {err}; using the defaults")],
         ),
     }
 }
@@ -50,8 +50,8 @@ pub fn config_error_block(d: &PluginDiagnostic) -> Block {
     Block::new(BlockKind::Error {
         message: diagnostic(d),
         hint: Some(
-            "crest arrancó sin lo que define ese archivo (valores por defecto); corrígelo y \
-             vuelve a abrir crest"
+            "crest started without what that file defines (using the defaults); fix it \
+             and reopen crest"
                 .into(),
         ),
     })
@@ -67,7 +67,7 @@ pub fn sensitive_rules(config: &LoadedConfig) -> (SensitivePathRules, Option<Str
             Err(err) => (
                 SensitivePathRules::default(),
                 Some(format!(
-                    "rutas sensibles inválidas: {err}; uso las de por defecto"
+                    "invalid sensitive paths: {err}; using the defaults"
                 )),
             ),
         },
@@ -97,12 +97,12 @@ pub async fn validate_models(
         }
         Ok(Err(err)) => (
             policy,
-            vec![format!("no pude validar los modelos configurados: {err}")],
+            vec![format!("could not validate the configured models: {err}")],
         ),
         Err(_) => (
             policy,
             vec![format!(
-                "no pude validar los modelos configurados: /v1/models no respondió en {} s",
+                "could not validate the configured models: /v1/models did not answer in {} s",
                 timeout.as_secs()
             )],
         ),

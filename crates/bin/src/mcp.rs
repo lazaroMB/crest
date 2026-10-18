@@ -169,13 +169,13 @@ pub fn pending_warning(spec: &McpServerSpec) -> String {
                 line.push(' ');
                 line.push_str(arg);
             }
-            format!("ejecutaría `{line}`")
+            format!("it would run `{line}`")
         }
-        McpTransport::Http { url, .. } => format!("conectaría con {url}"),
+        McpTransport::Http { url, .. } => format!("it would connect to {url}"),
     };
     format!(
-        "servidor MCP `{name}` del workspace no iniciado: {what}. Si confías en él, \
-         arranca con `crest --trust-mcp {name}` (se recuerda para este workspace)",
+        "workspace MCP server `{name}` not started: {what}. If you trust it, \
+         start crest with `crest --trust-mcp {name}` (remembered for this workspace)",
         name = spec.name
     )
 }
@@ -197,29 +197,29 @@ pub fn trust_declared(
 ) -> Result<String, String> {
     let Some(spec) = specs.iter().find(|s| s.name == name) else {
         return Err(format!(
-            "el workspace no declara un servidor MCP `{name}` (ni la config global)"
+            "the workspace declares no MCP server `{name}` (nor does the global config)"
         ));
     };
     if spec.origin == ConfigOrigin::Global {
         return Ok(format!(
-            "el servidor MCP `{name}` es de la config global: no necesita aprobación"
+            "the MCP server `{name}` comes from the global config: it needs no approval"
         ));
     }
     let path = path.ok_or_else(|| {
-        "no hay dónde guardar la aprobación (sin directorio de datos); usa --trust-mcp".to_owned()
+        "nowhere to save the approval (no data directory); use --trust-mcp".to_owned()
     })?;
-    let mut store = TrustStore::load(path)
-        .map_err(|e| format!("no puedo leer los servidores MCP aprobados: {e}"))?;
+    let mut store =
+        TrustStore::load(path).map_err(|e| format!("cannot read the approved MCP servers: {e}"))?;
     if store.is_trusted(workspace, spec) {
-        return Ok(format!("el servidor MCP `{name}` ya estaba aprobado"));
+        return Ok(format!("the MCP server `{name}` was already approved"));
     }
     store.trust(workspace, spec);
     store
         .save(path)
-        .map_err(|e| format!("no puedo guardar la aprobación en {}: {e}", path.display()))?;
+        .map_err(|e| format!("cannot save the approval to {}: {e}", path.display()))?;
     Ok(format!(
-        "servidor MCP `{name}` aprobado para este workspace; arrancará la próxima vez que \
-         abras crest"
+        "MCP server `{name}` approved for this workspace; it will start the next time you \
+         open crest"
     ))
 }
 
@@ -262,7 +262,7 @@ pub async fn start(
     let mut store = match trust.store.as_deref().map(TrustStore::load) {
         Some(Ok(store)) => store,
         Some(Err(err)) => {
-            warnings.push(format!("no puedo leer los servidores MCP aprobados: {err}"));
+            warnings.push(format!("cannot read the approved MCP servers: {err}"));
             TrustStore::default()
         }
         None => TrustStore::default(),
@@ -273,7 +273,7 @@ pub async fn start(
             .any(|s| &s.name == name && s.origin == ConfigOrigin::Workspace);
         if !declared {
             warnings.push(format!(
-                "--trust-mcp {name}: el workspace no declara un servidor MCP con ese nombre"
+                "--trust-mcp {name}: the workspace declares no MCP server with that name"
             ));
         }
     }
@@ -287,7 +287,7 @@ pub async fn start(
             && let Err(err) = store.save(path)
         {
             warnings.push(format!(
-                "no puedo guardar la aprobación de servidores MCP en {}: {err}",
+                "cannot save the MCP server approvals to {}: {err}",
                 path.display()
             ));
         }
@@ -327,11 +327,11 @@ pub async fn start(
     for status in &statuses {
         match &status.state {
             McpServerState::Failed { message } => warnings.push(format!(
-                "servidor MCP `{}` no disponible: {message}",
+                "MCP server `{}` unavailable: {message}",
                 status.name
             )),
             McpServerState::Starting => warnings.push(format!(
-                "servidor MCP `{}` no arrancó en {}s; sus tools no estarán en esta sesión",
+                "MCP server `{}` did not start in {}s; its tools will not be in this session",
                 status.name,
                 ready_timeout.as_secs()
             )),
@@ -353,11 +353,11 @@ pub async fn start(
                 let name = spec.qualified_name();
                 let tool = McpTool::new(spec, Arc::clone(&port)).with_effect(effect);
                 if let Err(err) = registry.register(Arc::new(tool)) {
-                    warnings.push(format!("tool MCP `{name}` ignorada: {err}"));
+                    warnings.push(format!("MCP tool `{name}` ignored: {err}"));
                 }
             }
         }
-        Err(err) => warnings.push(format!("no puedo listar las tools MCP: {err}")),
+        Err(err) => warnings.push(format!("cannot list the MCP tools: {err}")),
     }
     (Some(McpServers { manager, statuses }), warnings)
 }
@@ -440,11 +440,11 @@ mod tests {
             stdio("docs", "mcp-docs", ConfigOrigin::Global),
         ];
         let said = trust_declared(&specs, ws, Some(&path), "git").unwrap();
-        assert!(said.contains("próxima vez"), "{said}");
+        assert!(said.contains("next time"), "{said}");
         let store = TrustStore::load(&path).unwrap();
         assert!(store.is_trusted(ws, &specs[0]));
         let again = trust_declared(&specs, ws, Some(&path), "git").unwrap();
-        assert!(again.contains("ya estaba"), "{again}");
+        assert!(again.contains("already approved"), "{again}");
         let global = trust_declared(&specs, ws, Some(&path), "docs").unwrap();
         assert!(global.contains("global"), "{global}");
         assert!(trust_declared(&specs, ws, Some(&path), "nope").is_err());

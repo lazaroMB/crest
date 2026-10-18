@@ -57,7 +57,7 @@ impl HeadlessSink {
             DomainEvent::ThinkingDelta { block_id, .. } => {
                 if !state.thinking.contains(&block_id) {
                     state.thinking.push(block_id);
-                    w.line(Some(Style::Dim), "∴ pensando…");
+                    w.line(Some(Style::Dim), "∴ thinking…");
                 }
             }
             DomainEvent::ToolStatusChanged {
@@ -72,13 +72,13 @@ impl HeadlessSink {
             DomainEvent::ModelFallback { from, to } => {
                 w.line(
                     Some(Style::Yellow),
-                    &format!("! {from} no responde; uso {to}"),
+                    &format!("! {from} is not answering; using {to}"),
                 );
             }
             DomainEvent::Retrying { attempt, delay_ms } => {
                 w.line(
                     Some(Style::Dim),
-                    &format!("… reintento {attempt} en {delay_ms} ms"),
+                    &format!("… retry {attempt} in {delay_ms} ms"),
                 );
             }
             DomainEvent::TurnFinished { stop_reason, .. } => {
@@ -96,7 +96,7 @@ impl HeadlessSink {
             DomainEvent::Notice { level, message } => {
                 let (style, label) = match level {
                     NoticeLevel::Info => (Style::Dim, "info"),
-                    NoticeLevel::Warning => (Style::Yellow, "aviso"),
+                    NoticeLevel::Warning => (Style::Yellow, "warning"),
                     NoticeLevel::Error => (Style::Red, "error"),
                 };
                 w.line(Some(style), &format!("{label}: {message}"));
@@ -141,9 +141,9 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             w.line(None, source);
         }
         BlockKind::Error { message, .. } => w.line(Some(Style::Red), &format!("error: {message}")),
-        BlockKind::Chart(chart) => w.line(Some(Style::Dim), &format!("[gráfica: {}]", chart.title)),
+        BlockKind::Chart(chart) => w.line(Some(Style::Dim), &format!("[chart: {}]", chart.title)),
         BlockKind::Table(table) => print_table(w, table),
-        BlockKind::Mermaid(_) => w.line(Some(Style::Dim), "[diagrama mermaid]"),
+        BlockKind::Mermaid(_) => w.line(Some(Style::Dim), "[mermaid diagram]"),
         BlockKind::StageHeader {
             stage,
             index,
@@ -161,7 +161,7 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
 fn cell_text(cell: &Cell) -> String {
     match cell {
         Cell::Null => String::new(),
-        Cell::Bool(true) => "sí".to_owned(),
+        Cell::Bool(true) => "yes".to_owned(),
         Cell::Bool(false) => "no".to_owned(),
         Cell::Number(n) => n.to_string(),
         Cell::Text(text) => text.replace('\n', " "),
@@ -192,7 +192,7 @@ fn print_status(
         ToolStatus::Succeeded => (Style::Green, format!("  ✓ {name}: {output}")),
         ToolStatus::Failed => (Style::Red, format!("  ✗ {name}: {output}")),
         ToolStatus::Denied => (Style::Yellow, format!("  ⊘ {name}: {output}")),
-        ToolStatus::Cancelled => (Style::Yellow, format!("  ⊘ {name}: cancelada")),
+        ToolStatus::Cancelled => (Style::Yellow, format!("  ⊘ {name}: cancelled")),
     };
     w.line(Some(style), text.trim_end_matches([' ', ':']));
 }
@@ -200,16 +200,16 @@ fn print_status(
 fn stop_note(stop_reason: StopReason) -> Option<&'static str> {
     match stop_reason {
         StopReason::EndTurn | StopReason::ToolUse | StopReason::StopSequence => None,
-        StopReason::MaxTokens => Some("(respuesta cortada: se alcanzó max_tokens)"),
-        StopReason::PauseTurn => Some("(turno en pausa)"),
-        StopReason::Refusal => Some("(el modelo declinó responder)"),
-        StopReason::Interrupted => Some("(interrumpido)"),
+        StopReason::MaxTokens => Some("(answer cut off: max_tokens reached)"),
+        StopReason::PauseTurn => Some("(turn paused)"),
+        StopReason::Refusal => Some("(the model declined to answer)"),
+        StopReason::Interrupted => Some("(interrupted)"),
     }
 }
 
 fn usage_line(usage: Usage, cost: Option<f64>) -> String {
     let mut line = format!(
-        "tokens: {} entrada, {} salida, caché {} leídos / {} escritos",
+        "tokens: {} input, {} output, cache {} read / {} written",
         usage.input_tokens,
         usage.output_tokens,
         usage.cache_read_input_tokens,
@@ -266,11 +266,11 @@ mod tests {
         });
         sink.emit(DomainEvent::TextDelta {
             block_id: text.id,
-            text: "Busco ".into(),
+            text: "Looking for ".into(),
         });
         sink.emit(DomainEvent::TextDelta {
             block_id: text.id,
-            text: "la función.".into(),
+            text: "the function.".into(),
         });
         sink.emit(DomainEvent::BlockAdded {
             block: tool.clone(),
@@ -312,7 +312,7 @@ mod tests {
         });
         sink.emit(DomainEvent::Notice {
             level: NoticeLevel::Warning,
-            message: "sin fzf".into(),
+            message: "no fzf".into(),
         });
         sink.emit(DomainEvent::TurnFinished {
             turn_id: TurnId::new(),
@@ -320,12 +320,12 @@ mod tests {
         });
         assert_eq!(
             buf.text(),
-            "∴ pensando…\n\
-             Busco la función.\n\
+            "∴ thinking…\n\
+             Looking for the function.\n\
              → grep fn parse\n  ✓ grep: 1 match\n\
              \x20 diff a.rs\n  @@ -1 +1 @@\n  -a\n  +b\n\
-             aviso: sin fzf\n\
-             tokens: 10 entrada, 5 salida, caché 0 leídos / 0 escritos\n"
+             warning: no fzf\n\
+             tokens: 10 input, 5 output, cache 0 read / 0 written\n"
         );
     }
 
@@ -336,18 +336,18 @@ mod tests {
         let sink = HeadlessSink::new(term);
         sink.emit(DomainEvent::BlockAdded {
             block: Block::new(BlockKind::Text {
-                markdown: "¿Empezamos?\n".into(),
+                markdown: "Shall we start?\n".into(),
             }),
         });
         sink.emit(DomainEvent::BlockAdded {
             block: Block::new(BlockKind::Table(TableSpec {
-                columns: vec![Column::new("Esperado"), Column::new("Cumple")],
+                columns: vec![Column::new("Expected"), Column::new("Met")],
                 rows: vec![vec![Cell::Text("p95 < 20ms".into()), Cell::Bool(true)]],
             })),
         });
         assert_eq!(
             buf.text(),
-            "¿Empezamos?\n  Esperado | Cumple\n  p95 < 20ms | sí\n"
+            "Shall we start?\n  Expected | Met\n  p95 < 20ms | yes\n"
         );
     }
 
@@ -363,6 +363,6 @@ mod tests {
             turn_id: TurnId::new(),
             stop_reason: StopReason::Interrupted,
         });
-        assert_eq!(buf.text(), "error: 401\n(interrumpido)\n");
+        assert_eq!(buf.text(), "error: 401\n(interrupted)\n");
     }
 }

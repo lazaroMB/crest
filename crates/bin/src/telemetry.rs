@@ -26,7 +26,7 @@ impl Telemetry {
             {
                 Ok(Some(exporter)) => {
                     if let Err(err) = init_subscriber_with(&opts, exporter.layer()) {
-                        warnings.push(format!("telemetría: {err}"));
+                        warnings.push(format!("telemetry: {err}"));
                     }
                     return (
                         Self {
@@ -36,11 +36,11 @@ impl Telemetry {
                     );
                 }
                 Ok(None) => {}
-                Err(err) => warnings.push(format!("Langfuse desactivado: {err}")),
+                Err(err) => warnings.push(format!("Langfuse disabled: {err}")),
             }
         }
         if let Err(err) = adapter_telemetry::init_subscriber(&opts) {
-            warnings.push(format!("telemetría: {err}"));
+            warnings.push(format!("telemetry: {err}"));
         }
         (Self::default(), warnings)
     }
@@ -51,7 +51,7 @@ impl Telemetry {
         if let Some(exporter) = self.langfuse
             && let Err(err) = exporter.shutdown()
         {
-            eprintln!("aviso: Langfuse: {err}");
+            eprintln!("warning: Langfuse: {err}");
         }
     }
 }

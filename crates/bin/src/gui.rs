@@ -174,7 +174,7 @@ async fn research_command(
     let Some(session) = guard.as_mut() else {
         return Reply::Notice(
             NoticeLevel::Warning,
-            ":research no está disponible: la base de datos de crest no abrió".into(),
+            ":research is unavailable: the crest database did not open".into(),
         );
     };
     let result = crate::research::command(
@@ -195,7 +195,7 @@ async fn research_command(
 async fn save(app: &tokio::sync::Mutex<App>) {
     let app = app.lock().await;
     if let Err(err) = app.save().await {
-        app.warn(format!("no pude guardar la sesión: {err}"));
+        app.warn(format!("could not save the session: {err}"));
     }
 }
 
@@ -220,7 +220,7 @@ fn settle(
         Err(err) => Some((
             NoticeLevel::Warning,
             format!(
-                "el flujo de implementación se detuvo: {err}; `:implement {}` lo reanuda",
+                "the implementation flow stopped: {err}; `:implement {}` resumes it",
                 session.plan_path()
             ),
         )),
@@ -239,7 +239,7 @@ async fn start_implementation(
         return Reply::Notice(
             NoticeLevel::Warning,
             format!(
-                "ya hay un flujo de implementación activo ({}); respóndelo o escribe /abort",
+                "an implementation flow is already active ({}); answer it or type /abort",
                 session.plan_path()
             ),
         );
@@ -249,12 +249,9 @@ async fn start_implementation(
         Ok(session) => session,
         Err(err) => return Reply::Notice(NoticeLevel::Warning, format!(":implement: {err:#}")),
     };
-    let resumed = session.resumed().then(|| {
-        format!(
-            "flujo de implementación de {} reanudado",
-            session.plan_path()
-        )
-    });
+    let resumed = session
+        .resumed()
+        .then(|| format!("implementation flow of {} resumed", session.plan_path()));
     let result = session.run().await;
     match settle(&mut active, session, result) {
         Some((level, message)) => Reply::Notice(level, message),
@@ -296,7 +293,7 @@ impl McpTrust {
     fn run(&self, args: &str) -> Reply {
         let mut words = args.split_whitespace();
         let (Some("trust"), Some(name), None) = (words.next(), words.next(), words.next()) else {
-            return Reply::Notice(NoticeLevel::Warning, "uso: :mcp trust <nombre>".into());
+            return Reply::Notice(NoticeLevel::Warning, "usage: :mcp trust <name>".into());
         };
         match crate::mcp::trust_declared(&self.specs, &self.workspace, self.store.as_deref(), name)
         {
@@ -371,7 +368,7 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
         .run_turn(&mut app.session, request.prompt, opts)
         .await;
     if let Err(err) = app.save().await {
-        app.warn(format!("no pude guardar la sesión: {err}"));
+        app.warn(format!("could not save the session: {err}"));
     }
     match result {
         Ok(outcome) => TurnEnd::Finished(outcome.stop_reason),
@@ -419,7 +416,7 @@ impl SessionController for UiController {
             tx.send(run_turn(&mut app, request).await).ok();
         });
         rx.map(|end| {
-            end.unwrap_or_else(|_| TurnEnd::Failed("el turno terminó sin responder".into()))
+            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
         })
         .boxed()
     }
@@ -448,7 +445,7 @@ impl SessionController for UiController {
         let Some(host) = self.plugins.clone() else {
             return futures::future::ready(Reply::Notice(
                 NoticeLevel::Warning,
-                "Lua no está disponible".into(),
+                "Lua is unavailable".into(),
             ))
             .boxed();
         };
@@ -619,13 +616,11 @@ pub fn session_parts(
                 // error, there is nothing to show.
                 .map_err(|_| err)?;
             // Also on the terminal that started the window.
-            eprintln!("aviso: el agente no está disponible: {reason}");
+            eprintln!("warning: the agent is unavailable: {reason}");
             sink.emit(DomainEvent::BlockAdded {
                 block: Block::new(BlockKind::Error {
                     message: reason.clone(),
-                    hint: Some(
-                        "el agente no puede responder; corrige esto y vuelve a abrir crest".into(),
-                    ),
+                    hint: Some("the agent cannot answer; fix this and reopen crest".into()),
                 }),
             });
             let workspace = root.as_path().to_path_buf();
@@ -723,14 +718,14 @@ mod tests {
 
     #[test]
     fn without_an_agent_every_turn_reports_why() {
-        let controller = UnavailableController::new("falta la API key", PermissionMode::Ask);
+        let controller = UnavailableController::new("the API key is missing", PermissionMode::Ask);
         let end = futures::executor::block_on(controller.run_turn(TurnRequest {
             prompt: "hola".into(),
             model_override: None,
             role: None,
             cancel: CancelToken::new(),
         }));
-        assert_eq!(end, TurnEnd::Unavailable("falta la API key".into()));
+        assert_eq!(end, TurnEnd::Unavailable("the API key is missing".into()));
         controller.set_permission_mode(PermissionMode::Plan);
         assert_eq!(controller.permission_mode(), PermissionMode::Plan);
         assert!(!controller.models().is_empty());

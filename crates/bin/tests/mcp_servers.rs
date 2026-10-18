@@ -165,7 +165,7 @@ async fn a_global_server_is_offered_and_used_after_approval() {
     let exit = run_turn(&mut fx.app, "suma 2 y 3", CancelToken::new()).await;
     let out = fx.output.text();
     assert_eq!(exit, Exit::Success, "{out}");
-    assert!(out.contains("¿Permitir mcp__echo__add"), "{out}");
+    assert!(out.contains("Allow mcp__echo__add"), "{out}");
     assert!(out.contains("✓ mcp__echo__add"), "{out}");
 
     let requests = fx.llm.requests();
@@ -195,7 +195,7 @@ async fn a_read_server_runs_without_asking() {
     let exit = run_turn(&mut fx.app, "suma 2 y 3", CancelToken::new()).await;
     let out = fx.output.text();
     assert_eq!(exit, Exit::Success, "{out}");
-    assert!(!out.contains("¿Permitir"), "{out}");
+    assert!(!out.contains("Allow"), "{out}");
     assert!(out.contains("✓ mcp__echo__add"), "{out}");
 }
 
@@ -208,7 +208,7 @@ async fn a_workspace_server_does_not_start_until_trusted() {
     assert_eq!(fx.app.warnings.len(), 1, "{:?}", fx.app.warnings);
     let warning = &fx.app.warnings[0];
     assert!(
-        warning.contains("`echo` del workspace no iniciado"),
+        warning.contains("workspace MCP server `echo` not started"),
         "{warning}"
     );
     assert!(warning.contains("crest --trust-mcp echo"), "{warning}");
@@ -231,7 +231,7 @@ async fn a_failing_server_becomes_a_warning() {
     let fx = fixture(decl, "", "", &[], Vec::new()).await;
     assert_eq!(fx.app.warnings.len(), 1, "{:?}", fx.app.warnings);
     assert!(
-        fx.app.warnings[0].contains("servidor MCP `gone` no disponible"),
+        fx.app.warnings[0].contains("MCP server `gone` unavailable"),
         "{:?}",
         fx.app.warnings
     );

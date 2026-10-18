@@ -255,7 +255,7 @@ async fn implements_the_spec_end_to_end() {
     assert!(out.contains("sh tests/add.sh | pasa"), "{out}");
     // README.md asked and was approved.
     assert!(
-        out.contains("¿Permitir write_file README.md? [y]es / [a]lways / [n]o: y\n"),
+        out.contains("Allow write_file README.md? [y]es / [a]lways / [n]o: y\n"),
         "{out}"
     );
     // Verification: expected against obtained.
@@ -264,11 +264,11 @@ async fn implements_the_spec_end_to_end() {
         "{out}"
     );
     assert!(
-        out.contains("Hipótesis | sh bench.sh | p95 < 20ms | p95 4ms | sí"),
+        out.contains("Hipótesis | sh bench.sh | p95 < 20ms | p95 4ms | yes"),
         "{out}"
     );
     assert!(
-        out.contains("C1 | sh tests/add.sh | pasa (exit 0) | pasa | sí"),
+        out.contains("C1 | sh tests/add.sh | pasa (exit 0) | pasa | yes"),
         "{out}"
     );
     assert!(out.contains("flujo de implementación terminado"), "{out}");
@@ -320,5 +320,5 @@ async fn closed_stdin_leaves_the_flow_at_its_gate_to_resume() {
     let session = demo.app.open_implementation(SPEC).await.unwrap();
     assert!(session.resumed());
     let out = demo.output.text();
-    assert!(out.contains("stdin cerrado"), "{out}");
+    assert!(out.contains("stdin closed"), "{out}");
 }

@@ -50,7 +50,7 @@ pub async fn run_turn(app: &mut App, prompt: &str, cancel: CancelToken) -> Exit 
     let opts = app.turn_options.clone().with_cancel(cancel);
     let result = app.service.run_turn(&mut app.session, prompt, opts).await;
     if let Err(err) = app.save().await {
-        app.warn(format!("no pude guardar la sesión: {err}"));
+        app.warn(format!("could not save the session: {err}"));
     }
     match result {
         Ok(outcome) if outcome.stop_reason == StopReason::Interrupted => Exit::Interrupted,

@@ -3,19 +3,19 @@
 //!
 //! # Commands
 //!
-//! - `:research <descripción del problema>` starts a flow (the 14 nodes of
+//! - `:research <problem description>` starts a flow (the 14 nodes of
 //!   the X-Workflow) that runs to its first gate.
 //! - `:research resume` continues the flow left halfway in this workspace
 //!   (crest says so when it opens).
 //! - `:research` alone says where the flow is.
 //!
 //! While a flow is active every line typed in the chat goes to it: the
-//! answer to its gate ("sí" to go on, anything else to redo the stage) or
-//! `/stage`, `/back <nodo>`, `/skip` and `/abort`. The `:` commands of the
+//! answer to its gate ("yes" to go on, anything else to redo the stage) or
+//! `/stage`, `/back <stage>`, `/skip` and `/abort`. The `:` commands of the
 //! UI (`:model`, `:mode`…) are handled by the UI first. When the flow ends
 //! the chat answers turns again.
 //!
-//! Headless: `crest --headless --research "<problema>"` runs the flow in the
+//! Headless: `crest --headless --research "<problem>"` runs the flow in the
 //! terminal and reads each gate's answer from stdin (`resume` as the problem
 //! continues the pending flow).
 
@@ -171,8 +171,8 @@ impl ResearchCommand {
 }
 
 /// Usage of `:research`, shown when there is nothing to report.
-pub const USAGE: &str = "sin flujo investigativo activo; `:research <descripción del problema>` \
-                         empieza uno";
+pub const USAGE: &str = "no active research flow; `:research <problem description>` \
+                         starts one";
 
 /// Runs `command` (`now` in Unix epoch milliseconds for the new flow's
 /// id) and answers a line for the status bar.
@@ -197,7 +197,7 @@ pub async fn command(
                     .map_err(|e| e.to_string())?,
                 None => match research.pending().await {
                     Ok(Some(position)) => {
-                        format!("{position}; `:research resume` para seguir")
+                        format!("{position}; `:research resume` to continue")
                     }
                     Ok(None) => USAGE.to_owned(),
                     Err(err) => return Err(err.to_string()),
@@ -225,16 +225,14 @@ pub async fn line(research: &mut ResearchSession, text: &str) -> Result<String, 
 pub async fn pending_notice(research: &ResearchSession) -> Option<String> {
     let position = research.pending().await.ok()??;
     Some(format!(
-        "hay un flujo investigativo pendiente ({position}); `:research resume` para seguir"
+        "a research flow is pending ({position}); `:research resume` to continue"
     ))
 }
 
 fn message(err: &FlowError) -> String {
     match err {
-        FlowError::SessionNotFound(_) => {
-            "no hay un flujo investigativo que retomar en este workspace".to_owned()
-        }
-        other => format!("flujo investigativo: {other}"),
+        FlowError::SessionNotFound(_) => "no research flow to resume in this workspace".to_owned(),
+        other => format!("research flow: {other}"),
     }
 }
 

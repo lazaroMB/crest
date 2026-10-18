@@ -5,64 +5,64 @@ use std::path::PathBuf;
 use clap::Parser;
 use domain::permission::PermissionMode;
 
-/// Agente de código en la terminal y en una ventana GPUI.
+/// A coding agent in the terminal and in a GPUI window.
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
-#[command(name = "crest", version, about)]
+#[command(name = "crest", version)]
 pub struct Args {
-    /// Workspace a abrir (por defecto, el directorio actual).
+    /// Workspace to open (default: the current directory).
     #[arg(value_name = "DIR", conflicts_with = "workspace")]
     pub dir: Option<PathBuf>,
 
-    /// Workspace a abrir; equivalente al argumento posicional.
+    /// Workspace to open; same as the positional argument.
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
 
-    /// Corre un solo turno con este prompt, sin UI, imprimiendo los eventos.
-    /// Sin prompt, junto a `--implement`.
+    /// Runs a single turn with this prompt, without UI, printing the events.
+    /// Without a prompt, together with `--implement` or `--research`.
     #[arg(long, value_name = "PROMPT", num_args = 0..=1, default_missing_value = "")]
     pub headless: Option<String>,
 
-    /// En headless, implementa el plan de un Spec: su carpeta (o su nombre
-    /// en `.crest/specs/`) o la ruta a su `plan.json`. Las compuertas se
-    /// responden por stdin.
+    /// In headless mode, implements the plan of a Spec: its folder (or its
+    /// name in `.crest/specs/`) or the path to its `plan.json`. Gates are
+    /// answered on stdin.
     #[arg(
         long,
-        value_name = "RUTA",
+        value_name = "PATH",
         requires = "headless",
         conflicts_with = "research"
     )]
     pub implement: Option<String>,
 
-    /// En headless, corre el flujo investigativo sobre este problema hasta
-    /// escribir su Spec (`resume` retoma el flujo pendiente). Las compuertas
-    /// se responden por stdin.
-    #[arg(long, value_name = "PROBLEMA", requires = "headless")]
+    /// In headless mode, runs the research flow on this problem until it
+    /// writes its Spec (`resume` picks up the pending flow). Gates are
+    /// answered on stdin.
+    #[arg(long, value_name = "PROBLEM", requires = "headless")]
     pub research: Option<String>,
 
-    /// Modelo del turno: alias (`opus`), rol (`plan`) o id completo.
+    /// Model for the turn: alias (`opus`), role (`plan`) or full id.
     #[arg(long, value_name = "ALIAS|ID")]
     pub model: Option<String>,
 
-    /// Modo de permisos inicial: ask, auto-edit o plan.
+    /// Initial permission mode: ask, auto-edit or plan.
     #[arg(long, value_name = "MODE")]
     pub mode: Option<PermissionMode>,
 
-    /// En headless, aprueba todas las acciones sin preguntar.
+    /// In headless mode, approves every action without asking.
     #[arg(long, requires = "headless")]
     pub yes: bool,
 
-    /// Abre la ventana con una sesión nueva en vez de reanudar la última
-    /// del workspace.
+    /// Opens the window with a new session instead of resuming the
+    /// workspace's last one.
     #[arg(long, conflicts_with = "headless")]
     pub new: bool,
 
-    /// En headless, continúa la última sesión del workspace (con su
-    /// historial) en vez de empezar una nueva.
+    /// In headless mode, continues the workspace's last session (with its
+    /// history) instead of starting a new one.
     #[arg(long = "continue", requires = "headless")]
     pub continue_session: bool,
 
-    /// Confía en el servidor MCP NAME del `.crest/init.lua` del workspace y
-    /// lo arranca; se recuerda para este workspace. Repetible.
+    /// Trusts the MCP server NAME of the workspace's `.crest/init.lua` and
+    /// starts it; remembered for this workspace. Repeatable.
     #[arg(long = "trust-mcp", value_name = "NAME")]
     pub trust_mcp: Vec<String>,
 }
@@ -96,10 +96,10 @@ impl Args {
             (false, None) => Ok(HeadlessRun::Prompt(prompt)),
             (true, Some(flow)) => Ok(flow),
             (true, None) => {
-                Err("--headless necesita un prompt, --implement <ruta> o --research <problema>")
+                Err("--headless needs a prompt, --implement <path> or --research <problem>")
             }
             (false, Some(_)) => {
-                Err("--headless lleva un prompt o un flujo (--implement, --research), no ambos")
+                Err("--headless takes a prompt or a flow (--implement, --research), not both")
             }
         })
     }

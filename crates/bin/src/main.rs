@@ -17,7 +17,7 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(err) => {
-            eprintln!("error: no puedo iniciar el runtime de tokio: {err}");
+            eprintln!("error: cannot start the tokio runtime: {err}");
             return ExitCode::from(2);
         }
     };
@@ -26,7 +26,7 @@ fn main() -> ExitCode {
         Telemetry::init()
     };
     for warning in warnings {
-        eprintln!("aviso: {warning}");
+        eprintln!("warning: {warning}");
     }
     let code = match args.headless_run() {
         Some(Ok(HeadlessRun::Prompt(prompt))) => runtime

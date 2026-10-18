@@ -82,7 +82,7 @@ impl Config {
     pub fn from_args(args: &Args) -> anyhow::Result<Self> {
         let workspace = match args.workspace_dir() {
             Some(dir) => dir.clone(),
-            None => std::env::current_dir().context("no puedo leer el directorio actual")?,
+            None => std::env::current_dir().context("cannot read the current directory")?,
         };
         Ok(Self {
             workspace,
@@ -280,9 +280,10 @@ impl App {
     /// A target outside the workspace, no flow store, or a storage error.
     pub async fn open_implementation(&self, target: &str) -> anyhow::Result<ImplementSession> {
         let path = plan_path(self.workspace.as_path(), target)?;
-        let storage = self.flow_storage.clone().ok_or_else(|| {
-            anyhow!("no hay dónde guardar el flujo: la base de datos de crest no abrió")
-        })?;
+        let storage = self
+            .flow_storage
+            .clone()
+            .ok_or_else(|| anyhow!("nowhere to save the flow: the crest database did not open"))?;
         Ok(ImplementSession::open(self.implement.clone(), storage, path).await?)
     }
 }
@@ -311,7 +312,7 @@ pub async fn build_app(
 
     let guard = WorkspaceGuard::open(&config.workspace).map_err(|err| {
         anyhow!(
-            "no puedo abrir el workspace {}: {err}",
+            "cannot open the workspace {}: {err}",
             config.workspace.display()
         )
     })?;
@@ -320,7 +321,7 @@ pub async fn build_app(
     let plugins = match LuaHost::spawn(HostOptions::default()) {
         Ok(handle) => Some(Arc::new(handle)),
         Err(err) => {
-            warnings.push(format!("Lua no disponible: {err}"));
+            warnings.push(format!("Lua unavailable: {err}"));
             None
         }
     };
@@ -350,7 +351,7 @@ pub async fn build_app(
     let store = match open_store(overrides.db_path.as_deref()) {
         Ok(store) => Some(Arc::new(store) as Arc<dyn SessionStorePort>),
         Err(err) => {
-            warnings.push(format!("la sesión no se guardará: {err}"));
+            warnings.push(format!("the session will not be saved: {err}"));
             None
         }
     };
@@ -371,8 +372,8 @@ pub async fn build_app(
             shell: Arc::clone(&shell),
         },
     )
-    .context("registro de tools")?;
-    register_component_tools(&mut tools).context("registro de tools")?;
+    .context("tool registration")?;
+    register_component_tools(&mut tools).context("tool registration")?;
     let task = TaskTool::new(
         TaskPorts {
             llm: Arc::clone(&llm),
@@ -384,14 +385,14 @@ pub async fn build_app(
         },
         tools.budget(),
     )
-    .context("registro de tools")?;
-    tools.register_typed(task).context("registro de tools")?;
+    .context("tool registration")?;
+    tools.register_typed(task).context("tool registration")?;
     if let Some(host) = &plugins {
         for spec in loaded.tools.iter().cloned() {
             let name = spec.name.clone();
             let tool = PluginTool::new(spec, host.clone() as Arc<dyn PluginHostPort>);
             if let Err(err) = tools.register(Arc::new(tool)) {
-                warnings.push(format!("tool de plugin `{name}` ignorada: {err}"));
+                warnings.push(format!("plugin tool `{name}` ignored: {err}"));
             }
         }
     }
@@ -428,13 +429,13 @@ pub async fn build_app(
                     state.apply(&DomainEvent::BlockAdded { block });
                 }
                 resumed_notice = Some(format!(
-                    "sesión anterior reanudada ({} turnos); `crest --new` empieza una nueva",
+                    "previous session resumed ({} turns); `crest --new` starts a new one",
                     stored.session.turns.len()
                 ));
                 session = stored.session;
             }
             Ok(None) => {}
-            Err(err) => warnings.push(format!("no pude reanudar la última sesión: {err}")),
+            Err(err) => warnings.push(format!("could not resume the last session: {err}")),
         }
     }
     let deps = AgentDeps {
@@ -456,7 +457,7 @@ pub async fn build_app(
     let flow_storage = match open_flow_storage(overrides.db_path.as_deref()) {
         Ok(storage) => Some(Arc::new(storage)),
         Err(err) => {
-            warnings.push(format!("los flujos no se guardarán: {err}"));
+            warnings.push(format!("flows will not be saved: {err}"));
             None
         }
     };
@@ -488,7 +489,7 @@ pub async fn build_app(
             match research::build(parts) {
                 Ok(session) => Some(session),
                 Err(err) => {
-                    warnings.push(format!("flujo investigativo no disponible: {err:#}"));
+                    warnings.push(format!("research flow unavailable: {err:#}"));
                     None
                 }
             }
@@ -509,7 +510,7 @@ pub async fn build_app(
     // The spending cap asks through the front end's approval port.
     match CostTracker::from_options(&loaded.options) {
         Ok(tracker) => service = service.with_cost_tracker(tracker),
-        Err(err) => warnings.push(format!("costo: {err}; sin precios ni tope de gasto")),
+        Err(err) => warnings.push(format!("cost: {err}; no pricing and no spend cap")),
     }
 
     for error in &loaded.errors {
@@ -570,15 +571,15 @@ async fn model_ports(overrides: &Overrides) -> anyhow::Result<ModelPorts> {
     // The keyring may block (D-Bus, Keychain).
     let key = tokio::task::spawn_blocking(ApiKey::from_env_or_keyring)
         .await
-        .context("lectura de la API key")?
+        .context("reading the API key")?
         .map_err(|_| {
             anyhow!(
-                "falta la API key de Anthropic: exporta ANTHROPIC_API_KEY o guárdala en el \
-                 llavero del sistema (servicio `crest`, entrada `ANTHROPIC_API_KEY`)"
+                "the Anthropic API key is missing: export ANTHROPIC_API_KEY or store it in the \
+                 system keyring (service `crest`, entry `ANTHROPIC_API_KEY`)"
             )
         })?;
     let client = AnthropicClient::new(&key, ClientConfig::default())
-        .map_err(|err| anyhow!("no puedo crear el cliente de Anthropic: {err}"))?;
+        .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
     let catalog = overrides
         .catalog
         .clone()

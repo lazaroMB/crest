@@ -17,7 +17,7 @@ pub fn keymap(specs: &[KeymapSpec], options: &AppOptions) -> (Keymap<Action>, Ve
     if let Some(leader) = &options.leader
         && let Err(err) = keymap.set_leader(leader)
     {
-        warnings.push(format!("app.opt.leader `{leader}` inválido: {err}"));
+        warnings.push(format!("invalid app.opt.leader `{leader}`: {err}"));
     }
     for spec in specs {
         let mode = match spec.mode {
