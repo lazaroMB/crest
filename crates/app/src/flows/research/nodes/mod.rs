@@ -61,7 +61,7 @@ pub mod spec;
 pub mod plan;
 
 // T5.9: CriticalReview
-// pub mod review;
+pub mod review;
 
 /// The node registered for `stage`, if its task already landed.
 #[must_use]
@@ -107,7 +107,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Plan => Some(Arc::new(plan::Planner::new())),
 
         // T5.9: Some(Arc::new(review::<Type>::new()))
-        Stage::CriticalReview => None,
+        Stage::CriticalReview => Some(Arc::new(review::Review::new())),
     }
 }
 
