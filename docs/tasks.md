@@ -84,7 +84,7 @@ Estados: pendiente · en curso · en revisión · integrada. Lo mantiene el orqu
 | T5.7a–d | integrada | T5.3 (Investigación también T5.2) | `nodes/<nodo>.rs` |
 | T5.8 ★ | integrada | T5.3, T2.I2 | `nodes/spec.rs`, `nodes/plan.rs` |
 | T5.9 ★ | integrada | T5.8 | `nodes/review.rs` |
-| T5.10 ★ | en curso | T5.4–T5.9 | `flows/research/graph.rs` |
+| T5.10 ★ | integrada | T5.4–T5.9 | `flows/research/graph.rs` |
 | T6.1 ★ | integrada | T2.I2, T5.3 | `application/src/flows/implement/load.rs` |
 | T6.2 ★ | integrada | T6.1 | `nodes/implement.rs` |
 | T6.3 ★ | integrada | T6.2 | `nodes/test.rs` |
