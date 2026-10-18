@@ -12,9 +12,11 @@
 //! outside the approval flow, and a file the model may not read is not one
 //! it should overwrite blindly. This matches the in-memory fake.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use application::ports::fs::{EditFileRequest, FsError, PendingChange, replace_unique};
+use application::ports::fs::{
+    EditFileRequest, FsError, PendingChange, WriteFileRequest, replace_unique,
+};
 use domain::workspace::WorkspacePath;
 use similar::TextDiff;
 
@@ -34,6 +36,53 @@ pub(crate) async fn prepare_edit(
     let new_content = replace_unique(&original, &request.old, &request.new)?;
     let diff = unified_diff(&path, Some(&original), &new_content);
     Ok(PendingChange::new(path, Some(original), new_content, diff))
+}
+
+/// Computes the creation or overwrite of `request` without writing it.
+pub(crate) async fn prepare_write(
+    guard: &WorkspaceGuard,
+    request: WriteFileRequest,
+) -> Result<PendingChange, FsError> {
+    let (path, target) = resolve_writable(guard, &request.path).await?;
+    let original = match read_existing(&path, &target).await {
+        Ok(text) => Some(text),
+        Err(FsError::NotFound { .. }) => None,
+        Err(e) => return Err(e),
+    };
+    let diff = unified_diff(&path, original.as_deref(), &request.content);
+    Ok(PendingChange::new(path, original, request.content, diff))
+}
+
+/// Resolves where a write to `path` lands (see
+/// [`WorkspaceGuard::resolve_for_write`]) and denies it when the requested
+/// or the symlink-resolved path is sensitive.
+async fn resolve_writable(
+    guard: &WorkspaceGuard,
+    path: &WorkspacePath,
+) -> Result<(WorkspacePath, PathBuf), FsError> {
+    let (path, target) = guard.resolve_for_write(path.as_str()).await?;
+    guard.check_readable(&path)?;
+    if let Some(real) = relative(guard, &target)
+        && real != path
+    {
+        guard.check_readable(&real).map_err(|e| match e {
+            FsError::SensitivePath { pattern, .. } => FsError::SensitivePath {
+                path: path.clone(),
+                pattern,
+            },
+            e => e,
+        })?;
+    }
+    Ok((path, target))
+}
+
+/// The workspace-relative form of `target`, already known to be inside.
+fn relative(guard: &WorkspaceGuard, target: &Path) -> Option<WorkspacePath> {
+    let rest = target.strip_prefix(guard.root().as_path()).ok()?;
+    if rest.as_os_str().is_empty() {
+        return Some(WorkspacePath::root());
+    }
+    WorkspacePath::parse(&rest.to_string_lossy()).ok()
 }
 
 /// Reads an existing text file, failing on directories and binaries.
@@ -64,7 +113,9 @@ pub(crate) fn unified_diff(path: &WorkspacePath, old: Option<&str>, new: &str) -
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::os::unix::fs::symlink;
+
+    use domain::workspace::PathError;
 
     use super::*;
 
@@ -96,6 +147,79 @@ mod tests {
             old: old.into(),
             new: new.into(),
         }
+    }
+
+    fn write(path: &str, content: &str) -> WriteFileRequest {
+        WriteFileRequest {
+            path: p(path),
+            content: content.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_of_new_file_diffs_against_empty() {
+        let f = fixture();
+        let change = prepare_write(&f.guard, write("src/new.rs", "a\n"))
+            .await
+            .unwrap();
+        assert!(change.creates());
+        assert_eq!(change.original(), None);
+        assert_eq!(
+            change.diff_unified(),
+            "--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1 @@\n+a\n"
+        );
+        assert!(!f.ws.join("src").exists(), "nothing is written yet");
+    }
+
+    #[tokio::test]
+    async fn write_over_existing_file_diffs_against_it() {
+        let f = fixture();
+        std::fs::write(f.ws.join("a.txt"), "old\n").unwrap();
+        let change = prepare_write(&f.guard, write("a.txt", "new\n"))
+            .await
+            .unwrap();
+        assert_eq!(change.original(), Some("old\n"));
+        assert_eq!(
+            change.diff_unified(),
+            "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.ws.join("a.txt")).unwrap(),
+            "old\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_is_denied_outside_the_workspace_and_on_sensitive_paths() {
+        let f = fixture();
+        std::fs::create_dir(f.ws.join(".git")).unwrap();
+        std::fs::create_dir(f.ws.join("src")).unwrap();
+        symlink(f.ws.parent().unwrap(), f.ws.join("up")).unwrap();
+        symlink(f.ws.join(".git"), f.ws.join("hooks")).unwrap();
+        assert!(matches!(
+            prepare_write(&f.guard, write(".git/hooks/pre-commit", "x")).await,
+            Err(FsError::SensitivePath { .. })
+        ));
+        assert_eq!(
+            prepare_write(&f.guard, write("hooks/config", "x")).await,
+            Err(FsError::SensitivePath {
+                path: p("hooks/config"),
+                pattern: ".git/".into()
+            }),
+            "a symlink into .git/ is denied too"
+        );
+        assert!(matches!(
+            prepare_write(&f.guard, write(".env", "KEY=1")).await,
+            Err(FsError::SensitivePath { .. })
+        ));
+        assert!(matches!(
+            prepare_write(&f.guard, write("up/escape.txt", "x")).await,
+            Err(FsError::Path(PathError::OutsideWorkspace { .. }))
+        ));
+        assert_eq!(
+            prepare_write(&f.guard, write("src", "x")).await,
+            Err(FsError::IsDirectory { path: p("src") })
+        );
     }
 
     #[test]
