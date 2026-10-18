@@ -371,6 +371,313 @@ tolerant_tagged!(
     ]
 );
 
+// ---------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------
+
+/// Current versioned `type` of the web search server tool (dynamic
+/// filtering plus `response_inclusion`; Claude 4.6 and later models).
+pub const WEB_SEARCH_TOOL_TYPE: &str = "web_search_20260318";
+/// Current versioned `type` of the web fetch server tool (dynamic
+/// filtering, cache bypass and `response_inclusion`).
+pub const WEB_FETCH_TOOL_TYPE: &str = "web_fetch_20260318";
+
+/// Body of `POST /v1/messages`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MessagesRequest {
+    /// Model id.
+    pub model: String,
+    /// Output token cap (thinking included).
+    pub max_tokens: u32,
+    /// System prompt blocks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub system: Vec<SystemContent>,
+    /// Conversation, oldest first.
+    pub messages: Vec<WireMessage>,
+    /// Client and server tools.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<WireTool>,
+    /// How the model must pick tools; omitted means `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<WireToolChoice>,
+    /// Extended thinking; omitted means the model's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<WireThinking>,
+    /// Stream the answer as server-sent events.
+    #[serde(skip_serializing_if = "is_false")]
+    pub stream: bool,
+    /// Opaque request metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<WireMetadata>,
+    /// Custom stop sequences.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stop_sequences: Vec<String>,
+    /// Sampling temperature. Deprecated by the API: models after Claude
+    /// Opus 4.6 reject any value but 1.0, so leave it unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+}
+
+impl MessagesRequest {
+    /// A non-streaming request with only the required fields.
+    #[must_use]
+    pub fn new(model: impl Into<String>, max_tokens: u32, messages: Vec<WireMessage>) -> Self {
+        Self {
+            model: model.into(),
+            max_tokens,
+            system: Vec::new(),
+            messages,
+            tools: Vec::new(),
+            tool_choice: None,
+            thinking: None,
+            stream: false,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+        }
+    }
+}
+
+/// One system prompt block: `{"type": "text", "text": ...}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "text")]
+pub struct SystemContent {
+    /// Prompt text.
+    pub text: String,
+    /// Cache breakpoint after this block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+/// Author of a wire message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WireRole {
+    /// The user (and tool results).
+    User,
+    /// The model.
+    Assistant,
+}
+
+/// One entry of `messages`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireMessage {
+    /// Author.
+    pub role: WireRole,
+    /// Content blocks (always the array form).
+    pub content: Vec<WireContentBlock>,
+}
+
+/// One entry of `tools`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum WireTool {
+    /// A client tool, executed locally.
+    Custom(CustomTool),
+    /// A tool executed by the API (web search, web fetch).
+    Server(ServerToolDef),
+}
+
+/// A client tool definition (no `type` field).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CustomTool {
+    /// Tool name.
+    pub name: String,
+    /// What the tool does, for the model.
+    pub description: String,
+    /// JSON Schema of the input.
+    pub input_schema: Value,
+    /// Cache breakpoint after this tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+/// A server tool definition such as
+/// `{"type": "web_search_20260318", "name": "web_search", "max_uses": 5}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ServerToolDef {
+    /// Versioned tool type, e.g. [`WEB_SEARCH_TOOL_TYPE`].
+    #[serde(rename = "type")]
+    pub tool_type: &'static str,
+    /// Fixed tool name: `web_search` or `web_fetch`.
+    pub name: &'static str,
+    /// Cap on calls per request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_uses: Option<u32>,
+    /// Citations over fetched documents (web fetch only; web search always
+    /// cites).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citations: Option<CitationsConfig>,
+    /// Cache breakpoint after this tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+}
+
+impl ServerToolDef {
+    /// The web search tool.
+    #[must_use]
+    pub const fn web_search(max_uses: Option<u32>) -> Self {
+        Self {
+            tool_type: WEB_SEARCH_TOOL_TYPE,
+            name: "web_search",
+            max_uses,
+            citations: None,
+            cache_control: None,
+        }
+    }
+
+    /// The web fetch tool, with citations enabled so answers can link the
+    /// fetched passages.
+    #[must_use]
+    pub const fn web_fetch(max_uses: Option<u32>) -> Self {
+        Self {
+            tool_type: WEB_FETCH_TOOL_TYPE,
+            name: "web_fetch",
+            max_uses,
+            citations: Some(CitationsConfig { enabled: true }),
+            cache_control: None,
+        }
+    }
+}
+
+/// `{"enabled": bool}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CitationsConfig {
+    /// Whether citations are produced.
+    pub enabled: bool,
+}
+
+/// `tool_choice`. `disable_parallel_tool_use` is not modelled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WireToolChoice {
+    /// The model decides.
+    Auto,
+    /// The model must call some tool.
+    Any,
+    /// The model must call this tool.
+    Tool {
+        /// Tool name.
+        name: String,
+    },
+    /// The model must not call tools.
+    None,
+}
+
+/// `thinking`. The API also has `between_tools` (Claude Sonnet 5.5 only)
+/// and an optional `display` field; neither is modelled yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WireThinking {
+    /// Fixed budget (older models; at least 1024 and below `max_tokens`).
+    Enabled {
+        /// Thinking token budget.
+        budget_tokens: u32,
+    },
+    /// No thinking (rejected by models where thinking is always on).
+    Disabled,
+    /// The model decides how much to think.
+    Adaptive,
+}
+
+/// `metadata`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WireMetadata {
+    /// Opaque end-user id (no PII).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn minimal_request_omits_optional_fields() {
+        let req = MessagesRequest::new(
+            "claude-opus-5-5",
+            1024,
+            vec![WireMessage {
+                role: WireRole::User,
+                content: vec![WireContentBlock::text("Hello")],
+            }],
+        );
+        assert_eq!(
+            serde_json::to_value(&req).unwrap(),
+            json!({
+                "model": "claude-opus-5-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+            })
+        );
+    }
+
+    #[test]
+    fn optional_fields_use_api_shapes() {
+        let mut req = MessagesRequest::new("m", 2048, vec![]);
+        req.system = vec![SystemContent {
+            text: "sys".into(),
+            cache_control: Some(CacheControl::EPHEMERAL),
+        }];
+        req.tools = vec![
+            WireTool::Custom(CustomTool {
+                name: "get_weather".into(),
+                description: "Weather".into(),
+                input_schema: json!({"type": "object"}),
+                cache_control: Some(CacheControl {
+                    ttl: Some(CacheTtl::OneHour),
+                }),
+            }),
+            WireTool::Server(ServerToolDef::web_search(Some(5))),
+            WireTool::Server(ServerToolDef::web_fetch(None)),
+        ];
+        req.tool_choice = Some(WireToolChoice::Tool {
+            name: "get_weather".into(),
+        });
+        req.thinking = Some(WireThinking::Enabled {
+            budget_tokens: 1024,
+        });
+        req.stream = true;
+        req.metadata = Some(WireMetadata {
+            user_id: Some("u".into()),
+        });
+        req.stop_sequences = vec!["STOP".into()];
+        assert_eq!(
+            serde_json::to_value(&req).unwrap(),
+            json!({
+                "model": "m",
+                "max_tokens": 2048,
+                "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
+                "messages": [],
+                "tools": [
+                    {
+                        "name": "get_weather",
+                        "description": "Weather",
+                        "input_schema": {"type": "object"},
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"}
+                    },
+                    {"type": "web_search_20260318", "name": "web_search", "max_uses": 5},
+                    {"type": "web_fetch_20260318", "name": "web_fetch", "citations": {"enabled": true}}
+                ],
+                "tool_choice": {"type": "tool", "name": "get_weather"},
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+                "stream": true,
+                "metadata": {"user_id": "u"},
+                "stop_sequences": ["STOP"]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(WireThinking::Adaptive).unwrap(),
+            json!({"type": "adaptive"})
+        );
+        assert_eq!(
+            serde_json::to_value(WireToolChoice::None).unwrap(),
+            json!({"type": "none"})
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
