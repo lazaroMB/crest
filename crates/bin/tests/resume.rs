@@ -67,6 +67,7 @@ fn config(workspace: &Path, resume: bool) -> Config {
         mode: PermissionMode::Ask,
         model: None,
         trust_mcp: Vec::new(),
+        trust_plugins: Vec::new(),
         resume,
     }
 }

@@ -65,6 +65,12 @@ pub struct Args {
     /// starts it; remembered for this workspace. Repeatable.
     #[arg(long = "trust-mcp", value_name = "NAME")]
     pub trust_mcp: Vec<String>,
+
+    /// Approves the capabilities (network, shell) that plugin NAME declares
+    /// in `app.plugin{ capabilities = ... }`; remembered until they change.
+    /// Repeatable.
+    #[arg(long = "trust-plugin", value_name = "NAME")]
+    pub trust_plugin: Vec<String>,
 }
 
 /// What a headless run does.
@@ -194,6 +200,13 @@ mod tests {
         assert!(parse(&["--headless", "--research", "x", "--implement", "y"]).is_err());
         let both = parse(&["--headless", "hola", "--research", "x"]).unwrap();
         assert!(both.headless_run().unwrap().is_err());
+    }
+
+    #[test]
+    fn trust_plugin_can_repeat() {
+        assert!(parse(&[]).unwrap().trust_plugin.is_empty());
+        let args = parse(&["--trust-plugin", "jira", "--trust-plugin", "gh"]).unwrap();
+        assert_eq!(args.trust_plugin, ["jira", "gh"]);
     }
 
     #[test]

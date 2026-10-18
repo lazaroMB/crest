@@ -29,7 +29,8 @@ use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
-    AppOptions, CommandSpec, ConfigSources, KeymapSpec, McpServerSpec, PluginHostPort,
+    AppOptions, CommandSpec, ConfigSources, KeymapSpec, McpServerSpec, PluginCapabilities,
+    PluginHostPort,
 };
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::shell::ShellPort;
@@ -53,6 +54,7 @@ use ui::timeline::TimelineState;
 
 use crate::args::Args;
 use crate::mcp::{self, McpServers, TrustOptions};
+use crate::plugin_trust;
 use crate::research;
 use crate::startup::{self, CATALOG_TIMEOUT};
 
@@ -67,6 +69,9 @@ pub struct Config {
     pub model: Option<String>,
     /// `--trust-mcp`: workspace MCP servers approved on this run.
     pub trust_mcp: Vec<String>,
+    /// `--trust-plugin`: plugins whose capabilities are approved on this
+    /// run.
+    pub trust_plugins: Vec<String>,
     /// Resume the latest session of the workspace: the window does unless
     /// `--new`, headless only with `--continue`.
     pub resume: bool,
@@ -89,6 +94,7 @@ impl Config {
             mode: args.mode.unwrap_or_default(),
             model: args.model.clone(),
             trust_mcp: args.trust_mcp.clone(),
+            trust_plugins: args.trust_plugin.clone(),
             resume: if args.headless.is_some() {
                 args.continue_session
             } else {
@@ -121,6 +127,8 @@ pub struct Overrides {
     pub db_path: Option<PathBuf>,
     /// Store of approved workspace MCP servers instead of the default one.
     pub mcp_trust_path: Option<PathBuf>,
+    /// Store of approved plugin capabilities instead of the default one.
+    pub plugin_trust_path: Option<PathBuf>,
 }
 
 /// Records the timeline of the session while forwarding every event.
@@ -174,6 +182,12 @@ pub struct App {
     pub mcp_specs: Vec<McpServerSpec>,
     /// Store of approved workspace MCP servers, if there is one.
     pub mcp_trust_path: Option<PathBuf>,
+    /// Capability declarations of the config and plugins.
+    pub plugin_capabilities: Vec<PluginCapabilities>,
+    /// The declarations granted now (`:plugin trust` adds to them).
+    pub plugin_grants: Arc<Mutex<Vec<PluginCapabilities>>>,
+    /// Store of approved plugin capabilities, if there is one.
+    pub plugin_trust_path: Option<PathBuf>,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -318,7 +332,11 @@ pub async fn build_app(
     })?;
     let root = guard.root().clone();
 
-    let plugins = match LuaHost::spawn(HostOptions::default()) {
+    let lua_options = HostOptions {
+        workspace: Some(root.as_path().to_path_buf()),
+        ..HostOptions::default()
+    };
+    let plugins = match LuaHost::spawn(lua_options) {
         Ok(handle) => Some(Arc::new(handle)),
         Err(err) => {
             warnings.push(format!("Lua unavailable: {err}"));
@@ -332,6 +350,16 @@ pub async fn build_app(
     let host = plugins.as_deref().map(|h| h as &dyn PluginHostPort);
     let (loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
+    let plugin_trust = plugin_trust::TrustOptions {
+        store: overrides
+            .plugin_trust_path
+            .clone()
+            .or_else(plugin_trust::default_trust_path),
+        trust_now: config.trust_plugins.clone(),
+    };
+    let (granted, grant_warnings) =
+        plugin_trust::start(host, &loaded.plugin_capabilities, &plugin_trust).await;
+    warnings.extend(grant_warnings);
     let (rules, rules_warning) = startup::sensitive_rules(&loaded);
     warnings.extend(rules_warning);
     let guard = guard.with_sensitive_rules(rules.clone());
@@ -550,6 +578,9 @@ pub async fn build_app(
         options: loaded.options,
         mcp_specs: loaded.mcp_servers,
         mcp_trust_path,
+        plugin_capabilities: loaded.plugin_capabilities,
+        plugin_grants: Arc::new(Mutex::new(granted)),
+        plugin_trust_path: plugin_trust.store,
         models,
         events,
         timeline,
@@ -660,6 +691,7 @@ mod tests {
         assert_eq!(config.mode, PermissionMode::Ask);
         assert_eq!(config.model, None);
         assert!(config.trust_mcp.is_empty());
+        assert!(config.trust_plugins.is_empty());
         assert!(config.resume, "the window resumes by default");
         let headless = Config::from_args(&Args::parse_from(["crest", "--headless", "x"])).unwrap();
         assert!(!headless.resume);

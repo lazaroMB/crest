@@ -323,6 +323,7 @@ async fn open(
         mode: PermissionMode::Ask,
         model: None,
         trust_mcp: Vec::new(),
+        trust_plugins: Vec::new(),
         resume: false,
     };
     let app = build_app(&config, frontend(&terminal, approval.clone()), overrides)

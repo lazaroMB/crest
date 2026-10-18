@@ -107,8 +107,9 @@ fn key(workspace: &Path) -> String {
     workspace.display().to_string()
 }
 
+/// Writes `bytes` to `path`, readable only by its owner.
 #[cfg(unix)]
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
     let mut file = std::fs::OpenOptions::new()
@@ -120,8 +121,9 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)
 }
 
+/// Writes `bytes` to `path`.
 #[cfg(not(unix))]
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::write(path, bytes)
 }
 

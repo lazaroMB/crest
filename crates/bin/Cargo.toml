@@ -46,6 +46,7 @@ application = { workspace = true, features = ["testing"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui-component.workspace = true
 tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

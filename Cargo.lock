@@ -1551,6 +1551,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ui",
+ "wiremock",
 ]
 
 [[package]]

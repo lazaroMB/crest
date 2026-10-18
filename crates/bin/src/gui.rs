@@ -60,6 +60,7 @@ use ui::session::{
 };
 
 use crate::args::Args;
+use crate::plugin_trust::PluginTrust;
 use crate::research::ResearchCommand;
 use crate::root::{App, Config, Frontend, Overrides, build_app};
 
@@ -154,6 +155,7 @@ pub struct UiController {
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
     mcp: Arc<McpTrust>,
+    plugin_trust: Arc<PluginTrust>,
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
     research: SharedResearch,
@@ -303,6 +305,24 @@ impl McpTrust {
     }
 }
 
+/// `:plugin <args>`: `trust <name>` or `list`.
+async fn plugin_command(trust: Arc<PluginTrust>, args: String) -> Reply {
+    let words: Vec<&str> = args.split_whitespace().collect();
+    match words.as_slice() {
+        ["list"] => Reply::Notice(NoticeLevel::Info, trust.list()),
+        ["trust", name] => match trust.trust(name).await {
+            Ok(message) => Reply::Notice(NoticeLevel::Info, message),
+            Err(message) => {
+                Reply::Notice(NoticeLevel::Warning, format!(":plugin trust: {message}"))
+            }
+        },
+        _ => Reply::Notice(
+            NoticeLevel::Warning,
+            "usage: :plugin list | :plugin trust <name>".into(),
+        ),
+    }
+}
+
 impl UiController {
     /// A controller running the turns of `app` on `handle`.
     #[must_use]
@@ -315,6 +335,12 @@ impl UiController {
             specs: app.mcp_specs.clone(),
             workspace: app.workspace.as_path().to_path_buf(),
             store: app.mcp_trust_path.clone(),
+        });
+        let plugin_trust = Arc::new(PluginTrust {
+            decls: app.plugin_capabilities.clone(),
+            store: app.plugin_trust_path.clone(),
+            granted: Arc::clone(&app.plugin_grants),
+            host: app.plugins.clone(),
         });
         let events = app.events();
         let commands = app
@@ -330,6 +356,7 @@ impl UiController {
             plugins,
             commands,
             mcp,
+            plugin_trust,
             events,
             flow: Arc::new(tokio::sync::Mutex::new(None)),
             research,
@@ -502,6 +529,19 @@ impl SessionController for UiController {
                 task.map(|joined| {
                     joined.unwrap_or_else(|err| {
                         Reply::Notice(NoticeLevel::Warning, format!(":mcp: {err}"))
+                    })
+                })
+                .boxed(),
+            );
+        }
+        if name == "plugin" {
+            let task = self
+                .handle
+                .spawn(plugin_command(Arc::clone(&self.plugin_trust), args.to_owned()));
+            return Some(
+                task.map(|joined| {
+                    joined.unwrap_or_else(|err| {
+                        Reply::Notice(NoticeLevel::Warning, format!(":plugin: {err}"))
                     })
                 })
                 .boxed(),
@@ -752,6 +792,34 @@ mod tests {
             matches!(&block.kind, BlockKind::Error { message, .. } if message.contains("boom")),
             "{block:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn plugin_command_lists_or_explains_the_usage() {
+        let trust = Arc::new(PluginTrust {
+            decls: Vec::new(),
+            store: None,
+            granted: Arc::default(),
+            host: None,
+        });
+        let Reply::Notice(NoticeLevel::Info, list) =
+            plugin_command(Arc::clone(&trust), "list".into()).await
+        else {
+            panic!("list is informative");
+        };
+        assert!(list.contains("no plugin declares capabilities"), "{list}");
+        let Reply::Notice(NoticeLevel::Warning, usage) =
+            plugin_command(Arc::clone(&trust), "approve x".into()).await
+        else {
+            panic!("a bad subcommand warns");
+        };
+        assert!(usage.contains(":plugin trust <name>"), "{usage}");
+        let Reply::Notice(NoticeLevel::Warning, missing) =
+            plugin_command(trust, "trust x".into()).await
+        else {
+            panic!("an unknown plugin warns");
+        };
+        assert!(missing.contains("no plugin `x`"), "{missing}");
     }
 
     #[test]

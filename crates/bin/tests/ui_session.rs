@@ -87,6 +87,7 @@ fn open_with<'a>(
         mode: PermissionMode::Ask,
         model: None,
         trust_mcp: Vec::new(),
+        trust_plugins: Vec::new(),
         resume: false,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
