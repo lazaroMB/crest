@@ -2,7 +2,7 @@
 //! sequencer that resolves pending prefixes with `timeoutlen`.
 //!
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
-//! passed in as an [`Instant`](std::time::Instant) so tests never sleep.
+//! passed in as an [`Instant`] so tests never sleep.
 //!
 //! The types here ([`Mode`], [`Key`], [`KeySequence`], `Action`) are the
 //! keymap's own vocabulary. The Lua host (`app.keymap.set`) and the UI layer
@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::time::Instant;
 
 /// A key without modifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -372,6 +373,120 @@ fn remove<A>(node: &mut Node<A>, keys: &[Key]) -> Option<A> {
     removed
 }
 
+/// Outcome of feeding keys to a [`KeySequencer`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Feed<A> {
+    /// A mapping fired.
+    Matched(A),
+    /// The keys so far are a prefix of a longer mapping; waiting for more.
+    Pending,
+    /// Keys that matched nothing. In insert mode the host types them into
+    /// the input; elsewhere it discards them.
+    NoMatch(Vec<Key>),
+}
+
+/// Stateful resolver of key presses against a [`Keymap`].
+///
+/// [`feed`](Self::feed) returns a list because one key can settle several
+/// things at once: with `g` mapped, typing `g` then `x` fires `g` and then
+/// reports `x` as unmatched.
+#[derive(Debug, Clone)]
+pub struct KeySequencer<A> {
+    keymap: Keymap<A>,
+    mode: Mode,
+    pending: Vec<Key>,
+}
+
+impl<A: Clone> KeySequencer<A> {
+    /// A sequencer starting in `mode`.
+    pub fn new(keymap: Keymap<A>, mode: Mode) -> Self {
+        Self {
+            keymap,
+            mode,
+            pending: Vec::new(),
+        }
+    }
+
+    /// The keymap in use.
+    pub fn keymap(&self) -> &Keymap<A> {
+        &self.keymap
+    }
+
+    /// Mutable access to the keymap. Drops any pending keys, since they may
+    /// no longer be a valid prefix.
+    pub fn keymap_mut(&mut self) -> &mut Keymap<A> {
+        self.reset();
+        &mut self.keymap
+    }
+
+    /// The current mode.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Switches mode, dropping any pending keys.
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+        self.reset();
+    }
+
+    /// Keys typed so far that form an unresolved prefix.
+    pub fn pending(&self) -> &[Key] {
+        &self.pending
+    }
+
+    /// Drops pending keys without resolving them.
+    pub fn reset(&mut self) {
+        self.pending.clear();
+    }
+
+    /// Feeds one key press received at `now`.
+    pub fn feed(&mut self, key: Key, now: Instant) -> Vec<Feed<A>> {
+        let _ = now;
+        self.pending.push(key);
+        self.resolve()
+    }
+
+    /// Consumes `pending` as far as possible. Prefers waiting while the whole
+    /// buffer is a prefix; otherwise fires the longest exact mapping at the
+    /// start, or passes the first key through, and repeats with the rest.
+    fn resolve(&mut self) -> Vec<Feed<A>> {
+        let mut out = Vec::new();
+        while !self.pending.is_empty() {
+            let mut best = None;
+            let mut whole_is_prefix = false;
+            for len in 1..=self.pending.len() {
+                let found = self.keymap.lookup(self.mode, &self.pending[..len]);
+                if let Some(action) = found.exact {
+                    best = Some((len, action.clone()));
+                }
+                if !found.is_prefix {
+                    break;
+                }
+                whole_is_prefix = len == self.pending.len();
+            }
+            if whole_is_prefix {
+                out.push(Feed::Pending);
+                return out;
+            }
+            match best {
+                Some((len, action)) => {
+                    self.pending.drain(..len);
+                    out.push(Feed::Matched(action));
+                }
+                None => {
+                    let key = self.pending.remove(0);
+                    match out.last_mut() {
+                        Some(Feed::NoMatch(keys)) => keys.push(key),
+                        _ => out.push(Feed::NoMatch(vec![key])),
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +637,93 @@ mod tests {
             Err(KeyParseError::LeaderInLeader)
         );
         assert_eq!(km.leader(), " ");
+    }
+
+    fn feed_all<A: Clone>(seq: &mut KeySequencer<A>, n: &str, now: Instant) -> Vec<Feed<A>> {
+        keys(n).into_iter().flat_map(|k| seq.feed(k, now)).collect()
+    }
+
+    fn sequencer() -> KeySequencer<&'static str> {
+        let mut km = Keymap::new();
+        for (n, a) in [
+            ("gg", "first"),
+            ("G", "last"),
+            ("j", "next"),
+            ("<leader>ff", "files"),
+        ] {
+            assert_eq!(km.set(Mode::Normal, n, a), Ok(()));
+        }
+        assert_eq!(km.set(Mode::Insert, "<Esc>", "normal"), Ok(()));
+        KeySequencer::new(km, Mode::Normal)
+    }
+
+    #[test]
+    fn sequencer_leader_ff() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char(' '), t), vec![Feed::Pending]);
+        assert_eq!(seq.feed(Key::char('f'), t), vec![Feed::Pending]);
+        assert_eq!(seq.pending(), keys("<Space>f").as_slice());
+        assert_eq!(seq.feed(Key::char('f'), t), vec![Feed::Matched("files")]);
+        assert!(seq.pending().is_empty());
+    }
+
+    #[test]
+    fn sequencer_gg_vs_g_upper() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char('G'), t), vec![Feed::Matched("last")]);
+        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
+        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Matched("first")]);
+    }
+
+    #[test]
+    fn sequencer_broken_prefix_replays_rest() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        // `g` is only a prefix, so it is passed through; `j` still fires.
+        assert_eq!(
+            feed_all(&mut seq, "gj", t),
+            vec![
+                Feed::Pending,
+                Feed::NoMatch(keys("g")),
+                Feed::Matched("next")
+            ]
+        );
+        assert_eq!(
+            feed_all(&mut seq, "<Space>x", t),
+            vec![Feed::Pending, Feed::NoMatch(keys("<Space>x"))]
+        );
+    }
+
+    #[test]
+    fn sequencer_unmapped_key_in_insert_is_no_match() {
+        let mut seq = sequencer();
+        seq.set_mode(Mode::Insert);
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char('j'), t), vec![Feed::NoMatch(keys("j"))]);
+        assert_eq!(
+            seq.feed(Key::plain(KeyCode::Esc), t),
+            vec![Feed::Matched("normal")]
+        );
+    }
+
+    #[test]
+    fn sequencer_mode_change_resets_pending() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
+        seq.set_mode(Mode::Insert);
+        assert!(seq.pending().is_empty());
+        seq.set_mode(Mode::Normal);
+        assert_eq!(seq.feed(Key::char('G'), t), vec![Feed::Matched("last")]);
+    }
+
+    #[test]
+    fn sequencer_sees_overridden_mapping() {
+        let mut seq = sequencer();
+        let t = Instant::now();
+        assert_eq!(seq.keymap_mut().set(Mode::Normal, "j", "custom"), Ok(()));
+        assert_eq!(seq.feed(Key::char('j'), t), vec![Feed::Matched("custom")]);
     }
 }
