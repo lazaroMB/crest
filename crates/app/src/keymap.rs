@@ -547,7 +547,7 @@ impl Action {
     }
 }
 
-/// Builtin mappings, with the default leader (documented in `docs/uso.md`).
+/// Builtin mappings, with the default leader (documented in `docs/usage.md`).
 const DEFAULTS: &[(&[Mode], &str, &str)] = &[
     (&[Mode::Insert], "<Esc>", "mode.normal"),
     (&[Mode::Insert], "<CR>", "submit"),
