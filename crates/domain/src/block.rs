@@ -106,6 +106,8 @@ pub enum BlockKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<String>,
     },
+    /// Tabular data (tool `show_table`).
+    Table(TableSpec),
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -145,6 +147,105 @@ impl ToolStatus {
             Self::Succeeded | Self::Failed | Self::Denied | Self::Cancelled
         )
     }
+}
+
+/// Validation failure of a block payload.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum BlockError {
+    /// A table without columns.
+    #[error("table has no columns")]
+    TableNoColumns,
+    /// A table row whose width differs from the number of columns.
+    #[error("table row {row} has {actual} cells, expected {expected}")]
+    TableRowWidth {
+        /// Zero-based row index.
+        row: usize,
+        /// Number of columns.
+        expected: usize,
+        /// Number of cells in the row.
+        actual: usize,
+    },
+}
+
+/// A table: named columns and rows of cells.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TableSpec {
+    /// Column headers, in order.
+    pub columns: Vec<Column>,
+    /// Rows; each must have one cell per column.
+    pub rows: Vec<Vec<Cell>>,
+}
+
+impl TableSpec {
+    /// Checks that there is at least one column and every row has one cell
+    /// per column.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BlockError`] found.
+    pub fn validate(&self) -> Result<(), BlockError> {
+        if self.columns.is_empty() {
+            return Err(BlockError::TableNoColumns);
+        }
+        let expected = self.columns.len();
+        for (row, cells) in self.rows.iter().enumerate() {
+            if cells.len() != expected {
+                return Err(BlockError::TableRowWidth {
+                    row,
+                    expected,
+                    actual: cells.len(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A table column header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Column {
+    /// Header text.
+    pub name: String,
+    /// Horizontal alignment; the UI picks one when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Align>,
+}
+
+impl Column {
+    /// A column with default alignment.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            align: None,
+        }
+    }
+}
+
+/// Horizontal alignment of a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Align {
+    /// Left aligned.
+    Left,
+    /// Centered.
+    Center,
+    /// Right aligned.
+    Right,
+}
+
+/// A table cell: a plain JSON scalar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Cell {
+    /// Empty cell (`null`).
+    Null,
+    /// Boolean.
+    Bool(bool),
+    /// Number.
+    Number(f64),
+    /// Text.
+    Text(String),
 }
 
 #[cfg(test)]
@@ -231,5 +332,66 @@ mod tests {
         assert!(ToolStatus::Failed.is_terminal());
         assert!(ToolStatus::Denied.is_terminal());
         assert!(ToolStatus::Cancelled.is_terminal());
+    }
+
+    fn table(columns: &[&str], rows: Vec<Vec<Cell>>) -> TableSpec {
+        TableSpec {
+            columns: columns.iter().map(|c| Column::new(*c)).collect(),
+            rows,
+        }
+    }
+
+    #[test]
+    fn cells_are_plain_json_scalars() {
+        let row = vec![
+            Cell::Text("a".into()),
+            Cell::Number(1.5),
+            Cell::Bool(true),
+            Cell::Null,
+        ];
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value, json!(["a", 1.5, true, null]));
+        let back: Vec<Cell> = serde_json::from_value(value).unwrap();
+        assert_eq!(back, row);
+    }
+
+    #[test]
+    fn table_block_roundtrip() {
+        let mut spec = table(
+            &["name", "n"],
+            vec![vec![Cell::Text("x".into()), Cell::Number(2.0)]],
+        );
+        spec.columns[1].align = Some(Align::Right);
+        let value = roundtrip(&Block::new(BlockKind::Table(spec)));
+        assert_eq!(value["type"], "table");
+        assert_eq!(value["columns"][1]["align"], "right");
+        assert!(value["columns"][0].get("align").is_none());
+    }
+
+    #[test]
+    fn table_validate_accepts_matching_rows() {
+        let spec = table(&["a", "b"], vec![vec![Cell::Null, Cell::Bool(false)]]);
+        assert_eq!(spec.validate(), Ok(()));
+        assert_eq!(table(&["a"], vec![]).validate(), Ok(()));
+    }
+
+    #[test]
+    fn table_validate_rejects_bad_shapes() {
+        assert_eq!(
+            table(&[], vec![]).validate(),
+            Err(BlockError::TableNoColumns)
+        );
+        let spec = table(
+            &["a", "b"],
+            vec![vec![Cell::Null, Cell::Null], vec![Cell::Null]],
+        );
+        assert_eq!(
+            spec.validate(),
+            Err(BlockError::TableRowWidth {
+                row: 1,
+                expected: 2,
+                actual: 1
+            })
+        );
     }
 }
