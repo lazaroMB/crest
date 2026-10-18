@@ -17,7 +17,9 @@ use domain::conversation::{StopReason, ToolUseId, Usage};
 use domain::model::ModelId;
 use futures::{StreamExt, stream};
 
-use crate::ports::llm::{LlmError, LlmEvent, LlmPort, LlmRequest, LlmStream};
+use crate::ports::llm::{
+    LlmError, LlmEvent, LlmPort, LlmRequest, LlmStream, ModelCatalogPort, ModelInfo,
+};
 
 /// Signature attached to scripted thinking blocks.
 pub const FAKE_SIGNATURE: &str = "fake-signature";
@@ -454,6 +456,54 @@ impl Drop for OpenGuard {
     }
 }
 
+/// [`ModelCatalogPort`] with a fixed answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FakeModelCatalog {
+    answer: Result<Vec<ModelInfo>, LlmError>,
+}
+
+impl FakeModelCatalog {
+    /// A catalog listing exactly `models`.
+    #[must_use]
+    pub fn new(models: Vec<ModelInfo>) -> Self {
+        Self { answer: Ok(models) }
+    }
+
+    /// A catalog listing `ids`, each displayed under its own id.
+    #[must_use]
+    pub fn with_ids<I, T>(ids: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<ModelId>,
+    {
+        Self::new(
+            ids.into_iter()
+                .map(|id| {
+                    let id = id.into();
+                    ModelInfo {
+                        display_name: id.to_string(),
+                        id,
+                        created_at: None,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// A catalog whose listing fails with `error`.
+    #[must_use]
+    pub fn failing(error: LlmError) -> Self {
+        Self { answer: Err(error) }
+    }
+}
+
+#[async_trait]
+impl ModelCatalogPort for FakeModelCatalog {
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+        self.answer.clone()
+    }
+}
+
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
 /// recorded state from the others.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -734,5 +784,27 @@ mod tests {
         assert_eq!(llm.open_streams(), 1);
         drop(stream);
         assert_eq!(llm.open_streams(), 0);
+    }
+
+    #[tokio::test]
+    async fn model_catalog_returns_its_fixed_answer() {
+        let catalog: Arc<dyn ModelCatalogPort> = Arc::new(FakeModelCatalog::with_ids([
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+        ]));
+        let ids: Vec<String> = catalog
+            .list_models()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id.0)
+            .collect();
+        assert_eq!(ids, ["claude-sonnet-5-5", "claude-haiku-5-5"]);
+
+        let failing = FakeModelCatalog::failing(LlmError::Network("offline".into()));
+        assert_eq!(
+            failing.list_models().await,
+            Err(LlmError::Network("offline".into()))
+        );
     }
 }
