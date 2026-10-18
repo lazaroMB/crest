@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path};
 use std::sync::Arc;
+use std::time::Duration;
 
 use application::keymap::Action;
 use application::ports::search::{
@@ -17,6 +18,7 @@ use application::ports::search::{
 };
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc;
+use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{
     AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Task, Window, div, px,
@@ -31,6 +33,10 @@ pub const TOGGLE_ACTION: &str = "panel.tree";
 
 /// Levels of the tree the panel asks the port for.
 pub const PANEL_TREE_DEPTH: usize = 16;
+
+/// Quiet time after a change before the panel reloads, so a burst of
+/// events (a checkout, a build) costs one search.
+pub const REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// Width of the panel.
 const PANEL_WIDTH: f32 = 280.0;
@@ -146,6 +152,8 @@ pub struct TreePanel {
     error: Option<String>,
     visible: bool,
     loading: Option<Task<()>>,
+    watching: Option<Task<()>>,
+    watcher: Option<DirWatcher>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -170,6 +178,8 @@ impl TreePanel {
             error: None,
             visible: false,
             loading: None,
+            watching: None,
+            watcher: None,
             _subscriptions: vec![expansion],
         };
         panel.reload(cx);
@@ -243,6 +253,43 @@ impl TreePanel {
                 .await;
             this.update(cx, |this, cx| this.loaded(result, cx)).ok();
         }));
+    }
+
+    /// Reloads after each burst of `changes`, once [`REFRESH_DEBOUNCE`]
+    /// passes without a new one. Replaces any previous source.
+    pub fn watch(
+        &mut self,
+        mut changes: impl Stream<Item = ()> + Unpin + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.watching = Some(cx.spawn(async move |this, cx| {
+            while changes.next().await.is_some() {
+                loop {
+                    cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+                    // Pings during the wait restart it; an ended stream
+                    // still gets its last reload.
+                    let mut more = false;
+                    while let Some(Some(())) = changes.next().now_or_never() {
+                        more = true;
+                    }
+                    if !more {
+                        break;
+                    }
+                }
+                if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Watches `root` (the workspace directory) with a [`DirWatcher`] and
+    /// reloads on changes, until the panel is dropped.
+    pub fn watch_dir(&mut self, root: &Path, cx: &mut Context<Self>) -> Result<(), WatchError> {
+        let (watcher, changes) = DirWatcher::new(root)?;
+        self.watcher = Some(watcher);
+        self.watch(changes, cx);
+        Ok(())
     }
 
     fn loaded(&mut self, result: Result<TreeNode, SearchError>, cx: &mut Context<Self>) {
@@ -345,7 +392,6 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    use futures::StreamExt as _;
     use notify::event::{AccessKind, CreateKind, DataChange, ModifyKind, RenameMode};
 
     use super::*;
@@ -558,5 +604,141 @@ mod tests {
             gpui::size(gpui::px(400.), gpui::px(600.)),
             |_, _| div().size_full().child(panel.clone()),
         );
+    }
+
+    // -- refresh ------------------------------------------------------------
+
+    /// A port that counts the trees it builds.
+    struct Counting {
+        inner: Arc<dyn FileSearchPort>,
+        trees: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Counting {
+        fn trees(&self) -> usize {
+            self.trees.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileSearchPort for Counting {
+        async fn list_files(
+            &self,
+            request: application::ports::search::ListFilesRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            self.inner.list_files(request).await
+        }
+        async fn find_file(
+            &self,
+            request: application::ports::search::FindFileRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            self.inner.find_file(request).await
+        }
+        async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
+            self.trees.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.tree(request).await
+        }
+    }
+
+    #[gpui::test]
+    fn bursts_of_changes_reload_once_after_the_debounce(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let port = Arc::new(Counting {
+            inner: fs.clone(),
+            trees: Default::default(),
+        });
+        let (panel, cx) = panel(port.clone(), cx);
+        assert_eq!(port.trees(), 1, "initial load");
+        let (tx, rx) = mpsc::unbounded();
+        panel.update(cx, |panel, cx| panel.watch(rx, cx));
+
+        fs.set_file("src/main.rs", "");
+        for _ in 0..3 {
+            tx.unbounded_send(()).unwrap();
+        }
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(150));
+        tx.unbounded_send(()).unwrap();
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.run_until_parked();
+        assert_eq!(port.trees(), 1, "still inside the debounce window");
+
+        cx.executor().advance_clock(REFRESH_DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(port.trees(), 2, "one reload for the burst");
+        panel.update(cx, |panel, cx| panel.set_expanded("src", true, cx));
+        assert!(visible(&panel, cx).contains(&"src/main.rs".to_owned()));
+    }
+
+    /// A [`FileSearchPort`] over a real directory, walked with `std::fs`.
+    struct DirSearch(std::path::PathBuf);
+
+    impl DirSearch {
+        fn files(&self) -> Vec<WorkspacePath> {
+            let mut files = Vec::new();
+            let mut dirs = vec![self.0.clone()];
+            while let Some(dir) = dirs.pop() {
+                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        dirs.push(path);
+                    } else if let Ok(rel) = path.strip_prefix(&self.0) {
+                        files.extend(WorkspacePath::parse(&rel.to_string_lossy()).ok());
+                    }
+                }
+            }
+            files
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileSearchPort for DirSearch {
+        async fn list_files(
+            &self,
+            request: application::ports::search::ListFilesRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            Ok(application::ports::search::FileList::from_matches(
+                self.files(),
+                request.limit,
+            ))
+        }
+        async fn find_file(
+            &self,
+            _: application::ports::search::FindFileRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            Ok(application::ports::search::FileList::default())
+        }
+        async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
+            let base = request.path.unwrap_or_else(WorkspacePath::root);
+            Ok(TreeNode::from_files(&base, &self.files(), request.depth))
+        }
+    }
+
+    #[gpui::test]
+    fn refreshes_when_notify_sees_a_new_file(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        let (panel, cx) = panel(Arc::new(DirSearch(dir.path().to_owned())), cx);
+        assert_eq!(visible(&panel, cx), ["a.txt"]);
+        // The test scheduler rejects wake-ups from other threads, so the
+        // pings of notify's thread are relayed from the test thread; in the
+        // app `watch_dir` passes the watcher's channel straight in.
+        let (_watcher, mut pings) = DirWatcher::new(dir.path()).unwrap();
+        let (relay, changes) = mpsc::unbounded();
+        panel.update(cx, |panel, cx| panel.watch(changes, cx));
+
+        std::fs::write(dir.path().join("b.txt"), "").unwrap();
+        for _ in 0..250 {
+            std::thread::sleep(Duration::from_millis(20));
+            while pings.try_recv().is_ok() {
+                relay.unbounded_send(()).unwrap();
+            }
+            cx.executor().advance_clock(REFRESH_DEBOUNCE);
+            cx.run_until_parked();
+            if visible(&panel, cx).len() == 2 {
+                break;
+            }
+        }
+        assert_eq!(visible(&panel, cx), ["a.txt", "b.txt"]);
     }
 }
