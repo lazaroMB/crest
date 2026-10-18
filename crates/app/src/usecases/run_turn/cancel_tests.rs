@@ -271,3 +271,68 @@ async fn a_cancelled_token_skips_the_model_call() {
     assert_eq!(h.sink.kinds(), ["turn_started", "turn_finished"]);
     assert_eq!(h.session.turns[0].messages.len(), 1);
 }
+
+/// A read-only tool that cancels the turn while it runs and then
+/// finishes normally.
+struct CancelsTurn(CancelToken);
+
+#[async_trait]
+impl TypedTool for CancelsTurn {
+    type Input = ShInput;
+
+    fn name(&self) -> &str {
+        "cancels"
+    }
+
+    fn description(&self) -> &str {
+        "Cancels the turn."
+    }
+
+    fn effect(&self, _input: &ShInput) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        _input: ShInput,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let token = self.0.clone();
+        Ok(PreparedCall::new(
+            "x",
+            async move {
+                token.cancel();
+                Ok(ToolOutput::text("done"))
+            }
+            .boxed(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn cancelling_at_the_iteration_limit_is_an_interruption() {
+    let token = CancelToken::new();
+    let tool_token = token.clone();
+    let mut h = Harness::with(
+        vec![ScriptedResponse::tool_use(
+            "toolu_1",
+            "cancels",
+            json!({ "command": "x" }),
+        )],
+        PermissionMode::Ask,
+        move |tools| tools.register_typed(CancelsTurn(tool_token)).unwrap(),
+    )
+    .configure(|s| s.with_max_iterations(1));
+    let outcome = h
+        .service
+        .run_turn(
+            &mut h.session,
+            "hola",
+            TurnOptions::default().with_cancel(token),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    assert_eq!(h.tool_results(), [("done".to_owned(), false)]);
+    assert_resendable(&h.session);
+}

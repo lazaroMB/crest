@@ -351,13 +351,13 @@ impl TurnRun<'_> {
     /// The loop: model, tools, model… until the model stops calling tools.
     async fn run(&mut self) -> Result<StopReason, TurnError> {
         loop {
+            if self.cancel.is_cancelled() {
+                return Ok(StopReason::Interrupted);
+            }
             if self.model_calls >= self.service.max_iterations {
                 return Err(TurnError::TooManyIterations {
                     limit: self.service.max_iterations,
                 });
-            }
-            if self.cancel.is_cancelled() {
-                return Ok(StopReason::Interrupted);
             }
             let Answer {
                 assembled,
