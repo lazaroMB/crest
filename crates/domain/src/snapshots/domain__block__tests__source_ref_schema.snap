@@ -11,14 +11,13 @@ expression: "schemars::schema_for!(SourceRef)"
       "description": "A file of the workspace, optionally a 1-based inclusive line range.",
       "type": "object",
       "properties": {
-        "line_end": {
-          "description": "Last line.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
+        "type": {
+          "type": "string",
+          "const": "file"
+        },
+        "path": {
+          "description": "Path relative to the workspace.",
+          "type": "string"
         },
         "line_start": {
           "description": "First line.",
@@ -29,13 +28,14 @@ expression: "schemars::schema_for!(SourceRef)"
           "format": "uint32",
           "minimum": 0
         },
-        "path": {
-          "description": "Path relative to the workspace.",
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "file"
+        "line_end": {
+          "description": "Last line.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "required": [
@@ -47,6 +47,10 @@ expression: "schemars::schema_for!(SourceRef)"
       "description": "A git commit.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "commit"
+        },
         "sha": {
           "description": "Commit hash.",
           "type": "string"
@@ -54,10 +58,6 @@ expression: "schemars::schema_for!(SourceRef)"
         "summary": {
           "description": "First line of the message.",
           "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "commit"
         }
       },
       "required": [
@@ -70,13 +70,6 @@ expression: "schemars::schema_for!(SourceRef)"
       "description": "A web page.",
       "type": "object",
       "properties": {
-        "title": {
-          "description": "Page title.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "type": {
           "type": "string",
           "const": "url"
@@ -84,6 +77,13 @@ expression: "schemars::schema_for!(SourceRef)"
         "url": {
           "description": "Address.",
           "type": "string"
+        },
+        "title": {
+          "description": "Page title.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -95,6 +95,10 @@ expression: "schemars::schema_for!(SourceRef)"
       "description": "Output of a shell command.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "command"
+        },
         "command": {
           "description": "Command line.",
           "type": "string"
@@ -102,10 +106,6 @@ expression: "schemars::schema_for!(SourceRef)"
         "output_excerpt": {
           "description": "Relevant excerpt of its output.",
           "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "command"
         }
       },
       "required": [

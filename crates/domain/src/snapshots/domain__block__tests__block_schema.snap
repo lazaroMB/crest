@@ -13,18 +13,21 @@ expression: "schemars::schema_for!(Block)"
       "$ref": "#/$defs/BlockId"
     }
   },
+  "required": [
+    "id"
+  ],
   "oneOf": [
     {
       "description": "Model answer, markdown that may still be streaming.",
       "type": "object",
       "properties": {
-        "markdown": {
-          "description": "Markdown source.",
-          "type": "string"
-        },
         "type": {
           "type": "string",
           "const": "text"
+        },
+        "markdown": {
+          "description": "Markdown source.",
+          "type": "string"
         }
       },
       "required": [
@@ -36,17 +39,17 @@ expression: "schemars::schema_for!(Block)"
       "description": "Extended thinking of the model.",
       "type": "object",
       "properties": {
-        "collapsed": {
-          "description": "Whether the UI shows it collapsed (the default).",
-          "type": "boolean"
+        "type": {
+          "type": "string",
+          "const": "thinking"
         },
         "text": {
           "description": "Raw reasoning text.",
           "type": "string"
         },
-        "type": {
-          "type": "string",
-          "const": "thinking"
+        "collapsed": {
+          "description": "Whether the UI shows it collapsed (the default).",
+          "type": "boolean"
         }
       },
       "required": [
@@ -59,12 +62,28 @@ expression: "schemars::schema_for!(Block)"
       "description": "A tool invocation: one line with name, key arguments and status.",
       "type": "object",
       "properties": {
-        "input": {
-          "description": "Raw tool input as sent by the model."
+        "type": {
+          "type": "string",
+          "const": "tool_call"
+        },
+        "tool_use_id": {
+          "description": "Id of the `tool_use` content block this call belongs to.",
+          "type": "string"
         },
         "name": {
           "description": "Tool name.",
           "type": "string"
+        },
+        "summary": {
+          "description": "Short human summary of the key arguments.",
+          "type": "string"
+        },
+        "input": {
+          "description": "Raw tool input as sent by the model."
+        },
+        "status": {
+          "description": "Lifecycle state.",
+          "$ref": "#/$defs/ToolStatus"
         },
         "output": {
           "description": "Tool output shown when expanded, once available.",
@@ -72,22 +91,6 @@ expression: "schemars::schema_for!(Block)"
             "string",
             "null"
           ]
-        },
-        "status": {
-          "description": "Lifecycle state.",
-          "$ref": "#/$defs/ToolStatus"
-        },
-        "summary": {
-          "description": "Short human summary of the key arguments.",
-          "type": "string"
-        },
-        "tool_use_id": {
-          "description": "Id of the `tool_use` content block this call belongs to.",
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "tool_call"
         }
       },
       "required": [
@@ -159,9 +162,9 @@ expression: "schemars::schema_for!(Block)"
       "description": "A markdown document (tool `show_markdown` or a written `.md`), shown\nwith document typography and toggleable to source.",
       "type": "object",
       "properties": {
-        "source": {
-          "description": "Markdown source.",
-          "type": "string"
+        "type": {
+          "type": "string",
+          "const": "markdown"
         },
         "title": {
           "description": "Document title, e.g. the file name.",
@@ -170,9 +173,9 @@ expression: "schemars::schema_for!(Block)"
             "null"
           ]
         },
-        "type": {
-          "type": "string",
-          "const": "markdown"
+        "source": {
+          "description": "Markdown source.",
+          "type": "string"
         }
       },
       "required": [
@@ -184,21 +187,21 @@ expression: "schemars::schema_for!(Block)"
       "description": "A block drawn by a Lua plugin from a declarative tree.",
       "type": "object",
       "properties": {
-        "name": {
-          "description": "Block name within the plugin.",
-          "type": "string"
+        "type": {
+          "type": "string",
+          "const": "custom"
         },
         "plugin": {
           "description": "Plugin that produced it.",
           "type": "string"
         },
+        "name": {
+          "description": "Block name within the plugin.",
+          "type": "string"
+        },
         "tree": {
           "description": "Content to draw.",
           "$ref": "#/$defs/CustomNode"
-        },
-        "type": {
-          "type": "string",
-          "const": "custom"
         }
       },
       "required": [
@@ -212,16 +215,16 @@ expression: "schemars::schema_for!(Block)"
       "description": "Sources cited by a workflow node; citations in the text link here.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "sources"
+        },
         "sources": {
           "description": "Cited sources, in citation order.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/SourceRef"
           }
-        },
-        "type": {
-          "type": "string",
-          "const": "sources"
         }
       },
       "required": [
@@ -233,13 +236,17 @@ expression: "schemars::schema_for!(Block)"
       "description": "An image (screenshot, exported chart, web image) with its source.",
       "type": "object",
       "properties": {
-        "data_or_path": {
-          "description": "Inline bytes or a path to read them from.",
-          "$ref": "#/$defs/ImageData"
+        "type": {
+          "type": "string",
+          "const": "image"
         },
         "media_type": {
           "description": "MIME type, e.g. `image/png`.",
           "type": "string"
+        },
+        "data_or_path": {
+          "description": "Inline bytes or a path to read them from.",
+          "$ref": "#/$defs/ImageData"
         },
         "source": {
           "description": "Where the image came from.",
@@ -251,10 +258,6 @@ expression: "schemars::schema_for!(Block)"
               "type": "null"
             }
           ]
-        },
-        "type": {
-          "type": "string",
-          "const": "image"
         }
       },
       "required": [
@@ -267,25 +270,25 @@ expression: "schemars::schema_for!(Block)"
       "description": "Marks that the workflow entered a new stage, with progress\n(`index` of `total`, 1-based, e.g. 5/14).",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "stage_header"
+        },
+        "stage": {
+          "description": "Stage name.",
+          "type": "string"
+        },
         "index": {
           "description": "1-based position of the stage.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0
         },
-        "stage": {
-          "description": "Stage name.",
-          "type": "string"
-        },
         "total": {
           "description": "Number of stages.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0
-        },
-        "type": {
-          "type": "string",
-          "const": "stage_header"
         }
       },
       "required": [
@@ -299,20 +302,20 @@ expression: "schemars::schema_for!(Block)"
       "description": "Failure of the API or a tool.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "error"
+        },
+        "message": {
+          "description": "What went wrong.",
+          "type": "string"
+        },
         "hint": {
           "description": "Suggested action for the user.",
           "type": [
             "string",
             "null"
           ]
-        },
-        "message": {
-          "description": "What went wrong.",
-          "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "error"
         }
       },
       "required": [
@@ -321,10 +324,76 @@ expression: "schemars::schema_for!(Block)"
       ]
     }
   ],
-  "required": [
-    "id"
-  ],
   "$defs": {
+    "BlockId": {
+      "description": "Stable identifier of a block in the timeline.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "ToolStatus": {
+      "description": "Lifecycle of a tool call.",
+      "oneOf": [
+        {
+          "description": "Requested by the model, not started yet.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Waiting for the user to approve it.",
+          "type": "string",
+          "const": "awaiting_approval"
+        },
+        {
+          "description": "Executing.",
+          "type": "string",
+          "const": "running"
+        },
+        {
+          "description": "Finished successfully.",
+          "type": "string",
+          "const": "succeeded"
+        },
+        {
+          "description": "Finished with an error.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "Rejected by the user or a permission rule.",
+          "type": "string",
+          "const": "denied"
+        },
+        {
+          "description": "Interrupted before finishing.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        },
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
     "Align": {
       "description": "Horizontal alignment of a column.",
       "oneOf": [
@@ -344,31 +413,6 @@ expression: "schemars::schema_for!(Block)"
           "const": "right"
         }
       ]
-    },
-    "ApprovalState": {
-      "description": "Decision of the user on a proposed file change.",
-      "oneOf": [
-        {
-          "description": "Waiting for the user.",
-          "type": "string",
-          "const": "pending"
-        },
-        {
-          "description": "Accepted.",
-          "type": "string",
-          "const": "approved"
-        },
-        {
-          "description": "Rejected.",
-          "type": "string",
-          "const": "rejected"
-        }
-      ]
-    },
-    "BlockId": {
-      "description": "Stable identifier of a block in the timeline.",
-      "type": "string",
-      "format": "uuid"
     },
     "Cell": {
       "description": "A table cell: a plain JSON scalar.",
@@ -390,6 +434,33 @@ expression: "schemars::schema_for!(Block)"
           "description": "Text.",
           "type": "string"
         }
+      ]
+    },
+    "TableSpec": {
+      "description": "A table: named columns and rows of cells.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Column headers, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Column"
+          }
+        },
+        "rows": {
+          "description": "Rows; each must have one cell per column.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Cell"
+            }
+          }
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
       ]
     },
     "ChartKind": {
@@ -417,10 +488,36 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "Series": {
+      "description": "A named series of values, one per chart label.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Values, aligned with the chart labels.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ]
+    },
     "ChartSpec": {
       "description": "A chart: labels on one axis and one or more numeric series.",
       "type": "object",
       "properties": {
+        "title": {
+          "description": "Chart title.",
+          "type": "string"
+        },
         "kind": {
           "description": "How the series are drawn.",
           "$ref": "#/$defs/ChartKind"
@@ -438,10 +535,6 @@ expression: "schemars::schema_for!(Block)"
           "items": {
             "$ref": "#/$defs/Series"
           }
-        },
-        "title": {
-          "description": "Chart title.",
-          "type": "string"
         }
       },
       "required": [
@@ -451,28 +544,85 @@ expression: "schemars::schema_for!(Block)"
         "series"
       ]
     },
-    "Column": {
-      "description": "A table column header.",
+    "ApprovalState": {
+      "description": "Decision of the user on a proposed file change.",
+      "oneOf": [
+        {
+          "description": "Waiting for the user.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Accepted.",
+          "type": "string",
+          "const": "approved"
+        },
+        {
+          "description": "Rejected.",
+          "type": "string",
+          "const": "rejected"
+        }
+      ]
+    },
+    "DiffSpec": {
+      "description": "A file change. The adapter computes the diff; this is only data.",
       "type": "object",
       "properties": {
-        "align": {
-          "description": "Horizontal alignment; the UI picks one when absent.",
+        "path": {
+          "description": "Path of the file, relative to the workspace.",
+          "type": "string"
+        },
+        "old_text": {
+          "description": "Previous content; absent when the file is new.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new_text": {
+          "description": "New content.",
+          "type": "string"
+        },
+        "unified": {
+          "description": "Unified diff between both.",
+          "type": "string"
+        },
+        "approval": {
+          "description": "Approval state when the change needs the user's decision.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Align"
+              "$ref": "#/$defs/ApprovalState"
             },
             {
               "type": "null"
             }
           ]
-        },
-        "name": {
-          "description": "Header text.",
-          "type": "string"
         }
       },
       "required": [
-        "name"
+        "path",
+        "new_text",
+        "unified"
+      ]
+    },
+    "MermaidSpec": {
+      "description": "A Mermaid diagram; the UI shows the source and the error if it does not\nparse.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Mermaid source.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Optional caption.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
       ]
     },
     "CustomNode": {
@@ -482,13 +632,13 @@ expression: "schemars::schema_for!(Block)"
           "description": "Plain text.",
           "type": "object",
           "properties": {
-            "text": {
-              "description": "The text.",
-              "type": "string"
-            },
             "type": {
               "type": "string",
               "const": "text"
+            },
+            "text": {
+              "description": "The text.",
+              "type": "string"
             }
           },
           "required": [
@@ -500,16 +650,16 @@ expression: "schemars::schema_for!(Block)"
           "description": "Children laid out horizontally.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "row"
+            },
             "children": {
               "description": "Child nodes.",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/CustomNode"
               }
-            },
-            "type": {
-              "type": "string",
-              "const": "row"
             }
           },
           "required": [
@@ -521,16 +671,16 @@ expression: "schemars::schema_for!(Block)"
           "description": "Children laid out vertically.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "col"
+            },
             "children": {
               "description": "Child nodes.",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/CustomNode"
               }
-            },
-            "type": {
-              "type": "string",
-              "const": "col"
             }
           },
           "required": [
@@ -542,16 +692,16 @@ expression: "schemars::schema_for!(Block)"
           "description": "A bulleted list.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "list"
+            },
             "items": {
               "description": "One node per item.",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/CustomNode"
               }
-            },
-            "type": {
-              "type": "string",
-              "const": "list"
             }
           },
           "required": [
@@ -591,6 +741,10 @@ expression: "schemars::schema_for!(Block)"
           "description": "A code snippet.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "code"
+            },
             "lang": {
               "description": "Language for highlighting.",
               "type": [
@@ -601,10 +755,6 @@ expression: "schemars::schema_for!(Block)"
             "source": {
               "description": "Source code.",
               "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "code"
             }
           },
           "required": [
@@ -616,13 +766,13 @@ expression: "schemars::schema_for!(Block)"
           "description": "Rendered markdown.",
           "type": "object",
           "properties": {
-            "source": {
-              "description": "Markdown source.",
-              "type": "string"
-            },
             "type": {
               "type": "string",
               "const": "markdown"
+            },
+            "source": {
+              "description": "Markdown source.",
+              "type": "string"
             }
           },
           "required": [
@@ -632,130 +782,6 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
-    "DiffSpec": {
-      "description": "A file change. The adapter computes the diff; this is only data.",
-      "type": "object",
-      "properties": {
-        "approval": {
-          "description": "Approval state when the change needs the user's decision.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ApprovalState"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "new_text": {
-          "description": "New content.",
-          "type": "string"
-        },
-        "old_text": {
-          "description": "Previous content; absent when the file is new.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "path": {
-          "description": "Path of the file, relative to the workspace.",
-          "type": "string"
-        },
-        "unified": {
-          "description": "Unified diff between both.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "path",
-        "new_text",
-        "unified"
-      ]
-    },
-    "ImageData": {
-      "description": "Bytes of an image block, tagged by `type`.",
-      "oneOf": [
-        {
-          "description": "Inline, base64 encoded.",
-          "type": "object",
-          "properties": {
-            "data": {
-              "description": "Base64 payload.",
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "base64"
-            }
-          },
-          "required": [
-            "type",
-            "data"
-          ]
-        },
-        {
-          "description": "A file on disk.",
-          "type": "object",
-          "properties": {
-            "path": {
-              "description": "File path.",
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "path"
-            }
-          },
-          "required": [
-            "type",
-            "path"
-          ]
-        }
-      ]
-    },
-    "MermaidSpec": {
-      "description": "A Mermaid diagram; the UI shows the source and the error if it does not\nparse.",
-      "type": "object",
-      "properties": {
-        "source": {
-          "description": "Mermaid source.",
-          "type": "string"
-        },
-        "title": {
-          "description": "Optional caption.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "source"
-      ]
-    },
-    "Series": {
-      "description": "A named series of values, one per chart label.",
-      "type": "object",
-      "properties": {
-        "name": {
-          "description": "Legend name.",
-          "type": "string"
-        },
-        "values": {
-          "description": "Values, aligned with the chart labels.",
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "double"
-          }
-        }
-      },
-      "required": [
-        "name",
-        "values"
-      ]
-    },
     "SourceRef": {
       "description": "Where a piece of information came from, tagged by `type`.",
       "oneOf": [
@@ -763,14 +789,13 @@ expression: "schemars::schema_for!(Block)"
           "description": "A file of the workspace, optionally a 1-based inclusive line range.",
           "type": "object",
           "properties": {
-            "line_end": {
-              "description": "Last line.",
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "path": {
+              "description": "Path relative to the workspace.",
+              "type": "string"
             },
             "line_start": {
               "description": "First line.",
@@ -781,13 +806,14 @@ expression: "schemars::schema_for!(Block)"
               "format": "uint32",
               "minimum": 0
             },
-            "path": {
-              "description": "Path relative to the workspace.",
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "file"
+            "line_end": {
+              "description": "Last line.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
             }
           },
           "required": [
@@ -799,6 +825,10 @@ expression: "schemars::schema_for!(Block)"
           "description": "A git commit.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "commit"
+            },
             "sha": {
               "description": "Commit hash.",
               "type": "string"
@@ -806,10 +836,6 @@ expression: "schemars::schema_for!(Block)"
             "summary": {
               "description": "First line of the message.",
               "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "commit"
             }
           },
           "required": [
@@ -822,13 +848,6 @@ expression: "schemars::schema_for!(Block)"
           "description": "A web page.",
           "type": "object",
           "properties": {
-            "title": {
-              "description": "Page title.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "type": {
               "type": "string",
               "const": "url"
@@ -836,6 +855,13 @@ expression: "schemars::schema_for!(Block)"
             "url": {
               "description": "Address.",
               "type": "string"
+            },
+            "title": {
+              "description": "Page title.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -847,6 +873,10 @@ expression: "schemars::schema_for!(Block)"
           "description": "Output of a shell command.",
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "command"
+            },
             "command": {
               "description": "Command line.",
               "type": "string"
@@ -854,10 +884,6 @@ expression: "schemars::schema_for!(Block)"
             "output_excerpt": {
               "description": "Relevant excerpt of its output.",
               "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "command"
             }
           },
           "required": [
@@ -868,70 +894,44 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
-    "TableSpec": {
-      "description": "A table: named columns and rows of cells.",
-      "type": "object",
-      "properties": {
-        "columns": {
-          "description": "Column headers, in order.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Column"
-          }
-        },
-        "rows": {
-          "description": "Rows; each must have one cell per column.",
-          "type": "array",
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/Cell"
-            }
-          }
-        }
-      },
-      "required": [
-        "columns",
-        "rows"
-      ]
-    },
-    "ToolStatus": {
-      "description": "Lifecycle of a tool call.",
+    "ImageData": {
+      "description": "Bytes of an image block, tagged by `type`.",
       "oneOf": [
         {
-          "description": "Requested by the model, not started yet.",
-          "type": "string",
-          "const": "pending"
+          "description": "Inline, base64 encoded.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "base64"
+            },
+            "data": {
+              "description": "Base64 payload.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
         },
         {
-          "description": "Waiting for the user to approve it.",
-          "type": "string",
-          "const": "awaiting_approval"
-        },
-        {
-          "description": "Executing.",
-          "type": "string",
-          "const": "running"
-        },
-        {
-          "description": "Finished successfully.",
-          "type": "string",
-          "const": "succeeded"
-        },
-        {
-          "description": "Finished with an error.",
-          "type": "string",
-          "const": "failed"
-        },
-        {
-          "description": "Rejected by the user or a permission rule.",
-          "type": "string",
-          "const": "denied"
-        },
-        {
-          "description": "Interrupted before finishing.",
-          "type": "string",
-          "const": "cancelled"
+          "description": "A file on disk.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "path"
+            },
+            "path": {
+              "description": "File path.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
         }
       ]
     }

@@ -8,6 +8,25 @@ expression: "schemars::schema_for!(DiffSpec)"
   "description": "A file change. The adapter computes the diff; this is only data.",
   "type": "object",
   "properties": {
+    "path": {
+      "description": "Path of the file, relative to the workspace.",
+      "type": "string"
+    },
+    "old_text": {
+      "description": "Previous content; absent when the file is new.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "new_text": {
+      "description": "New content.",
+      "type": "string"
+    },
+    "unified": {
+      "description": "Unified diff between both.",
+      "type": "string"
+    },
     "approval": {
       "description": "Approval state when the change needs the user's decision.",
       "anyOf": [
@@ -18,25 +37,6 @@ expression: "schemars::schema_for!(DiffSpec)"
           "type": "null"
         }
       ]
-    },
-    "new_text": {
-      "description": "New content.",
-      "type": "string"
-    },
-    "old_text": {
-      "description": "Previous content; absent when the file is new.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "path": {
-      "description": "Path of the file, relative to the workspace.",
-      "type": "string"
-    },
-    "unified": {
-      "description": "Unified diff between both.",
-      "type": "string"
     }
   },
   "required": [

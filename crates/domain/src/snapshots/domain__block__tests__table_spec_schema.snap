@@ -31,6 +31,30 @@ expression: "schemars::schema_for!(TableSpec)"
     "rows"
   ],
   "$defs": {
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        },
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
     "Align": {
       "description": "Horizontal alignment of a column.",
       "oneOf": [
@@ -71,30 +95,6 @@ expression: "schemars::schema_for!(TableSpec)"
           "description": "Text.",
           "type": "string"
         }
-      ]
-    },
-    "Column": {
-      "description": "A table column header.",
-      "type": "object",
-      "properties": {
-        "align": {
-          "description": "Horizontal alignment; the UI picks one when absent.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Align"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "description": "Header text.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
       ]
     }
   }

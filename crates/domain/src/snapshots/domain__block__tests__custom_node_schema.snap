@@ -11,13 +11,13 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "Plain text.",
       "type": "object",
       "properties": {
-        "text": {
-          "description": "The text.",
-          "type": "string"
-        },
         "type": {
           "type": "string",
           "const": "text"
+        },
+        "text": {
+          "description": "The text.",
+          "type": "string"
         }
       },
       "required": [
@@ -29,16 +29,16 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "Children laid out horizontally.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "row"
+        },
         "children": {
           "description": "Child nodes.",
           "type": "array",
           "items": {
             "$ref": "#"
           }
-        },
-        "type": {
-          "type": "string",
-          "const": "row"
         }
       },
       "required": [
@@ -50,16 +50,16 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "Children laid out vertically.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "col"
+        },
         "children": {
           "description": "Child nodes.",
           "type": "array",
           "items": {
             "$ref": "#"
           }
-        },
-        "type": {
-          "type": "string",
-          "const": "col"
         }
       },
       "required": [
@@ -71,16 +71,16 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "A bulleted list.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "list"
+        },
         "items": {
           "description": "One node per item.",
           "type": "array",
           "items": {
             "$ref": "#"
           }
-        },
-        "type": {
-          "type": "string",
-          "const": "list"
         }
       },
       "required": [
@@ -120,6 +120,10 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "A code snippet.",
       "type": "object",
       "properties": {
+        "type": {
+          "type": "string",
+          "const": "code"
+        },
         "lang": {
           "description": "Language for highlighting.",
           "type": [
@@ -130,10 +134,6 @@ expression: "schemars::schema_for!(CustomNode)"
         "source": {
           "description": "Source code.",
           "type": "string"
-        },
-        "type": {
-          "type": "string",
-          "const": "code"
         }
       },
       "required": [
@@ -145,13 +145,13 @@ expression: "schemars::schema_for!(CustomNode)"
       "description": "Rendered markdown.",
       "type": "object",
       "properties": {
-        "source": {
-          "description": "Markdown source.",
-          "type": "string"
-        },
         "type": {
           "type": "string",
           "const": "markdown"
+        },
+        "source": {
+          "description": "Markdown source.",
+          "type": "string"
         }
       },
       "required": [
@@ -161,6 +161,30 @@ expression: "schemars::schema_for!(CustomNode)"
     }
   ],
   "$defs": {
+    "Column": {
+      "description": "A table column header.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Header text.",
+          "type": "string"
+        },
+        "align": {
+          "description": "Horizontal alignment; the UI picks one when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
     "Align": {
       "description": "Horizontal alignment of a column.",
       "oneOf": [
@@ -203,111 +227,6 @@ expression: "schemars::schema_for!(CustomNode)"
         }
       ]
     },
-    "ChartKind": {
-      "description": "How a chart is drawn.",
-      "oneOf": [
-        {
-          "description": "Vertical bars.",
-          "type": "string",
-          "const": "bar"
-        },
-        {
-          "description": "Lines.",
-          "type": "string",
-          "const": "line"
-        },
-        {
-          "description": "Filled areas.",
-          "type": "string",
-          "const": "area"
-        },
-        {
-          "description": "Pie; takes exactly one series.",
-          "type": "string",
-          "const": "pie"
-        }
-      ]
-    },
-    "ChartSpec": {
-      "description": "A chart: labels on one axis and one or more numeric series.",
-      "type": "object",
-      "properties": {
-        "kind": {
-          "description": "How the series are drawn.",
-          "$ref": "#/$defs/ChartKind"
-        },
-        "labels": {
-          "description": "Category labels, one per value of each series.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "series": {
-          "description": "Data series.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Series"
-          }
-        },
-        "title": {
-          "description": "Chart title.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "title",
-        "kind",
-        "labels",
-        "series"
-      ]
-    },
-    "Column": {
-      "description": "A table column header.",
-      "type": "object",
-      "properties": {
-        "align": {
-          "description": "Horizontal alignment; the UI picks one when absent.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Align"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "description": "Header text.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
-      ]
-    },
-    "Series": {
-      "description": "A named series of values, one per chart label.",
-      "type": "object",
-      "properties": {
-        "name": {
-          "description": "Legend name.",
-          "type": "string"
-        },
-        "values": {
-          "description": "Values, aligned with the chart labels.",
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "double"
-          }
-        }
-      },
-      "required": [
-        "name",
-        "values"
-      ]
-    },
     "TableSpec": {
       "description": "A table: named columns and rows of cells.",
       "type": "object",
@@ -333,6 +252,87 @@ expression: "schemars::schema_for!(CustomNode)"
       "required": [
         "columns",
         "rows"
+      ]
+    },
+    "ChartKind": {
+      "description": "How a chart is drawn.",
+      "oneOf": [
+        {
+          "description": "Vertical bars.",
+          "type": "string",
+          "const": "bar"
+        },
+        {
+          "description": "Lines.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "Filled areas.",
+          "type": "string",
+          "const": "area"
+        },
+        {
+          "description": "Pie; takes exactly one series.",
+          "type": "string",
+          "const": "pie"
+        }
+      ]
+    },
+    "Series": {
+      "description": "A named series of values, one per chart label.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "values": {
+          "description": "Values, aligned with the chart labels.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ]
+    },
+    "ChartSpec": {
+      "description": "A chart: labels on one axis and one or more numeric series.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Chart title.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "How the series are drawn.",
+          "$ref": "#/$defs/ChartKind"
+        },
+        "labels": {
+          "description": "Category labels, one per value of each series.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "description": "Data series.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Series"
+          }
+        }
+      },
+      "required": [
+        "title",
+        "kind",
+        "labels",
+        "series"
       ]
     }
   }

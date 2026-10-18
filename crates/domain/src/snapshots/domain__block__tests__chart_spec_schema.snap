@@ -8,6 +8,10 @@ expression: "schemars::schema_for!(ChartSpec)"
   "description": "A chart: labels on one axis and one or more numeric series.",
   "type": "object",
   "properties": {
+    "title": {
+      "description": "Chart title.",
+      "type": "string"
+    },
     "kind": {
       "description": "How the series are drawn.",
       "$ref": "#/$defs/ChartKind"
@@ -25,10 +29,6 @@ expression: "schemars::schema_for!(ChartSpec)"
       "items": {
         "$ref": "#/$defs/Series"
       }
-    },
-    "title": {
-      "description": "Chart title.",
-      "type": "string"
     }
   },
   "required": [
