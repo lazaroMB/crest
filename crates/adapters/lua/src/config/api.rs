@@ -14,9 +14,8 @@ use application::ports::plugin::{
     PluginToolSpec,
 };
 use mlua::{Function, Lua, Table, Value};
-use serde_json::json;
 
-use crate::{callbacks, convert};
+use crate::callbacks;
 
 /// Builds a phase's environment: globals readable through `__index`, its own
 /// `app` and a `require` that returns that `app`.
@@ -47,15 +46,17 @@ pub(crate) struct Collected {
     pub(crate) diagnostics: Vec<PluginDiagnostic>,
 }
 
+/// Where registrations of one phase come from.
 #[derive(Debug)]
-struct Origin {
+pub(crate) struct Origin {
     /// File, for diagnostics.
     file: String,
     /// Plugin (or config) name, for tools and hooks.
-    plugin: String,
+    pub(crate) plugin: String,
 }
 
-type Sink = Arc<Mutex<Collected>>;
+/// Where the functions of one `app` table record what they receive.
+pub(crate) type Sink = Arc<Mutex<Collected>>;
 
 /// One config file's environment and what it registered.
 pub(crate) struct Phase {
@@ -90,7 +91,7 @@ impl Phase {
     }
 }
 
-fn lock(sink: &Sink) -> std::sync::MutexGuard<'_, Collected> {
+pub(crate) fn lock(sink: &Sink) -> std::sync::MutexGuard<'_, Collected> {
     sink.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -112,7 +113,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     commands.set("register", commands_register(lua, sink, origin)?)?;
     app.set("commands", commands)?;
     let tools = lua.create_table()?;
-    tools.set("register", tools_register(lua, sink, origin)?)?;
+    tools.set("register", crate::api::tools::register(lua, sink, origin)?)?;
     app.set("tools", tools)?;
     app.set("on", on(lua, sink, origin)?)?;
     Ok(app)
@@ -125,7 +126,8 @@ fn caller_line(lua: &Lua) -> Option<u32> {
         .and_then(|l| u32::try_from(l).ok())
 }
 
-fn report(lua: &Lua, sink: &Sink, origin: &Origin, message: String) {
+/// Records a diagnostic at the caller's line.
+pub(crate) fn report(lua: &Lua, sink: &Sink, origin: &Origin, message: String) {
     lock(sink).diagnostics.push(PluginDiagnostic {
         source: origin.file.clone(),
         message,
@@ -224,43 +226,6 @@ fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Resu
     })
 }
 
-fn tools_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
-    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(move |lua, def: Value| {
-        let Value::Table(def) = def else {
-            report(lua, &sink, &origin, "tools.register expects a table".into());
-            return Ok(());
-        };
-        let name: Option<String> = def.get("name")?;
-        let handler: Option<Function> = def.get("handler")?;
-        let (Some(name), Some(handler)) = (name.filter(|n| !n.is_empty()), handler) else {
-            report(
-                lua,
-                &sink,
-                &origin,
-                "tools.register needs a `name` and a `handler` function".into(),
-            );
-            return Ok(());
-        };
-        let description: Option<String> = def.get("description")?;
-        let input_schema = match def.get::<Value>("schema")? {
-            Value::Nil => json!({ "type": "object" }),
-            schema => convert::to_json(lua, schema)?,
-        };
-        let handler = callbacks::register(lua, handler)?;
-        lock(&sink).tools.push(ToolReg {
-            spec: PluginToolSpec {
-                name,
-                description: description.unwrap_or_default(),
-                input_schema,
-                plugin: origin.plugin.clone(),
-            },
-            handler,
-        });
-        Ok(())
-    })
-}
-
 fn hook_kind(name: &str) -> Option<HookKind> {
     match name {
         "before_tool" => Some(HookKind::BeforeTool),
@@ -297,6 +262,8 @@ fn on(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::callbacks::CallbackIds;
     use crate::sandbox;

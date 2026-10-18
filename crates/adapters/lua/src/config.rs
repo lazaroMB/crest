@@ -18,7 +18,7 @@ use crate::vm::Vm;
 use api::Phase;
 use merge::Layer;
 
-mod api;
+pub(crate) mod api;
 mod diag;
 mod merge;
 mod parse;

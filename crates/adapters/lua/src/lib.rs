@@ -4,6 +4,7 @@
 //! through a [`LuaHandle`], which implements
 //! [`PluginHostPort`](application::ports::plugin::PluginHostPort).
 
+mod api;
 mod callbacks;
 mod config;
 mod convert;
