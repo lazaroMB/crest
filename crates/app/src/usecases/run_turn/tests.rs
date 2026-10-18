@@ -391,3 +391,13 @@ async fn telemetry_records_model_and_tool_calls() {
         .collect();
     assert_eq!(kinds, ["turn", "llm", "tool-ok", "tool-err", "llm", "end"]);
 }
+
+#[test]
+fn run_turn_future_is_send() {
+    fn assert_send<T: Send>(_: &T) {}
+    let mut h = Harness::new(vec![]);
+    let fut = h
+        .service
+        .run_turn(&mut h.session, "hola", TurnOptions::default());
+    assert_send(&fut);
+}
