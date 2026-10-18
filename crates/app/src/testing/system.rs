@@ -4,14 +4,16 @@
 //! Every fake is `Send + Sync`, usable as `Arc<dyn Port>`, and records what
 //! it received so tests can assert on it afterwards.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
+use domain::conversation::SessionId;
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::ports::approval::{ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink};
+use crate::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
 
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
 /// recorded data from the next assertion.
@@ -324,5 +326,194 @@ mod approval_tests {
             approval.request(req(1)).await,
             Ok(ApprovalResponse::Approve)
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SessionStorePort
+// ---------------------------------------------------------------------------
+
+/// [`SessionStorePort`] over a `HashMap`, with the semantics of the real
+/// store: `NotFound` on missing ids, listings most recent first.
+///
+/// [`fail_next`](Self::fail_next) makes the next operation fail, to test how
+/// use cases handle a broken backend.
+#[derive(Debug, Default)]
+pub struct InMemorySessionStore {
+    sessions: Mutex<HashMap<SessionId, StoredSession>>,
+    fail_next: Mutex<Option<StoreError>>,
+}
+
+impl InMemorySessionStore {
+    /// Creates an empty store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes the next operation, whatever it is, fail with `error`.
+    pub fn fail_next(&self, error: StoreError) {
+        *lock(&self.fail_next) = Some(error);
+    }
+
+    /// Number of stored sessions.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        lock(&self.sessions).len()
+    }
+
+    /// Whether the store is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn check_failure(&self) -> Result<(), StoreError> {
+        lock(&self.fail_next).take().map_or(Ok(()), Err)
+    }
+
+    /// Sessions of `root`, most recently updated first; ties are broken by
+    /// creation time and then id so the order is deterministic.
+    fn sorted_for(&self, root: &str) -> Vec<StoredSession> {
+        let mut found: Vec<StoredSession> = lock(&self.sessions)
+            .values()
+            .filter(|s| s.session.workspace_root == root)
+            .cloned()
+            .collect();
+        found.sort_by(|a, b| {
+            let key =
+                |s: &StoredSession| (s.session.updated_at, s.session.created_at, s.session.id);
+            key(b).cmp(&key(a))
+        });
+        found
+    }
+}
+
+#[async_trait]
+impl SessionStorePort for InMemorySessionStore {
+    async fn save(&self, session: &StoredSession) -> Result<(), StoreError> {
+        self.check_failure()?;
+        lock(&self.sessions).insert(session.session.id, session.clone());
+        Ok(())
+    }
+
+    async fn load(&self, id: SessionId) -> Result<StoredSession, StoreError> {
+        self.check_failure()?;
+        lock(&self.sessions)
+            .get(&id)
+            .cloned()
+            .ok_or(StoreError::NotFound(id))
+    }
+
+    async fn latest_for_workspace(&self, root: &str) -> Result<Option<StoredSession>, StoreError> {
+        self.check_failure()?;
+        Ok(self.sorted_for(root).into_iter().next())
+    }
+
+    async fn list(&self, root: &str) -> Result<Vec<SessionSummary>, StoreError> {
+        self.check_failure()?;
+        Ok(self
+            .sorted_for(root)
+            .iter()
+            .map(StoredSession::summary)
+            .collect())
+    }
+
+    async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
+        self.check_failure()?;
+        lock(&self.sessions)
+            .remove(&id)
+            .map(|_| ())
+            .ok_or(StoreError::NotFound(id))
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use std::sync::Arc;
+
+    use domain::conversation::Session;
+
+    use super::*;
+
+    fn stored(root: &str, updated_at: u64) -> StoredSession {
+        StoredSession {
+            session: Session::new(root, updated_at),
+            timeline: Vec::new(),
+            permission_rules: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn save_then_load_round_trips() {
+        let store: Arc<dyn SessionStorePort> = Arc::new(InMemorySessionStore::new());
+        let session = stored("/ws", 1);
+        store.save(&session).await.unwrap();
+        assert_eq!(store.load(session.session.id).await.unwrap(), session);
+    }
+
+    #[tokio::test]
+    async fn save_replaces_the_same_id() {
+        let store = InMemorySessionStore::new();
+        let mut session = stored("/ws", 1);
+        store.save(&session).await.unwrap();
+        session.session.title = Some("renamed".into());
+        store.save(&session).await.unwrap();
+        assert_eq!(store.len(), 1);
+        let loaded = store.load(session.session.id).await.unwrap();
+        assert_eq!(loaded.session.title.as_deref(), Some("renamed"));
+    }
+
+    #[tokio::test]
+    async fn missing_ids_are_not_found() {
+        let store = InMemorySessionStore::new();
+        let id = SessionId::new();
+        assert_eq!(store.load(id).await, Err(StoreError::NotFound(id)));
+        assert_eq!(store.delete(id).await, Err(StoreError::NotFound(id)));
+    }
+
+    #[tokio::test]
+    async fn list_is_per_workspace_and_most_recent_first() {
+        let store = InMemorySessionStore::new();
+        let old = stored("/ws", 1);
+        let new = stored("/ws", 5);
+        let other = stored("/other", 9);
+        for s in [&old, &new, &other] {
+            store.save(s).await.unwrap();
+        }
+        let ids: Vec<_> = store
+            .list("/ws")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, [new.session.id, old.session.id]);
+        let latest = store.latest_for_workspace("/ws").await.unwrap();
+        assert_eq!(latest, Some(new));
+        assert_eq!(store.latest_for_workspace("/none").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_session() {
+        let store = InMemorySessionStore::new();
+        let session = stored("/ws", 1);
+        store.save(&session).await.unwrap();
+        store.delete(session.session.id).await.unwrap();
+        assert!(store.is_empty());
+        assert!(store.list("/ws").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fail_next_fails_only_once() {
+        let store = InMemorySessionStore::new();
+        store.fail_next(StoreError::Backend("disk full".into()));
+        let session = stored("/ws", 1);
+        assert_eq!(
+            store.save(&session).await,
+            Err(StoreError::Backend("disk full".into()))
+        );
+        assert!(store.is_empty());
+        store.save(&session).await.unwrap();
     }
 }
