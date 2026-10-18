@@ -7,4 +7,6 @@ pub mod block;
 pub mod conversation;
 pub mod model;
 pub mod permission;
+pub mod plan;
+pub mod research;
 pub mod workspace;
