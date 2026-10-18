@@ -1,0 +1,72 @@
+# CI de crest: `make ci` (doctor + check) en Linux y macOS.
+#
+# Acciones fijadas por SHA de commit (con la versión en el comentario): un tag
+# se puede mover, un SHA no. Dependabot o Renovate pueden actualizarlos.
+#
+# macOS: la imagen macos-15 trae Xcode completo seleccionado, con lo que
+# install-deps.sh encuentra las Command Line Tools y el compilador Metal sin
+# instalar nada de la App Store. GPUI se compila con `runtime_shaders`, así
+# que el build no invoca Metal; solo `make doctor` lo verifica. Si una imagen
+# futura trae Xcode 26+ sin el Metal toolchain, el paso "Metal toolchain" lo
+# descarga.
+#
+# Los tests de GPUI usan el TestAppContext de `test-support`, que no abre
+# ventanas: no hace falta display (ni xvfb-run) en Linux.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Sin info de depuración: target/ mucho más chico (GPUI es grande) y cache más liviana.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  ci:
+    name: make ci (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Antes de install-deps: restaura también ~/.cargo/bin (cache-bin), así
+      # cargo-insta y cargo-nextest no se recompilan en cada ejecución.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-bin: "true"
+
+      - name: Metal toolchain
+        if: runner.os == 'macOS'
+        run: |
+          xcode-select -p
+          if ! xcrun -sdk macosx metal --version </dev/null; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+
+      - name: Instalar dependencias
+        run: |
+          bash scripts/install-deps.sh --yes --dev
+          # rg y fzf pueden quedar en ~/.local/bin si el paquete es viejo.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: make ci
+        run: make ci
