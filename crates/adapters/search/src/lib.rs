@@ -23,7 +23,10 @@
 use std::ffi::OsString;
 use std::time::Duration;
 
-use application::ports::search::DEFAULT_SEARCH_TIMEOUT;
+use application::ports::search::{
+    ContentSearchPort, DEFAULT_SEARCH_TIMEOUT, GrepRequest, GrepResult, SearchError,
+};
+use async_trait::async_trait;
 use domain::workspace::{SensitivePathRules, WorkspaceRoot};
 
 use crate::detect::{Tool, ToolReport};
@@ -100,5 +103,29 @@ impl RipgrepSearch {
             rg: detect::detect(Tool::Ripgrep, &self.rg).await,
             fzf: detect::detect(Tool::Fzf, &self.fzf).await,
         }
+    }
+}
+
+#[async_trait]
+impl ContentSearchPort for RipgrepSearch {
+    async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
+        grep::grep(self, request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::test_support::Workspace;
+
+    #[tokio::test]
+    async fn greps_through_the_port() {
+        let ws = Workspace::new();
+        ws.write("a.txt", "needle\n");
+        let port: Arc<dyn ContentSearchPort> = Arc::new(ws.search());
+        let result = port.grep(GrepRequest::new("needle")).await.unwrap();
+        assert_eq!(result.hits.len(), 1);
     }
 }
