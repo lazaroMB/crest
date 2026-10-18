@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::callbacks::{self, CallbackIds};
 use crate::convert;
 use crate::host::HostOptions;
+use crate::sandbox;
 
 /// A hook registered with `app.on`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub(crate) struct Vm {
 
 impl Vm {
     pub(crate) fn new(options: HostOptions, ids: CallbackIds) -> Result<Self, PluginError> {
-        let lua = new_lua(&ids)?;
+        let lua = new_lua(&options, &ids)?;
         Ok(Self {
             lua,
             options,
@@ -45,7 +46,7 @@ impl Vm {
     /// Replaces the Lua state with a fresh one and forgets every tool and
     /// hook. Callback ids keep increasing, so old ids stop resolving.
     pub(crate) fn reset(&mut self) -> Result<(), PluginError> {
-        self.lua = new_lua(&self.ids)?;
+        self.lua = new_lua(&self.options, &self.ids)?;
         self.tools.clear();
         self.hooks.clear();
         Ok(())
@@ -122,8 +123,8 @@ impl Vm {
     }
 }
 
-fn new_lua(ids: &CallbackIds) -> Result<Lua, PluginError> {
-    let lua = Lua::new();
+fn new_lua(options: &HostOptions, ids: &CallbackIds) -> Result<Lua, PluginError> {
+    let lua = sandbox::new_lua(options.memory_limit).map_err(|e| convert::runtime_error(&e))?;
     callbacks::install(&lua, ids.clone()).map_err(|e| convert::runtime_error(&e))?;
     Ok(lua)
 }

@@ -7,6 +7,7 @@
 mod callbacks;
 mod convert;
 mod host;
+mod sandbox;
 mod vm;
 
 pub use host::{HostOptions, LuaHandle, LuaHost};
