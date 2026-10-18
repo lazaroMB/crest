@@ -70,3 +70,19 @@ jobs:
 
       - name: make ci
         run: make ci
+
+  install-deps-containers:
+    name: install-deps --check (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "ubuntu:22.04", "fedora:latest", "archlinux:latest"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # En una imagen limpia --check debe salir con 1, listar lo que falta y
+      # no colgarse; el script lo verifica con docker (preinstalado en el runner).
+      - name: install-deps.sh --check en ${{ matrix.image }}
+        run: bash tests/install-deps/run-containers.sh "${{ matrix.image }}"
