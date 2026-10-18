@@ -107,6 +107,15 @@ xpcall = function(...) return check(raw_xpcall(...)) end
 coroutine.resume = function(...) return check(raw_resume(...)) end
 "#;
 
+/// Why a guarded call failed.
+#[derive(Debug)]
+pub(crate) enum Failure {
+    /// It ran out of instructions.
+    InstructionLimit,
+    /// Lua raised an error.
+    Lua(mlua::Error),
+}
+
 /// Stops a call that runs more than a fixed number of instructions.
 ///
 /// The budget is refilled at the start of every [`Limiter::guard`]. Once it
@@ -166,17 +175,25 @@ impl Limiter {
         Ok(Self { limit, state })
     }
 
-    /// Runs `f` with a full budget and maps its errors.
-    pub(crate) fn guard<R>(&self, f: impl FnOnce() -> mlua::Result<R>) -> Result<R, PluginError> {
+    /// Runs `f` with a full budget, keeping the Lua error as is.
+    pub(crate) fn run<R>(&self, f: impl FnOnce() -> mlua::Result<R>) -> Result<R, Failure> {
         self.state.remaining.store(self.limit, Ordering::Relaxed);
         self.state.exceeded.store(false, Ordering::Relaxed);
         let result = f();
         let exceeded = self.state.exceeded.swap(false, Ordering::Relaxed);
         self.state.remaining.store(self.limit, Ordering::Relaxed);
         if exceeded {
-            return Err(PluginError::InstructionLimit);
+            return Err(Failure::InstructionLimit);
         }
-        result.map_err(|e| convert::runtime_error(&e))
+        result.map_err(Failure::Lua)
+    }
+
+    /// Runs `f` with a full budget and maps its errors.
+    pub(crate) fn guard<R>(&self, f: impl FnOnce() -> mlua::Result<R>) -> Result<R, PluginError> {
+        self.run(f).map_err(|failure| match failure {
+            Failure::InstructionLimit => PluginError::InstructionLimit,
+            Failure::Lua(e) => convert::runtime_error(&e),
+        })
     }
 }
 

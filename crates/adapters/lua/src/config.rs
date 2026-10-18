@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use application::ports::plugin::ConfigSources;
 
 mod api;
+mod diag;
 mod merge;
 mod parse;
 
