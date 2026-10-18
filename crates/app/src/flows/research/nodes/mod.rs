@@ -46,7 +46,7 @@ pub mod define;
 pub mod research;
 
 // T5.7b: Brainstorm
-// pub mod brainstorm;
+pub mod brainstorm;
 
 // T5.7c: Modeling
 // pub mod modeling;
@@ -92,7 +92,7 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Research => Some(Arc::new(research::Research::new())),
 
         // T5.7b: Some(Arc::new(brainstorm::<Type>::new()))
-        Stage::Brainstorm => None,
+        Stage::Brainstorm => Some(Arc::new(brainstorm::Brainstorm::new())),
 
         // T5.7c: Some(Arc::new(modeling::<Type>::new()))
         Stage::Modeling => None,
