@@ -511,6 +511,153 @@ pub struct JournalEntry {
     pub text: String,
 }
 
+/// Everything the research graph has learned so far.
+///
+/// New records get the next free id of their kind, so ids stay
+/// sequential even after the state is restored from a checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ResearchState {
+    /// Collected evidence, in collection order.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    /// Hypotheses, in creation order.
+    #[serde(default)]
+    pub hypotheses: Vec<Hypothesis>,
+    /// Constraints of the problem.
+    #[serde(default)]
+    pub constraints: Vec<Constraint>,
+    /// Decisions taken while modeling.
+    #[serde(default)]
+    pub decisions: Vec<Decision>,
+    /// Research journal, one or more entries per node.
+    #[serde(default)]
+    pub journal: Vec<JournalEntry>,
+    /// Measurable one-sentence problem statements; one Spec each.
+    #[serde(default)]
+    pub problem_statements: Vec<String>,
+}
+
+impl ResearchState {
+    /// An allocator that continues after every id in the state.
+    #[must_use]
+    pub fn allocator(&self) -> IdAllocator {
+        IdAllocator::after(
+            self.evidence.iter().map(|e| &e.id),
+            self.hypotheses.iter().map(|h| &h.id),
+            self.constraints.iter().map(|c| &c.id),
+            self.decisions.iter().map(|d| &d.id),
+        )
+    }
+
+    /// Records a piece of evidence and returns its new id.
+    pub fn add_evidence(
+        &mut self,
+        claim: impl Into<String>,
+        source: SourceRef,
+        collected_at: u64,
+    ) -> EvidenceId {
+        let id = self.allocator().next_evidence();
+        self.evidence.push(Evidence {
+            id,
+            claim: claim.into(),
+            source,
+            collected_at,
+        });
+        id
+    }
+
+    /// Records an open hypothesis and returns its new id.
+    pub fn add_hypothesis(
+        &mut self,
+        statement: impl Into<String>,
+        causes: Vec<String>,
+        priority: u8,
+    ) -> HypothesisId {
+        let id = self.allocator().next_hypothesis();
+        self.hypotheses.push(Hypothesis {
+            id,
+            statement: statement.into(),
+            causes,
+            priority,
+            status: HypothesisStatus::Open,
+        });
+        id
+    }
+
+    /// Records a constraint and returns its new id.
+    pub fn add_constraint(
+        &mut self,
+        kind: ConstraintKind,
+        statement: impl Into<String>,
+        test: Option<TestRef>,
+    ) -> ConstraintId {
+        let id = self.allocator().next_constraint();
+        self.constraints.push(Constraint {
+            id,
+            kind,
+            statement: statement.into(),
+            test,
+        });
+        id
+    }
+
+    /// Records a decision and returns its new id.
+    pub fn add_decision(
+        &mut self,
+        chosen: impl Into<String>,
+        discarded: Vec<String>,
+        rationale: impl Into<String>,
+        evidence_ids: Vec<EvidenceId>,
+    ) -> DecisionId {
+        let id = self.allocator().next_decision();
+        self.decisions.push(Decision {
+            id,
+            chosen: chosen.into(),
+            discarded,
+            rationale: rationale.into(),
+            evidence_ids,
+        });
+        id
+    }
+
+    /// Appends an entry to the research journal.
+    pub fn log(&mut self, at: u64, stage: Stage, text: impl Into<String>) {
+        self.journal.push(JournalEntry {
+            at,
+            stage,
+            text: text.into(),
+        });
+    }
+
+    /// The evidence with the given id.
+    #[must_use]
+    pub fn evidence(&self, id: EvidenceId) -> Option<&Evidence> {
+        self.evidence.iter().find(|e| e.id == id)
+    }
+
+    /// Checks that every cited id names collected evidence.
+    ///
+    /// The critical review uses it to reject claims without a source.
+    ///
+    /// # Errors
+    ///
+    /// Returns the unknown ids, without repeats, in the order they were
+    /// first cited.
+    pub fn cites_only_known_evidence(&self, ids: &[EvidenceId]) -> Result<(), Vec<EvidenceId>> {
+        let mut unknown: Vec<EvidenceId> = Vec::new();
+        for &id in ids {
+            if self.evidence(id).is_none() && !unknown.contains(&id) {
+                unknown.push(id);
+            }
+        }
+        if unknown.is_empty() {
+            Ok(())
+        } else {
+            Err(unknown)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,5 +830,65 @@ mod tests {
         let back: JournalEntry =
             serde_json::from_value(json!({"at": 5, "stage": "data", "text": "t"})).unwrap();
         assert_eq!(back, entry);
+    }
+
+    fn url(u: &str) -> SourceRef {
+        SourceRef::Url {
+            url: u.into(),
+            title: None,
+        }
+    }
+
+    #[test]
+    fn state_allocates_sequential_ids_per_kind() {
+        let mut state = ResearchState::default();
+        assert_eq!(state.add_evidence("a", url("https://a"), 1), EvidenceId(1));
+        assert_eq!(state.add_evidence("b", url("https://b"), 2), EvidenceId(2));
+        assert_eq!(state.add_hypothesis("h", vec![], 1), HypothesisId(1));
+        assert_eq!(
+            state.add_constraint(ConstraintKind::Security, "c", None),
+            ConstraintId(1)
+        );
+        let decision = state.add_decision("x", vec!["y".into()], "r", vec![EvidenceId(2)]);
+        assert_eq!(decision, DecisionId(1));
+        state.log(3, Stage::Modeling, "eligió x");
+        assert_eq!(state.journal.len(), 1);
+        assert_eq!(state.evidence(EvidenceId(2)).unwrap().claim, "b");
+    }
+
+    #[test]
+    fn restored_state_continues_after_its_highest_id() {
+        let mut state: ResearchState = serde_json::from_value(json!({
+            "evidence": [
+                {"id": "E4", "claim": "a", "source": {"type": "url", "url": "https://a"}, "collected_at": 1}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            state.add_evidence("b", url("https://b"), 2).to_string(),
+            "E5"
+        );
+        assert_eq!(state.add_hypothesis("h", vec![], 1).to_string(), "H1");
+    }
+
+    #[test]
+    fn citations_of_unknown_evidence_are_reported_once() {
+        let mut state = ResearchState::default();
+        let e1 = state.add_evidence("a", url("https://a"), 1);
+        assert_eq!(state.cites_only_known_evidence(&[]), Ok(()));
+        assert_eq!(state.cites_only_known_evidence(&[e1, e1]), Ok(()));
+        let (e7, e3) = (EvidenceId(7), EvidenceId(3));
+        assert_eq!(
+            state.cites_only_known_evidence(&[e7, e1, e3, e7]),
+            Err(vec![e7, e3])
+        );
+    }
+
+    #[test]
+    fn research_state_schema() {
+        insta::assert_json_snapshot!(
+            "research_state_schema",
+            schemars::schema_for!(ResearchState)
+        );
     }
 }

@@ -1,0 +1,524 @@
+---
+source: crates/domain/src/research.rs
+expression: "schemars::schema_for!(ResearchState)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchState",
+  "description": "Everything the research graph has learned so far.\n\nNew records get the next free id of their kind, so ids stay\nsequential even after the state is restored from a checkpoint.",
+  "type": "object",
+  "properties": {
+    "evidence": {
+      "description": "Collected evidence, in collection order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "default": []
+    },
+    "hypotheses": {
+      "description": "Hypotheses, in creation order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Hypothesis"
+      },
+      "default": []
+    },
+    "constraints": {
+      "description": "Constraints of the problem.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Constraint"
+      },
+      "default": []
+    },
+    "decisions": {
+      "description": "Decisions taken while modeling.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "default": []
+    },
+    "journal": {
+      "description": "Research journal, one or more entries per node.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/JournalEntry"
+      },
+      "default": []
+    },
+    "problem_statements": {
+      "description": "Measurable one-sentence problem statements; one Spec each.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "$defs": {
+    "Evidence": {
+      "description": "A piece of evidence and where it came from.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id cited by the Spec, e.g. `E3`.",
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "claim": {
+          "description": "What the evidence shows, in one sentence.",
+          "type": "string"
+        },
+        "source": {
+          "description": "File lines, commit, URL or command output backing the claim.",
+          "$ref": "#/$defs/SourceRef"
+        },
+        "collected_at": {
+          "description": "When it was collected, in Unix milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "claim",
+        "source",
+        "collected_at"
+      ]
+    },
+    "EvidenceId": {
+      "description": "Readable evidence id, e.g. `E1`.",
+      "type": "string",
+      "pattern": "^E[1-9][0-9]*$"
+    },
+    "SourceRef": {
+      "description": "Where a piece of information came from, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "A file of the workspace, optionally a 1-based inclusive line range.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "path": {
+              "description": "Path relative to the workspace.",
+              "type": "string"
+            },
+            "line_start": {
+              "description": "First line.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "line_end": {
+              "description": "Last line.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        },
+        {
+          "description": "A git commit.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "commit"
+            },
+            "sha": {
+              "description": "Commit hash.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "First line of the message.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sha",
+            "summary"
+          ]
+        },
+        {
+          "description": "A web page.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "url"
+            },
+            "url": {
+              "description": "Address.",
+              "type": "string"
+            },
+            "title": {
+              "description": "Page title.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "Output of a shell command.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "command"
+            },
+            "command": {
+              "description": "Command line.",
+              "type": "string"
+            },
+            "output_excerpt": {
+              "description": "Relevant excerpt of its output.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "output_excerpt"
+          ]
+        }
+      ]
+    },
+    "Hypothesis": {
+      "description": "A one-sentence hypothesis with its causes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id, e.g. `H2`.",
+          "$ref": "#/$defs/HypothesisId"
+        },
+        "statement": {
+          "description": "The hypothesis, in one sentence.",
+          "type": "string"
+        },
+        "causes": {
+          "description": "Candidate causes (the branches of the Ishikawa diagram).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "priority": {
+          "description": "Priority in the hypothesis table; 1 is the highest.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "status": {
+          "description": "Result of the experiments so far.",
+          "$ref": "#/$defs/HypothesisStatus",
+          "default": "open"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "priority"
+      ]
+    },
+    "HypothesisId": {
+      "description": "Readable hypothesis id, e.g. `H1`.",
+      "type": "string",
+      "pattern": "^H[1-9][0-9]*$"
+    },
+    "HypothesisStatus": {
+      "description": "Where a hypothesis stands after the experiments.",
+      "oneOf": [
+        {
+          "description": "Stated, experiments pending.",
+          "type": "string",
+          "const": "open"
+        },
+        {
+          "description": "The experiments back it.",
+          "type": "string",
+          "const": "supported"
+        },
+        {
+          "description": "The experiments contradict it.",
+          "type": "string",
+          "const": "refuted"
+        },
+        {
+          "description": "Deliberately left without an experiment.",
+          "type": "string",
+          "const": "untested"
+        }
+      ]
+    },
+    "Constraint": {
+      "description": "A constraint the solution must respect.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id, e.g. `C3`.",
+          "$ref": "#/$defs/ConstraintId"
+        },
+        "kind": {
+          "description": "Category.",
+          "$ref": "#/$defs/ConstraintKind"
+        },
+        "statement": {
+          "description": "The constraint, measurable when possible.",
+          "type": "string"
+        },
+        "test": {
+          "description": "Check that proves it holds, once known.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TestRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "statement"
+      ]
+    },
+    "ConstraintId": {
+      "description": "Readable constraint id, e.g. `C1`.",
+      "type": "string",
+      "pattern": "^C[1-9][0-9]*$"
+    },
+    "ConstraintKind": {
+      "description": "Category of a constraint, as in the constraint table of the Spec.",
+      "oneOf": [
+        {
+          "description": "Operating systems, architectures, toolchains.",
+          "type": "string",
+          "const": "platform"
+        },
+        {
+          "description": "Latency, throughput, memory.",
+          "type": "string",
+          "const": "performance"
+        },
+        {
+          "description": "APIs, formats or versions that must keep working.",
+          "type": "string",
+          "const": "compatibility"
+        },
+        {
+          "description": "Secrets, permissions, sandboxing.",
+          "type": "string",
+          "const": "security"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "TestRef": {
+      "description": "A runnable check, serialized as `{\"kind\": \"test\", \"ref\": \"...\"}`.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How to run it.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "ref": {
+          "description": "What to run, e.g. `cargo test -p store offline`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ]
+    },
+    "TestKind": {
+      "description": "How a test or check is run.",
+      "oneOf": [
+        {
+          "description": "A test of the project's suite; `ref` is the command that runs it.",
+          "type": "string",
+          "const": "test"
+        },
+        {
+          "description": "Any other command (benchmark, script); `ref` is the command line.",
+          "type": "string",
+          "const": "command"
+        }
+      ]
+    },
+    "Decision": {
+      "description": "A choice between options, backed by evidence.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id, e.g. `D1`.",
+          "$ref": "#/$defs/DecisionId"
+        },
+        "chosen": {
+          "description": "The option chosen.",
+          "type": "string"
+        },
+        "discarded": {
+          "description": "Options considered and discarded.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "rationale": {
+          "description": "Why the chosen option wins.",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "description": "Evidence the rationale relies on.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "id",
+        "chosen",
+        "rationale"
+      ]
+    },
+    "DecisionId": {
+      "description": "Readable decision id, e.g. `D1`.",
+      "type": "string",
+      "pattern": "^D[1-9][0-9]*$"
+    },
+    "JournalEntry": {
+      "description": "An entry of the research journal, written by every node.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "When it was written, in Unix milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stage": {
+          "description": "Node that wrote it.",
+          "$ref": "#/$defs/Stage"
+        },
+        "text": {
+          "description": "Markdown text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "stage",
+        "text"
+      ]
+    },
+    "Stage": {
+      "description": "A node of the research graph, in workflow order.",
+      "oneOf": [
+        {
+          "description": "1. Restate and classify the request; ask for what is missing.",
+          "type": "string",
+          "const": "intake"
+        },
+        {
+          "description": "2. Walk the repo and draw the current architecture.",
+          "type": "string",
+          "const": "observation"
+        },
+        {
+          "description": "3. Gather evidence: history, logs, metrics, issues, docs.",
+          "type": "string",
+          "const": "data"
+        },
+        {
+          "description": "4. Contrast ideas with the data.",
+          "type": "string",
+          "const": "analysis"
+        },
+        {
+          "description": "5. One-sentence hypotheses, cause diagram and priorities.",
+          "type": "string",
+          "const": "hypotheses"
+        },
+        {
+          "description": "6. Reproducible protocols: failing tests, benchmarks.",
+          "type": "string",
+          "const": "experiments"
+        },
+        {
+          "description": "7. Measurable problem statements and the constraint table.",
+          "type": "string",
+          "const": "definition"
+        },
+        {
+          "description": "8. Prior solutions: libraries, articles, patterns in the repo.",
+          "type": "string",
+          "const": "research"
+        },
+        {
+          "description": "9. Unfiltered options.",
+          "type": "string",
+          "const": "brainstorm"
+        },
+        {
+          "description": "10. Discard what violates constraints; decision matrix.",
+          "type": "string",
+          "const": "modeling"
+        },
+        {
+          "description": "11. Optional spike in a temporary worktree.",
+          "type": "string",
+          "const": "prototype"
+        },
+        {
+          "description": "12. Write the Spec.",
+          "type": "string",
+          "const": "spec"
+        },
+        {
+          "description": "13. Split the Spec into tasks.",
+          "type": "string",
+          "const": "plan"
+        },
+        {
+          "description": "14. A clean-context subagent looks for gaps.",
+          "type": "string",
+          "const": "critical_review"
+        }
+      ]
+    }
+  }
+}
