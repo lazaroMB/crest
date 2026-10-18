@@ -11,11 +11,10 @@ use crate::flows::research::node::{NodeContext, NodeError};
 use crate::ports::llm::{LlmError, MessageAssembler, ToolChoice, ToolDefinition};
 
 /// Appended to the prompt when the previous answer was invalid.
-const RETRY_PROMPT: &str = "Tu respuesta anterior no es válida por estos motivos:";
+const RETRY_PROMPT: &str = "Your previous answer is not valid for these reasons:";
 
 /// Closes [`RETRY_PROMPT`].
-const RETRY_CLOSING: &str =
-    "Corrige todos los motivos y envía la respuesta completa de nuevo con la misma herramienta.";
+const RETRY_CLOSING: &str = "Fix every reason and send the whole answer again with the same tool.";
 
 /// A tool named `name` whose input schema is the JSON Schema of `T`.
 ///
@@ -62,7 +61,7 @@ pub(crate) async fn ask_valid<T>(
                 errors = found;
                 if attempt < retries {
                     ctx.log(format!(
-                        "Respuesta inválida de {}; se vuelve a pedir: {}",
+                        "Invalid answer from {}; asking again: {}",
                         tool.name,
                         errors.join("; ")
                     ));
@@ -71,7 +70,7 @@ pub(crate) async fn ask_valid<T>(
         }
     }
     Err(NodeError::Failed(format!(
-        "{} inválido tras {} intentos: {}",
+        "{} invalid after {} attempts: {}",
         tool.name,
         retries + 1,
         errors.join("; ")
@@ -112,7 +111,7 @@ async fn ask_json(
     }
     if text.trim().is_empty() {
         return Ok(Err(vec![format!(
-            "no llamaste a la herramienta {} ni respondiste JSON",
+            "you neither called the tool {} nor answered JSON",
             tool.name
         )]));
     }
@@ -129,7 +128,7 @@ fn json_in_text(text: &str) -> Result<Value, String> {
         (Some(s), Some(e)) if s < e => &trimmed[s..=e],
         _ => trimmed,
     };
-    serde_json::from_str(candidate).map_err(|e| format!("el JSON no se pudo leer: {e}"))
+    serde_json::from_str(candidate).map_err(|e| format!("the JSON could not be read: {e}"))
 }
 
 #[cfg(test)]
@@ -138,8 +137,8 @@ mod tests {
 
     #[test]
     fn json_is_found_in_fenced_text() {
-        let value = json_in_text("Aquí va:\n```json\n{\"a\": 1}\n```\n").unwrap();
+        let value = json_in_text("Here it is:\n```json\n{\"a\": 1}\n```\n").unwrap();
         assert_eq!(value["a"], 1);
-        assert!(json_in_text("nada").is_err());
+        assert!(json_in_text("nothing").is_err());
     }
 }

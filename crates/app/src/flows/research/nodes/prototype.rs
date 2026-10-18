@@ -1,4 +1,4 @@
-//! Node 11, Prototipo (optional, `/skip` jumps over it): a spike in a
+//! Node 11, Prototype (optional, `/skip` jumps over it): a spike in a
 //! temporary `git worktree` that proves the hard piece of the chosen
 //! option can be built.
 //!
@@ -74,16 +74,16 @@ pub const RESULT_KEY: &str = "prototype.result";
 
 const RUN_COMMAND: &str = "run_command";
 
-const SPIKE_PROMPT: &str = "Eres la etapa de Prototipo de una investigación de software. \
-Escribe un spike mínimo que pruebe que la pieza difícil de la opción elegida se puede \
-construir. Trabaja SOLO dentro del worktree temporal {dir}: toda ruta que leas o \
-escribas empieza con {dir}/. run_command corre en la raíz del workspace y no acepta \
-directorio de trabajo, así que apunta al worktree con rutas y opciones (git -C {dir}, \
-cargo test --manifest-path {dir}/Cargo.toml…). No toques archivos fuera del worktree. \
-Corre un comando que demuestre si la pieza funciona y termina respondiendo SOLO con \
-JSON:\n{\"feasible\": true, \"summary\": \"una oración con lo que probaste\", \
-\"command\": \"línea exacta del comando de verificación\", \"output_excerpt\": \
-\"parte relevante de su salida\"}";
+const SPIKE_PROMPT: &str = "You are the Prototype stage of a software investigation. \
+Write a minimal spike that proves the hard piece of the chosen option can be built. \
+Work ONLY inside the temporary worktree {dir}: every path you read or write starts \
+with {dir}/. run_command runs at the workspace root and takes no working directory, \
+so reach the worktree through paths and flags (git -C {dir}, \
+cargo test --manifest-path {dir}/Cargo.toml…). Do not touch files outside the worktree. \
+Run one command that shows whether the piece works and finish by answering ONLY with \
+JSON:\n{\"feasible\": true, \"summary\": \"one sentence on what you tried\", \
+\"command\": \"exact line of the verification command\", \"output_excerpt\": \
+\"relevant part of its output\"}";
 
 /// A spike: its id, worktree and branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,7 +165,7 @@ impl ResearchNode for Prototype {
         let Some(decision) = ctx.state().decisions.last().cloned() else {
             return Ok(NodeOutcome::Back {
                 to: Stage::Modeling,
-                reason: "no hay una opción elegida que prototipar".into(),
+                reason: "there is no chosen option to prototype".into(),
             });
         };
         let agent = Arc::clone(ctx.agent()?);
@@ -183,7 +183,7 @@ impl ResearchNode for Prototype {
         };
         if !is_approval(&reply) {
             ctx.log(format!(
-                "Sin prototipo: el usuario no autorizó el spike ({reply})."
+                "No prototype: the user did not authorize the spike ({reply})."
             ));
             return Ok(NodeOutcome::Done);
         }
@@ -192,9 +192,9 @@ impl ResearchNode for Prototype {
         }
         let (ok, output) = git(ctx, &agent, &spike, "add", spike.add()).await;
         if !ok {
-            ctx.log(format!("No se pudo crear el worktree {}.", spike.path));
+            ctx.log(format!("Could not create the worktree {}.", spike.path));
             return Err(NodeError::Failed(format!(
-                "git worktree add falló: {output}"
+                "git worktree add failed: {output}"
             )));
         }
         let report = run_spike(ctx, &agent, &decision, &spike).await;
@@ -207,11 +207,11 @@ impl ResearchNode for Prototype {
 fn ask_prompt(decision: &Decision, spike: &Spike) -> String {
     let [remove, branch] = spike.cleanup();
     format!(
-        "Para probar «{}» crearé un worktree temporal y correré ahí un spike:\n\
-         - `{}`\n- el agente escribe y prueba la pieza difícil dentro de `{}`\n\
-         - al terminar: `{}` y `{}`\n\
-         ¿Lo creo? Responde «sí» para seguir, cualquier otra cosa para seguir sin \
-         prototipo, o /skip.",
+        "To test \"{}\" I will create a temporary worktree and run a spike in it:\n\
+         - `{}`\n- the agent writes and tests the hard piece inside `{}`\n\
+         - when done: `{}` and `{}`\n\
+         Create it? Answer \"yes\" to go on, anything else to continue without a \
+         prototype, or /skip.",
         decision.chosen,
         spike.add().display(),
         spike.path,
@@ -231,7 +231,7 @@ fn check_policy(agent: &AgentService, request: &RunCommandRequest) -> Result<(),
     let action = ActionRequest::new(RUN_COMMAND, effect, request.display());
     match lock_permissions(agent.permissions()).decide(&action) {
         Verdict::Deny { reason } => Err(NodeError::Failed(format!(
-            "la política de permisos niega `{}`: {reason}",
+            "the permission policy denies `{}`: {reason}",
             request.display()
         ))),
         Verdict::Allow | Verdict::Ask => Ok(()),
@@ -292,9 +292,9 @@ async fn cleanup(ctx: &mut NodeContext, agent: &AgentService, spike: &Spike) {
         }
     }
     if failed.is_empty() {
-        ctx.log(format!("Worktree {} eliminado.", spike.path));
+        ctx.log(format!("Worktree {} removed.", spike.path));
     } else {
-        let message = format!("No se pudo limpiar el spike: {}", failed.join("; "));
+        let message = format!("Could not clean up the spike: {}", failed.join("; "));
         ctx.notice(NoticeLevel::Warning, message.clone());
         ctx.log(message);
     }
@@ -311,14 +311,14 @@ async fn run_spike(
     let mut session = ctx.new_session();
     let system = SPIKE_PROMPT.replace("{dir}", &spike.path);
     let input = format!(
-        "{system}\n\nPedido: {}\nOpción elegida: {}\nPor qué: {}",
+        "{system}\n\nRequest: {}\nChosen option: {}\nWhy: {}",
         ctx.problem(),
         decision.chosen,
         decision.rationale
     );
     ctx.agent_json(agent, &mut session, input, |report: &Report| {
         if report.command.trim().is_empty() || report.summary.trim().is_empty() {
-            return Err("faltan el comando o el resumen".into());
+            return Err("the command or the summary is missing".into());
         }
         Ok(())
     })
@@ -332,12 +332,12 @@ fn record(
     report: &Report,
 ) -> Result<NodeOutcome, NodeError> {
     let verdict = if report.feasible {
-        "se puede construir"
+        "can be built"
     } else {
-        "no se pudo construir"
+        "could not be built"
     };
     let claim = format!(
-        "Spike de «{}»: {verdict}. {}",
+        "Spike of \"{}\": {verdict}. {}",
         decision.chosen, report.summary
     );
     let now = ctx.now();
@@ -350,14 +350,14 @@ fn record(
         now,
     );
     ctx.emit(BlockKind::Markdown {
-        title: Some("Resultado del spike".into()),
+        title: Some("Spike result".into()),
         source: format!(
             "**{}** {verdict} [{evidence}].\n\n{}\n\n```text\n$ {}\n{}\n```",
             decision.chosen, report.summary, report.command, report.output_excerpt
         ),
     })?;
     ctx.log(format!(
-        "Spike {} en {}: {verdict} ({evidence}).",
+        "Spike {} in {}: {verdict} ({evidence}).",
         spike.id, spike.path
     ));
     ctx.set_data(
@@ -375,7 +375,7 @@ fn record(
         Ok(NodeOutcome::Back {
             to: Stage::Modeling,
             reason: format!(
-                "el spike mostró que «{}» no se puede construir [{evidence}]",
+                "the spike showed that \"{}\" cannot be built [{evidence}]",
                 decision.chosen
             ),
         })
@@ -463,7 +463,7 @@ mod tests {
         let deps = NodeDeps::new(llm.clone(), ModelPolicy::default(), sink.clone())
             .with_agent(Arc::new(agent))
             .with_clock(|| 9);
-        let ctx = NodeContext::new(Stage::Prototype, deps, "el login es lento", state);
+        let ctx = NodeContext::new(Stage::Prototype, deps, "login is slow", state);
         Fixture {
             llm,
             shell,
@@ -474,7 +474,7 @@ mod tests {
 
     fn decided() -> ResearchState {
         let mut state = ResearchState::default();
-        state.add_decision("Caché en memoria", vec![], "evita el disco", vec![]);
+        state.add_decision("In-memory cache", vec![], "avoids the disk", vec![]);
         state
     }
 
@@ -493,7 +493,7 @@ mod tests {
             ScriptedResponse::text(
                 json!({
                     "feasible": feasible,
-                    "summary": "una caché LRU detrás de SessionStore",
+                    "summary": "an LRU cache behind SessionStore",
                     "command": "cargo test --manifest-path .crest/spikes/d1-9/Cargo.toml",
                     "output_excerpt": "test cache ... ok"
                 })
@@ -538,7 +538,7 @@ mod tests {
         assert!(shell.calls().is_empty());
         assert_eq!(llm.requests().len(), 0);
 
-        let mut ctx = ctx.with_reply("sí");
+        let mut ctx = ctx.with_reply("yes");
         assert_eq!(node.run(&mut ctx).await.unwrap(), NodeOutcome::Done);
 
         assert_eq!(
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(first.model.role, Stage::Prototype.default_role());
         assert!(
             format!("{:?}", first.messages)
-                .contains("SOLO dentro del worktree temporal .crest/spikes/d1-9")
+                .contains("ONLY inside the temporary worktree .crest/spikes/d1-9")
         );
 
         let blocks = blocks(&sink);
@@ -592,8 +592,8 @@ mod tests {
                 output_excerpt: "test cache ... ok".into(),
             }
         );
-        assert!(evidence.claim.contains("se puede construir"));
-        assert!(state.journal.iter().any(|e| e.text.contains("eliminado")));
+        assert!(evidence.claim.contains("can be built"));
+        assert!(state.journal.iter().any(|e| e.text.contains("removed")));
     }
 
     #[tokio::test]
@@ -611,7 +611,7 @@ mod tests {
         assert!(
             ctx.into_state().evidence[0]
                 .claim
-                .contains("no se pudo construir")
+                .contains("could not be built")
         );
     }
 
@@ -631,6 +631,7 @@ mod tests {
         } = fixture(spike_turn(true), shell, decided());
         ctx.set_data(SPIKE_KEY, Spike::for_decision(&decided().decisions[0], 9))
             .unwrap();
+        // The Spanish "sí" still approves.
         let mut ctx = ctx.with_reply("sí");
         let err = Prototype::new().run(&mut ctx).await.unwrap_err();
         assert!(err.to_string().contains("not a git repository"), "{err}");
@@ -655,11 +656,11 @@ mod tests {
             node.run(&mut ctx).await.unwrap(),
             NodeOutcome::NeedsInput { .. }
         ));
-        let mut ctx = ctx.with_reply("no, sin spike");
+        let mut ctx = ctx.with_reply("no, no spike");
         assert_eq!(node.run(&mut ctx).await.unwrap(), NodeOutcome::Done);
         assert!(shell.calls().is_empty());
         let state = ctx.into_state();
         assert!(state.evidence.is_empty());
-        assert!(state.journal[0].text.starts_with("Sin prototipo"));
+        assert!(state.journal[0].text.starts_with("No prototype"));
     }
 }

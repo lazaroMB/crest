@@ -1,4 +1,4 @@
-//! Node 5, Hipótesis: one-sentence hypotheses, their causes and priority.
+//! Node 5, Hypotheses: one-sentence hypotheses, their causes and priority.
 //!
 //! The `plan` model reads the evidence and the findings of the analysis
 //! and answers a JSON list of hypotheses with causes grouped by category.
@@ -29,28 +29,28 @@ pub const KEY_EVIDENCE: &str = "hypotheses.evidence";
 pub const KEY_EFFECT: &str = "hypotheses.effect";
 
 const SYSTEM: &str = "\
-Eres la etapa de Hipótesis de una investigación sobre un proyecto de software. \
-Propón hipótesis de una oración que expliquen el efecto observado, cada una con sus \
-causas agrupadas por categoría (diagrama de Ishikawa: Código, Datos, Infraestructura, \
-Dependencias, Configuración, Uso…) y una prioridad (1 es la más alta: la más probable \
-y barata de probar). Básate en la evidencia y cita sus ids. Responde solo con un objeto \
-JSON, sin texto extra.";
+You are the Hypotheses stage of an investigation of a software project. \
+Propose one-sentence hypotheses that explain the observed effect, each with its causes \
+grouped by category (Ishikawa diagram: Code, Data, Infrastructure, Dependencies, \
+Configuration, Usage…) and a priority (1 is the highest: the most likely and cheapest \
+to test). Base them on the evidence and cite its ids. Answer only with a JSON object, \
+with no extra text.";
 
-const SCHEMA: &str = r#"Formato de la respuesta:
+const SCHEMA: &str = r#"Answer format:
 {
-  "effect": "efecto observado, en pocas palabras",
+  "effect": "observed effect, in a few words",
   "hypotheses": [
     {
       "id": "H1",
-      "statement": "hipótesis en una oración",
+      "statement": "hypothesis in one sentence",
       "priority": 1,
-      "causes": [{ "category": "Código", "cause": "causa concreta" }],
+      "causes": [{ "category": "Code", "cause": "concrete cause" }],
       "evidence_ids": ["E1"]
     }
   ]
 }
-"id" solo para conservar una hipótesis actual; omítelo en las nuevas. Devuelve la lista
-completa: las hipótesis actuales que no aparezcan se descartan."#;
+"id" only to keep a current hypothesis; leave it out in new ones. Return the full
+list: current hypotheses that do not appear are dropped."#;
 
 #[derive(Debug, Clone, Deserialize)]
 struct CauseOut {
@@ -75,7 +75,7 @@ struct Answer {
     hypotheses: Vec<HypothesisOut>,
 }
 
-/// The Hipótesis node.
+/// The Hypotheses node.
 #[derive(Debug, Default)]
 pub struct Hypotheses;
 
@@ -98,7 +98,7 @@ impl ResearchNode for Hypotheses {
             let to = ctx.first_stage_of(&[Stage::Data, Stage::Observation]);
             return Ok(NodeOutcome::Back {
                 to,
-                reason: "no hay evidencia en la que basar las hipótesis".into(),
+                reason: "there is no evidence to base the hypotheses on".into(),
             });
         }
         let findings: Vec<Finding> = ctx.data(KEY_FINDINGS).unwrap_or_default();
@@ -111,7 +111,7 @@ impl ResearchNode for Hypotheses {
         let hypotheses = by_priority(&ctx.state().hypotheses);
         ctx.emit(BlockKind::Mermaid(MermaidSpec {
             source: ishikawa(&effect, &hypotheses),
-            title: Some("Diagrama de causas (Ishikawa)".into()),
+            title: Some("Cause diagram (Ishikawa)".into()),
         }))?;
         ctx.emit(BlockKind::Table(table(&hypotheses, &evidence)))?;
         ctx.set_data(KEY_EVIDENCE, &evidence)?;
@@ -119,12 +119,12 @@ impl ResearchNode for Hypotheses {
 
         let order: Vec<String> = hypotheses.iter().map(|h| h.id.to_string()).collect();
         let action = if ctx.user_reply().is_some() {
-            "Hipótesis revisadas con el usuario"
+            "Hypotheses revised with the user"
         } else {
-            "Hipótesis"
+            "Hypotheses"
         };
         ctx.log(format!(
-            "{action}: {} por prioridad ({}); efecto: {effect}.",
+            "{action}: {} by priority ({}); effect: {effect}.",
             order.len(),
             order.join(", ")
         ));
@@ -140,18 +140,18 @@ fn prompt(
 ) -> String {
     let mut out = analysis::context_prompt(problem, state, reply);
     if !findings.is_empty() {
-        out.push_str("\nHallazgos del análisis:\n");
+        out.push_str("\nFindings of the analysis:\n");
         for f in findings {
             let ids: Vec<String> = f.evidence_ids.iter().map(ToString::to_string).collect();
             let _ = writeln!(out, "- {} [{}]", f.statement, ids.join(", "));
         }
     }
     if !state.hypotheses.is_empty() {
-        out.push_str("\nHipótesis actuales:\n");
+        out.push_str("\nCurrent hypotheses:\n");
         for h in by_priority(&state.hypotheses) {
             let _ = writeln!(
                 out,
-                "- {} (prioridad {}, {}): {} Causas: {}",
+                "- {} (priority {}, {}): {} Causes: {}",
                 h.id,
                 h.priority,
                 status_label(h.status),
@@ -166,39 +166,39 @@ fn prompt(
 
 fn check(answer: &Answer, state: &ResearchState) -> Result<(), String> {
     if answer.effect.trim().is_empty() {
-        return Err("falta \"effect\"".into());
+        return Err("\"effect\" is missing".into());
     }
     if answer.hypotheses.is_empty() {
-        return Err("\"hypotheses\" está vacío".into());
+        return Err("\"hypotheses\" is empty".into());
     }
     let mut seen = Vec::new();
     for (i, h) in answer.hypotheses.iter().enumerate() {
         let n = i + 1;
         let statement = h.statement.trim();
         if statement.is_empty() || statement.contains('\n') {
-            return Err(format!("la hipótesis {n} debe ser una sola oración"));
+            return Err(format!("hypothesis {n} must be a single sentence"));
         }
         if h.priority == 0 {
-            return Err(format!(
-                "la hipótesis {n} tiene prioridad 0; la más alta es 1"
-            ));
+            return Err(format!("hypothesis {n} has priority 0; the highest is 1"));
         }
         if h.causes.is_empty()
             || h.causes
                 .iter()
                 .any(|c| c.category.trim().is_empty() || c.cause.trim().is_empty())
         {
-            return Err(format!("la hipótesis {n} necesita causas con categoría"));
+            return Err(format!("hypothesis {n} needs causes with a category"));
         }
         if !h.evidence_ids.is_empty() {
-            analysis::cites_known(state, &h.evidence_ids, &format!("la hipótesis {n}"))?;
+            analysis::cites_known(state, &h.evidence_ids, &format!("hypothesis {n}"))?;
         }
         if let Some(id) = h.id {
             if !state.hypotheses.iter().any(|old| old.id == id) {
-                return Err(format!("{id} no es una hipótesis actual; omite el id"));
+                return Err(format!(
+                    "{id} is not a current hypothesis; leave out the id"
+                ));
             }
             if seen.contains(&id) {
-                return Err(format!("{id} aparece dos veces"));
+                return Err(format!("{id} appears twice"));
             }
             seen.push(id);
         }
@@ -240,10 +240,10 @@ pub(super) fn by_priority(hypotheses: &[Hypothesis]) -> Vec<Hypothesis> {
 
 pub(super) fn status_label(status: HypothesisStatus) -> &'static str {
     match status {
-        HypothesisStatus::Open => "abierta",
-        HypothesisStatus::Supported => "respaldada",
-        HypothesisStatus::Refuted => "refutada",
-        HypothesisStatus::Untested => "sin probar",
+        HypothesisStatus::Open => "open",
+        HypothesisStatus::Supported => "supported",
+        HypothesisStatus::Refuted => "refuted",
+        HypothesisStatus::Untested => "untested",
     }
 }
 
@@ -260,13 +260,13 @@ fn label(s: &str) -> String {
 type CauseNode = (String, Vec<HypothesisId>);
 
 /// The Ishikawa diagram as a flowchart: each cause points to its category
-/// and each category to the effect. Causes are `Categoría: causa`; equal
+/// and each category to the effect. Causes are `Category: cause`; equal
 /// causes of several hypotheses are drawn once, tagged with their ids.
 fn ishikawa(effect: &str, hypotheses: &[Hypothesis]) -> String {
     let mut categories: Vec<(String, Vec<CauseNode>)> = Vec::new();
     for h in hypotheses {
         for cause in &h.causes {
-            let (category, text) = cause.split_once(": ").unwrap_or(("Otras", cause.as_str()));
+            let (category, text) = cause.split_once(": ").unwrap_or(("Other", cause.as_str()));
             let i = categories
                 .iter()
                 .position(|(c, _)| c.eq_ignore_ascii_case(category))
@@ -302,12 +302,12 @@ fn table(hypotheses: &[Hypothesis], evidence: &BTreeMap<String, Vec<EvidenceId>>
     let text = |s: String| Cell::Text(s);
     TableSpec {
         columns: [
-            "Prioridad",
+            "Priority",
             "Id",
-            "Hipótesis",
-            "Causas",
-            "Evidencia",
-            "Estado",
+            "Hypothesis",
+            "Causes",
+            "Evidence",
+            "Status",
         ]
         .into_iter()
         .map(Column::new)
@@ -364,7 +364,7 @@ mod tests {
     fn state() -> ResearchState {
         let mut state = ResearchState::default();
         state.add_evidence(
-            "3 consultas por login",
+            "3 queries per login",
             SourceRef::File {
                 path: "src/login.rs".into(),
                 line_start: Some(4),
@@ -386,24 +386,24 @@ mod tests {
             Arc::clone(sink) as _,
         )
         .with_clock(|| 9);
-        NodeContext::new(Stage::Hypotheses, deps, "el login tarda 2 s", state)
+        NodeContext::new(Stage::Hypotheses, deps, "login takes 2 s", state)
     }
 
     fn first_answer() -> String {
         json!({
-            "effect": "login de 2 s",
+            "effect": "2 s login",
             "hypotheses": [
                 {
-                    "statement": "El pool de conexiones se agota con 50 usuarios.",
+                    "statement": "The connection pool runs out with 50 users.",
                     "priority": 2,
-                    "causes": [{ "category": "Infraestructura", "cause": "pool de 5 \"conexiones\"" }]
+                    "causes": [{ "category": "Infrastructure", "cause": "pool of 5 \"connections\"" }]
                 },
                 {
-                    "statement": "Las 3 consultas por login no usan índice.",
+                    "statement": "The 3 queries per login use no index.",
                     "priority": 1,
                     "causes": [
-                        { "category": "Datos", "cause": "falta índice en users.email" },
-                        { "category": "Código", "cause": "consultas N+1" }
+                        { "category": "Data", "cause": "missing index on users.email" },
+                        { "category": "Code", "cause": "N+1 queries" }
                     ],
                     "evidence_ids": ["E1"]
                 }
@@ -428,10 +428,7 @@ mod tests {
         assert_eq!((hs[1].id.to_string(), hs[1].priority), ("H2".into(), 1));
         assert_eq!(
             hs[1].causes,
-            [
-                "Datos: falta índice en users.email",
-                "Código: consultas N+1"
-            ]
+            ["Data: missing index on users.email", "Code: N+1 queries"]
         );
         assert!(hs.iter().all(|h| h.status == HypothesisStatus::Open));
 
@@ -442,17 +439,17 @@ mod tests {
         assert!(
             diagram
                 .source
-                .starts_with("flowchart LR\n  effect([\"login de 2 s\"])")
+                .starts_with("flowchart LR\n  effect([\"2 s login\"])")
         );
         assert!(
-            diagram.source.contains("cat0[\"Datos\"] --> effect"),
+            diagram.source.contains("cat0[\"Data\"] --> effect"),
             "{}",
             diagram.source
         );
         assert!(
             diagram
                 .source
-                .contains("pool de 5 #quot;conexiones#quot; (H1)")
+                .contains("pool of 5 #quot;connections#quot; (H1)")
         );
         let BlockKind::Table(table) = &blocks[1] else {
             panic!("{blocks:?}")
@@ -475,34 +472,33 @@ mod tests {
 
         llm.push(ScriptedResponse::text(
             json!({
-                "effect": "login de 2 s",
+                "effect": "2 s login",
                 "hypotheses": [
                     {
                         "id": "H1",
-                        "statement": "El pool se agota con 20 usuarios.",
+                        "statement": "The pool runs out with 20 users.",
                         "priority": 1,
-                        "causes": [{ "category": "Infraestructura", "cause": "pool de 5" }]
+                        "causes": [{ "category": "Infrastructure", "cause": "pool of 5" }]
                     },
                     {
-                        "statement": "La caché de sesiones expira cada request.",
+                        "statement": "The session cache expires on every request.",
                         "priority": 2,
-                        "causes": [{ "category": "Configuración", "cause": "TTL de 0" }]
+                        "causes": [{ "category": "Configuration", "cause": "TTL of 0" }]
                     }
                 ]
             })
             .to_string(),
         ));
-        let mut ctx =
-            context(&llm, &sink, state).with_reply("sube H1 y descarta H2; agrega la caché");
+        let mut ctx = context(&llm, &sink, state).with_reply("raise H1 and drop H2; add the cache");
         Hypotheses::new().run(&mut ctx).await.unwrap();
         let sent = serde_json::to_string(&llm.last_request().unwrap().messages).unwrap();
-        assert!(sent.contains("sube H1 y descarta H2"), "{sent}");
-        assert!(sent.contains("H2 (prioridad 1, abierta)"), "{sent}");
+        assert!(sent.contains("raise H1 and drop H2"), "{sent}");
+        assert!(sent.contains("H2 (priority 1, open)"), "{sent}");
 
         let hs = &ctx.state().hypotheses;
         let ids: Vec<String> = hs.iter().map(|h| h.id.to_string()).collect();
         assert_eq!(ids, ["H1", "H3"]);
-        assert_eq!(hs[0].statement, "El pool se agota con 20 usuarios.");
+        assert_eq!(hs[0].statement, "The pool runs out with 20 users.");
         assert_eq!(
             (hs[0].priority, hs[0].status),
             (1, HypothesisStatus::Untested)
@@ -513,7 +509,7 @@ mod tests {
                 .last()
                 .unwrap()
                 .text
-                .starts_with("Hipótesis revisadas")
+                .starts_with("Hypotheses revised")
         );
     }
 
@@ -522,7 +518,7 @@ mod tests {
         let bad = json!({
             "effect": "e",
             "hypotheses": [{ "id": "H7", "statement": "x.", "priority": 1,
-                "causes": [{ "category": "Código", "cause": "c" }] }]
+                "causes": [{ "category": "Code", "cause": "c" }] }]
         });
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::text(bad.to_string()),
@@ -532,7 +528,7 @@ mod tests {
         let mut ctx = context(&llm, &sink, state());
         Hypotheses::new().run(&mut ctx).await.unwrap();
         let retry = serde_json::to_string(&llm.last_request().unwrap().messages).unwrap();
-        assert!(retry.contains("H7 no es una hipótesis actual"), "{retry}");
+        assert!(retry.contains("H7 is not a current hypothesis"), "{retry}");
         assert_eq!(ctx.state().hypotheses.len(), 2);
     }
 

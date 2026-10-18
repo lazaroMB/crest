@@ -28,14 +28,14 @@ pub const PLANS_KEY: &str = "plan.folders";
 /// Retries after an invalid plan.
 const RETRIES: usize = 2;
 
-const SYSTEM: &str = "Eres el planificador de un flujo de investigación de software. Divides \
-un Spec en tareas pequeñas que se implementan y se confirman una por una. Cada tarea tiene un \
-id (T1, T2…), depende solo de tareas anteriores (sin ciclos), lista los únicos archivos que \
-puede tocar y criterios de aceptación ejecutables (tests o comandos). Agrega las pruebas de la \
-hipótesis y una prueba por restricción, citando solo los ids de restricción dados. Responde \
-llamando a la herramienta submit_plan con JSON que cumpla el schema.";
+const SYSTEM: &str = "You are the planner of a software research flow. You split a Spec \
+into small tasks that are implemented and committed one by one. Each task has an id (T1, \
+T2…), depends only on earlier tasks (no cycles), lists the only files it may touch and has \
+executable acceptance criteria (tests or commands). Add the hypothesis tests and one test per \
+constraint, citing only the constraint ids given. Reply by calling the submit_plan tool with \
+JSON that matches the schema.";
 
-const TOOL_DESCRIPTION: &str = "Entrega el plan de implementación (contenido de plan.json).";
+const TOOL_DESCRIPTION: &str = "Submits the implementation plan (the content of plan.json).";
 
 /// The Plan node.
 pub struct Planner {
@@ -80,7 +80,7 @@ impl ResearchNode for Planner {
         if drafts.is_empty() {
             return Ok(NodeOutcome::Back {
                 to: Stage::Spec,
-                reason: "no hay un Spec escrito que dividir en tareas".into(),
+                reason: "there is no written Spec to split into tasks".into(),
             });
         }
         let known: Vec<ConstraintId> = ctx.state().constraints.iter().map(|c| c.id).collect();
@@ -98,7 +98,7 @@ impl ResearchNode for Planner {
             .await?;
             self.write_plan(ctx, &plan).await?;
             ctx.log(format!(
-                "Plan de {} con {} tareas, {} pruebas de hipótesis y {} de restricciones.",
+                "Plan for {} with {} tasks, {} hypothesis tests and {} constraint tests.",
                 plan.spec,
                 plan.tasks.len(),
                 plan.hypothesis_tests.len(),
@@ -131,7 +131,7 @@ impl Planner {
             .map_err(sink_error)?;
         ctx.emit(BlockKind::Mermaid(MermaidSpec {
             source: plan.to_mermaid(),
-            title: Some(format!("Dependencias de {}", plan.spec)),
+            title: Some(format!("Dependencies of {}", plan.spec)),
         }))?;
         ctx.emit(BlockKind::Table(tasks_table(plan)))?;
         Ok(())
@@ -144,7 +144,7 @@ fn check(mut value: Value, folder: &str, known: &[ConstraintId]) -> Result<Plan,
         object.insert("spec".into(), Value::String(folder.to_owned()));
     }
     let plan: Plan = serde_json::from_value(value)
-        .map_err(|e| vec![format!("el JSON no cumple el schema de plan.json: {e}")])?;
+        .map_err(|e| vec![format!("the JSON does not match the plan.json schema: {e}")])?;
     let mut errors: Vec<String> = Vec::new();
     if let Err(found) = plan.validate() {
         errors.extend(found.iter().map(ToString::to_string));
@@ -184,7 +184,7 @@ fn tasks_table(plan: &Plan) -> TableSpec {
         })
         .collect();
     TableSpec {
-        columns: ["Id", "Tarea", "Depende de", "Archivos", "Rol", "Riesgo"]
+        columns: ["Id", "Task", "Depends on", "Files", "Role", "Risk"]
             .into_iter()
             .map(Column::new)
             .collect(),
@@ -195,26 +195,26 @@ fn tasks_table(plan: &Plan) -> TableSpec {
 /// The request for the plan of `draft`.
 fn prompt(ctx: &NodeContext, draft: &SpecDraft, schema: &str) -> String {
     let mut out = format!(
-        "Carpeta del Spec (campo spec): {}\n\nSpec:\n\n{}\n",
+        "Spec folder (spec field): {}\n\nSpec:\n\n{}\n",
         draft.folder, draft.spec_md
     );
     let constraints = &ctx.state().constraints;
     if constraints.is_empty() {
-        out.push_str("\nNo hay restricciones: deja constraint_tests vacío.\n");
+        out.push_str("\nThere are no constraints: leave constraint_tests empty.\n");
     } else {
-        out.push_str("\nRestricciones válidas para constraint_tests:\n");
+        out.push_str("\nValid constraints for constraint_tests:\n");
         for c in constraints {
             let test = c
                 .test
                 .as_ref()
-                .map_or_else(String::new, |t| format!(" (prueba: {})", t.reference));
+                .map_or_else(String::new, |t| format!(" (test: {})", t.reference));
             let _ = writeln!(out, "- {}: {}{test}", c.id, c.statement);
         }
     }
     if let Some(reply) = ctx.user_reply() {
-        let _ = write!(out, "\nCorrecciones del usuario: {reply}\n");
+        let _ = write!(out, "\nUser corrections: {reply}\n");
     }
-    let _ = write!(out, "\nSchema JSON de plan.json:\n{schema}\n");
+    let _ = write!(out, "\nJSON schema of plan.json:\n{schema}\n");
     out
 }
 
@@ -229,13 +229,13 @@ mod tests {
     use domain::research::{ConstraintKind, ResearchState, TestKind, TestRef};
     use serde_json::json;
 
-    const FOLDER: &str = "0004-cache-de-sesiones";
+    const FOLDER: &str = "0004-session-cache";
 
     fn task(id: &str, deps: &[&str]) -> Value {
         json!({
             "id": id,
-            "title": format!("Tarea {id}"),
-            "description": "hacer algo",
+            "title": format!("Task {id}"),
+            "description": "do something",
             "depends_on": deps,
             "files": ["crates/app/src/ports/store.rs"],
             "acceptance": [{ "kind": "test", "ref": "cargo test -p application cache" }],
@@ -263,7 +263,7 @@ mod tests {
                 reference: "make bench".into(),
             }),
         );
-        let ctx = NodeContext::new(Stage::Plan, deps, "el login es lento", state);
+        let ctx = NodeContext::new(Stage::Plan, deps, "login is slow", state);
         let drafts: Vec<SpecDraft> = drafts
             .iter()
             .map(|f| SpecDraft {
@@ -305,7 +305,7 @@ mod tests {
             files
                 .file(FOLDER, "journal.md")
                 .unwrap()
-                .contains("Plan de")
+                .contains("Plan for")
         );
 
         let req = llm.last_request().unwrap();

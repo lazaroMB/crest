@@ -1,4 +1,4 @@
-//! Node 8, Investigación: prior solutions to the defined problem.
+//! Node 8, Research: prior solutions to the defined problem.
 //!
 //! Two sources, both with the `explore` role:
 //!
@@ -36,23 +36,23 @@ const WEB_SEARCHES: u32 = 5;
 const WEB_FETCHES: u32 = 3;
 
 const REPO_PROMPT: &str = "\
-Eres el nodo «Investigación» de una investigación sobre este repositorio. SOLO PUEDES LEER: \
-usa list_files, find_file, grep, tree y read_file; no edites, no escribas archivos ni ejecutes \
-comandos. Busca en el repo soluciones previas al problema: patrones, módulos, utilidades o \
-dependencias ya presentes que lo resuelvan en parte o sirvan de modelo.
-Al terminar responde solo con JSON:
-{\"findings\": [{\"name\": \"…\", \"summary\": \"una línea\", \"path\": \"ruta/relativa.rs\", \
+You are the \"Research\" node of an investigation of this repository. YOU MAY ONLY READ: \
+use list_files, find_file, grep, tree and read_file; do not edit, write files or run \
+commands. Look in the repo for prior solutions to the problem: patterns, modules, utilities or \
+dependencies already present that partly solve it or can serve as a model.
+When you finish, answer only with JSON:
+{\"findings\": [{\"name\": \"…\", \"summary\": \"one line\", \"path\": \"relative/path.rs\", \
 \"line_start\": 10, \"line_end\": 40}]}
-line_start y line_end pueden ser null. Si no hay nada, devuelve \"findings\": [].";
+line_start and line_end may be null. If there is nothing, return \"findings\": [].";
 
 const WEB_SYSTEM: &str = "\
-Eres el nodo «Investigación» de una investigación sobre un proyecto de software. Busca en la web \
-soluciones previas al problema: librerías, artículos e issues de proyectos parecidos. Cita las \
-fuentes. No inventes URLs: incluye solo páginas que hayas encontrado.
-Al terminar responde solo con JSON:
-{\"options\": [{\"name\": \"…\", \"kind\": \"library\", \"summary\": \"una línea\", \
+You are the \"Research\" node of an investigation of a software project. Search the web \
+for prior solutions to the problem: libraries, articles and issues of similar projects. Cite the \
+sources. Do not make up URLs: include only pages you found.
+When you finish, answer only with JSON:
+{\"options\": [{\"name\": \"…\", \"kind\": \"library\", \"summary\": \"one line\", \
 \"url\": \"https://…\"}]}
-kind es library, article, issue o pattern. Si no hay nada, devuelve \"options\": [].";
+kind is library, article, issue or pattern. If there is nothing, return \"options\": [].";
 
 /// What kind of prior solution an option is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,12 +69,12 @@ pub enum SolutionKind {
 }
 
 impl SolutionKind {
-    fn name_es(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
-            Self::Library => "librería",
-            Self::Article => "artículo",
+            Self::Library => "library",
+            Self::Article => "article",
             Self::Issue => "issue",
-            Self::Pattern => "patrón",
+            Self::Pattern => "pattern",
         }
     }
 }
@@ -133,7 +133,7 @@ struct WebOption {
     url: String,
 }
 
-/// The Investigación node.
+/// The Research node.
 #[derive(Debug, Default)]
 pub struct Research;
 
@@ -153,8 +153,11 @@ impl ResearchNode for Research {
 
     async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
         if ctx.state().problem_statements.is_empty() {
-            let reason = "no hay una definición del problema que investigar";
-            ctx.log(format!("Regresa a Definición: {reason}."));
+            let reason = "there is no problem definition to research";
+            ctx.log(format!(
+                "Going back to {}: {reason}.",
+                Stage::Definition.name()
+            ));
             return Ok(NodeOutcome::Back {
                 to: Stage::Definition,
                 reason: reason.into(),
@@ -177,8 +180,8 @@ impl ResearchNode for Research {
         ctx.set_data(OPTIONS_KEY, &options)?;
         let new_evidence = ctx.state().evidence.len() - first_evidence;
         ctx.log(format!(
-            "{} solución(es) previa(s): {repo_count} en el repo y {} en la web; {new_evidence} \
-             evidencia(s) nueva(s).",
+            "{} prior solution(s): {repo_count} in the repo and {} on the web; {new_evidence} \
+             new piece(s) of evidence.",
             options.len(),
             options.len() - repo_count,
         ));
@@ -189,18 +192,18 @@ impl ResearchNode for Research {
 /// The definition, constraints and hypotheses, for both prompts.
 fn brief(ctx: &NodeContext) -> String {
     let state = ctx.state();
-    let mut out = String::from("Problema:\n");
+    let mut out = String::from("Problem:\n");
     for p in &state.problem_statements {
         let _ = writeln!(out, "- {p}");
     }
     if !state.constraints.is_empty() {
-        out.push_str("\nRestricciones:\n");
+        out.push_str("\nConstraints:\n");
         for c in &state.constraints {
             let _ = writeln!(out, "- {}: {}", c.id, c.statement);
         }
     }
     if !state.hypotheses.is_empty() {
-        out.push_str("\nHipótesis:\n");
+        out.push_str("\nHypotheses:\n");
         for h in &state.hypotheses {
             let _ = writeln!(out, "- {}: {}", h.id, h.statement);
         }
@@ -211,7 +214,7 @@ fn brief(ctx: &NodeContext) -> String {
 /// Prior solutions already in the repo, from a read-only agent turn.
 async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolution>, NodeError> {
     let Ok(agent) = ctx.explore_agent().cloned() else {
-        ctx.log("Sin agente con tools: no se exploró el repo.");
+        ctx.log("No agent with tools: the repo was not explored.");
         return Ok(Vec::new());
     };
     let prompt = format!("{REPO_PROMPT}\n\n{brief}");
@@ -228,7 +231,7 @@ async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSol
             |a: &RepoAnswer| {
                 a.findings.iter().try_for_each(|f| {
                     if f.name.trim().is_empty() || f.path.trim().is_empty() {
-                        return Err("cada hallazgo necesita `name` y `path`".to_owned());
+                        return Err("every finding needs `name` and `path`".to_owned());
                     }
                     f.source().validate().map_err(|e| e.to_string())
                 })
@@ -274,9 +277,12 @@ async fn web_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolu
         .fix_json(WEB_SYSTEM, messages, text, |a: &WebAnswer| {
             a.options.iter().try_for_each(|o| {
                 if o.name.trim().is_empty() || o.summary.trim().is_empty() {
-                    Err("cada opción necesita `name` y `summary`".to_owned())
+                    Err("every option needs `name` and `summary`".to_owned())
                 } else if !o.url.starts_with("http") {
-                    Err(format!("la URL de «{}» no es válida: {:?}", o.name, o.url))
+                    Err(format!(
+                        "the URL of \"{}\" is not valid: {:?}",
+                        o.name, o.url
+                    ))
                 } else {
                     Ok(())
                 }
@@ -336,7 +342,7 @@ fn source_label(source: &SourceRef) -> String {
 
 fn table(options: &[PriorSolution]) -> TableSpec {
     TableSpec {
-        columns: ["Opción", "Tipo", "Resumen", "Fuente", "Evidencia"]
+        columns: ["Option", "Kind", "Summary", "Source", "Evidence"]
             .into_iter()
             .map(Column::new)
             .collect(),
@@ -346,7 +352,7 @@ fn table(options: &[PriorSolution]) -> TableSpec {
                 let ids: Vec<String> = o.evidence_ids.iter().map(ToString::to_string).collect();
                 vec![
                     Cell::Text(o.name.clone()),
-                    Cell::Text(o.kind.name_es().into()),
+                    Cell::Text(o.kind.name().into()),
                     Cell::Text(o.summary.clone()),
                     Cell::Text(source_label(&o.source)),
                     Cell::Text(ids.join(", ")),

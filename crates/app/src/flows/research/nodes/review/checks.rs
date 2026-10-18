@@ -7,17 +7,17 @@ use domain::research::{ResearchState, Stage, extract_citations};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::super::spec::render::SECTIONS;
+use super::super::spec::render::{SECTIONS, SECTIONS_ES};
 
 /// Stage that collects evidence; claims without sources go back there.
 pub const EVIDENCE_STAGE: Stage = Stage::Data;
 
 /// Where claims without sources go back to: [`EVIDENCE_STAGE`], or
-/// Observación when the graph has no Datos.
+/// Observation when the graph has no Data.
 pub const EVIDENCE_STAGES: [Stage; 2] = [EVIDENCE_STAGE, Stage::Observation];
 
 /// Section of `spec.md` whose paragraphs are factual claims.
-const BACKGROUND: &str = SECTIONS[1];
+const BACKGROUND: usize = 1;
 
 /// Longest claim quoted in a gap.
 const CLAIM_CHARS: usize = 200;
@@ -26,20 +26,20 @@ const CLAIM_CHARS: usize = 200;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Severity {
     /// The Spec cannot be implemented or defended as is.
-    #[serde(rename = "grave")]
+    #[serde(rename = "major", alias = "grave")]
     Major,
     /// An improvement that does not block the Spec.
-    #[serde(rename = "menor")]
+    #[serde(rename = "minor", alias = "menor")]
     Minor,
 }
 
 impl Severity {
     /// Name shown to the user.
     #[must_use]
-    pub const fn name_es(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::Major => "grave",
-            Self::Minor => "menor",
+            Self::Major => "major",
+            Self::Minor => "minor",
         }
     }
 }
@@ -47,13 +47,13 @@ impl Severity {
 /// A hole found by the review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Gap {
-    /// Afirmación, sección o elemento del Spec o del plan con el hueco (cita textual breve).
+    /// Claim, section or item of the Spec or the plan with the gap (a short verbatim quote).
     pub claim: String,
-    /// Qué falta o qué está mal, en una oración.
+    /// What is missing or wrong, in one sentence.
     pub problem: String,
-    /// La etapa más temprana del flujo donde falta la información para cerrar el hueco.
+    /// The earliest stage of the flow where the information to close the gap is missing.
     pub missing_stage: Stage,
-    /// "grave" si impide implementar o sostener el Spec; "menor" si es una mejora.
+    /// "major" if it prevents implementing or defending the Spec; "minor" if it is an improvement.
     pub severity: Severity,
 }
 
@@ -168,28 +168,35 @@ pub fn spec_gaps(spec_md: &str, state: &ResearchState, evidence_stage: Stage) ->
                 .unwrap_or_default();
             gaps.push(Gap::major(
                 claim,
-                format!("cita la evidencia {id}, que no existe"),
+                format!("cites evidence {id}, which does not exist"),
                 evidence_stage,
             ));
         }
     }
     let found = sections(spec_md);
-    for heading in SECTIONS {
-        let body = found.iter().find(|(h, _)| h == heading).map(|(_, b)| b);
-        if !body.is_some_and(|b| has_content(b)) {
+    // A section is found by its English heading or by the Spanish one of
+    // the Specs written by earlier versions.
+    let section = |i: usize| {
+        found
+            .iter()
+            .find(|(h, _)| h == SECTIONS[i] || h == SECTIONS_ES[i])
+            .map(|(_, b)| b)
+    };
+    for (i, heading) in SECTIONS.iter().enumerate() {
+        if !section(i).is_some_and(|b| has_content(b)) {
             gaps.push(Gap::major(
-                format!("sección «{heading}»"),
-                "la sección obligatoria de la plantilla falta o está vacía",
+                format!("section \"{heading}\""),
+                "the required section of the template is missing or empty",
                 Stage::Spec,
             ));
         }
     }
-    if let Some((_, body)) = found.iter().find(|(h, _)| h == BACKGROUND) {
+    if let Some(body) = section(BACKGROUND) {
         for claim in claims(body) {
             if extract_citations(&claim).is_empty() {
                 gaps.push(Gap::major(
                     claim,
-                    "la afirmación no cita ninguna evidencia",
+                    "the claim cites no evidence",
                     evidence_stage,
                 ));
             }
@@ -202,7 +209,7 @@ pub fn spec_gaps(spec_md: &str, state: &ResearchState, evidence_stage: Stage) ->
         {
             gaps.push(Gap::major(
                 format!("{}: {}", c.id, c.statement),
-                "la restricción no tiene una prueba que la demuestre",
+                "the constraint has no test that proves it",
                 Stage::Definition,
             ));
         }
@@ -226,14 +233,14 @@ pub fn plan_gaps(folder: &str, plan: &Plan, state: &ResearchState) -> Vec<Gap> {
     for e in errors {
         gaps.push(Gap::major(
             claim.clone(),
-            format!("el plan no valida: {e}"),
+            format!("the plan does not validate: {e}"),
             Stage::Plan,
         ));
     }
     if plan.hypothesis_tests.is_empty() {
         gaps.push(Gap::major(
             claim.clone(),
-            "el plan no tiene pruebas de la hipótesis (hypothesis_tests)",
+            "the plan has no hypothesis tests (hypothesis_tests)",
             Stage::Plan,
         ));
     }
@@ -242,7 +249,7 @@ pub fn plan_gaps(folder: &str, plan: &Plan, state: &ResearchState) -> Vec<Gap> {
             gaps.push(Gap::major(
                 claim.clone(),
                 format!(
-                    "el plan no prueba la restricción {} (constraint_tests)",
+                    "the plan does not test constraint {} (constraint_tests)",
                     c.id
                 ),
                 Stage::Plan,
@@ -258,11 +265,42 @@ mod tests {
 
     #[test]
     fn claims_split_paragraphs_and_items_and_skip_code() {
-        let body = "Uno [E1]\nsigue.\n\n- dos\n- tres [E2]\n\n```\nnada\n```\n| a | b |\n### x\n1. cuatro\n";
+        let body = "One [E1]\ngoes on.\n\n- two\n- three [E2]\n\n```\nnothing\n```\n| a | b |\n### x\n1. four\n";
         assert_eq!(
             claims(body),
-            ["Uno [E1] sigue.", "- dos", "- tres [E2]", "1. cuatro"]
+            ["One [E1] goes on.", "- two", "- three [E2]", "1. four"]
         );
+    }
+
+    #[test]
+    fn severities_read_their_spanish_names_too() {
+        for (name, severity) in [
+            ("major", Severity::Major),
+            ("grave", Severity::Major),
+            ("minor", Severity::Minor),
+            ("menor", Severity::Minor),
+        ] {
+            let read: Severity = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(read, severity);
+        }
+    }
+
+    #[test]
+    fn spanish_section_headings_still_count() {
+        let state = ResearchState::default();
+        let english: String = SECTIONS
+            .iter()
+            .map(|h| format!("## {h}\n\n| x |\n\n"))
+            .collect();
+        let spanish: String = SECTIONS_ES
+            .iter()
+            .map(|h| format!("## {h}\n\n| x |\n\n"))
+            .collect();
+        assert!(spec_gaps(&english, &state, Stage::Data).is_empty());
+        assert!(spec_gaps(&spanish, &state, Stage::Data).is_empty());
+        let gaps = spec_gaps("## 1. Problem\n\nx\n", &state, Stage::Data);
+        assert_eq!(gaps.len(), 9);
+        assert!(gaps[0].problem.contains("missing or empty"), "{gaps:?}");
     }
 
     #[test]

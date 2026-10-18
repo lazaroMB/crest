@@ -240,19 +240,19 @@ impl ResearchSession {
 pub fn describe_status(status: &FlowStatus) -> String {
     match status {
         FlowStatus::Running { next } => format!(
-            "flujo investigativo en curso: sigue {} ({}/{})",
-            next.name_es(),
+            "research flow running: next is {} ({}/{})",
+            next.name(),
             next.index(),
             domain::research::Stage::total()
         ),
         FlowStatus::WaitingForInput { stage, .. } => format!(
-            "flujo investigativo en {} ({}/{}): responde en el chat",
-            stage.name_es(),
+            "research flow at {} ({}/{}): answer in the chat",
+            stage.name(),
             stage.index(),
             domain::research::Stage::total()
         ),
-        FlowStatus::Completed => "flujo investigativo terminado".to_owned(),
-        FlowStatus::Aborted => "flujo investigativo abortado".to_owned(),
+        FlowStatus::Completed => "research flow finished".to_owned(),
+        FlowStatus::Aborted => "research flow aborted".to_owned(),
     }
 }
 
@@ -302,7 +302,7 @@ mod tests {
             Err(FlowError::SessionNotFound(_))
         ));
 
-        let status = research.start("suma mal", 1).await.unwrap();
+        let status = research.start("adds wrong", 1).await.unwrap();
         assert!(matches!(
             status,
             FlowStatus::WaitingForInput {
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(pending.stage, Stage::Intake);
         reopened.resume().await.unwrap();
         assert!(reopened.is_active());
-        let reply = reopened.handle_line("sí").await.unwrap();
+        let reply = reopened.handle_line("yes").await.unwrap();
         assert_eq!(reply, FlowReply::Status(FlowStatus::Completed));
         assert!(!reopened.is_active());
         assert!(reopened.pending().await.unwrap().is_none());
@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(reply, FlowReply::Status(FlowStatus::Completed));
         assert!(!reopened.is_active());
         // Another workspace has its own flows.
-        let other = ResearchSession::new(graph(), storage, "/otro");
+        let other = ResearchSession::new(graph(), storage, "/other");
         assert!(other.pending().await.unwrap().is_none());
     }
 
@@ -346,6 +346,6 @@ mod tests {
         let reply = research.handle_line("/abort").await.unwrap();
         assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
         assert!(!research.is_active());
-        assert!(describe_reply(&reply).contains("abortado"));
+        assert!(describe_reply(&reply).contains("aborted"));
     }
 }

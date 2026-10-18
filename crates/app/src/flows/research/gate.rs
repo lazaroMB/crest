@@ -113,8 +113,9 @@ pub struct GateReply {
 }
 
 /// Whether `text` approves a confirmation gate: empty, or a short "yes"
-/// such as `sí`, `ok`, `continuar` or `dale` (case and accents ignored,
-/// trailing punctuation allowed).
+/// such as `yes`, `ok` or `continue` (case and accents ignored, trailing
+/// punctuation allowed). Spanish yeses such as `sí`, `continuar` or `dale`
+/// are accepted too.
 #[must_use]
 pub fn is_approval(text: &str) -> bool {
     const YES: &[&str] = &[
@@ -135,7 +136,17 @@ pub fn is_approval(text: &str) -> bool {
         "aprobado",
         "y",
         "yes",
+        "yep",
+        "sure",
         "go",
+        "go ahead",
+        "next",
+        "continue",
+        "proceed",
+        "approve",
+        "approved",
+        "agreed",
+        "done",
         "lgtm",
     ];
     let normalized = normalize(text);
@@ -143,7 +154,7 @@ pub fn is_approval(text: &str) -> bool {
     YES.contains(&trimmed)
 }
 
-/// Lowercase, trimmed and without Spanish accents, for lenient matching.
+/// Lowercase, trimmed and without accents, for lenient matching.
 pub(crate) fn normalize(text: &str) -> String {
     text.trim()
         .chars()
@@ -186,13 +197,18 @@ mod tests {
             "dale!",
             "Continuar",
             "de acuerdo",
+            "yes",
+            "Y",
+            "Continue.",
+            "go ahead",
         ] {
             assert!(is_approval(yes), "{yes:?}");
         }
         for no in [
             "no",
+            "yes, but add hypothesis H3",
             "sí, pero agrega la hipótesis H3",
-            "falta el benchmark",
+            "the benchmark is missing",
         ] {
             assert!(!is_approval(no), "{no:?}");
         }
@@ -202,7 +218,7 @@ mod tests {
     fn status_round_trips_through_json() {
         let status = FlowStatus::WaitingForInput {
             stage: Stage::Hypotheses,
-            prompt: "¿Seguimos?".into(),
+            prompt: "Shall we go on?".into(),
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["status"], "waiting_for_input");

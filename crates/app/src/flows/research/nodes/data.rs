@@ -40,34 +40,34 @@ const MAX_COMMIT_EVIDENCE: usize = 20;
 /// Weeks shown in the chart, the most recent ones.
 const MAX_WEEKS: usize = 52;
 
-const TASK: &str = "Etapa de datos de una investigación sobre este repositorio. Reúne \
-evidencia sobre el problema SOLO LEYENDO, sin modificar nada: historial de cambios de los \
-archivos implicados, logs, métricas o benchmarks que existan en el repositorio y, si hay \
-herramientas de issues, los issues relacionados. No propongas soluciones.";
+const TASK: &str = "Data stage of an investigation of this repository. Gather \
+evidence about the problem READ-ONLY, without changing anything: the change history of the \
+files involved, logs, metrics or benchmarks that exist in the repository and, if there are \
+issue tools, the related issues. Do not propose solutions.";
 
-const GIT: &str = "Usa `run_command` solo con comandos git de lectura; para el historial: \
-`git log --date=short --format=%H%x09%ad%x09%s -n 50 -- <archivos>`.";
+const GIT: &str = "Use `run_command` only with read-only git commands; for the history: \
+`git log --date=short --format=%H%x09%ad%x09%s -n 50 -- <files>`.";
 
-const NO_GIT: &str = "No tienes acceso a git: deja `commits` vacío.";
+const NO_GIT: &str = "You have no access to git: leave `commits` empty.";
 
-const FORMAT: &str = "Al terminar, responde solo con un objeto JSON, sin texto alrededor:
-{\"commits\": [{\"sha\": \"…\", \"date\": \"AAAA-MM-DD\", \"summary\": \"primera línea\"}],
- \"findings\": [{\"claim\": \"dato encontrado, en una oración\", \"source\": \
+const FORMAT: &str = "When you finish, answer only with a JSON object, with no text around it:
+{\"commits\": [{\"sha\": \"…\", \"date\": \"YYYY-MM-DD\", \"summary\": \"first line\"}],
+ \"findings\": [{\"claim\": \"fact found, in one sentence\", \"source\": \
 {\"type\": \"file\", \"path\": \"…\", \"line_start\": 1} | {\"type\": \"url\", \"url\": \"…\", \
 \"title\": \"…\"} | {\"type\": \"command\", \"command\": \"…\", \"output_excerpt\": \"…\"}}],
- \"libraries\": [\"librerías externas implicadas cuya documentación convenga consultar\"]}
-Usa listas vacías cuando no haya nada.";
+ \"libraries\": [\"external libraries involved whose documentation is worth checking\"]}
+Use empty lists when there is nothing.";
 
-const WEB_SYSTEM: &str = "Investigas un problema de software. Busca en la web la documentación \
-oficial, changelogs e issues conocidos de las librerías indicadas que sean relevantes para el \
-problema. Responde en 3 a 5 viñetas breves y cita las fuentes.";
+const WEB_SYSTEM: &str = "You are investigating a software problem. Search the web for the \
+official documentation, changelogs and known issues of the given libraries that are relevant to \
+the problem. Answer in 3 to 5 short bullets and cite the sources.";
 
 /// What Data gathered, read by Analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataReport {
     /// Evidence recorded by the stage.
     pub evidence: Vec<EvidenceId>,
-    /// Commits per week: the Monday of each week (`AAAA-MM-DD`) and its
+    /// Commits per week: the Monday of each week (`YYYY-MM-DD`) and its
     /// count, oldest first.
     pub commits_per_week: Vec<(String, u32)>,
     /// Libraries whose documentation was looked up.
@@ -108,20 +108,17 @@ impl Answer {
     fn validate(&self) -> Result<(), String> {
         for (i, c) in self.commits.iter().enumerate() {
             if c.sha.trim().is_empty() || c.summary.trim().is_empty() {
-                return Err(format!("el commit {i} no tiene `sha` o `summary`"));
+                return Err(format!("commit {i} has no `sha` or `summary`"));
             }
             if !c.date.trim().is_empty() && day_number(&c.date).is_none() {
-                return Err(format!(
-                    "el commit {i} tiene una fecha inválida: {}",
-                    c.date
-                ));
+                return Err(format!("commit {i} has an invalid date: {}", c.date));
             }
         }
         for (i, f) in self.findings.iter().enumerate() {
             if f.claim.trim().is_empty() {
-                return Err(format!("el hallazgo {i} no tiene `claim`"));
+                return Err(format!("finding {i} has no `claim`"));
             }
-            validate_source(&f.source).map_err(|e| format!("el hallazgo {i}: {e}"))?;
+            validate_source(&f.source).map_err(|e| format!("finding {i}: {e}"))?;
         }
         Ok(())
     }
@@ -141,8 +138,8 @@ impl Data {
 
 fn input(brief: &IntakeBrief, observed: &ObservationReport, git: bool, mcp: &[&str]) -> String {
     let mut out = format!(
-        "{TASK}\n\nProblema ({}): {}\nArquitectura observada: {}\nArchivos implicados:\n",
-        brief.kind.name_es(),
+        "{TASK}\n\nProblem ({}): {}\nObserved architecture: {}\nFiles involved:\n",
+        brief.kind.name(),
         brief.restated,
         observed.summary
     );
@@ -153,7 +150,7 @@ fn input(brief: &IntakeBrief, observed: &ObservationReport, git: bool, mcp: &[&s
     if !mcp.is_empty() {
         let _ = writeln!(
             out,
-            "Para buscar issues relacionados usa solo consultas de estas herramientas MCP: {}.",
+            "To look for related issues, use only queries of these MCP tools: {}.",
             mcp.join(", ")
         );
     }
@@ -161,7 +158,7 @@ fn input(brief: &IntakeBrief, observed: &ObservationReport, git: bool, mcp: &[&s
     out
 }
 
-/// Days since 1970-01-01 of an `AAAA-MM-DD` date (anything after the day,
+/// Days since 1970-01-01 of a `YYYY-MM-DD` date (anything after the day,
 /// like a time, is ignored).
 fn day_number(date: &str) -> Option<i64> {
     let date = date.trim().get(..10)?;
@@ -182,7 +179,7 @@ fn day_number(date: &str) -> Option<i64> {
     Some(era * 146_097 + doe - 719_468)
 }
 
-/// The `AAAA-MM-DD` date of a day number.
+/// The `YYYY-MM-DD` date of a day number.
 fn civil(days: i64) -> String {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -222,7 +219,7 @@ fn commits_per_week(commits: &[Commit]) -> Vec<(String, u32)> {
 
 fn chart(weeks: &[(String, u32)]) -> ChartSpec {
     ChartSpec {
-        title: "Commits por semana en los archivos implicados".into(),
+        title: "Commits per week in the files involved".into(),
         kind: ChartKind::Bar,
         labels: weeks.iter().map(|(week, _)| week.clone()).collect(),
         series: vec![Series {
@@ -254,10 +251,10 @@ fn source_label(source: &SourceRef) -> String {
 
 fn source_kind(source: &SourceRef) -> &'static str {
     match source {
-        SourceRef::File { .. } => "archivo",
+        SourceRef::File { .. } => "file",
         SourceRef::Commit { .. } => "commit",
         SourceRef::Url { .. } => "web",
-        SourceRef::Command { .. } => "comando",
+        SourceRef::Command { .. } => "command",
     }
 }
 
@@ -278,14 +275,14 @@ impl ResearchNode for Data {
         let Some(brief) = ctx.data::<IntakeBrief>(BRIEF_KEY) else {
             return Ok(NodeOutcome::Back {
                 to: Stage::Intake,
-                reason: "el problema no está definido: falta el pedido reformulado de Intake"
+                reason: "the problem is not defined: the restated request from Intake is missing"
                     .into(),
             });
         };
         let Some(observed) = ctx.data::<ObservationReport>(observation::REPORT_KEY) else {
             return Ok(NodeOutcome::Back {
                 to: Stage::Observation,
-                reason: "faltan los archivos implicados que marca la observación".into(),
+                reason: "the files involved that Observation marks are missing".into(),
             });
         };
         let git = has_shell(ctx);
@@ -314,7 +311,7 @@ impl ResearchNode for Data {
             };
             evidence.push(ctx.state_mut().add_evidence(
                 format!(
-                    "Cambio en los archivos implicados{date}: {}",
+                    "Change in the files involved{date}: {}",
                     commit.summary.trim()
                 ),
                 SourceRef::Commit {
@@ -342,7 +339,7 @@ impl ResearchNode for Data {
         let mut web = 0;
         if !libraries.is_empty() {
             let prompt = format!(
-                "Problema: {}\nLibrerías: {}",
+                "Problem: {}\nLibraries: {}",
                 brief.restated,
                 libraries.join(", ")
             );
@@ -357,7 +354,7 @@ impl ResearchNode for Data {
                     web_summary = Some(text).filter(|t| !t.is_empty());
                 }
                 Err(err) => {
-                    let message = format!("No se pudo consultar la web: {err}");
+                    let message = format!("Could not search the web: {err}");
                     ctx.notice(NoticeLevel::Warning, &message);
                     ctx.log(message);
                 }
@@ -377,17 +374,17 @@ impl ResearchNode for Data {
         if records.is_empty() {
             ctx.emit(BlockKind::Markdown {
                 title: None,
-                source: "No se encontraron datos adicionales: ni historial, ni logs, ni \
-                         métricas, ni documentación relevante."
+                source: "No additional data found: no history, logs, metrics or \
+                         relevant documentation."
                     .into(),
             })?;
         } else {
             ctx.emit(BlockKind::Table(TableSpec {
                 columns: vec![
                     Column::new("Id"),
-                    Column::new("Tipo"),
-                    Column::new("Dato"),
-                    Column::new("Fuente"),
+                    Column::new("Kind"),
+                    Column::new("Fact"),
+                    Column::new("Source"),
                 ],
                 rows: records
                     .iter()
@@ -406,18 +403,18 @@ impl ResearchNode for Data {
 
         let ids: Vec<String> = evidence.iter().map(ToString::to_string).collect();
         ctx.log(format!(
-            "Datos reunidos: {} commits en {} semanas, {findings} hallazgos del repo{}, \
-             {web} citas web{}; evidencia {}.",
+            "Data gathered: {} commits over {} weeks, {findings} findings in the repo{}, \
+             {web} web citations{}; evidence {}.",
             answer.commits.len(),
             weeks.len(),
-            if mcp.is_empty() { "" } else { " (con MCP)" },
+            if mcp.is_empty() { "" } else { " (with MCP)" },
             if libraries.is_empty() {
                 String::new()
             } else {
-                format!(" sobre {}", libraries.join(", "))
+                format!(" about {}", libraries.join(", "))
             },
             if ids.is_empty() {
-                "ninguna".to_owned()
+                "none".to_owned()
             } else {
                 ids.join(", ")
             },
@@ -459,12 +456,12 @@ mod tests {
 
     fn observed() -> ObservationReport {
         ObservationReport {
-            summary: "Un crate con el login.".into(),
+            summary: "A crate with the login.".into(),
             architecture: "flowchart TD\n  login --> hash".into(),
             key_files: vec![KeyFile {
                 path: "src/login.rs".into(),
-                kind: "código".into(),
-                role: "inicia sesión".into(),
+                kind: "code".into(),
+                role: "logs in".into(),
             }],
             evidence: vec![],
         }
@@ -474,7 +471,7 @@ mod tests {
         let citation = Citation {
             url: "https://docs.rs/argon2".into(),
             title: Some("argon2 - docs.rs".into()),
-            cited_text: "Los parámetros por defecto usan 19 MiB de memoria.".into(),
+            cited_text: "The default parameters use 19 MiB of memory.".into(),
         };
         ScriptedResponse::events(vec![
             LlmEvent::MessageStart {
@@ -487,7 +484,7 @@ mod tests {
             LlmEvent::BlockStop { index: 0 },
             LlmEvent::TextDelta {
                 index: 1,
-                text: "- argon2 es lento por diseño.".into(),
+                text: "- argon2 is slow by design.".into(),
             },
             LlmEvent::Citation { index: 1, citation },
             LlmEvent::BlockStop { index: 1 },
@@ -501,12 +498,12 @@ mod tests {
     fn agent_answer() -> String {
         json!({
             "commits": [
-                {"sha": "aaa1111222", "date": "2026-09-28", "summary": "usa argon2"},
-                {"sha": "bbb3333444", "date": "2026-10-01", "summary": "sube el costo"},
-                {"sha": "ccc5555666", "date": "2026-10-14", "summary": "agrega log"}
+                {"sha": "aaa1111222", "date": "2026-09-28", "summary": "use argon2"},
+                {"sha": "bbb3333444", "date": "2026-10-01", "summary": "raise the cost"},
+                {"sha": "ccc5555666", "date": "2026-10-14", "summary": "add log"}
             ],
             "findings": [
-                {"claim": "El issue #12 reporta logins de 6 s.",
+                {"claim": "Issue #12 reports 6 s logins.",
                  "source": {"type": "url", "url": "https://github.com/o/r/issues/12", "title": "#12"}}
             ],
             "libraries": ["argon2"]
@@ -540,17 +537,17 @@ mod tests {
             git_log,
             CommandOutput {
                 status: Some(0),
-                stdout: "aaa1111222\t2026-09-28\tusa argon2\n".into(),
+                stdout: "aaa1111222\t2026-09-28\tuse argon2\n".into(),
                 ..CommandOutput::default()
             },
         ));
         let mcp =
-            Arc::new(FakeMcp::new().with_text_tool("github", "search_issues", "#12 login lento"));
+            Arc::new(FakeMcp::new().with_text_tool("github", "search_issues", "#12 slow login"));
         let service = agent(&llm, &workspace(), Some(shell.clone()), |tools| {
             let spec = McpSpec {
                 server: "github".into(),
                 name: "search_issues".into(),
-                description: "Busca issues".into(),
+                description: "Searches issues".into(),
                 input_schema: json!({"type": "object"}),
             };
             tools
@@ -599,7 +596,7 @@ mod tests {
         );
         assert_eq!(
             report.web_summary.as_deref(),
-            Some("- argon2 es lento por diseño.")
+            Some("- argon2 is slow by design.")
         );
 
         let shown = blocks(&sink);
@@ -623,7 +620,7 @@ mod tests {
         Data::new().run(&mut ctx).await.unwrap();
 
         assert_eq!(llm.requests().len(), 1);
-        assert!(format!("{:?}", llm.requests()[0].messages).contains("No tienes acceso a git"));
+        assert!(format!("{:?}", llm.requests()[0].messages).contains("You have no access to git"));
         assert!(ctx.state().evidence.is_empty());
         let shown = blocks(&sink);
         assert!(
@@ -649,7 +646,7 @@ mod tests {
         assert!(
             ctx.state().journal[0]
                 .text
-                .contains("No se pudo consultar la web")
+                .contains("Could not search the web")
         );
     }
 
@@ -685,7 +682,7 @@ mod tests {
             assert_eq!(civil(day_number(date).unwrap()), date);
         }
         assert_eq!(day_number("2026-13-01"), None);
-        assert_eq!(day_number("ayer"), None);
+        assert_eq!(day_number("yesterday"), None);
         let commit = |date: &str| Commit {
             sha: "x".into(),
             date: date.into(),

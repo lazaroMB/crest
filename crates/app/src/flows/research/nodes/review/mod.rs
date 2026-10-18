@@ -1,4 +1,4 @@
-//! Node 14, Revisión crítica: looks for holes in each Spec and its plan
+//! Node 14, Critical review: looks for holes in each Spec and its plan
 //! and, when it finds serious ones, sends the flow back to the earliest
 //! stage that left the information out.
 //!
@@ -17,7 +17,7 @@
 //!    forced tool `submit_review`.
 //!
 //! Serious gaps end in `Back { to }` to the earliest `missing_stage`, with
-//! the gaps in the reason; otherwise `Done` with "Revisión: sin huecos"
+//! the gaps in the reason; otherwise `Done` with "Review: no gaps"
 //! and a table of minor remarks. Either way `review.md` is written to the
 //! folder of each Spec through its [`SpecSink`]. The frame stops after
 //! three returns from this stage and asks the user.
@@ -68,22 +68,22 @@ const RETRIES: usize = 1;
 /// Most lines read from `plan.json`.
 const PLAN_LINES: usize = 100_000;
 
-const SYSTEM: &str = "Eres un revisor crítico independiente de Specs de software. No conoces \
-la conversación que produjo el Spec: solo ves el Spec, su plan y la evidencia con sus fuentes. \
-Busca huecos: afirmaciones que la evidencia citada no sostiene, un problema que no es medible, \
-una hipótesis sin forma de probarla, una propuesta que no resuelve el problema o viola una \
-restricción, especificación técnica insuficiente para implementarla, y un plan que no cubre el \
-Spec. Para cada hueco indica la etapa más temprana del flujo donde falta la información \
-(missing_stage) y su gravedad: grave si impide implementar o sostener el Spec, menor si es una \
-mejora. No reportes estilo ni redacción. Si no hay huecos, entrega gaps vacío. Responde \
-llamando a la herramienta submit_review.";
+const SYSTEM: &str = "You are an independent critical reviewer of software Specs. You do not \
+know the conversation that produced the Spec: you only see the Spec, its plan and the evidence \
+with its sources. Look for gaps: claims the cited evidence does not support, a problem that is \
+not measurable, a hypothesis with no way to test it, a proposal that does not solve the \
+problem or violates a constraint, a technical specification too thin to implement, and a plan \
+that does not cover the Spec. For each gap give the earliest stage of the flow where the \
+information is missing (missing_stage) and its severity: major if it prevents implementing or \
+defending the Spec, minor if it is an improvement. Do not report style or wording. If there \
+are no gaps, submit empty gaps. Reply by calling the submit_review tool.";
 
-const TOOL_DESCRIPTION: &str = "Entrega los huecos encontrados en el Spec y su plan.";
+const TOOL_DESCRIPTION: &str = "Submits the gaps found in the Spec and its plan.";
 
 /// What the reviewer answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReviewAnswer {
-    /// Huecos encontrados; vacío si no hay.
+    /// Gaps found; empty if there are none.
     pub gaps: Vec<Gap>,
 }
 
@@ -145,7 +145,7 @@ impl ResearchNode for Review {
         if drafts.is_empty() {
             return Ok(NodeOutcome::Back {
                 to: Stage::Spec,
-                reason: "no hay un Spec escrito que revisar".into(),
+                reason: "there is no written Spec to review".into(),
             });
         }
         let planned: Vec<String> = ctx.data(PLANS_KEY).unwrap_or_default();
@@ -162,14 +162,14 @@ impl ResearchNode for Review {
             let blocked = gaps.iter().any(Gap::is_major);
             if blocked {
                 ctx.log(format!(
-                    "Revisión determinista de {}: {} huecos graves; no se consulta al modelo.",
+                    "Deterministic review of {}: {} major gaps; the model is not consulted.",
                     draft.folder,
                     gaps.iter().filter(|g| g.is_major()).count()
                 ));
             } else {
                 let found = judge(ctx, draft, plan.as_ref()).await?;
                 ctx.log(format!(
-                    "Revisión de {} por un subagente sin historial: {} huecos ({} graves).",
+                    "Review of {} by a subagent without history: {} gaps ({} major).",
                     draft.folder,
                     found.len(),
                     found.iter().filter(|g| g.is_major()).count()
@@ -191,13 +191,13 @@ impl ResearchNode for Review {
         if let Some(to) = major.iter().map(|g| g.missing_stage).min() {
             let list = gap_list(&major);
             ctx.emit(BlockKind::Markdown {
-                title: Some(format!("Revisión: {} huecos", major.len())),
-                source: format!("Regreso a **{}**.\n\n{list}", to.name_es()),
+                title: Some(format!("Review: {} gaps", major.len())),
+                source: format!("Back to **{}**.\n\n{list}", to.name()),
             })?;
             return Ok(NodeOutcome::Back {
                 to,
                 reason: format!(
-                    "la revisión crítica encontró {} huecos graves:\n{list}",
+                    "the critical review found {} major gaps:\n{list}",
                     major.len()
                 ),
             });
@@ -205,7 +205,7 @@ impl ResearchNode for Review {
         ctx.emit(BlockKind::Markdown {
             title: None,
             source: format!(
-                "Revisión: sin huecos\n\nSe revisaron {} Specs; {} observaciones menores.",
+                "Review: no gaps\n\n{} Specs reviewed; {} minor remarks.",
                 drafts.len(),
                 minor.len()
             ),
@@ -235,12 +235,12 @@ impl Review {
             Some(plan) => gaps.extend(plan_gaps(&draft.folder, plan, state)),
             None if !planned.contains(&draft.folder) => gaps.push(Gap::major(
                 claim,
-                "el Spec no tiene plan de implementación",
+                "the Spec has no implementation plan",
                 Stage::Plan,
             )),
             None => gaps.push(Gap::minor(
                 claim,
-                "no se pudo leer el plan para revisarlo",
+                "the plan could not be read to review it",
                 Stage::Plan,
             )),
         }
@@ -274,7 +274,7 @@ impl Review {
             if !exists {
                 gaps.push(Gap::major(
                     format!("[{}] {}", e.id, e.claim),
-                    format!("la fuente `{path}` no existe en el workspace"),
+                    format!("the source `{path}` does not exist in the workspace"),
                     Stage::Observation,
                 ));
             }
@@ -313,17 +313,17 @@ async fn judge(
     let prompt = prompt(ctx.state(), draft, plan, ctx.user_reply());
     ask_valid(ctx, SYSTEM, &prompt, &tool, RETRIES, |value| {
         let answer: ReviewAnswer = serde_json::from_value(value)
-            .map_err(|e| vec![format!("el JSON no cumple el schema: {e}")])?;
+            .map_err(|e| vec![format!("the JSON does not match the schema: {e}")])?;
         let mut errors = Vec::new();
         for gap in &answer.gaps {
             if gap.missing_stage >= Stage::CriticalReview {
                 errors.push(format!(
-                    "missing_stage de «{}» debe ser una etapa anterior a la revisión",
+                    "missing_stage of \"{}\" must be a stage before the review",
                     gap.claim
                 ));
             }
             if gap.claim.trim().is_empty() || gap.problem.trim().is_empty() {
-                errors.push("cada hueco necesita claim y problem".into());
+                errors.push("each gap needs claim and problem".into());
             }
         }
         if errors.is_empty() {
@@ -344,18 +344,18 @@ fn prompt(
     reply: Option<&str>,
 ) -> String {
     let mut out = format!(
-        "Spec (carpeta {}), spec.md:\n\n{}\n",
+        "Spec (folder {}), spec.md:\n\n{}\n",
         draft.folder, draft.spec_md
     );
     match plan.and_then(|p| serde_json::to_string_pretty(p).ok()) {
         Some(json) => {
             let _ = write!(out, "\nplan.json:\n\n```json\n{json}\n```\n");
         }
-        None => out.push_str("\nplan.json: no disponible.\n"),
+        None => out.push_str("\nplan.json: not available.\n"),
     }
-    out.push_str("\nEvidencia reunida (id, afirmación, fuente):\n");
+    out.push_str("\nEvidence gathered (id, claim, source):\n");
     if state.evidence.is_empty() {
-        out.push_str("- ninguna\n");
+        out.push_str("- none\n");
     }
     for e in &state.evidence {
         let _ = writeln!(
@@ -366,7 +366,7 @@ fn prompt(
             describe_source(&e.source)
         );
     }
-    out.push_str("\nEtapas posibles para missing_stage:\n");
+    out.push_str("\nPossible stages for missing_stage:\n");
     for stage in Stage::ALL
         .into_iter()
         .filter(|s| *s < Stage::CriticalReview)
@@ -375,13 +375,10 @@ fn prompt(
             .ok()
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
-        let _ = writeln!(out, "- {id}: {}", stage.name_es());
+        let _ = writeln!(out, "- {id}: {}", stage.name());
     }
     if let Some(reply) = reply {
-        let _ = write!(
-            out,
-            "\nIndicaciones del usuario para esta revisión: {reply}\n"
-        );
+        let _ = write!(out, "\nUser instructions for this review: {reply}\n");
     }
     out
 }
@@ -391,10 +388,10 @@ fn gap_list(gaps: &[&Gap]) -> String {
     gaps.iter()
         .map(|g| {
             format!(
-                "- «{}»: {} (falta en {})\n",
+                "- \"{}\": {} (missing in {})\n",
                 g.claim,
                 g.problem,
-                g.missing_stage.name_es()
+                g.missing_stage.name()
             )
         })
         .collect()
@@ -404,7 +401,7 @@ fn gap_list(gaps: &[&Gap]) -> String {
 fn gaps_table(gaps: &[&Gap]) -> TableSpec {
     let text = |s: &str| Cell::Text(s.to_owned());
     TableSpec {
-        columns: ["Afirmación", "Problema", "Etapa", "Gravedad"]
+        columns: ["Claim", "Problem", "Stage", "Severity"]
             .into_iter()
             .map(Column::new)
             .collect(),
@@ -414,8 +411,8 @@ fn gaps_table(gaps: &[&Gap]) -> TableSpec {
                 vec![
                     text(&g.claim),
                     text(&g.problem),
-                    text(g.missing_stage.name_es()),
-                    text(g.severity.name_es()),
+                    text(g.missing_stage.name()),
+                    text(g.severity.name()),
                 ]
             })
             .collect(),
@@ -426,17 +423,17 @@ fn gaps_table(gaps: &[&Gap]) -> TableSpec {
 fn review_markdown(folder: &str, gaps: &[Gap]) -> String {
     let major: Vec<&Gap> = gaps.iter().filter(|g| g.is_major()).collect();
     let minor: Vec<&Gap> = gaps.iter().filter(|g| !g.is_major()).collect();
-    let mut out = format!("# Revisión crítica de {folder}\n\n");
+    let mut out = format!("# Critical review of {folder}\n\n");
     if major.is_empty() {
-        out.push_str("Sin huecos graves.\n\n");
+        out.push_str("No major gaps.\n\n");
     } else {
-        let _ = write!(out, "## Huecos graves\n\n{}\n", gap_list(&major));
+        let _ = write!(out, "## Major gaps\n\n{}\n", gap_list(&major));
     }
-    out.push_str("## Observaciones menores\n\n");
+    out.push_str("## Minor remarks\n\n");
     if minor.is_empty() {
-        out.push_str("Ninguna.\n");
+        out.push_str("None.\n");
     } else {
-        out.push_str("| Afirmación | Problema | Etapa |\n| --- | --- | --- |\n");
+        out.push_str("| Claim | Problem | Stage |\n| --- | --- | --- |\n");
         for g in minor {
             let cell = |s: &str| s.replace('|', "\\|");
             let _ = writeln!(
@@ -444,7 +441,7 @@ fn review_markdown(folder: &str, gaps: &[Gap]) -> String {
                 "| {} | {} | {} |",
                 cell(&g.claim),
                 cell(&g.problem),
-                g.missing_stage.name_es()
+                g.missing_stage.name()
             );
         }
     }

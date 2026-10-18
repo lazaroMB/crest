@@ -133,8 +133,8 @@ impl NodeDeps {
         self
     }
 
-    /// The read-only agent of the stages that only explore (Observación,
-    /// Datos, Investigación); see [`explore_agent`](super::agents::explore_agent).
+    /// The read-only agent of the stages that only explore (Observation,
+    /// Data, Research); see [`explore_agent`](super::agents::explore_agent).
     /// Without it they use the agent of [`NodeDeps::with_agent`].
     #[must_use]
     pub fn with_explore_agent(mut self, agent: Arc<AgentService>) -> Self {
@@ -651,7 +651,7 @@ mod tests {
         NodeContext::new(
             Stage::Hypotheses,
             deps,
-            "el login es lento",
+            "login is slow",
             ResearchState::default(),
         )
     }
@@ -659,16 +659,16 @@ mod tests {
     #[tokio::test]
     async fn ask_uses_the_role_of_the_stage() {
         let llm = Arc::new(ScriptedLlm::new([ScriptedResponse::text(
-            "  H1: la caché  ",
+            "  H1: the cache  ",
         )]));
         let ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()));
         assert_eq!(
-            ctx.ask("sistema", "pregunta").await.unwrap(),
-            "H1: la caché"
+            ctx.ask("system", "question").await.unwrap(),
+            "H1: the cache"
         );
         let req = llm.last_request().unwrap();
         assert_eq!(req.model.role, ModelRole::Plan);
-        assert_eq!(req.system[0].text, "sistema");
+        assert_eq!(req.system[0].text, "system");
     }
 
     #[tokio::test]
@@ -687,10 +687,10 @@ mod tests {
             Arc::new(ScriptedLlm::new([])),
             Arc::new(RecordingSink::new()),
         );
-        ctx.log("dos hipótesis");
+        ctx.log("two hypotheses");
         let entry = &ctx.state().journal[0];
         assert_eq!((entry.at, entry.stage), (7, Stage::Hypotheses));
-        assert_eq!(entry.text, "dos hipótesis");
+        assert_eq!(entry.text, "two hypotheses");
     }
 
     #[test]
@@ -734,7 +734,7 @@ mod tests {
         )
         .with_reply("agrega H2");
         assert_eq!(ctx.user_reply(), Some("agrega H2"));
-        assert_eq!(ctx.problem(), "el login es lento");
+        assert_eq!(ctx.problem(), "login is slow");
         ctx.state_mut().problem_statements.push("p".into());
         assert_eq!(ctx.into_state().problem_statements, ["p"]);
     }
@@ -746,7 +746,7 @@ mod tests {
 
     fn non_empty(a: &Items) -> Result<(), String> {
         if a.items.is_empty() {
-            Err("`items` está vacío".into())
+            Err("`items` is empty".into())
         } else {
             Ok(())
         }
@@ -759,28 +759,28 @@ mod tests {
             ScriptedResponse::text("```json\n{\"items\": [\"a\"]}\n```"),
         ]));
         let ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()));
-        let answer: Items = ctx.ask_json("s", "dame items", non_empty).await.unwrap();
+        let answer: Items = ctx.ask_json("s", "give me items", non_empty).await.unwrap();
         assert_eq!(answer.items, ["a"]);
         let retry = llm.last_request().unwrap();
         assert_eq!(retry.messages.len(), 3);
         let ContentPart::Text { text } = &retry.messages[2].content[0] else {
             panic!("expected text");
         };
-        assert!(text.contains("`items` está vacío"), "{text}");
+        assert!(text.contains("`items` is empty"), "{text}");
     }
 
     #[tokio::test]
     async fn ask_json_fails_after_two_invalid_answers() {
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::text("no"),
-            ScriptedResponse::text("tampoco"),
+            ScriptedResponse::text("nope"),
         ]));
         let ctx = context(llm, Arc::new(RecordingSink::new()));
         let err = ctx
             .ask_json::<Items>("s", "p", non_empty)
             .await
             .unwrap_err();
-        assert!(matches!(err, NodeError::Failed(m) if m.contains("Hipótesis")));
+        assert!(matches!(err, NodeError::Failed(m) if m.contains("Hypotheses")));
     }
 
     #[test]

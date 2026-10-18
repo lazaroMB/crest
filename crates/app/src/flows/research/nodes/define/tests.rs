@@ -13,13 +13,13 @@ use crate::ports::llm::LlmRequest;
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::RecordingSink;
 
-const GOOD: &str = "a 500 requests por segundo el tiempo de respuesta sube de 10 ms a 500 ms";
-const BAD: &str = "el tiempo de respuesta depende de la carga";
+const GOOD: &str = "at 500 requests per second the response time rises from 10 ms to 500 ms";
+const BAD: &str = "the response time depends on the load";
 
 fn state() -> ResearchState {
     let mut state = ResearchState::default();
     state.add_evidence(
-        "p95 de 500 ms con 500 rps",
+        "p95 of 500 ms at 500 rps",
         SourceRef::Command {
             command: "make bench".into(),
             output_excerpt: "p95=500ms".into(),
@@ -27,7 +27,7 @@ fn state() -> ResearchState {
         1,
     );
     state.add_hypothesis(
-        "la caché de sesiones se invalida en cada request",
+        "the session cache is invalidated on every request",
         vec![],
         1,
     );
@@ -39,9 +39,9 @@ fn draft(statement: &str) -> ScriptedResponse {
         json!({
             "problems": [{ "statement": statement, "evidence_ids": ["E1"] }],
             "constraints": [
-                { "kind": "performance", "statement": "p95 < 20 ms a 500 rps",
+                { "kind": "performance", "statement": "p95 < 20 ms at 500 rps",
                   "test": { "kind": "command", "ref": "make bench-sessions" } },
-                { "kind": "compatibility", "statement": "el formato de sesión no cambia", "test": null }
+                { "kind": "compatibility", "statement": "the session format does not change", "test": null }
             ]
         })
         .to_string(),
@@ -76,7 +76,7 @@ async fn run(
         Arc::clone(&sink) as _,
     )
     .with_clock(|| 9);
-    let mut ctx = NodeContext::new(Stage::Definition, deps, "el login es lento", state);
+    let mut ctx = NodeContext::new(Stage::Definition, deps, "login is slow", state);
     if let Some(reply) = reply {
         ctx = ctx.with_reply(reply);
     }
@@ -134,12 +134,12 @@ async fn writes_the_definition_and_the_constraint_table() {
     };
     assert!(source.contains(&format!("1. {GOOD} [E1]")));
     assert_eq!(table.rows.len(), 2);
-    assert_eq!(table.rows[0][1], Cell::Text("rendimiento".into()));
+    assert_eq!(table.rows[0][1], Cell::Text("performance".into()));
     assert_eq!(table.rows[1][3], Cell::Null);
 
     assert_eq!(run.requests.len(), 2);
     assert!(run.requests.iter().all(|r| r.model.role == ModelRole::Plan));
-    assert!(user_text(&run.requests[0]).contains("E1: p95 de 500 ms"));
+    assert!(user_text(&run.requests[0]).contains("E1: p95 of 500 ms"));
     assert!(user_text(&run.requests[1]).contains(GOOD));
     assert_eq!(run.state.journal.last().unwrap().stage, Stage::Definition);
 }
@@ -153,7 +153,7 @@ async fn asks_again_with_the_reason_when_the_heuristic_rejects() {
     assert_eq!(run.requests.len(), 3);
     let retry = user_text(&run.requests[1]);
     assert!(
-        retry.contains(BAD) && retry.contains("«depende de»"),
+        retry.contains(BAD) && retry.contains("\"depends on\""),
         "{retry}"
     );
 }
@@ -164,8 +164,8 @@ async fn asks_the_user_when_still_unmeasurable() {
         state(),
         None,
         [
-            draft("el login tarda más de 2 s"),
-            verdict(false, "no dice con cuántos usuarios"),
+            draft("login takes more than 2 s"),
+            verdict(false, "it does not say with how many users"),
             draft(BAD),
         ],
     )
@@ -173,9 +173,9 @@ async fn asks_the_user_when_still_unmeasurable() {
     let NodeOutcome::NeedsInput { prompt } = run.outcome else {
         panic!("expected NeedsInput, got {:?}", run.outcome);
     };
-    assert!(prompt.contains(BAD) && prompt.contains("magnitud con unidad"));
+    assert!(prompt.contains(BAD) && prompt.contains("magnitude with a unit"));
     let retry = user_text(&run.requests[2]);
-    assert!(retry.contains("no dice con cuántos usuarios"));
+    assert!(retry.contains("it does not say with how many users"));
     assert!(run.state.problem_statements.is_empty());
     assert!(run.state.constraints.is_empty());
     assert!(run.blocks.is_empty());
@@ -185,15 +185,15 @@ async fn asks_the_user_when_still_unmeasurable() {
 #[tokio::test]
 async fn reruns_replace_the_definition_with_the_users_answer() {
     let mut previous = state();
-    previous.problem_statements.push("vieja".into());
-    previous.add_constraint(ConstraintKind::Other, "vieja", None);
+    previous.problem_statements.push("old".into());
+    previous.add_constraint(ConstraintKind::Other, "old", None);
     let run = run(
         previous,
-        Some("con 500 rps"),
+        Some("at 500 rps"),
         [draft(GOOD), verdict(true, "")],
     )
     .await;
-    assert!(user_text(&run.requests[0]).contains("Indicaciones del usuario: con 500 rps"));
+    assert!(user_text(&run.requests[0]).contains("User instructions: at 500 rps"));
     assert_eq!(run.state.problem_statements, [GOOD]);
     assert_eq!(run.state.constraints.len(), 2);
     assert_eq!(run.state.constraints[0].id.to_string(), "C1");

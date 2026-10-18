@@ -29,7 +29,7 @@ fn state() -> ResearchState {
     let mut state = ResearchState::default();
     state
         .problem_statements
-        .push("a 500 requests por segundo el tiempo de respuesta sube de 10 ms a 500 ms".into());
+        .push("at 500 requests per second the response time rises from 10 ms to 500 ms".into());
     state.add_constraint(ConstraintKind::Performance, "p95 < 20 ms", None);
     state
 }
@@ -37,7 +37,7 @@ fn state() -> ResearchState {
 fn repo_answer() -> ScriptedResponse {
     ScriptedResponse::text(
         json!({ "findings": [{
-            "name": "LruCache", "summary": "caché LRU ya usada por el índice",
+            "name": "LruCache", "summary": "LRU cache already used by the index",
             "path": "src/cache.rs", "line_start": 1, "line_end": 4
         }]})
         .to_string(),
@@ -47,8 +47,8 @@ fn repo_answer() -> ScriptedResponse {
 /// A web answer whose text is split around a citation of moka.
 fn web_answer() -> ScriptedResponse {
     let text = json!({ "options": [
-        { "name": "moka", "kind": "library", "summary": "caché concurrente", "url": MOKA },
-        { "name": "Cachear sesiones", "kind": "article", "summary": "TTL por sesión", "url": BLOG }
+        { "name": "moka", "kind": "library", "summary": "concurrent cache", "url": MOKA },
+        { "name": "Caching sessions", "kind": "article", "summary": "per-session TTL", "url": BLOG }
     ]})
     .to_string();
     let (a, b) = text.split_at(20);
@@ -126,7 +126,7 @@ async fn run(state: ResearchState, with_agent: bool, script: Vec<ScriptedRespons
     if with_agent {
         deps = deps.with_agent(agent(&llm, &sink));
     }
-    let mut ctx = NodeContext::new(Stage::Research, deps, "el login es lento", state);
+    let mut ctx = NodeContext::new(Stage::Research, deps, "login is slow", state);
     let outcome = Research::new().run(&mut ctx).await.unwrap();
     let options = ctx.data(OPTIONS_KEY);
     let blocks = sink
@@ -183,7 +183,7 @@ async fn records_repo_and_web_solutions_as_evidence() {
     };
     assert_eq!(table.rows.len(), 3);
     assert_eq!(table.rows[0][3], Cell::Text("src/cache.rs:1-4".into()));
-    assert_eq!(table.rows[1][1], Cell::Text("librería".into()));
+    assert_eq!(table.rows[1][1], Cell::Text("library".into()));
     assert_eq!(sources.len(), 3);
 
     // The agent read the file with the explore role; the web request
@@ -203,7 +203,7 @@ async fn records_repo_and_web_solutions_as_evidence() {
             .last()
             .unwrap()
             .text
-            .contains("1 en el repo y 2 en la web")
+            .contains("1 in the repo and 2 on the web")
     );
 }
 
@@ -213,7 +213,11 @@ async fn without_an_agent_only_searches_the_web() {
     assert_eq!(run.outcome, NodeOutcome::Done);
     assert_eq!(run.requests.len(), 1);
     assert_eq!(run.options.unwrap().len(), 2);
-    assert!(run.state.journal[0].text.contains("no se exploró el repo"));
+    assert!(
+        run.state.journal[0]
+            .text
+            .contains("the repo was not explored")
+    );
 }
 
 #[tokio::test]

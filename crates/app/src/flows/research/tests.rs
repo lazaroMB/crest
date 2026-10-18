@@ -79,7 +79,7 @@ impl Fixture {
             FakeNode::new(B),
             FakeNode::new(C).then(NodeOutcome::Back {
                 to: A,
-                reason: "falta el perfil de la consulta".into(),
+                reason: "the query profile is missing".into(),
             }),
         )
     }
@@ -101,7 +101,7 @@ impl Fixture {
 
     pub(super) async fn start(&self) -> ResearchFlow {
         let storage = Arc::clone(&self.storage) as Arc<dyn SessionStorage>;
-        ResearchFlow::start(self.graph(), storage, "s1", "el login tarda 2 s")
+        ResearchFlow::start(self.graph(), storage, "s1", "login takes 2 s")
             .await
             .unwrap()
     }
@@ -144,7 +144,7 @@ async fn three_nodes_with_a_gate_and_a_back() {
 
     // Confirming runs C, which goes back to A; A and B run again and B
     // asks again.
-    let status = flow.provide_input("sí").await.unwrap();
+    let status = flow.provide_input("yes").await.unwrap();
     assert_eq!(waiting_at(&status), Some(B));
     assert_eq!(fx.runs(), [2, 2, 1]);
 
@@ -158,14 +158,14 @@ async fn three_nodes_with_a_gate_and_a_back() {
     assert!(
         journal
             .iter()
-            .any(|e| e.stage == C && e.text.contains("Regreso a Observación"))
+            .any(|e| e.stage == C && e.text.contains("Back to Observation"))
     );
     assert_eq!(
         journal.last().map(|e| e.text.as_str()),
-        Some("Flujo terminado.")
+        Some("Flow finished.")
     );
     assert!(matches!(
-        flow.provide_input("más").await,
+        flow.provide_input("more").await,
         Err(FlowError::Completed)
     ));
 }
@@ -194,12 +194,9 @@ async fn feedback_at_a_gate_reruns_the_node() {
     let fx = Fixture::with_one_back();
     let flow = fx.start().await;
     flow.run().await.unwrap();
-    let status = flow.provide_input("agrega la hipótesis H2").await.unwrap();
+    let status = flow.provide_input("add hypothesis H2").await.unwrap();
     assert_eq!(waiting_at(&status), Some(B));
-    assert_eq!(
-        fx.b.replies(),
-        [None, Some("agrega la hipótesis H2".into())]
-    );
+    assert_eq!(fx.b.replies(), [None, Some("add hypothesis H2".into())]);
     assert_eq!(fx.runs(), [1, 2, 0]);
 }
 
@@ -208,22 +205,22 @@ async fn questions_rerun_the_node_with_the_answer() {
     let fx = Fixture::new(
         FakeNode::new(B),
         FakeNode::new(C).then(NodeOutcome::NeedsInput {
-            prompt: "¿Qué versión de Postgres?".into(),
+            prompt: "Which Postgres version?".into(),
         }),
     );
     let flow = fx.start().await;
     flow.run().await.unwrap();
-    let status = flow.provide_input("sí").await.unwrap();
+    let status = flow.provide_input("yes").await.unwrap();
     assert_eq!(
         status,
         FlowStatus::WaitingForInput {
             stage: C,
-            prompt: "¿Qué versión de Postgres?".into()
+            prompt: "Which Postgres version?".into()
         }
     );
-    let status = flow.provide_input("la 16").await.unwrap();
+    let status = flow.provide_input("16").await.unwrap();
     assert_eq!(status, FlowStatus::Completed);
-    assert_eq!(fx.c.replies(), [None, Some("la 16".into())]);
+    assert_eq!(fx.c.replies(), [None, Some("16".into())]);
 }
 
 #[tokio::test]
@@ -240,7 +237,7 @@ async fn resumes_from_storage_after_dropping_the_runner() {
         .unwrap();
     let position = flow.position().await.unwrap();
     assert_eq!(position.stage, B);
-    assert_eq!(flow.problem().await.unwrap(), "el login tarda 2 s");
+    assert_eq!(flow.problem().await.unwrap(), "login takes 2 s");
     let status = flow.run().await.unwrap();
     assert_eq!(waiting_at(&status), Some(B));
     assert_eq!(fx.runs(), [1, 1, 0]);
@@ -248,10 +245,10 @@ async fn resumes_from_storage_after_dropping_the_runner() {
 
 #[tokio::test]
 async fn a_failing_node_keeps_the_last_checkpoint() {
-    let fx = Fixture::new(FakeNode::new(B).then_fail("sin red"), FakeNode::new(C));
+    let fx = Fixture::new(FakeNode::new(B).then_fail("offline"), FakeNode::new(C));
     let flow = fx.start().await;
     let err = flow.run().await.unwrap_err();
-    assert!(err.to_string().contains("sin red"), "{err}");
+    assert!(err.to_string().contains("offline"), "{err}");
     assert_eq!(
         flow.status().await.unwrap(),
         FlowStatus::Running { next: B }
@@ -288,7 +285,7 @@ async fn stage_reports_the_position() {
     assert_eq!(position.phase(), Phase::Discovery);
     assert_eq!(
         position.to_string(),
-        "Etapa 5/14: Hipótesis (Descubrimiento) · esperando tu respuesta"
+        "Stage 5/14: Hypotheses (Discovery) · waiting for your answer"
     );
 }
 
@@ -335,7 +332,7 @@ async fn skip_only_jumps_over_optional_stages() {
     assert!(matches!(err, FlowError::NotOptional(A)));
     assert_eq!(
         err.to_string(),
-        "Observación (2/14) is not optional; only Datos (3) and Prototipo (11) can be skipped"
+        "Observation (2/14) is not optional; only Data (3) and Prototype (11) can be skipped"
     );
 
     // A graph whose middle node is optional.
@@ -380,7 +377,7 @@ async fn abort_stops_the_flow_for_good() {
     assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
     assert_eq!(flow.run().await.unwrap(), FlowStatus::Aborted);
     assert!(matches!(
-        flow.provide_input("sí").await,
+        flow.provide_input("yes").await,
         Err(FlowError::Aborted)
     ));
     assert!(matches!(flow.back(A).await, Err(FlowError::Aborted)));

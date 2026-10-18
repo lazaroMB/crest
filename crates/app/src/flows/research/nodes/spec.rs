@@ -41,19 +41,19 @@ pub const CHARTS_KEY: &str = "evidence.charts";
 /// Retries after an answer with unknown citations or missing sections.
 const RETRIES: usize = 1;
 
-const SYSTEM: &str = "Eres el redactor de Specs de un flujo de investigación de software \
-(X-Workflow). Redactas en español un Spec para un solo problema, a partir de la evidencia, \
-hipótesis, restricciones y decisiones reunidas. Toda afirmación de hecho cita los ids de \
-evidencia que la sustentan entre corchetes, como [E3] o [E1, E4]; usa solo ids de la lista. \
-No inventes datos que no estén en la evidencia. Responde llamando a la herramienta submit_spec.";
+const SYSTEM: &str = "You are the Spec writer of a software research flow (X-Workflow). You \
+write, in English, a Spec for a single problem from the evidence, hypotheses, constraints and \
+decisions gathered. Every factual claim cites the ids of the evidence that supports it in \
+brackets, such as [E3] or [E1, E4]; use only ids from the list. Do not make up data that is \
+not in the evidence. Reply by calling the submit_spec tool.";
 
-const TOOL_DESCRIPTION: &str = "Entrega las secciones del Spec. Los campos de diagramas son \
-Mermaid sin cercas de código; el resto es markdown.";
+const TOOL_DESCRIPTION: &str = "Submits the sections of the Spec. The diagram fields are \
+Mermaid without code fences; the rest is markdown.";
 
 /// A Spec written by this node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecDraft {
-    /// Folder name, e.g. `0007-cache-de-sesiones`.
+    /// Folder name, e.g. `0007-session-cache`.
     pub folder: String,
     /// Problem statement it solves.
     pub problem: String,
@@ -172,7 +172,7 @@ impl ResearchNode for Spec {
             let state = ctx.state().clone();
             let (answer, spec_md) = ask_valid(ctx, SYSTEM, &prompt, &tool, RETRIES, |value| {
                 let answer: SpecAnswer = serde_json::from_value(value)
-                    .map_err(|e| vec![format!("el JSON no cumple el schema: {e}")])?;
+                    .map_err(|e| vec![format!("the JSON does not match the schema: {e}")])?;
                 let answer = answer.normalized();
                 let mut errors = answer.problems();
                 let md = render::spec_markdown(&number, &answer, &state);
@@ -199,7 +199,7 @@ impl ResearchNode for Spec {
         for draft in &drafts {
             let cited = cited_evidence(&draft.spec_md, ctx.state()).len();
             ctx.log(format!(
-                "Spec {} escrito para «{}» con {cited} fuentes citadas.",
+                "Spec {} written for \"{}\" with {cited} sources cited.",
                 draft.folder, draft.problem
             ));
         }
@@ -257,17 +257,14 @@ fn missing_input(state: &ResearchState) -> Option<NodeOutcome> {
     let (to, reason) = if state.problem_statements.is_empty() {
         (
             Stage::Definition,
-            "no hay definición del problema para redactar el Spec",
+            "there is no problem definition to write the Spec from",
         )
     } else if state.evidence.is_empty() {
-        (
-            Stage::Observation,
-            "no hay evidencia que el Spec pueda citar",
-        )
+        (Stage::Observation, "there is no evidence the Spec can cite")
     } else if state.decisions.is_empty() {
         (
             Stage::Modeling,
-            "no hay una solución elegida para proponer en el Spec",
+            "there is no chosen solution to propose in the Spec",
         )
     } else {
         return None;
@@ -282,17 +279,17 @@ fn missing_input(state: &ResearchState) -> Option<NodeOutcome> {
 fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
     let state = ctx.state();
     let mut out = format!(
-        "Pedido original: {}\n\nProblema de este Spec: {problem}\n",
+        "Original request: {}\n\nProblem of this Spec: {problem}\n",
         ctx.problem()
     );
     let others: Vec<&String> = all.iter().filter(|p| p.as_str() != problem).collect();
     if !others.is_empty() {
-        out.push_str("\nOtros problemas (tienen su propio Spec; quedan fuera de alcance):\n");
+        out.push_str("\nOther problems (they have their own Spec; out of scope here):\n");
         for p in others {
             let _ = writeln!(out, "- {p}");
         }
     }
-    out.push_str("\nEvidencia (cita solo estos ids):\n");
+    out.push_str("\nEvidence (cite only these ids):\n");
     for e in &state.evidence {
         let _ = writeln!(
             out,
@@ -303,11 +300,11 @@ fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
         );
     }
     if !state.hypotheses.is_empty() {
-        out.push_str("\nHipótesis:\n");
+        out.push_str("\nHypotheses:\n");
         for h in &state.hypotheses {
             let _ = writeln!(
                 out,
-                "- {} (prioridad {}, {:?}): {}{}",
+                "- {} (priority {}, {:?}): {}{}",
                 h.id,
                 h.priority,
                 h.status,
@@ -315,27 +312,27 @@ fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
                 if h.causes.is_empty() {
                     String::new()
                 } else {
-                    format!("; causas: {}", h.causes.join(", "))
+                    format!("; causes: {}", h.causes.join(", "))
                 }
             );
         }
     }
     if !state.constraints.is_empty() {
-        out.push_str("\nRestricciones (la tabla se agrega sola; menciónalas por id):\n");
+        out.push_str("\nConstraints (the table is added for you; mention them by id):\n");
         for c in &state.constraints {
             let _ = writeln!(out, "- {} ({:?}): {}", c.id, c.kind, c.statement);
         }
     }
-    out.push_str("\nDecisiones:\n");
+    out.push_str("\nDecisions:\n");
     for d in &state.decisions {
         let evidence: Vec<String> = d.evidence_ids.iter().map(ToString::to_string).collect();
         let _ = writeln!(
             out,
-            "- {}: elegida «{}»; descartadas: {}; razón: {} [{}]",
+            "- {}: chose \"{}\"; discarded: {}; rationale: {} [{}]",
             d.id,
             d.chosen,
             if d.discarded.is_empty() {
-                "ninguna".to_owned()
+                "none".to_owned()
             } else {
                 d.discarded.join(", ")
             },
@@ -344,7 +341,7 @@ fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
         );
     }
     if let Some(reply) = ctx.user_reply() {
-        let _ = write!(out, "\nCorrecciones del usuario: {reply}\n");
+        let _ = write!(out, "\nUser corrections: {reply}\n");
     }
     out
 }

@@ -38,8 +38,9 @@
 //!   is missing something: the flow goes back there instead of inventing
 //!   it. `to` must be an earlier stage of the graph; after three returns
 //!   from the same stage the frame asks the user instead.
-//! - Gated stages are asked to confirm after `Done`: "sí"/"ok" moves on,
-//!   any other text reruns the node with it as `user_reply`.
+//! - Gated stages are asked to confirm after `Done`: "yes"/"ok" (or the
+//!   Spanish "sí") moves on, any other text reruns the node with it as
+//!   `user_reply`.
 //! - Errors ([`NodeError`](node::NodeError)) leave the flow at the last
 //!   checkpoint and are shown as an `Error` block.
 //! - Node-specific data that must survive a restart goes in
@@ -84,15 +85,15 @@
 //!         if ctx.state().evidence.is_empty() {
 //!             return Ok(NodeOutcome::Back {
 //!                 to: Stage::Data,
-//!                 reason: "no hay evidencia para formular hipótesis".into(),
+//!                 reason: "there is no evidence to form hypotheses".into(),
 //!             });
 //!         }
-//!         let feedback = ctx.user_reply().unwrap_or("ninguna");
-//!         let prompt = format!("Problema: {}\nCorrecciones: {feedback}", ctx.problem());
-//!         let text = ctx.ask("Escribe una hipótesis de una oración.", &prompt).await?;
+//!         let feedback = ctx.user_reply().unwrap_or("none");
+//!         let prompt = format!("Problem: {}\nCorrections: {feedback}", ctx.problem());
+//!         let text = ctx.ask("Write a one-sentence hypothesis.", &prompt).await?;
 //!         ctx.state_mut().add_hypothesis(text.clone(), vec![], 1);
 //!         ctx.emit(BlockKind::Markdown { title: None, source: text })?;
-//!         ctx.log("Una hipótesis nueva.");
+//!         ctx.log("A new hypothesis.");
 //!         Ok(NodeOutcome::Done)
 //!     }
 //! }

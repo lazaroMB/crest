@@ -16,16 +16,16 @@ use crate::testing::fs::InMemoryFs;
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::RecordingSink;
 
-const FOLDER: &str = "0001-cache-de-sesiones";
-const HISTORY: &str = "HISTORIAL-PRIVADO-DEL-FLUJO";
-const REQUEST: &str = "PEDIDO-ORIGINAL-DEL-USUARIO";
-const UNCITED: &str = "Los usuarios se quejan del login desde marzo.";
-const SOUND: &str = "El login tarda 500 ms a 500 rps [E1] porque lee SQLite [E2].";
+const FOLDER: &str = "0001-session-cache";
+const HISTORY: &str = "PRIVATE-FLOW-HISTORY";
+const REQUEST: &str = "ORIGINAL-USER-REQUEST";
+const UNCITED: &str = "Users complain about login since March.";
+const SOUND: &str = "Login takes 500 ms at 500 rps [E1] because it reads SQLite [E2].";
 
 fn state() -> ResearchState {
     let mut s = ResearchState::default();
     let e1 = s.add_evidence(
-        "El login tarda 500 ms a 500 rps",
+        "Login takes 500 ms at 500 rps",
         SourceRef::Command {
             command: "make bench-login".into(),
             output_excerpt: "p95 500ms".into(),
@@ -33,7 +33,7 @@ fn state() -> ResearchState {
         1,
     );
     s.add_evidence(
-        "Cada login lee la sesión de SQLite",
+        "Every login reads the session from SQLite",
         SourceRef::File {
             path: "crates/app/src/ports/store.rs".into(),
             line_start: Some(10),
@@ -41,36 +41,36 @@ fn state() -> ResearchState {
         },
         2,
     );
-    s.add_hypothesis("Una caché en memoria baja el p95 a 20 ms", vec![], 1);
+    s.add_hypothesis("An in-memory cache brings p95 down to 20 ms", vec![], 1);
     s.add_constraint(
         ConstraintKind::Performance,
-        "p95 < 20 ms a 500 rps",
+        "p95 < 20 ms at 500 rps",
         Some(TestRef {
             kind: TestKind::Command,
             reference: "make bench-login".into(),
         }),
     );
-    s.add_decision("Caché LRU", vec!["Redis".into()], "sin servicios", vec![e1]);
-    s.problem_statements = vec!["A 500 rps el login sube de 10 ms a 500 ms".into()];
+    s.add_decision("LRU cache", vec!["Redis".into()], "no services", vec![e1]);
+    s.problem_statements = vec!["At 500 rps login goes from 10 ms to 500 ms".into()];
     s.log(1, Stage::Intake, HISTORY);
     s
 }
 
 fn spec_md(background: &str, state: &ResearchState) -> String {
     let answer: SpecAnswer = serde_json::from_value(json!({
-        "title": "Caché de sesiones",
-        "problem": "A 500 rps el login sube de 10 ms a 500 ms [E1].",
+        "title": "Session cache",
+        "problem": "At 500 rps login goes from 10 ms to 500 ms [E1].",
         "background": background,
-        "hypothesis": "Una caché en memoria baja el p95 a 20 ms.",
-        "proposal": "Caché LRU delante del store [E2].",
+        "hypothesis": "An in-memory cache brings p95 down to 20 ms.",
+        "proposal": "LRU cache in front of the store [E2].",
         "black_box": "flowchart LR\n  login --> cache --> store",
-        "functional": "El login consulta la caché antes que el store.",
+        "functional": "Login checks the cache before the store.",
         "sequence": "sequenceDiagram\n  login->>cache: get",
-        "states": "stateDiagram-v2\n  [*] --> vacia",
-        "technical": "`SessionCache` en `crates/app/src/ports/store.rs`.",
-        "test_protocol": "`make bench-login` debe dar p95 < 20 ms.",
+        "states": "stateDiagram-v2\n  [*] --> empty",
+        "technical": "`SessionCache` in `crates/app/src/ports/store.rs`.",
+        "test_protocol": "`make bench-login` must give p95 < 20 ms.",
         "out_of_scope": "Redis.",
-        "risks": "Invalidación."
+        "risks": "Invalidation."
     }))
     .unwrap();
     spec_markdown("0001", &answer, state)
@@ -81,8 +81,8 @@ fn plan() -> Plan {
         "spec": FOLDER,
         "tasks": [{
             "id": "T1",
-            "title": "Caché",
-            "description": "agregar la caché",
+            "title": "Cache",
+            "description": "add the cache",
             "depends_on": [],
             "files": ["crates/app/src/ports/store.rs"],
             "acceptance": [{ "kind": "test", "ref": "cargo test cache" }],
@@ -105,7 +105,7 @@ fn context(
     let draft = SpecDraft {
         folder: FOLDER.into(),
         problem: "p".into(),
-        title: "Caché de sesiones".into(),
+        title: "Session cache".into(),
         spec_md,
     };
     ctx.set_data(DRAFTS_KEY, vec![draft]).unwrap();
@@ -204,10 +204,10 @@ async fn a_sound_spec_without_gaps_is_done() {
     let state = state();
     let md = spec_md(SOUND, &state);
     let llm = Arc::new(ScriptedLlm::new([gaps(json!([{
-        "claim": "Riesgos",
-        "problem": "podría detallar la invalidación",
+        "claim": "Risks",
+        "problem": "could detail the invalidation",
         "missing_stage": "modeling",
-        "severity": "menor"
+        "severity": "minor"
     }]))]));
     let events = Arc::new(RecordingSink::new());
     let files = Arc::new(MemorySpecSink::new());
@@ -220,14 +220,14 @@ async fn a_sound_spec_without_gaps_is_done() {
     assert_eq!(outcome, NodeOutcome::Done);
     let kinds = blocks(&events);
     assert!(
-        matches!(&kinds[0], BlockKind::Markdown { source, .. } if source.starts_with("Revisión: sin huecos"))
+        matches!(&kinds[0], BlockKind::Markdown { source, .. } if source.starts_with("Review: no gaps"))
     );
     assert!(matches!(&kinds[1], BlockKind::Table(t) if t.rows.len() == 1));
     assert!(
         files
             .file(FOLDER, REVIEW_FILE)
             .unwrap()
-            .contains("Sin huecos graves")
+            .contains("No major gaps")
     );
     let req = llm.last_request().unwrap();
     assert_eq!(req.tools[0].name, "submit_review");
@@ -239,16 +239,16 @@ async fn a_definition_gap_goes_back_to_the_definition() {
     let md = spec_md(SOUND, &state);
     let llm = Arc::new(ScriptedLlm::new([gaps(json!([
         {
-            "claim": "Caché LRU",
-            "problem": "no compara el tamaño",
+            "claim": "LRU cache",
+            "problem": "it does not compare the size",
             "missing_stage": "modeling",
-            "severity": "grave"
+            "severity": "major"
         },
         {
-            "claim": "A 500 rps el login sube de 10 ms a 500 ms",
-            "problem": "no dice con qué hardware se mide",
+            "claim": "At 500 rps login goes from 10 ms to 500 ms",
+            "problem": "it does not say on which hardware it is measured",
             "missing_stage": "definition",
-            "severity": "grave"
+            "severity": "major"
         }
     ]))]));
     let mut ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()), state, md);
@@ -258,7 +258,7 @@ async fn a_definition_gap_goes_back_to_the_definition() {
     };
     assert_eq!(to, Stage::Definition);
     assert!(
-        reason.contains("hardware") && reason.contains("tamaño"),
+        reason.contains("hardware") && reason.contains("size"),
         "{reason}"
     );
 }
@@ -276,9 +276,9 @@ async fn the_reviewer_request_holds_no_flow_history() {
     assert!(!text.contains(HISTORY), "{text}");
     assert!(!text.contains(REQUEST), "{text}");
     let prompt = format!("{:?}", req.messages[0].content);
-    assert!(prompt.contains("Caché de sesiones"));
+    assert!(prompt.contains("Session cache"));
     assert!(prompt.contains("hypothesis_tests"));
-    assert!(prompt.contains("[E2] Cada login lee la sesión de SQLite"));
+    assert!(prompt.contains("[E2] Every login reads the session from SQLite"));
 }
 
 #[tokio::test]
@@ -289,7 +289,7 @@ async fn the_model_may_not_send_the_flow_to_the_review_itself() {
         "claim": "x",
         "problem": "y",
         "missing_stage": "critical_review",
-        "severity": "grave"
+        "severity": "major"
     }]);
     let llm = Arc::new(ScriptedLlm::new([gaps(bad), gaps(json!([]))]));
     let mut ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()), state, md);
@@ -303,7 +303,7 @@ async fn the_model_may_not_send_the_flow_to_the_review_itself() {
 #[tokio::test]
 async fn plan_and_constraint_holes_are_found_without_the_model() {
     let mut state = state();
-    state.add_constraint(ConstraintKind::Security, "sin secretos en logs", None);
+    state.add_constraint(ConstraintKind::Security, "no secrets in logs", None);
     let md = spec_md(SOUND, &state);
     let llm = Arc::new(ScriptedLlm::new([]));
     let mut ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()), state, md);
@@ -324,7 +324,7 @@ async fn plan_and_constraint_holes_are_found_without_the_model() {
     let stored: Vec<Gap> = ctx.data(GAPS_KEY).unwrap();
     let problems: Vec<&str> = stored.iter().map(|g| g.problem.as_str()).collect();
     assert!(
-        problems.iter().any(|p| p.contains("no tiene una prueba")),
+        problems.iter().any(|p| p.contains("has no test")),
         "{problems:?}"
     );
     assert!(

@@ -27,26 +27,26 @@ use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, Research
 /// Flow data key of the [`ObservationReport`].
 pub const REPORT_KEY: &str = "observation.report";
 
-const TASK: &str = "Etapa de observación de una investigación sobre este repositorio. \
-Recorre el repositorio SOLO LEYENDO, sin modificar nada: el árbol (`tree`), los archivos \
-clave relacionados con el problema, sus tests y la documentación. No propongas soluciones: \
-describe lo que hay.";
+const TASK: &str = "Observation stage of an investigation of this repository. \
+Walk the repository READ-ONLY, without changing anything: the tree (`tree`), the key files \
+related to the problem, their tests and the documentation. Do not propose solutions: \
+describe what is there.";
 
-const GIT: &str = "Puedes usar `run_command` solo con comandos git de lectura, por ejemplo \
-`git log --oneline -n 20` o `git log --format=%H%x09%s -n 10 -- <archivo>`, para ver los \
-cambios recientes de los archivos implicados.";
+const GIT: &str = "You may use `run_command` only with read-only git commands, for example \
+`git log --oneline -n 20` or `git log --format=%H%x09%s -n 10 -- <file>`, to see the \
+recent changes to the files involved.";
 
-const NO_GIT: &str = "No tienes acceso a git: no cites commits.";
+const NO_GIT: &str = "You have no access to git: do not cite commits.";
 
-const FORMAT: &str = "Al terminar, responde solo con un objeto JSON, sin texto alrededor:
-{\"summary\": \"resumen de la arquitectura en 2-3 oraciones\",
- \"architecture\": \"diagrama Mermaid (flowchart) de los módulos actuales y sus relaciones\",
- \"key_files\": [{\"path\": \"ruta/relativa\", \"kind\": \"código\" | \"test\" | \"doc\" | \"config\", \
-\"role\": \"qué hace\"}],
- \"observations\": [{\"claim\": \"lo observado, en una oración\", \"source\": \
-{\"type\": \"file\", \"path\": \"ruta\", \"line_start\": 1, \"line_end\": 20} | \
+const FORMAT: &str = "When you finish, answer only with a JSON object, with no text around it:
+{\"summary\": \"summary of the architecture in 2-3 sentences\",
+ \"architecture\": \"Mermaid diagram (flowchart) of the current modules and their relations\",
+ \"key_files\": [{\"path\": \"relative/path\", \"kind\": \"code\" | \"test\" | \"doc\" | \"config\", \
+\"role\": \"what it does\"}],
+ \"observations\": [{\"claim\": \"what you observed, in one sentence\", \"source\": \
+{\"type\": \"file\", \"path\": \"path\", \"line_start\": 1, \"line_end\": 20} | \
 {\"type\": \"commit\", \"sha\": \"…\", \"summary\": \"…\"}}]}
-Cada observación debe citar un archivo que leíste o un commit que viste.";
+Each observation must cite a file you read or a commit you saw.";
 
 /// What Observation learned, read by the later stages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,7 +66,7 @@ pub struct ObservationReport {
 pub struct KeyFile {
     /// Path relative to the workspace.
     pub path: String,
-    /// `código`, `test`, `doc` or `config`.
+    /// `code`, `test`, `doc` or `config`.
     #[serde(default)]
     pub kind: String,
     /// What it does.
@@ -92,22 +92,22 @@ struct Answer {
 impl Answer {
     fn validate(&self) -> Result<(), String> {
         if self.summary.trim().is_empty() {
-            return Err("`summary` está vacío".into());
+            return Err("`summary` is empty".into());
         }
         if mermaid_source(&self.architecture).is_empty() {
-            return Err("`architecture` no tiene un diagrama Mermaid".into());
+            return Err("`architecture` has no Mermaid diagram".into());
         }
         if self.key_files.is_empty() || self.key_files.iter().any(|f| f.path.trim().is_empty()) {
-            return Err("`key_files` está vacío o tiene una ruta vacía".into());
+            return Err("`key_files` is empty or has an empty path".into());
         }
         if self.observations.is_empty() {
-            return Err("`observations` está vacío".into());
+            return Err("`observations` is empty".into());
         }
         for (i, o) in self.observations.iter().enumerate() {
             if o.claim.trim().is_empty() {
-                return Err(format!("la observación {i} no tiene `claim`"));
+                return Err(format!("observation {i} has no `claim`"));
             }
-            validate_source(&o.source).map_err(|e| format!("la observación {i}: {e}"))?;
+            validate_source(&o.source).map_err(|e| format!("observation {i}: {e}"))?;
         }
         Ok(())
     }
@@ -123,7 +123,7 @@ pub(crate) fn validate_source(source: &SourceRef) -> Result<(), String> {
         SourceRef::Command { command, .. } => command.trim().is_empty(),
     };
     if empty {
-        return Err("la fuente está vacía".into());
+        return Err("the source is empty".into());
     }
     Ok(())
 }
@@ -191,12 +191,12 @@ impl Observation {
 
 fn input(problem: &str, brief: &IntakeBrief, git: bool) -> String {
     let mut out = format!(
-        "{TASK}\n\nProblema ({}): {}\nPedido original: {problem}\n",
-        brief.kind.name_es(),
+        "{TASK}\n\nProblem ({}): {}\nOriginal request: {problem}\n",
+        brief.kind.name(),
         brief.restated
     );
     for answer in &brief.answers {
-        let _ = writeln!(out, "Aclaración del usuario: {answer}");
+        let _ = writeln!(out, "User clarification: {answer}");
     }
     let _ = write!(out, "\n{}\n\n{FORMAT}", if git { GIT } else { NO_GIT });
     out
@@ -205,9 +205,9 @@ fn input(problem: &str, brief: &IntakeBrief, git: bool) -> String {
 fn key_files_table(files: &[KeyFile]) -> TableSpec {
     TableSpec {
         columns: vec![
-            Column::new("Archivo o módulo"),
-            Column::new("Tipo"),
-            Column::new("Qué hace"),
+            Column::new("File or module"),
+            Column::new("Kind"),
+            Column::new("What it does"),
         ],
         rows: files
             .iter()
@@ -232,7 +232,7 @@ impl ResearchNode for Observation {
         let Some(brief) = ctx.data::<IntakeBrief>(BRIEF_KEY) else {
             return Ok(NodeOutcome::Back {
                 to: Stage::Intake,
-                reason: "el problema no está definido: falta el pedido reformulado de Intake"
+                reason: "the problem is not defined: the restated request from Intake is missing"
                     .into(),
             });
         };
@@ -261,15 +261,15 @@ impl ResearchNode for Observation {
 
         ctx.emit(BlockKind::Mermaid(MermaidSpec {
             source: report.architecture.clone(),
-            title: Some("Arquitectura actual".into()),
+            title: Some("Current architecture".into()),
         }))?;
         ctx.emit(BlockKind::Table(key_files_table(&report.key_files)))?;
         ctx.emit(sources_block(sources))?;
 
         let ids: Vec<String> = report.evidence.iter().map(ToString::to_string).collect();
         ctx.log(format!(
-            "Repositorio recorrido{}: {} archivos clave, evidencia {}. {}",
-            if git { " (con git log)" } else { "" },
+            "Repository walked{}: {} key files, evidence {}. {}",
+            if git { " (with git log)" } else { "" },
             report.key_files.len(),
             ids.join(", "),
             report.summary
@@ -367,21 +367,16 @@ pub(crate) mod testing {
         if let Some(agent) = agent {
             deps = deps.with_agent(agent);
         }
-        NodeContext::new(
-            stage,
-            deps,
-            "el login tarda mucho",
-            ResearchState::default(),
-        )
+        NodeContext::new(stage, deps, "login is slow", ResearchState::default())
     }
 
     /// The brief Intake leaves.
     pub(crate) fn brief() -> IntakeBrief {
         IntakeBrief {
             kind: super::super::intake::RequestKind::Performance,
-            restated: "El login tarda más de 5 s.".into(),
+            restated: "Login takes more than 5 s.".into(),
             questions: vec![],
-            answers: vec!["desde la v2".into()],
+            answers: vec!["since v2".into()],
         }
     }
 
@@ -413,17 +408,17 @@ mod tests {
 
     fn answer() -> String {
         json!({
-            "summary": "Un crate con el login y sus tests.",
+            "summary": "A crate with the login and its tests.",
             "architecture": "```mermaid\nflowchart TD\n  login --> hash\n```",
             "key_files": [
-                {"path": "src/login.rs", "kind": "código", "role": "inicia sesión"},
-                {"path": "tests/login.rs", "kind": "test", "role": "prueba el login"}
+                {"path": "src/login.rs", "kind": "code", "role": "logs in"},
+                {"path": "tests/login.rs", "kind": "test", "role": "tests the login"}
             ],
             "observations": [
-                {"claim": "login llama a hash en cada intento.",
+                {"claim": "login calls hash on every attempt.",
                  "source": {"type": "file", "path": "src/login.rs", "line_start": 1, "line_end": 3}},
-                {"claim": "El último cambio tocó el hash.",
-                 "source": {"type": "commit", "sha": "abc123", "summary": "usa argon2"}}
+                {"claim": "The last change touched the hash.",
+                 "source": {"type": "commit", "sha": "abc123", "summary": "use argon2"}}
             ]
         })
         .to_string()
@@ -446,7 +441,7 @@ mod tests {
             ["log", "--oneline", "-n", "20"],
             CommandOutput {
                 status: Some(0),
-                stdout: "abc123 usa argon2\n".into(),
+                stdout: "abc123 use argon2\n".into(),
                 ..CommandOutput::default()
             },
         ));
@@ -462,7 +457,7 @@ mod tests {
         let first = &llm.requests()[0];
         assert_eq!(first.model.role, ModelRole::Explore);
         let sent = format!("{:?}", first.messages);
-        assert!(sent.contains("El login tarda más de 5 s.") && sent.contains("run_command"));
+        assert!(sent.contains("Login takes more than 5 s.") && sent.contains("run_command"));
 
         let state = ctx.state();
         assert_eq!(state.evidence.len(), 2);
@@ -503,7 +498,7 @@ mod tests {
 
         let retry = llm.last_request().unwrap();
         let sent = format!("{:?}", retry.messages);
-        assert!(sent.contains("architecture") && sent.contains("No tienes acceso a git"));
+        assert!(sent.contains("architecture") && sent.contains("You have no access to git"));
         assert_eq!(retry.messages.len(), 3);
         assert_eq!(ctx.state().evidence.len(), 2);
     }

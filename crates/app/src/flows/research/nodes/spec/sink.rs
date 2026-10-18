@@ -29,7 +29,7 @@ pub struct SpecSinkError(pub String);
 #[async_trait]
 pub trait SpecSink: Send + Sync {
     /// Names of the folders already in [`SPECS_DIR`], e.g.
-    /// `0007-cache-de-sesiones`.
+    /// `0007-session-cache`.
     async fn folders(&self) -> Result<Vec<String>, SpecSinkError>;
 
     /// Writes `content` to `<SPECS_DIR>/<folder>/<file>`, replacing it.

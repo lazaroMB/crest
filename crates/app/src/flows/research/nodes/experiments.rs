@@ -1,4 +1,4 @@
-//! Node 6, Experimentos: reproducible protocols that test the hypotheses.
+//! Node 6, Experiments: reproducible protocols that test the hypotheses.
 //!
 //! An agent turn with tools (`main` role, the usual approvals: writing a
 //! test or running a benchmark asks the user) designs and runs one
@@ -10,7 +10,7 @@
 //! command never ran stays `Untested`. The agent's own `ToolCall` and
 //! `Diff` blocks show the work; the node adds a `Chart` per experiment
 //! with measurements and a summary `Table`. Without hypotheses the flow
-//! goes back to Hipótesis.
+//! goes back to Hypotheses.
 
 use std::fmt::Write as _;
 
@@ -39,28 +39,28 @@ const EXCERPT_LINES: usize = 40;
 const EXCERPT_CHARS: usize = 2000;
 
 const INSTRUCTIONS: &str = "\
-Eres la etapa de Experimentos de una investigación sobre este repositorio. Para cada \
-hipótesis de la lista diseña un protocolo reproducible que la confirme o la refute: un \
-test que falle mientras el problema exista, un script de benchmark o pasos de \
-reproducción. Escribe los archivos que necesites con write_file o edit_file (el usuario \
-aprueba los cambios) y corre cada protocolo con run_command. No inventes resultados: \
-si no puedes correr un protocolo, márcalo \"untested\".";
+You are the Experiments stage of an investigation of this repository. For each \
+hypothesis in the list, design a reproducible protocol that confirms or refutes it: a \
+test that fails while the problem exists, a benchmark script or reproduction steps. \
+Write the files you need with write_file or edit_file (the user approves the changes) \
+and run each protocol with run_command. Do not make up results: if you cannot run a \
+protocol, mark it \"untested\".";
 
-const SCHEMA: &str = r#"Cuando termines, responde solo con este JSON, sin texto extra:
+const SCHEMA: &str = r#"When you finish, answer only with this JSON, with no extra text:
 {
   "experiments": [
     {
       "hypothesis_id": "H1",
-      "protocol": "qué hace el protocolo y cómo repetirlo",
-      "command": "el comando exactamente como lo corriste con run_command, o null",
-      "expect": "qué resultado confirmaría la hipótesis",
+      "protocol": "what the protocol does and how to repeat it",
+      "command": "the command exactly as you ran it with run_command, or null",
+      "expect": "what result would confirm the hypothesis",
       "result": "supported | refuted | untested",
-      "observation": "lo que mostró la salida, en una oración",
-      "measurements": [{ "label": "p95 actual", "value": 2000.0, "unit": "ms" }]
+      "observation": "what the output showed, in one sentence",
+      "measurements": [{ "label": "current p95", "value": 2000.0, "unit": "ms" }]
     }
   ]
 }
-Incluye un experimento por cada hipótesis de la lista."#;
+Include one experiment for each hypothesis in the list."#;
 
 /// What the experiment says about its hypothesis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,7 +131,7 @@ struct Run {
     output: String,
 }
 
-/// The Experimentos node.
+/// The Experiments node.
 #[derive(Debug, Default)]
 pub struct Experiments;
 
@@ -153,7 +153,7 @@ impl ResearchNode for Experiments {
         if ctx.state().hypotheses.is_empty() {
             return Ok(NodeOutcome::Back {
                 to: Stage::Hypotheses,
-                reason: "no hay hipótesis que probar".into(),
+                reason: "there are no hypotheses to test".into(),
             });
         }
         let targets: Vec<Hypothesis> = by_priority(&ctx.state().hypotheses)
@@ -166,7 +166,7 @@ impl ResearchNode for Experiments {
             })
             .collect();
         if targets.is_empty() {
-            ctx.log("Experimentos: todas las hipótesis ya tienen resultado.");
+            ctx.log("Experiments: every hypothesis already has a result.");
             return Ok(NodeOutcome::Done);
         }
 
@@ -196,14 +196,14 @@ impl ResearchNode for Experiments {
         ctx.emit(BlockKind::Table(table(&protocols)))?;
         ctx.set_data(KEY_PROTOCOLS, &protocols)?;
 
-        let mut journal = format!("Experimentos: {} protocolos.", protocols.len());
+        let mut journal = format!("Experiments: {} protocols.", protocols.len());
         for p in &protocols {
             let _ = write!(
                 journal,
                 "\n- {}: {} ({})",
                 p.hypothesis_id,
                 status_label(p.status),
-                p.command.as_deref().unwrap_or("sin comando corrido")
+                p.command.as_deref().unwrap_or("no command run")
             );
         }
         ctx.log(journal);
@@ -219,11 +219,11 @@ fn prompt(
 ) -> String {
     let mut out = format!("{INSTRUCTIONS}\n\n");
     out.push_str(&analysis::context_prompt(problem, state, reply));
-    out.push_str("\nHipótesis a probar, por prioridad:\n");
+    out.push_str("\nHypotheses to test, by priority:\n");
     for h in targets {
         let _ = writeln!(
             out,
-            "- {} (prioridad {}): {} Causas: {}",
+            "- {} (priority {}): {} Causes: {}",
             h.id,
             h.priority,
             h.statement,
@@ -238,18 +238,18 @@ fn check(report: &Report, targets: &[Hypothesis]) -> Result<(), String> {
     for e in &report.experiments {
         if !targets.iter().any(|h| h.id == e.hypothesis_id) {
             return Err(format!(
-                "{} no está en la lista de hipótesis",
+                "{} is not in the list of hypotheses",
                 e.hypothesis_id
             ));
         }
         if e.protocol.trim().is_empty() {
             return Err(format!(
-                "el experimento de {} no describe el protocolo",
+                "the experiment for {} does not describe the protocol",
                 e.hypothesis_id
             ));
         }
         if let Some(m) = e.measurements.iter().find(|m| !m.value.is_finite()) {
-            return Err(format!("la medición {:?} no es un número finito", m.label));
+            return Err(format!("measurement {:?} is not a finite number", m.label));
         }
     }
     let missing: Vec<String> = targets
@@ -260,7 +260,10 @@ fn check(report: &Report, targets: &[Hypothesis]) -> Result<(), String> {
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("faltan experimentos para {}", missing.join(", ")))
+        Err(format!(
+            "experiments are missing for {}",
+            missing.join(", ")
+        ))
     }
 }
 
@@ -371,9 +374,9 @@ fn chart(p: &Protocol) -> ChartSpec {
         .measurements
         .iter()
         .find_map(|m| m.unit.clone())
-        .unwrap_or_else(|| "valor".into());
+        .unwrap_or_else(|| "value".into());
     ChartSpec {
-        title: format!("{}: mediciones", p.hypothesis_id),
+        title: format!("{}: measurements", p.hypothesis_id),
         kind: ChartKind::Bar,
         labels: p.measurements.iter().map(|m| m.label.clone()).collect(),
         series: vec![Series {
@@ -386,16 +389,10 @@ fn chart(p: &Protocol) -> ChartSpec {
 fn table(protocols: &[Protocol]) -> TableSpec {
     let text = |s: &str| Cell::Text(s.to_owned());
     TableSpec {
-        columns: [
-            "Hipótesis",
-            "Protocolo",
-            "Comando",
-            "Resultado",
-            "Evidencia",
-        ]
-        .into_iter()
-        .map(Column::new)
-        .collect(),
+        columns: ["Hypothesis", "Protocol", "Command", "Result", "Evidence"]
+            .into_iter()
+            .map(Column::new)
+            .collect(),
         rows: protocols
             .iter()
             .map(|p| {
@@ -497,7 +494,7 @@ mod tests {
             NodeContext::new(
                 Stage::Experiments,
                 self.deps.clone(),
-                "el login tarda 2 s",
+                "login takes 2 s",
                 state,
             )
         }
@@ -522,11 +519,11 @@ mod tests {
     fn state() -> ResearchState {
         let mut state = ResearchState::default();
         state.add_hypothesis(
-            "Falta un índice en users.email.",
-            vec!["Datos: sin índice".into()],
+            "An index on users.email is missing.",
+            vec!["Data: no index".into()],
             1,
         );
-        state.add_hypothesis("El pool se agota.", vec!["Infraestructura: pool".into()], 2);
+        state.add_hypothesis("The pool runs out.", vec!["Infrastructure: pool".into()], 2);
         state
     }
 
@@ -535,19 +532,19 @@ mod tests {
             "experiments": [
                 {
                     "hypothesis_id": "H1",
-                    "protocol": "test que mide la consulta de login",
+                    "protocol": "test that measures the login query",
                     "command": command,
-                    "expect": "el test falla con un seq scan",
+                    "expect": "the test fails with a seq scan",
                     "result": "supported",
-                    "observation": "el test falla: seq scan de 1900 ms",
+                    "observation": "the test fails: 1900 ms seq scan",
                     "measurements": [
-                        { "label": "consulta", "value": 1900.0, "unit": "ms" },
-                        { "label": "objetivo", "value": 50.0, "unit": "ms" }
+                        { "label": "query", "value": 1900.0, "unit": "ms" },
+                        { "label": "target", "value": 50.0, "unit": "ms" }
                     ]
                 },
                 {
                     "hypothesis_id": "H2",
-                    "protocol": "benchmark con 50 usuarios",
+                    "protocol": "benchmark with 50 users",
                     "command": null,
                     "result": "refuted"
                 }
@@ -617,10 +614,10 @@ mod tests {
         }
         let protocols: Vec<Protocol> = ctx.data(KEY_PROTOCOLS).unwrap();
         assert_eq!(protocols[0].evidence_id, Some(e.id));
-        assert!(ctx.state().journal[0].text.contains("H1: respaldada"));
+        assert!(ctx.state().journal[0].text.contains("H1: supported"));
         assert!(
             h.llm.requests()[0].messages[0].content.iter().any(
-                |p| matches!(p, ContentPart::Text { text } if text.contains("H2 (prioridad 2)"))
+                |p| matches!(p, ContentPart::Text { text } if text.contains("H2 (priority 2)"))
             )
         );
     }
@@ -633,7 +630,10 @@ mod tests {
         let mut ctx = h.context(state());
         Experiments::new().run(&mut ctx).await.unwrap();
         let retry = serde_json::to_string(&h.llm.last_request().unwrap().messages).unwrap();
-        assert!(retry.contains("faltan experimentos para H1, H2"), "{retry}");
+        assert!(
+            retry.contains("experiments are missing for H1, H2"),
+            "{retry}"
+        );
         assert_eq!(
             ctx.state().hypotheses[0].status,
             HypothesisStatus::Supported
@@ -657,10 +657,10 @@ mod tests {
 
     #[test]
     fn excerpts_keep_the_end_of_the_output() {
-        let long: String = (0..100).map(|i| format!("línea {i}\n")).collect();
+        let long: String = (0..100).map(|i| format!("line {i}\n")).collect();
         let cut = excerpt(&long);
         assert!(
-            cut.starts_with("línea 60") && cut.ends_with("línea 99"),
+            cut.starts_with("line 60") && cut.ends_with("line 99"),
             "{cut}"
         );
         let wide = "é".repeat(EXCERPT_CHARS + 5);

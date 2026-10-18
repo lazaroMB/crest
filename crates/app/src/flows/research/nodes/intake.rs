@@ -18,14 +18,14 @@ use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, Research
 /// Flow data key of the [`IntakeBrief`].
 pub const BRIEF_KEY: &str = "intake.brief";
 
-const SYSTEM: &str = "Eres el primer paso de una investigación sobre un proyecto de software. \
-Reformula el pedido del usuario en una o dos oraciones precisas, clasifícalo y pregunta solo \
-lo que falte para investigarlo (pasos para reproducir, comportamiento esperado, alcance, \
-métricas, entorno). No inventes datos ni propongas soluciones.
-Responde solo con un objeto JSON, sin texto alrededor:
+const SYSTEM: &str = "You are the first step of an investigation into a software project. \
+Restate the user's request in one or two precise sentences, classify it and ask only for \
+what is missing to investigate it (steps to reproduce, expected behaviour, scope, metrics, \
+environment). Do not make up data or propose solutions.
+Reply only with a JSON object, with no text around it:
 {\"kind\": \"feature\" | \"bug\" | \"performance\" | \"refactor\", \"restated\": \"…\", \
 \"questions\": [\"…\"]}
-Si no falta nada, `questions` es [].";
+If nothing is missing, `questions` is [].";
 
 /// What the user asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +47,11 @@ pub enum RequestKind {
 impl RequestKind {
     /// Name shown to the user.
     #[must_use]
-    pub const fn name_es(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
-            Self::Feature => "Funcionalidad nueva",
+            Self::Feature => "New feature",
             Self::Bug => "Bug",
-            Self::Performance => "Rendimiento",
+            Self::Performance => "Performance",
             Self::Refactor => "Refactor",
         }
     }
@@ -83,10 +83,10 @@ struct Answer {
 impl Answer {
     fn validate(&self) -> Result<(), String> {
         if self.restated.trim().is_empty() {
-            return Err("`restated` está vacío".into());
+            return Err("`restated` is empty".into());
         }
         if self.questions.iter().any(|q| q.trim().is_empty()) {
-            return Err("hay una pregunta vacía en `questions`".into());
+            return Err("`questions` has an empty question".into());
         }
         Ok(())
     }
@@ -106,28 +106,28 @@ impl Intake {
 
 /// The user prompt: the request, the previous brief and the answers.
 fn prompt(problem: &str, previous: Option<&IntakeBrief>, answers: &[String]) -> String {
-    let mut out = format!("Pedido original:\n{problem}\n");
+    let mut out = format!("Original request:\n{problem}\n");
     if let Some(brief) = previous {
         let _ = write!(
             out,
-            "\nReformulación anterior ({}): {}\n",
-            brief.kind.name_es(),
+            "\nPrevious restatement ({}): {}\n",
+            brief.kind.name(),
             brief.restated
         );
         if !brief.questions.is_empty() {
-            out.push_str("Preguntas hechas:\n");
+            out.push_str("Questions asked:\n");
             for q in &brief.questions {
                 let _ = writeln!(out, "- {q}");
             }
         }
     }
     if !answers.is_empty() {
-        out.push_str("\nRespuestas del usuario:\n");
+        out.push_str("\nUser answers:\n");
         for a in answers {
             let _ = writeln!(out, "- {a}");
         }
         out.push_str(
-            "\nIncorpora las respuestas, vuelve a reformular y pregunta solo lo que siga faltando.\n",
+            "\nIncorporate the answers, restate again and ask only for what is still missing.\n",
         );
     }
     out
@@ -136,14 +136,14 @@ fn prompt(problem: &str, previous: Option<&IntakeBrief>, answers: &[String]) -> 
 /// The `Text` block shown to the user.
 fn render(brief: &IntakeBrief) -> String {
     let mut out = format!(
-        "**Tipo:** {}\n\n**Pedido reformulado:** {}\n",
-        brief.kind.name_es(),
+        "**Kind:** {}\n\n**Restated request:** {}\n",
+        brief.kind.name(),
         brief.restated
     );
     if brief.questions.is_empty() {
-        out.push_str("\nNo hay preguntas pendientes.\n");
+        out.push_str("\nNo open questions.\n");
     } else {
-        out.push_str("\n**Preguntas:**\n\n");
+        out.push_str("\n**Questions:**\n\n");
         for (i, q) in brief.questions.iter().enumerate() {
             let _ = writeln!(out, "{}. {q}", i + 1);
         }
@@ -183,13 +183,13 @@ impl ResearchNode for Intake {
             markdown: render(&brief),
         })?;
         let action = if ctx.user_reply().is_some() {
-            "Pedido reformulado con la respuesta del usuario"
+            "Request restated with the user's answer"
         } else {
-            "Pedido reformulado"
+            "Request restated"
         };
         ctx.log(format!(
-            "{action} y clasificado como {}: {} ({} preguntas pendientes).",
-            brief.kind.name_es(),
+            "{action} and classified as {}: {} ({} open questions).",
+            brief.kind.name(),
             brief.restated,
             brief.questions.len()
         ));
@@ -217,7 +217,7 @@ mod tests {
         NodeContext::new(
             Stage::Intake,
             deps,
-            "el login tarda mucho",
+            "login is very slow",
             ResearchState::default(),
         )
     }
@@ -236,8 +236,8 @@ mod tests {
     }
 
     const ANSWER: &str = r#"```json
-{"kind": "performance", "restated": "El login tarda más de 5 s.",
- "questions": ["¿Desde qué versión?", "¿En qué entorno?"]}
+{"kind": "performance", "restated": "Login takes more than 5 s.",
+ "questions": ["Since which version?", "In which environment?"]}
 ```"#;
 
     #[tokio::test]
@@ -253,58 +253,54 @@ mod tests {
 
         let brief: IntakeBrief = ctx.data(BRIEF_KEY).unwrap();
         assert_eq!(brief.kind, RequestKind::Performance);
-        assert_eq!(brief.restated, "El login tarda más de 5 s.");
+        assert_eq!(brief.restated, "Login takes more than 5 s.");
         assert_eq!(brief.questions.len(), 2);
         assert!(brief.answers.is_empty());
         let shown = texts(&sink);
         assert_eq!(shown.len(), 1);
-        assert!(shown[0].contains("**Tipo:** Rendimiento"));
-        assert!(shown[0].contains("1. ¿Desde qué versión?"));
+        assert!(shown[0].contains("**Kind:** Performance"));
+        assert!(shown[0].contains("1. Since which version?"));
         let req = llm.last_request().unwrap();
         assert_eq!(req.model.role, ModelRole::Main);
         let journal = &ctx.state().journal;
         assert_eq!((journal.len(), journal[0].stage), (1, Stage::Intake));
-        assert!(journal[0].text.contains("2 preguntas"));
+        assert!(journal[0].text.contains("2 open questions"));
     }
 
     #[tokio::test]
     async fn a_gate_reply_is_incorporated_and_restated() {
         let llm = Arc::new(ScriptedLlm::new([ScriptedResponse::text(
-            r#"{"kind": "bug", "restated": "Desde la v2 el login en Linux tarda 5 s.", "questions": []}"#,
+            r#"{"kind": "bug", "restated": "Since v2, login on Linux takes 5 s.", "questions": []}"#,
         )]));
         let sink = Arc::new(RecordingSink::new());
         let ctx = context(&llm, &sink);
         let previous = IntakeBrief {
             kind: RequestKind::Performance,
-            restated: "El login tarda más de 5 s.".into(),
-            questions: vec!["¿Desde qué versión?".into()],
+            restated: "Login takes more than 5 s.".into(),
+            questions: vec!["Since which version?".into()],
             answers: vec![],
         };
         ctx.set_data(BRIEF_KEY, &previous).unwrap();
-        let mut ctx = ctx.with_reply("desde la v2, en Linux");
+        let mut ctx = ctx.with_reply("since v2, on Linux");
 
         Intake::new().run(&mut ctx).await.unwrap();
 
         let brief: IntakeBrief = ctx.data(BRIEF_KEY).unwrap();
         assert_eq!(brief.kind, RequestKind::Bug);
-        assert_eq!(brief.answers, ["desde la v2, en Linux"]);
+        assert_eq!(brief.answers, ["since v2, on Linux"]);
         assert!(brief.questions.is_empty());
         let sent = format!("{:?}", llm.last_request().unwrap().messages);
-        assert!(sent.contains("desde la v2, en Linux"));
-        assert!(sent.contains("¿Desde qué versión?"));
-        assert!(texts(&sink)[0].contains("No hay preguntas pendientes"));
-        assert!(
-            ctx.state().journal[0]
-                .text
-                .contains("respuesta del usuario")
-        );
+        assert!(sent.contains("since v2, on Linux"));
+        assert!(sent.contains("Since which version?"));
+        assert!(texts(&sink)[0].contains("No open questions"));
+        assert!(ctx.state().journal[0].text.contains("user's answer"));
     }
 
     #[tokio::test]
     async fn an_invalid_answer_is_retried_once() {
         let llm = Arc::new(ScriptedLlm::new([
-            ScriptedResponse::text("es un bug"),
-            ScriptedResponse::text(r#"{"kind": "refactor", "restated": "Separar el módulo."}"#),
+            ScriptedResponse::text("it is a bug"),
+            ScriptedResponse::text(r#"{"kind": "refactor", "restated": "Split the module."}"#),
         ]));
         let sink = Arc::new(RecordingSink::new());
         let mut ctx = context(&llm, &sink);
@@ -320,7 +316,7 @@ mod tests {
     async fn two_invalid_answers_fail_without_state() {
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::text(r#"{"kind": "bug", "restated": ""}"#),
-            ScriptedResponse::text(r#"{"kind": "otro", "restated": "x"}"#),
+            ScriptedResponse::text(r#"{"kind": "other", "restated": "x"}"#),
         ]));
         let sink = Arc::new(RecordingSink::new());
         let mut ctx = context(&llm, &sink);

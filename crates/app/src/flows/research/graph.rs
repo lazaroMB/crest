@@ -63,9 +63,8 @@ pub fn research_graph(
                     None => review,
                 })
             }
-            other => node_for(other).ok_or_else(|| {
-                FlowError::InvalidGraph(format!("{} has no node", other.name_es()))
-            })?,
+            other => node_for(other)
+                .ok_or_else(|| FlowError::InvalidGraph(format!("{} has no node", other.name())))?,
         };
         builder = builder.shared_node(node);
     }

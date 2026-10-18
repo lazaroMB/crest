@@ -1,4 +1,4 @@
-//! Node 10, Modelado: filters the brainstorm options against the
+//! Node 10, Modeling: filters the brainstorm options against the
 //! constraints, scores the survivors in a decision matrix and draws the
 //! black box of the chosen one.
 //!
@@ -20,7 +20,7 @@
 //!   later stage) replaces the decision of the previous run, whose id is
 //!   kept under [`DECISION_KEY`].
 //! - The Mermaid source of the black box under [`BLACK_BOX_KEY`], for the
-//!   "Propuesta de solución" of the Spec.
+//!   "Proposed solution" of the Spec.
 //! - Blocks: a `Table` (options × criteria with scores, total and state),
 //!   a `Mermaid` black box and a `Markdown` with the rationale.
 //!
@@ -64,17 +64,17 @@ pub struct IdeaOption {
     pub description: String,
 }
 
-const SYSTEM: &str = "Eres la etapa de Modelado de una investigación de software. \
-Recibes opciones de solución, restricciones con id (C1…) y evidencia con id (E1…). \
-1) Descarta cada opción que viole al menos una restricción, citando sus ids. \
-2) Elige de 2 a 5 criterios de decisión y puntúa cada opción no descartada de 1 a 5 \
-por criterio. 3) Elige la mejor opción viable y justifica en 2-4 oraciones citando \
-evidencia como [E1]. 4) Describe su caja negra: la pieza nueva y con qué partes del \
-sistema interactúa. Usa exactamente los títulos de las opciones. Responde SOLO con JSON:\n\
+const SYSTEM: &str = "You are the Modeling stage of a software investigation. \
+You get solution options, constraints with ids (C1…) and evidence with ids (E1…). \
+1) Discard every option that violates at least one constraint, citing its ids. \
+2) Pick 2 to 5 decision criteria and score each option that was not discarded from 1 to 5 \
+on each criterion. 3) Choose the best viable option and justify it in 2-4 sentences citing \
+evidence as [E1]. 4) Describe its black box: the new piece and which parts of the \
+system it interacts with. Use the option titles exactly. Answer ONLY with JSON:\n\
 {\"criteria\": [\"...\"],\n\
  \"discarded\": [{\"title\": \"...\", \"constraints\": [\"C1\"], \"reason\": \"...\"}],\n\
  \"scores\": [{\"title\": \"...\", \"values\": [1]}],\n\
- \"chosen\": \"título o null si ninguna es viable\",\n\
+ \"chosen\": \"title, or null if none is viable\",\n\
  \"rationale\": \"...\",\n\
  \"evidence_ids\": [\"E1\"],\n\
  \"black_box\": {\"piece\": \"...\", \"interactions\": [{\"with\": \"...\", \"how\": \"...\"}]}}";
@@ -152,14 +152,14 @@ impl ResearchNode for Modeling {
         if ctx.state().constraints.is_empty() {
             return Ok(NodeOutcome::Back {
                 to: Stage::Definition,
-                reason: "no hay restricciones contra las cuales descartar opciones".into(),
+                reason: "there are no constraints to discard options against".into(),
             });
         }
         let options: Vec<IdeaOption> = ctx.data(BRAINSTORM_OPTIONS_KEY).unwrap_or_default();
         if options.is_empty() {
             return Ok(NodeOutcome::Back {
                 to: Stage::Brainstorm,
-                reason: "la lluvia de ideas no dejó opciones que modelar".into(),
+                reason: "the brainstorm left no options to model".into(),
             });
         }
         let prompt = prompt(ctx, &options);
@@ -167,18 +167,18 @@ impl ResearchNode for Modeling {
         let Some(chosen) = model.answer.chosen.clone() else {
             return Ok(NodeOutcome::Back {
                 to: Stage::Brainstorm,
-                reason: "todas las opciones violan alguna restricción".into(),
+                reason: "every option violates some constraint".into(),
             });
         };
         let black_box = black_box_mermaid(model.answer.black_box.as_ref(), &chosen);
         ctx.emit(BlockKind::Table(matrix(&model.answer, &options, &chosen)))?;
         ctx.emit(BlockKind::Mermaid(MermaidSpec {
             source: black_box.clone(),
-            title: Some(format!("Caja negra: {chosen}")),
+            title: Some(format!("Black box: {chosen}")),
         }))?;
         ctx.emit(BlockKind::Markdown {
-            title: Some("Decisión".into()),
-            source: format!("**Elegida:** {chosen}\n\n{}", model.answer.rationale),
+            title: Some("Decision".into()),
+            source: format!("**Chosen:** {chosen}\n\n{}", model.answer.rationale),
         })?;
         let discarded = discarded_labels(&model.answer);
         if let Some(previous) = ctx.data::<DecisionId>(DECISION_KEY) {
@@ -193,7 +193,7 @@ impl ResearchNode for Modeling {
         ctx.set_data(DECISION_KEY, id)?;
         ctx.set_data(BLACK_BOX_KEY, &black_box)?;
         ctx.log(format!(
-            "{id}: de {} opciones se descartaron {} por restricciones; elegida «{chosen}» con {} criterios.",
+            "{id}: of {} options, {} were discarded by constraints; chose \"{chosen}\" with {} criteria.",
             options.len(),
             discarded.len(),
             model.answer.criteria.len(),
@@ -204,21 +204,21 @@ impl ResearchNode for Modeling {
 
 fn kind_name(kind: ConstraintKind) -> &'static str {
     match kind {
-        ConstraintKind::Platform => "plataforma",
-        ConstraintKind::Performance => "rendimiento",
-        ConstraintKind::Compatibility => "compatibilidad",
-        ConstraintKind::Security => "seguridad",
-        ConstraintKind::Other => "otra",
+        ConstraintKind::Platform => "platform",
+        ConstraintKind::Performance => "performance",
+        ConstraintKind::Compatibility => "compatibility",
+        ConstraintKind::Security => "security",
+        ConstraintKind::Other => "other",
     }
 }
 
 fn prompt(ctx: &NodeContext, options: &[IdeaOption]) -> String {
     let state = ctx.state();
-    let mut out = format!("Pedido: {}\n", ctx.problem());
+    let mut out = format!("Request: {}\n", ctx.problem());
     for statement in &state.problem_statements {
-        let _ = writeln!(out, "Problema: {statement}");
+        let _ = writeln!(out, "Problem: {statement}");
     }
-    out.push_str("\nRestricciones:\n");
+    out.push_str("\nConstraints:\n");
     for Constraint {
         id,
         kind,
@@ -228,18 +228,18 @@ fn prompt(ctx: &NodeContext, options: &[IdeaOption]) -> String {
     {
         let _ = writeln!(out, "- {id} ({}): {statement}", kind_name(*kind));
     }
-    out.push_str("\nOpciones:\n");
+    out.push_str("\nOptions:\n");
     for option in options {
         let _ = writeln!(out, "- {}: {}", option.title, option.description);
     }
     if !state.evidence.is_empty() {
-        out.push_str("\nEvidencia:\n");
+        out.push_str("\nEvidence:\n");
         for evidence in &state.evidence {
             let _ = writeln!(out, "- {}: {}", evidence.id, evidence.claim);
         }
     }
     if let Some(reply) = ctx.user_reply() {
-        let _ = write!(out, "\nCorrecciones del usuario: {reply}\n");
+        let _ = write!(out, "\nUser corrections: {reply}\n");
     }
     out
 }
@@ -258,7 +258,7 @@ fn validate(ctx: &NodeContext, text: &str, options: &[IdeaOption]) -> Result<Mod
     let answer: Answer = parse_json(text)?;
     let titles: BTreeSet<&str> = options.iter().map(|o| o.title.as_str()).collect();
     if answer.criteria.is_empty() {
-        return Err("faltan criterios".into());
+        return Err("criteria are missing".into());
     }
     let mut seen = BTreeSet::new();
     let known_constraints: BTreeSet<String> = ctx
@@ -270,55 +270,58 @@ fn validate(ctx: &NodeContext, text: &str, options: &[IdeaOption]) -> Result<Mod
     for d in &answer.discarded {
         check_title(&titles, &mut seen, &d.title)?;
         if d.constraints.is_empty() {
-            return Err(format!("«{}» se descarta sin citar restricciones", d.title));
+            return Err(format!(
+                "\"{}\" is discarded without citing constraints",
+                d.title
+            ));
         }
         if let Some(c) = d
             .constraints
             .iter()
             .find(|c| !known_constraints.contains(*c))
         {
-            return Err(format!("la restricción {c} no existe"));
+            return Err(format!("constraint {c} does not exist"));
         }
     }
     for s in &answer.scores {
         check_title(&titles, &mut seen, &s.title)?;
         if s.values.len() != answer.criteria.len() {
             return Err(format!(
-                "«{}» tiene {} puntajes y hay {} criterios",
+                "\"{}\" has {} scores and there are {} criteria",
                 s.title,
                 s.values.len(),
                 answer.criteria.len()
             ));
         }
         if s.values.iter().any(|v| !(1.0..=5.0).contains(v)) {
-            return Err(format!("los puntajes de «{}» deben ir de 1 a 5", s.title));
+            return Err(format!("the scores of \"{}\" must be from 1 to 5", s.title));
         }
     }
     if let Some(missing) = titles.iter().find(|t| !seen.contains(**t)) {
-        return Err(format!("falta clasificar la opción «{missing}»"));
+        return Err(format!("option \"{missing}\" is not classified"));
     }
     if let Some(chosen) = &answer.chosen {
         if !answer.scores.iter().any(|s| &s.title == chosen) {
             return Err(format!(
-                "la elegida «{chosen}» no es una opción viable puntuada"
+                "the chosen \"{chosen}\" is not a scored viable option"
             ));
         }
         if answer.rationale.trim().is_empty() {
-            return Err("falta la justificación".into());
+            return Err("the rationale is missing".into());
         }
         if answer
             .black_box
             .as_ref()
             .is_none_or(|b| b.piece.trim().is_empty())
         {
-            return Err("falta la caja negra de la elegida".into());
+            return Err("the black box of the chosen option is missing".into());
         }
     }
     let mut evidence = Vec::new();
     for raw in &answer.evidence_ids {
         let id: EvidenceId = raw
             .parse()
-            .map_err(|_| format!("id de evidencia inválido {raw}"))?;
+            .map_err(|_| format!("invalid evidence id {raw}"))?;
         evidence.push(id);
     }
     for id in extract_citations(&answer.rationale) {
@@ -329,7 +332,7 @@ fn validate(ctx: &NodeContext, text: &str, options: &[IdeaOption]) -> Result<Mod
     if let Err(unknown) = ctx.state().cites_only_known_evidence(&evidence) {
         let unknown: Vec<String> = unknown.iter().map(ToString::to_string).collect();
         return Err(format!(
-            "cita evidencia inexistente: {}",
+            "cites evidence that does not exist: {}",
             unknown.join(", ")
         ));
     }
@@ -342,10 +345,10 @@ fn check_title<'a>(
     title: &'a str,
 ) -> Result<(), String> {
     if !titles.contains(title) {
-        return Err(format!("«{title}» no es una de las opciones"));
+        return Err(format!("\"{title}\" is not one of the options"));
     }
     if !seen.insert(title) {
-        return Err(format!("«{title}» aparece dos veces"));
+        return Err(format!("\"{title}\" appears twice"));
     }
     Ok(())
 }
@@ -360,7 +363,11 @@ fn discarded_labels(answer: &Answer) -> Vec<String> {
             } else {
                 format!(": {}", d.reason.trim())
             };
-            format!("{} (viola {}){reason}", d.title, d.constraints.join(", "))
+            format!(
+                "{} (violates {}){reason}",
+                d.title,
+                d.constraints.join(", ")
+            )
         })
         .collect()
 }
@@ -368,10 +375,10 @@ fn discarded_labels(answer: &Answer) -> Vec<String> {
 /// Options × criteria, with the total and whether each was chosen,
 /// viable or discarded; in the order of the brainstorm.
 fn matrix(answer: &Answer, options: &[IdeaOption], chosen: &str) -> TableSpec {
-    let mut columns = vec![Column::new("Opción")];
+    let mut columns = vec![Column::new("Option")];
     columns.extend(answer.criteria.iter().map(Column::new));
     columns.push(Column::new("Total"));
-    columns.push(Column::new("Estado"));
+    columns.push(Column::new("Status"));
     let rows = options
         .iter()
         .map(|option| {
@@ -380,7 +387,7 @@ fn matrix(answer: &Answer, options: &[IdeaOption], chosen: &str) -> TableSpec {
                 row.extend(s.values.iter().map(|v| Cell::Number(*v)));
                 row.push(Cell::Number(s.values.iter().sum()));
                 let state = if option.title == chosen {
-                    "elegida"
+                    "chosen"
                 } else {
                     "viable"
                 };
@@ -394,7 +401,7 @@ fn matrix(answer: &Answer, options: &[IdeaOption], chosen: &str) -> TableSpec {
                     .find(|d| d.title == option.title)
                     .map(|d| d.constraints.join(", "))
                     .unwrap_or_default();
-                row.push(Cell::Text(format!("descartada ({violated})")));
+                row.push(Cell::Text(format!("discarded ({violated})")));
             }
             row
         })
@@ -451,14 +458,14 @@ mod tests {
     #[test]
     fn the_options_are_the_ideas_of_the_brainstorm() {
         let idea = super::super::brainstorm::Idea {
-            name: "Caché".into(),
-            description: "una línea".into(),
+            name: "Cache".into(),
+            description: "one line".into(),
             evidence_ids: vec![EvidenceId::new(1).unwrap()],
         };
         let options: Vec<IdeaOption> =
             serde_json::from_value(serde_json::to_value(vec![idea]).unwrap()).unwrap();
-        assert_eq!(options[0].title, "Caché");
-        assert_eq!(options[0].description, "una línea");
+        assert_eq!(options[0].title, "Cache");
+        assert_eq!(options[0].description, "one line");
     }
     use crate::flows::research::node::NodeDeps;
     use crate::ports::events::DomainEvent;
@@ -469,10 +476,10 @@ mod tests {
         let mut state = ResearchState::default();
         state
             .problem_statements
-            .push("el login tarda 2 s a 100 rps".into());
-        state.add_constraint(ConstraintKind::Platform, "sin servicios externos", None);
+            .push("login takes 2 s at 100 rps".into());
+        state.add_constraint(ConstraintKind::Platform, "no external services", None);
         state.add_evidence(
-            "la sesión se lee de disco en cada request",
+            "the session is read from disk on every request",
             SourceRef::File {
                 path: "src/session.rs".into(),
                 line_start: Some(10),
@@ -484,29 +491,29 @@ mod tests {
     }
 
     fn options() -> Vec<IdeaOption> {
-        ["Redis", "Caché en memoria", "Índice en SQLite"]
+        ["Redis", "In-memory cache", "SQLite index"]
             .into_iter()
             .map(|t| IdeaOption {
                 title: t.into(),
-                description: format!("usar {t}"),
+                description: format!("use {t}"),
             })
             .collect()
     }
 
     fn answer() -> String {
         json!({
-            "criteria": ["Rendimiento", "Simplicidad"],
-            "discarded": [{"title": "Redis", "constraints": ["C1"], "reason": "es un servicio externo"}],
+            "criteria": ["Performance", "Simplicity"],
+            "discarded": [{"title": "Redis", "constraints": ["C1"], "reason": "it is an external service"}],
             "scores": [
-                {"title": "Caché en memoria", "values": [5, 4]},
-                {"title": "Índice en SQLite", "values": [3, 3]}
+                {"title": "In-memory cache", "values": [5, 4]},
+                {"title": "SQLite index", "values": [3, 3]}
             ],
-            "chosen": "Caché en memoria",
-            "rationale": "Evita leer disco en cada request [E1].",
+            "chosen": "In-memory cache",
+            "rationale": "Avoids reading disk on every request [E1].",
             "evidence_ids": [],
             "black_box": {"piece": "SessionCache", "interactions": [
-                {"with": "SessionStore", "how": "lee al fallar"},
-                {"with": "Login", "how": "consulta"}
+                {"with": "SessionStore", "how": "reads on a miss"},
+                {"with": "Login", "how": "queries"}
             ]}
         })
         .to_string()
@@ -518,7 +525,7 @@ mod tests {
         state: ResearchState,
     ) -> NodeContext {
         let deps = NodeDeps::new(llm, ModelPolicy::default(), sink).with_clock(|| 9);
-        NodeContext::new(Stage::Modeling, deps, "el login es lento", state)
+        NodeContext::new(Stage::Modeling, deps, "login is slow", state)
     }
 
     fn blocks(sink: &RecordingSink) -> Vec<BlockKind> {
@@ -547,8 +554,8 @@ mod tests {
         );
 
         let prompt = format!("{:?}", llm.last_request().unwrap().messages);
-        assert!(prompt.contains("C1 (plataforma): sin servicios externos"));
-        assert!(prompt.contains("Índice en SQLite: usar Índice en SQLite"));
+        assert!(prompt.contains("C1 (platform): no external services"));
+        assert!(prompt.contains("SQLite index: use SQLite index"));
         assert_eq!(
             llm.last_request().unwrap().model.role,
             Stage::Modeling.default_role()
@@ -561,11 +568,11 @@ mod tests {
         let names: Vec<_> = table.columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Opción", "Rendimiento", "Simplicidad", "Total", "Estado"]
+            ["Option", "Performance", "Simplicity", "Total", "Status"]
         );
-        assert_eq!(table.rows[0][4], Cell::Text("descartada (C1)".into()));
+        assert_eq!(table.rows[0][4], Cell::Text("discarded (C1)".into()));
         assert_eq!(table.rows[1][3], Cell::Number(9.0));
-        assert_eq!(table.rows[1][4], Cell::Text("elegida".into()));
+        assert_eq!(table.rows[1][4], Cell::Text("chosen".into()));
         let BlockKind::Mermaid(mermaid) = &blocks[1] else {
             panic!("{blocks:?}")
         };
@@ -577,7 +584,7 @@ mod tests {
         assert!(
             mermaid
                 .source
-                .contains("P ---|\"lee al fallar\"| I1[\"SessionStore\"]")
+                .contains("P ---|\"reads on a miss\"| I1[\"SessionStore\"]")
         );
         assert!(matches!(blocks[2], BlockKind::Markdown { .. }));
 
@@ -586,13 +593,13 @@ mod tests {
         let state = ctx.into_state();
         let decision = &state.decisions[0];
         assert_eq!(decision.id, decision_key);
-        assert_eq!(decision.chosen, "Caché en memoria");
+        assert_eq!(decision.chosen, "In-memory cache");
         assert_eq!(
             decision.discarded,
-            ["Redis (viola C1): es un servicio externo"]
+            ["Redis (violates C1): it is an external service"]
         );
         assert_eq!(decision.evidence_ids, [EvidenceId::new(1).unwrap()]);
-        assert!(state.journal[0].text.contains("elegida «Caché en memoria»"));
+        assert!(state.journal[0].text.contains("chose \"In-memory cache\""));
     }
 
     #[tokio::test]
@@ -606,24 +613,24 @@ mod tests {
         ctx.set_data(BRAINSTORM_OPTIONS_KEY, options()).unwrap();
         let old = ctx
             .state_mut()
-            .add_decision("otra", vec![], "previa", vec![]);
+            .add_decision("other", vec![], "previous", vec![]);
         ctx.set_data(DECISION_KEY, old).unwrap();
 
         Modeling::new().run(&mut ctx).await.unwrap();
 
         let retry = llm.last_request().unwrap();
         assert_eq!(retry.messages.len(), 3);
-        assert!(format!("{:?}", retry.messages[2]).contains("no es válida"));
+        assert!(format!("{:?}", retry.messages[2]).contains("is not valid"));
         let state = ctx.into_state();
         assert_eq!(state.decisions.len(), 1);
-        assert_eq!(state.decisions[0].chosen, "Caché en memoria");
+        assert_eq!(state.decisions[0].chosen, "In-memory cache");
     }
 
     #[tokio::test]
     async fn fails_after_two_invalid_answers() {
         let llm = Arc::new(ScriptedLlm::new([
-            ScriptedResponse::text("no sé"),
-            ScriptedResponse::text("tampoco"),
+            ScriptedResponse::text("no idea"),
+            ScriptedResponse::text("neither"),
         ]));
         let mut ctx = context(llm, Arc::new(RecordingSink::new()), state());
         ctx.set_data(BRAINSTORM_OPTIONS_KEY, options()).unwrap();

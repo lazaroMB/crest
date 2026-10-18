@@ -53,17 +53,17 @@ impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Etapa {}/{}: {} ({})",
+            "Stage {}/{}: {} ({})",
             self.index(),
             self.total(),
-            self.stage.name_es(),
-            self.phase().name_es()
+            self.stage.name(),
+            self.phase().name()
         )?;
         match &self.status {
-            FlowStatus::Running { .. } => write!(f, " · en curso"),
-            FlowStatus::WaitingForInput { .. } => write!(f, " · esperando tu respuesta"),
-            FlowStatus::Completed => write!(f, " · flujo terminado"),
-            FlowStatus::Aborted => write!(f, " · flujo abortado"),
+            FlowStatus::Running { .. } => write!(f, " · running"),
+            FlowStatus::WaitingForInput { .. } => write!(f, " · waiting for your answer"),
+            FlowStatus::Completed => write!(f, " · flow finished"),
+            FlowStatus::Aborted => write!(f, " · flow aborted"),
         }
     }
 }
@@ -342,7 +342,7 @@ impl ResearchFlow {
                 reason: "it is ahead of the current stage",
             });
         }
-        let text = format!("Regreso manual desde {} (/back).", current.name_es());
+        let text = format!("Manual return from {} (/back).", current.name());
         log_and_clear_gate(&session, self.now(), to, &text)?;
         session.context.remove(KEY_ENTERED);
         session.context.remove(KEY_BACKS);
@@ -372,7 +372,7 @@ impl ResearchFlow {
         if !is_optional(current) {
             return Err(FlowError::NotOptional(current));
         }
-        log_and_clear_gate(&session, self.now(), current, "Etapa saltada (/skip).")?;
+        log_and_clear_gate(&session, self.now(), current, "Stage skipped (/skip).")?;
         let status = match self.graph.next_after(current) {
             Some(next) => {
                 session.current_task_id = task_id(next);
@@ -397,7 +397,7 @@ impl ResearchFlow {
             return Ok(FlowStatus::Aborted);
         }
         let current = self.current_stage(&session)?;
-        log_and_clear_gate(&session, self.now(), current, "Flujo abortado (/abort).")?;
+        log_and_clear_gate(&session, self.now(), current, "Flow aborted (/abort).")?;
         session.context.set(KEY_STATUS, FlowStatus::Aborted)?;
         self.save(session).await?;
         Ok(FlowStatus::Aborted)

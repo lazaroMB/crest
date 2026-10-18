@@ -1,11 +1,11 @@
-//! Node 4, Análisis: contrasts the ideas gathered so far with the data.
+//! Node 4, Analysis: contrasts the ideas gathered so far with the data.
 //!
 //! It sends the collected evidence to the `main` model and asks for a JSON
 //! report: findings (profiles, benchmarks, counts, timelines), each citing
 //! known evidence ids, plus numeric series for charts. Findings are shown
 //! as a `Table` and stored under [`KEY_FINDINGS`]; every series becomes a
-//! `Chart`. Without evidence the flow goes back to Datos (or Observación
-//! when the graph has no Datos).
+//! `Chart`. Without evidence the flow goes back to Data (or Observation
+//! when the graph has no Data).
 
 use std::fmt::Write as _;
 
@@ -24,55 +24,55 @@ pub const KEY_FINDINGS: &str = "analysis.findings";
 const MAX_JOURNAL_ENTRIES: usize = 12;
 
 const SYSTEM: &str = "\
-Eres la etapa de Análisis de una investigación sobre un proyecto de software. \
-Contrasta las ideas (el pedido y lo observado) con los datos: perfiles, benchmarks, \
-conteos y líneas de tiempo. No inventes datos: cada hallazgo y cada gráfica cita ids \
-de evidencia de la lista (E1, E2…). Responde solo con un objeto JSON, sin texto extra.";
+You are the Analysis stage of an investigation of a software project. \
+Contrast the ideas (the request and what was observed) with the data: profiles, benchmarks, \
+counts and timelines. Do not make up data: every finding and every chart cites evidence ids \
+from the list (E1, E2…). Answer only with a JSON object, with no extra text.";
 
-const SCHEMA: &str = r#"Formato de la respuesta:
+const SCHEMA: &str = r#"Answer format:
 {
   "findings": [
     {
-      "idea": "idea o suposición que se contrasta",
-      "statement": "hallazgo en una oración, con números si los hay",
-      "verdict": "confirma | contradice | matiza",
-      "kind": "perfil | benchmark | conteo | linea_de_tiempo | otro",
+      "idea": "idea or assumption being contrasted",
+      "statement": "finding in one sentence, with numbers if there are any",
+      "verdict": "supports | contradicts | nuances",
+      "kind": "profile | benchmark | count | timeline | other",
       "evidence_ids": ["E1"]
     }
   ],
   "charts": [
     {
-      "title": "título",
+      "title": "title",
       "kind": "bar | line | area | pie",
-      "labels": ["etiqueta"],
-      "series": [{ "name": "serie", "values": [1.0] }],
+      "labels": ["label"],
+      "series": [{ "name": "series", "values": [1.0] }],
       "evidence_ids": ["E1"]
     }
   ]
 }
-"findings" tiene al menos un elemento; "charts" puede estar vacío si no hay números. \
-Cada serie tiene un valor por etiqueta; "pie" lleva una sola serie."#;
+"findings" has at least one element; "charts" may be empty if there are no numbers. \
+Each series has one value per label; "pie" takes a single series."#;
 
 /// Whether the data backs the idea it is contrasted with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Verdict {
     /// The data backs the idea.
-    #[serde(rename = "confirma")]
+    #[serde(rename = "supports", alias = "confirma")]
     Supports,
     /// The data contradicts the idea.
-    #[serde(rename = "contradice")]
+    #[serde(rename = "contradicts", alias = "contradice")]
     Contradicts,
     /// The data backs it only in part.
-    #[serde(rename = "matiza")]
+    #[serde(rename = "nuances", alias = "matiza")]
     Nuances,
 }
 
 impl Verdict {
     fn label(self) -> &'static str {
         match self {
-            Self::Supports => "Confirma",
-            Self::Contradicts => "Contradice",
-            Self::Nuances => "Matiza",
+            Self::Supports => "Supports",
+            Self::Contradicts => "Contradicts",
+            Self::Nuances => "Nuances",
         }
     }
 }
@@ -81,31 +81,31 @@ impl Verdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FindingKind {
     /// Where the time or memory goes.
-    #[serde(rename = "perfil")]
+    #[serde(rename = "profile", alias = "perfil")]
     Profile,
     /// A measurement under load.
     #[serde(rename = "benchmark")]
     Benchmark,
     /// How often something happens.
-    #[serde(rename = "conteo")]
+    #[serde(rename = "count", alias = "conteo")]
     Count,
     /// When something changed.
-    #[serde(rename = "linea_de_tiempo")]
+    #[serde(rename = "timeline", alias = "linea_de_tiempo")]
     Timeline,
     /// Anything else.
     #[default]
-    #[serde(rename = "otro", other)]
+    #[serde(rename = "other", alias = "otro", other)]
     Other,
 }
 
 impl FindingKind {
     fn label(self) -> &'static str {
         match self {
-            Self::Profile => "Perfil",
+            Self::Profile => "Profile",
             Self::Benchmark => "Benchmark",
-            Self::Count => "Conteo",
-            Self::Timeline => "Línea de tiempo",
-            Self::Other => "Otro",
+            Self::Count => "Count",
+            Self::Timeline => "Timeline",
+            Self::Other => "Other",
         }
     }
 }
@@ -143,7 +143,7 @@ struct Report {
     charts: Vec<ChartOut>,
 }
 
-/// The Análisis node.
+/// The Analysis node.
 #[derive(Debug, Default)]
 pub struct Analysis;
 
@@ -166,7 +166,7 @@ impl ResearchNode for Analysis {
             let to = ctx.first_stage_of(&[Stage::Data, Stage::Observation]);
             return Ok(NodeOutcome::Back {
                 to,
-                reason: "no hay evidencia que analizar; hacen falta datos del proyecto".into(),
+                reason: "there is no evidence to analyze; data about the project is needed".into(),
             });
         }
         let prompt = format!(
@@ -204,7 +204,7 @@ impl ResearchNode for Analysis {
         }
         let cited: Vec<String> = cited.iter().map(ToString::to_string).collect();
         ctx.log(format!(
-            "Análisis: {} hallazgos y {} gráficas; evidencia citada: {}.",
+            "Analysis: {} findings and {} charts; evidence cited: {}.",
             report.findings.len(),
             charts.len(),
             cited.join(", ")
@@ -217,23 +217,19 @@ impl ResearchNode for Analysis {
 /// that its charts validate.
 fn check(report: &Report, state: &ResearchState) -> Result<(), String> {
     if report.findings.is_empty() {
-        return Err("\"findings\" está vacío".into());
+        return Err("\"findings\" is empty".into());
     }
     for (i, finding) in report.findings.iter().enumerate() {
         if finding.statement.trim().is_empty() {
-            return Err(format!("el hallazgo {} no tiene \"statement\"", i + 1));
+            return Err(format!("finding {} has no \"statement\"", i + 1));
         }
-        cites_known(
-            state,
-            &finding.evidence_ids,
-            &format!("el hallazgo {}", i + 1),
-        )?;
+        cites_known(state, &finding.evidence_ids, &format!("finding {}", i + 1))?;
     }
     for chart in &report.charts {
         cites_known(
             state,
             &chart.evidence_ids,
-            &format!("la gráfica {:?}", chart.title),
+            &format!("chart {:?}", chart.title),
         )?;
         ChartSpec {
             title: chart.title.clone(),
@@ -242,7 +238,7 @@ fn check(report: &Report, state: &ResearchState) -> Result<(), String> {
             series: chart.series.clone(),
         }
         .validate()
-        .map_err(|e| format!("la gráfica {:?} es inválida: {e}", chart.title))?;
+        .map_err(|e| format!("chart {:?} is invalid: {e}", chart.title))?;
     }
     Ok(())
 }
@@ -254,12 +250,12 @@ pub(super) fn cites_known(
     what: &str,
 ) -> Result<(), String> {
     if ids.is_empty() {
-        return Err(format!("{what} no cita evidencia"));
+        return Err(format!("{what} cites no evidence"));
     }
     state.cites_only_known_evidence(ids).map_err(|unknown| {
         let unknown: Vec<String> = unknown.iter().map(ToString::to_string).collect();
         format!(
-            "{what} cita evidencia que no existe: {}",
+            "{what} cites evidence that does not exist: {}",
             unknown.join(", ")
         )
     })
@@ -267,18 +263,18 @@ pub(super) fn cites_known(
 
 /// The problem, the journal of earlier stages and the evidence, as text.
 pub(super) fn context_prompt(problem: &str, state: &ResearchState, reply: Option<&str>) -> String {
-    let mut out = format!("Pedido del usuario: {problem}\n");
+    let mut out = format!("User request: {problem}\n");
     if !state.problem_statements.is_empty() {
-        let _ = writeln!(out, "Problema: {}", state.problem_statements.join(" / "));
+        let _ = writeln!(out, "Problem: {}", state.problem_statements.join(" / "));
     }
     let skip = state.journal.len().saturating_sub(MAX_JOURNAL_ENTRIES);
     if state.journal.len() > skip {
-        out.push_str("\nDiario de la investigación:\n");
+        out.push_str("\nResearch journal:\n");
         for entry in &state.journal[skip..] {
-            let _ = writeln!(out, "- [{}] {}", entry.stage.name_es(), entry.text);
+            let _ = writeln!(out, "- [{}] {}", entry.stage.name(), entry.text);
         }
     }
-    out.push_str("\nEvidencia:\n");
+    out.push_str("\nEvidence:\n");
     for evidence in &state.evidence {
         let _ = writeln!(
             out,
@@ -289,7 +285,7 @@ pub(super) fn context_prompt(problem: &str, state: &ResearchState, reply: Option
         );
     }
     if let Some(reply) = reply {
-        let _ = writeln!(out, "\nIndicaciones del usuario: {reply}");
+        let _ = writeln!(out, "\nUser instructions: {reply}");
     }
     out
 }
@@ -302,18 +298,18 @@ pub(super) fn describe_source(source: &SourceRef) -> String {
             line_start: Some(start),
             line_end,
         } => match line_end {
-            Some(end) if end != start => format!("archivo {path}:{start}-{end}"),
-            _ => format!("archivo {path}:{start}"),
+            Some(end) if end != start => format!("file {path}:{start}-{end}"),
+            _ => format!("file {path}:{start}"),
         },
-        SourceRef::File { path, .. } => format!("archivo {path}"),
-        SourceRef::Commit { sha, summary } => format!("commit {sha} «{summary}»"),
+        SourceRef::File { path, .. } => format!("file {path}"),
+        SourceRef::Commit { sha, summary } => format!("commit {sha} \"{summary}\""),
         SourceRef::Url { url, .. } => format!("web {url}"),
         SourceRef::Command {
             command,
             output_excerpt,
         } => {
             let excerpt: String = output_excerpt.chars().take(300).collect();
-            format!("comando `{command}`, salida: {excerpt}")
+            format!("command `{command}`, output: {excerpt}")
         }
     }
 }
@@ -331,7 +327,7 @@ fn ids_text(ids: &[EvidenceId]) -> String {
 
 fn findings_table(findings: &[Finding]) -> TableSpec {
     TableSpec {
-        columns: ["Idea", "Hallazgo", "Veredicto", "Tipo", "Evidencia"]
+        columns: ["Idea", "Finding", "Verdict", "Kind", "Evidence"]
             .into_iter()
             .map(Column::new)
             .collect(),
@@ -363,18 +359,18 @@ fn evidence_by_source(state: &ResearchState) -> ChartSpec {
         };
         counts[i] += 1;
     }
-    let (labels, values): (Vec<String>, Vec<f64>) = ["Archivos", "Commits", "Web", "Comandos"]
+    let (labels, values): (Vec<String>, Vec<f64>) = ["Files", "Commits", "Web", "Commands"]
         .into_iter()
         .zip(counts)
         .filter(|(_, n)| *n > 0)
         .map(|(label, n)| (label.to_owned(), f64::from(n)))
         .unzip();
     ChartSpec {
-        title: "Evidencia por tipo de fuente".into(),
+        title: "Evidence by source kind".into(),
         kind: ChartKind::Bar,
         labels,
         series: vec![Series {
-            name: "evidencias".into(),
+            name: "evidence".into(),
             values,
         }],
     }
@@ -405,9 +401,9 @@ mod tests {
 
     fn state_with_evidence() -> ResearchState {
         let mut state = ResearchState::default();
-        state.log(1, Stage::Data, "dos evidencias");
+        state.log(1, Stage::Data, "two pieces of evidence");
         state.add_evidence(
-            "el login hace 3 consultas por usuario",
+            "login runs 3 queries per user",
             SourceRef::File {
                 path: "src/login.rs".into(),
                 line_start: Some(10),
@@ -416,7 +412,7 @@ mod tests {
             1,
         );
         state.add_evidence(
-            "p95 del login: 2000 ms",
+            "login p95: 2000 ms",
             SourceRef::Command {
                 command: "make bench".into(),
                 output_excerpt: "p95=2000ms".into(),
@@ -437,22 +433,22 @@ mod tests {
             Arc::clone(sink) as _,
         )
         .with_clock(|| 5);
-        NodeContext::new(Stage::Analysis, deps, "el login tarda 2 s", state)
+        NodeContext::new(Stage::Analysis, deps, "login takes 2 s", state)
     }
 
     fn report(evidence: &str) -> String {
         json!({
             "findings": [{
-                "idea": "el login es lento por la base de datos",
-                "statement": "3 consultas por usuario suman 2000 ms de p95",
-                "verdict": "confirma",
+                "idea": "login is slow because of the database",
+                "statement": "3 queries per user add up to a 2000 ms p95",
+                "verdict": "supports",
                 "kind": "benchmark",
                 "evidence_ids": [evidence, "E2"]
             }],
             "charts": [{
-                "title": "p95 del login",
+                "title": "login p95",
                 "kind": "bar",
-                "labels": ["actual", "objetivo"],
+                "labels": ["current", "target"],
                 "series": [{ "name": "ms", "values": [2000.0, 200.0] }],
                 "evidence_ids": ["E2"]
             }]
@@ -476,13 +472,13 @@ mod tests {
         let req = llm.last_request().unwrap();
         assert_eq!(req.model.role, ModelRole::Main);
         let sent = serde_json::to_string(&req.messages).unwrap();
-        assert!(sent.contains("E1 (archivo src/login.rs:10-20)"), "{sent}");
+        assert!(sent.contains("E1 (file src/login.rs:10-20)"), "{sent}");
 
         let blocks = blocks(&sink);
         let BlockKind::Table(table) = &blocks[0] else {
             panic!("{blocks:?}")
         };
-        assert_eq!(table.rows[0][2], Cell::Text("Confirma".into()));
+        assert_eq!(table.rows[0][2], Cell::Text("Supports".into()));
         assert_eq!(table.rows[0][4], Cell::Text("E1, E2".into()));
         let BlockKind::Chart(chart) = &blocks[1] else {
             panic!("{blocks:?}")
@@ -495,7 +491,7 @@ mod tests {
         assert_eq!(findings[0].kind, FindingKind::Benchmark);
         let entry = ctx.state().journal.last().unwrap();
         assert_eq!(entry.stage, Stage::Analysis);
-        assert!(entry.text.contains("1 hallazgos"), "{}", entry.text);
+        assert!(entry.text.contains("1 findings"), "{}", entry.text);
     }
 
     #[tokio::test]
@@ -511,10 +507,13 @@ mod tests {
             NodeOutcome::Done
         );
         let retry = serde_json::to_string(&llm.last_request().unwrap().messages).unwrap();
-        assert!(retry.contains("evidencia que no existe: E9"), "{retry}");
+        assert!(
+            retry.contains("evidence that does not exist: E9"),
+            "{retry}"
+        );
 
         let llm = Arc::new(ScriptedLlm::new([
-            ScriptedResponse::text("no sé"),
+            ScriptedResponse::text("no idea"),
             ScriptedResponse::text(report("E9")),
         ]));
         let mut ctx = context(&llm, &sink, state_with_evidence());
@@ -526,8 +525,8 @@ mod tests {
     async fn without_charts_it_counts_the_evidence_by_source() {
         let answer = json!({
             "findings": [{
-                "statement": "el login consulta tres veces",
-                "verdict": "matiza",
+                "statement": "login queries three times",
+                "verdict": "nuances",
                 "evidence_ids": ["E1"]
             }]
         });
@@ -540,8 +539,21 @@ mod tests {
         let BlockKind::Chart(chart) = &blocks(&sink)[1] else {
             panic!()
         };
-        assert_eq!(chart.labels, ["Archivos", "Comandos"]);
+        assert_eq!(chart.labels, ["Files", "Commands"]);
         assert_eq!(chart.series[0].values, [1.0, 1.0]);
+    }
+
+    #[test]
+    fn spanish_verdicts_and_kinds_still_parse() {
+        let finding: Finding = serde_json::from_value(json!({
+            "statement": "s",
+            "verdict": "contradice",
+            "kind": "linea_de_tiempo",
+            "evidence_ids": ["E1"]
+        }))
+        .unwrap();
+        assert_eq!(finding.verdict, Verdict::Contradicts);
+        assert_eq!(finding.kind, FindingKind::Timeline);
     }
 
     #[tokio::test]
@@ -558,7 +570,7 @@ mod tests {
             }
         ));
 
-        // A graph without Datos goes back to Observación.
+        // A graph without Data goes back to Observation.
         let stages: Arc<[Stage]> = Stage::ALL
             .into_iter()
             .filter(|s| *s != Stage::Data)

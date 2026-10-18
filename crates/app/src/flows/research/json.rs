@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 use super::node::NodeError;
 
 /// Start of the message sent back after an invalid answer.
-pub const RETRY_PREFIX: &str = "Tu respuesta anterior no es válida";
+pub const RETRY_PREFIX: &str = "Your previous answer is not valid";
 
 /// From the first `{` to the last `}` of `text`, if any.
 fn braces(text: &str) -> Option<&str> {
@@ -37,7 +37,7 @@ fn fence_body(text: &str) -> Option<&str> {
 /// The serde error (of the whole span), as text to send back to the model.
 pub fn parse_json<T: DeserializeOwned>(text: &str) -> Result<T, String> {
     let Some(span) = braces(text) else {
-        return Err("no hay ningún objeto JSON en la respuesta".into());
+        return Err("the answer has no JSON object".into());
     };
     let error = match serde_json::from_str(span) {
         Ok(value) => return Ok(value),
@@ -47,7 +47,7 @@ pub fn parse_json<T: DeserializeOwned>(text: &str) -> Result<T, String> {
         .and_then(braces)
         .filter(|fenced| *fenced != span)
         .and_then(|fenced| serde_json::from_str(fenced).ok())
-        .ok_or_else(|| format!("JSON inválido: {error}"))
+        .ok_or_else(|| format!("invalid JSON: {error}"))
 }
 
 /// [`parse_json`], then `validate`.
@@ -68,8 +68,8 @@ pub fn parse_valid<T: DeserializeOwned>(
 #[must_use]
 pub fn retry_message(error: &str) -> String {
     format!(
-        "{RETRY_PREFIX}: {error}. Responde de nuevo solo con el JSON corregido, sin texto \
-         alrededor."
+        "{RETRY_PREFIX}: {error}. Reply again with only the corrected JSON, with no text \
+         around it."
     )
 }
 
@@ -77,8 +77,8 @@ pub fn retry_message(error: &str) -> String {
 #[must_use]
 pub fn invalid_answer(stage: Stage, error: &str) -> NodeError {
     NodeError::Failed(format!(
-        "{}: el modelo devolvió dos veces un JSON inválido: {error}",
-        stage.name_es()
+        "{}: the model returned invalid JSON twice: {error}",
+        stage.name()
     ))
 }
 
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn json_is_found_inside_prose_and_fences() {
         let a = |t: &str| parse_json::<A>(t).map(|v| v.a);
-        assert_eq!(a("Aquí va:\n{\"a\": 1}\nlisto"), Ok(1.into()));
+        assert_eq!(a("Here it is:\n{\"a\": 1}\ndone"), Ok(1.into()));
         assert_eq!(a("```json\n{\"a\": {}}\n```"), Ok(serde_json::json!({})));
         // A fence inside a string of the object does not confuse it.
         assert_eq!(
@@ -134,19 +134,19 @@ mod tests {
             Ok("```mermaid\ngraph TD\n```".into())
         );
         // Braces in the prose around a fenced object.
-        assert_eq!(a("uso {x}:\n```json\n{\"a\": 2}\n```\n{fin}"), Ok(2.into()));
-        assert!(a("nada").unwrap_err().contains("ningún objeto"));
-        assert!(a("{\"b\": 1}").unwrap_err().starts_with("JSON inválido"));
+        assert_eq!(a("use {x}:\n```json\n{\"a\": 2}\n```\n{end}"), Ok(2.into()));
+        assert!(a("nothing").unwrap_err().contains("no JSON object"));
+        assert!(a("{\"b\": 1}").unwrap_err().starts_with("invalid JSON"));
     }
 
     #[test]
     fn validation_errors_are_returned_as_text() {
         let err = parse_valid::<A>("{\"a\": 1}", |_| Err("no".into())).unwrap_err();
         assert_eq!(err, "no");
-        assert!(retry_message("falta x").starts_with(RETRY_PREFIX));
+        assert!(retry_message("x is missing").starts_with(RETRY_PREFIX));
         let NodeError::Failed(m) = invalid_answer(Stage::Brainstorm, "e") else {
             panic!("failed");
         };
-        assert!(m.contains("Lluvia de ideas"), "{m}");
+        assert!(m.contains("Brainstorm"), "{m}");
     }
 }

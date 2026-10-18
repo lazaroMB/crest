@@ -1,4 +1,4 @@
-//! The chat commands of the research flow: `/stage`, `/back <nodo>`,
+//! The chat commands of the research flow: `/stage`, `/back <stage>`,
 //! `/skip` and `/abort`.
 
 use domain::research::Stage;
@@ -10,7 +10,7 @@ use super::gate::normalize;
 pub enum Command {
     /// `/stage`: show where the flow is.
     Stage,
-    /// `/back <nodo>`: go back to an earlier (or the current) stage.
+    /// `/back <stage>`: go back to an earlier (or the current) stage.
     Back(Stage),
     /// `/skip`: jump over the current stage, if it is optional.
     Skip,
@@ -22,7 +22,7 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommandError {
     /// `/back` without a stage.
-    #[error("usage: /back <stage>, by number (1-14) or name, e.g. /back 5 or /back hipótesis")]
+    #[error("usage: /back <stage>, by number (1-14) or name, e.g. /back 5 or /back hypotheses")]
     MissingStage,
     /// `/back` with something that names no stage (or several).
     #[error("{0:?} names no single stage; use its number (1-14) or name")]
@@ -59,9 +59,9 @@ pub fn parse_command(line: &str) -> Option<Result<Command, CommandError>> {
     })
 }
 
-/// A stage by number (`5`), Spanish name (`hipótesis`, accents and case
-/// ignored), id (`critical_review`) or unique name prefix of at least
-/// three letters (`defin`, `revis`).
+/// A stage by number (`5`), name (`hypotheses`, or the Spanish
+/// `hipótesis`; accents and case ignored), id (`critical_review`) or unique
+/// name prefix of at least three letters (`defin`, `crit`, `revis`).
 ///
 /// # Errors
 ///
@@ -77,10 +77,10 @@ pub fn parse_stage(text: &str) -> Result<Stage, CommandError> {
             .ok()
             .and_then(|v| v.as_str().map(normalize))
     };
-    let name = |s: Stage| normalize(s.name_es());
+    let names = |s: Stage| [normalize(s.name()), normalize(s.name_es())];
     if let Some(stage) = Stage::ALL
         .into_iter()
-        .find(|s| name(*s) == wanted || id(*s).as_deref() == Some(wanted.as_str()))
+        .find(|s| names(*s).contains(&wanted) || id(*s).as_deref() == Some(wanted.as_str()))
     {
         return Ok(stage);
     }
@@ -89,7 +89,7 @@ pub fn parse_stage(text: &str) -> Result<Stage, CommandError> {
     }
     let mut prefixed = Stage::ALL
         .into_iter()
-        .filter(|s| name(*s).starts_with(&wanted));
+        .filter(|s| names(*s).iter().any(|n| n.starts_with(&wanted)));
     match (prefixed.next(), prefixed.next()) {
         (Some(stage), None) => Ok(stage),
         _ => Err(unknown()),
@@ -113,11 +113,15 @@ mod tests {
             parse_command("/back   Hipótesis"),
             Some(Ok(Command::Back(Stage::Hypotheses)))
         );
+        assert_eq!(
+            parse_command("/back hypotheses"),
+            Some(Ok(Command::Back(Stage::Hypotheses)))
+        );
     }
 
     #[test]
     fn leaves_other_lines_to_the_chat() {
-        assert_eq!(parse_command("hola"), None);
+        assert_eq!(parse_command("hello"), None);
         assert_eq!(parse_command("/model opus"), None);
         assert_eq!(parse_command("/stages"), None);
     }
@@ -142,6 +146,8 @@ mod tests {
     fn stages_by_number_name_id_or_prefix() {
         for stage in Stage::ALL {
             assert_eq!(parse_stage(&stage.index().to_string()), Ok(stage));
+            assert_eq!(parse_stage(stage.name()), Ok(stage));
+            assert_eq!(parse_stage(&stage.name().to_uppercase()), Ok(stage));
             assert_eq!(parse_stage(stage.name_es()), Ok(stage));
             assert_eq!(parse_stage(&stage.name_es().to_uppercase()), Ok(stage));
         }
@@ -150,6 +156,9 @@ mod tests {
         assert_eq!(parse_stage("defin"), Ok(Stage::Definition));
         assert_eq!(parse_stage("revisión"), Ok(Stage::CriticalReview));
         assert_eq!(parse_stage("lluvia"), Ok(Stage::Brainstorm));
+        assert_eq!(parse_stage("crit"), Ok(Stage::CriticalReview));
+        assert_eq!(parse_stage("brain"), Ok(Stage::Brainstorm));
+        assert_eq!(parse_stage("data"), Ok(Stage::Data));
         // Prefixes need three letters.
         assert!(parse_stage("p").is_err());
         assert!(parse_stage("pr").is_err());

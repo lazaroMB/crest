@@ -12,6 +12,21 @@ use serde::{Deserialize, Serialize};
 
 /// Headings of the ten sections of `spec.md`, in order.
 pub const SECTIONS: [&str; 10] = [
+    "1. Problem",
+    "2. Background",
+    "3. Hypothesis",
+    "4. Proposed solution",
+    "5. Functional specification",
+    "6. Technical specification",
+    "7. Constraints",
+    "8. Test protocol",
+    "9. Out of scope and risks",
+    "10. Sources",
+];
+
+/// The Spanish headings of [`SECTIONS`], written by earlier versions;
+/// accepted when an existing `spec.md` is read.
+pub const SECTIONS_ES: [&str; 10] = [
     "1. Problema",
     "2. Antecedentes",
     "3. Hipótesis",
@@ -28,31 +43,31 @@ pub const SECTIONS: [&str; 10] = [
 /// come from the research state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SpecAnswer {
-    /// Título corto del Spec (da nombre a la carpeta), p. ej. "Caché de sesiones".
+    /// Short title of the Spec (it names the folder), e.g. "Session cache".
     pub title: String,
-    /// Problema en una oración medible.
+    /// The problem in one measurable sentence.
     pub problem: String,
-    /// Resumen de la investigación, intentos previos y lo descartado, citando evidencia como [E1].
+    /// Summary of the research, previous attempts and what was discarded, citing evidence as [E1].
     pub background: String,
-    /// La hipótesis de una oración en la que se basa la solución.
+    /// The one-sentence hypothesis the solution rests on.
     pub hypothesis: String,
-    /// Descripción corta de la solución elegida.
+    /// Short description of the chosen solution.
     pub proposal: String,
-    /// Diagrama de caja negra en Mermaid (`flowchart`) con las piezas con las que interactúa.
+    /// Black-box diagram in Mermaid (`flowchart`) with the parts it interacts with.
     pub black_box: String,
-    /// Estados, flujos, pantallas, comandos y contratos de API (markdown).
+    /// States, flows, screens, commands and API contracts (markdown).
     pub functional: String,
-    /// Diagrama de secuencia en Mermaid (`sequenceDiagram`).
+    /// Sequence diagram in Mermaid (`sequenceDiagram`).
     pub sequence: String,
-    /// Diagrama de estados en Mermaid (`stateDiagram-v2`).
+    /// State diagram in Mermaid (`stateDiagram-v2`).
     pub states: String,
-    /// Módulos y archivos a tocar, tipos y firmas, algoritmos, migraciones y configuración (markdown).
+    /// Modules and files to touch, types and signatures, algorithms, migrations and configuration (markdown).
     pub technical: String,
-    /// Tests y experimentos que demuestran el problema y deben pasar al final (markdown).
+    /// Tests and experiments that show the problem and must pass at the end (markdown).
     pub test_protocol: String,
-    /// Lo que queda fuera de alcance (markdown).
+    /// What is out of scope (markdown).
     pub out_of_scope: String,
-    /// Riesgos y cómo mitigarlos (markdown).
+    /// Risks and how to mitigate them (markdown).
     pub risks: String,
 }
 
@@ -82,7 +97,7 @@ impl SpecAnswer {
         ];
         for (field, value) in required {
             if value.trim().is_empty() {
-                errors.push(format!("el campo {field} está vacío"));
+                errors.push(format!("the field {field} is empty"));
             }
         }
         let diagrams = [
@@ -94,8 +109,8 @@ impl SpecAnswer {
             let first = source.trim_start();
             if !starts.iter().any(|s| first.starts_with(s)) {
                 errors.push(format!(
-                    "el campo {field} debe ser Mermaid que empiece con {}",
-                    starts.join(" o ")
+                    "the field {field} must be Mermaid starting with {}",
+                    starts.join(" or ")
                 ));
             }
         }
@@ -138,30 +153,30 @@ fn cell(text: &str) -> String {
     text.replace(['\n', '\r'], " ").replace('|', "\\|")
 }
 
-const fn kind_es(kind: ConstraintKind) -> &'static str {
+const fn kind_name(kind: ConstraintKind) -> &'static str {
     match kind {
-        ConstraintKind::Platform => "Plataforma",
-        ConstraintKind::Performance => "Rendimiento",
-        ConstraintKind::Compatibility => "Compatibilidad",
-        ConstraintKind::Security => "Seguridad",
-        ConstraintKind::Other => "Otra",
+        ConstraintKind::Platform => "Platform",
+        ConstraintKind::Performance => "Performance",
+        ConstraintKind::Compatibility => "Compatibility",
+        ConstraintKind::Security => "Security",
+        ConstraintKind::Other => "Other",
     }
 }
 
 fn constraints_table(constraints: &[Constraint]) -> String {
     if constraints.is_empty() {
-        return "Sin restricciones registradas.\n".into();
+        return "No constraints recorded.\n".into();
     }
-    let mut out = String::from("| Id | Tipo | Restricción | Prueba |\n| --- | --- | --- | --- |\n");
+    let mut out = String::from("| Id | Kind | Constraint | Test |\n| --- | --- | --- | --- |\n");
     for c in constraints {
         let test = c
             .test
             .as_ref()
-            .map_or_else(|| "sin prueba".to_owned(), |t| format!("`{}`", t.reference));
+            .map_or_else(|| "no test".to_owned(), |t| format!("`{}`", t.reference));
         out.push_str(&format!(
             "| {} | {} | {} | {} |\n",
             c.id,
-            kind_es(c.kind),
+            kind_name(c.kind),
             cell(&c.statement),
             cell(&test)
         ));
@@ -187,7 +202,7 @@ pub fn describe_source(source: &SourceRef) -> String {
             Some(t) => format!("[{t}]({url})"),
             None => format!("<{url}>"),
         },
-        SourceRef::Command { command, .. } => format!("comando `{command}`"),
+        SourceRef::Command { command, .. } => format!("command `{command}`"),
     }
 }
 
@@ -198,7 +213,7 @@ pub fn spec_markdown(number: &str, answer: &SpecAnswer, state: &ResearchState) -
     let cited = cited_evidence(&body, state);
     let mut sources = String::new();
     if cited.is_empty() {
-        sources.push_str("Sin fuentes citadas.\n");
+        sources.push_str("No sources cited.\n");
     }
     for e in &cited {
         sources.push_str(&format!(
@@ -228,7 +243,7 @@ fn sections_without_sources(a: &SpecAnswer, constraints: &[Constraint]) -> Strin
         mermaid(&a.black_box)
     ));
     out.push_str(&format!(
-        "## {}\n\n{}### Secuencia\n\n{}\n### Estados\n\n{}\n",
+        "## {}\n\n{}### Sequence\n\n{}\n### States\n\n{}\n",
         SECTIONS[4],
         block(&a.functional),
         mermaid(&a.sequence),
@@ -247,13 +262,13 @@ fn sections_without_sources(a: &SpecAnswer, constraints: &[Constraint]) -> Strin
     ));
     let or_none = |t: &str| {
         if t.trim().is_empty() {
-            "Ninguno.".to_owned()
+            "None.".to_owned()
         } else {
             t.trim().to_owned()
         }
     };
     out.push_str(&format!(
-        "## {}\n\n### Fuera de alcance\n\n{}\n\n### Riesgos\n\n{}\n\n",
+        "## {}\n\n### Out of scope\n\n{}\n\n### Risks\n\n{}\n\n",
         SECTIONS[8],
         or_none(&a.out_of_scope),
         or_none(&a.risks)
@@ -281,13 +296,13 @@ pub fn citation_problems(
     if let Err(unknown) = state.cites_only_known_evidence(&ids) {
         let known: Vec<String> = state.evidence.iter().map(|e| e.id.to_string()).collect();
         errors.push(format!(
-            "cita evidencia que no existe: {}; usa solo {}",
+            "cites evidence that does not exist: {}; use only {}",
             join(&unknown),
             known.join(", ")
         ));
     }
     if !state.evidence.is_empty() && extract_citations(&answer.background).is_empty() {
-        errors.push("los antecedentes no citan ninguna evidencia (escribe ids como [E1])".into());
+        errors.push("the background cites no evidence (write ids such as [E1])".into());
     }
     errors
 }
@@ -354,7 +369,7 @@ pub fn folder_number(folder: &str) -> Option<u32> {
 /// `journal.md`: the entries in order, under a heading per stage run.
 #[must_use]
 pub fn journal_markdown(journal: &[JournalEntry]) -> String {
-    let mut out = String::from("# Diario de investigación\n");
+    let mut out = String::from("# Research journal\n");
     let mut current: Option<Stage> = None;
     for entry in journal {
         if current != Some(entry.stage) {
@@ -362,7 +377,7 @@ pub fn journal_markdown(journal: &[JournalEntry]) -> String {
             out.push_str(&format!(
                 "\n## {}. {}\n\n",
                 entry.stage.index(),
-                entry.stage.name_es()
+                entry.stage.name()
             ));
         }
         out.push_str(&format!(
@@ -372,7 +387,7 @@ pub fn journal_markdown(journal: &[JournalEntry]) -> String {
         ));
     }
     if journal.is_empty() {
-        out.push_str("\nSin entradas.\n");
+        out.push_str("\nNo entries.\n");
     }
     out
 }
@@ -405,18 +420,18 @@ pub fn chart_file(index: usize, chart: &ChartSpec) -> String {
     format!("evidence/chart-{}-{}.csv", index + 1, slug(&chart.title))
 }
 
-/// The "Gráficas" part of the sources of `spec.md`: one link per chart to
+/// The "Charts" part of the sources of `spec.md`: one link per chart to
 /// its CSV in `evidence/`. Empty without charts.
 #[must_use]
 pub fn charts_section(charts: &[ChartSpec]) -> String {
     if charts.is_empty() {
         return String::new();
     }
-    let mut out = String::from("\n### Gráficas\n\n");
+    let mut out = String::from("\n### Charts\n\n");
     for (i, chart) in charts.iter().enumerate() {
         let file = chart_file(i, chart);
         out.push_str(&format!(
-            "- **{}**: datos en [`{file}`]({file})\n",
+            "- **{}**: data in [`{file}`]({file})\n",
             one_line(&chart.title)
         ));
     }
@@ -462,17 +477,18 @@ mod tests {
 
     #[test]
     fn slugs_fold_accents_and_punctuation() {
+        assert_eq!(slug("Session cache"), "session-cache");
         assert_eq!(slug("Caché de sesiones"), "cache-de-sesiones");
         assert_eq!(slug("  ¿Por qué? ¡Ñandú!  "), "por-que-nandu");
         assert_eq!(slug("!!!"), "spec");
-        assert!(slug(&"palabra ".repeat(20)).len() <= 48);
+        assert!(slug(&"word ".repeat(20)).len() <= 48);
     }
 
     #[test]
     fn folder_numbers_need_four_digits() {
         assert_eq!(folder_number("0007-cache"), Some(7));
         assert_eq!(folder_number("7-cache"), None);
-        assert_eq!(folder_number("notas"), None);
+        assert_eq!(folder_number("notes"), None);
     }
 
     #[test]

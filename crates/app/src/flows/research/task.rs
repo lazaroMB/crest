@@ -57,20 +57,13 @@ pub(crate) fn log(ctx: &Context, at: u64, stage: Stage, text: &str) -> Result<()
 /// The confirmation prompt of a gated stage.
 fn confirm_prompt(stage: Stage, next: Option<Stage>) -> String {
     let then = next.map_or_else(
-        || "terminar el flujo".to_owned(),
-        |n| {
-            format!(
-                "seguir con {} ({}/{})",
-                n.name_es(),
-                n.index(),
-                Stage::total()
-            )
-        },
+        || "finish the flow".to_owned(),
+        |n| format!("go on to {} ({}/{})", n.name(), n.index(), Stage::total()),
     );
     format!(
-        "**{}** terminó. Responde «sí» para {then}, escribe correcciones para rehacer \
-         esta etapa o usa `/back <nodo>` para regresar.",
-        stage.name_es()
+        "**{}** is done. Answer \"yes\" to {then}, write corrections to redo this \
+         stage or use `/back <stage>` to go back.",
+        stage.name()
     )
 }
 
@@ -117,7 +110,7 @@ impl NodeTask {
             put(ctx, KEY_STATUS, FlowStatus::Running { next })?;
             return Ok(TaskResult::new(None, NextAction::Continue));
         }
-        log(ctx, self.deps.now(), self.stage(), "Flujo terminado.")?;
+        log(ctx, self.deps.now(), self.stage(), "Flow finished.")?;
         put(ctx, KEY_STATUS, FlowStatus::Completed)?;
         Ok(TaskResult::new(None, NextAction::End))
     }
@@ -155,7 +148,7 @@ impl NodeTask {
             return Ok(());
         }
         self.deps.emit(BlockKind::StageHeader {
-            stage: stage.name_es().to_owned(),
+            stage: stage.name().to_owned(),
             index: stage.index(),
             total: Stage::total(),
         })?;
@@ -168,8 +161,8 @@ impl NodeTask {
         if !self.stages.contains(&to) || to >= stage {
             return Err(NodeError::Failed(format!(
                 "{} asked to go back to {}, which is not an earlier stage of the graph",
-                stage.name_es(),
-                to.name_es()
+                stage.name(),
+                to.name()
             )));
         }
         let mut backs: BTreeMap<Stage, u32> = ctx.get(KEY_BACKS).unwrap_or_default();
@@ -179,10 +172,10 @@ impl NodeTask {
         put(ctx, KEY_BACKS, &backs)?;
         if count > MAX_BACKS_PER_STAGE {
             let prompt = format!(
-                "**{}** pidió regresar a **{}** {count} veces ({reason}). Dime qué falta \
-                 para rehacer esta etapa, o usa `/back <nodo>`.",
-                stage.name_es(),
-                to.name_es()
+                "**{}** asked to go back to **{}** {count} times ({reason}). Tell me what is \
+                 missing to redo this stage, or use `/back <stage>`.",
+                stage.name(),
+                to.name()
             );
             return self.wait(ctx, GateKind::Question, prompt);
         }
@@ -190,11 +183,11 @@ impl NodeTask {
             ctx,
             self.deps.now(),
             stage,
-            &format!("Regreso a {}: {reason}", to.name_es()),
+            &format!("Back to {}: {reason}", to.name()),
         )?;
         self.deps.notice(
             NoticeLevel::Info,
-            format!("{} regresa a {}: {reason}", stage.name_es(), to.name_es()),
+            format!("{} goes back to {}: {reason}", stage.name(), to.name()),
         );
         put(ctx, KEY_STATUS, FlowStatus::Running { next: to })?;
         Ok(TaskResult::new(None, NextAction::GoTo(task_id(to))))
@@ -230,7 +223,7 @@ impl NodeTask {
                     &ctx,
                     self.deps.now(),
                     stage,
-                    &format!("Respuesta del usuario: {}", reply.text.trim()),
+                    &format!("User answer: {}", reply.text.trim()),
                 )?;
             }
             if gate.kind == GateKind::Confirm && is_approval(&reply.text) {
@@ -273,11 +266,11 @@ impl Task for NodeTask {
 
     async fn run(&self, context: Context) -> graph_flow::Result<TaskResult> {
         self.run_node(context).await.map_err(|error| {
-            let message = format!("{}: {error}", self.stage().name_es());
+            let message = format!("{}: {error}", self.stage().name());
             // The error block is best effort: it only fails on bad payloads.
             let _ = self.deps.emit(BlockKind::Error {
                 message: message.clone(),
-                hint: Some("Corrige el problema y vuelve a intentarlo.".to_owned()),
+                hint: Some("Fix the problem and try again.".to_owned()),
             });
             GraphError::TaskExecutionFailed(message)
         })
@@ -354,7 +347,7 @@ mod tests {
         assert_eq!(
             header,
             Some(BlockKind::StageHeader {
-                stage: "Observación".into(),
+                stage: "Observation".into(),
                 index: 2,
                 total: 14,
             })
@@ -386,16 +379,16 @@ mod tests {
         assert_eq!(h.runs(), 1);
 
         // Feedback reruns the node with it and asks again.
-        reply(&s, Stage::Hypotheses, "falta la hipótesis de red");
+        reply(&s, Stage::Hypotheses, "the network hypothesis is missing");
         let out = g.execute_session(&mut s).await.unwrap();
         assert!(matches!(out.status, ExecutionStatus::WaitingForInput));
         assert_eq!(
             h.replies(),
-            [None, Some("falta la hipótesis de red".into())]
+            [None, Some("the network hypothesis is missing".into())]
         );
 
         // Approval moves on without running it again.
-        reply(&s, Stage::Hypotheses, "sí");
+        reply(&s, Stage::Hypotheses, "yes");
         g.execute_session(&mut s).await.unwrap();
         assert_eq!(h.runs(), 2);
         assert_eq!(s.current_task_id, task_id(Stage::Definition));
@@ -418,7 +411,7 @@ mod tests {
         assert!(sink.kinds().contains(&"block_added".to_owned()));
     }
 
-    /// Goes back to the first of Datos and Observación the graph has.
+    /// Goes back to the first of Data and Observation the graph has.
     struct NeedsData;
 
     #[async_trait]
@@ -430,7 +423,7 @@ mod tests {
         async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
             Ok(NodeOutcome::Back {
                 to: ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
-                reason: format!("{} etapas", ctx.stages().len()),
+                reason: format!("{} stages", ctx.stages().len()),
             })
         }
     }
@@ -463,7 +456,7 @@ mod tests {
         assert_eq!(s.current_task_id, task_id(Stage::Observation));
         let journal = load_state(&s.context).journal;
         assert!(
-            journal.last().unwrap().text.contains("2 etapas"),
+            journal.last().unwrap().text.contains("2 stages"),
             "{journal:?}"
         );
     }
@@ -473,7 +466,7 @@ mod tests {
         let sink = Arc::new(RecordingSink::new());
         let back = NodeOutcome::Back {
             to: Stage::Observation,
-            reason: "faltan datos".into(),
+            reason: "data is missing".into(),
         };
         let b = (0..=MAX_BACKS_PER_STAGE)
             .fold(FakeNode::new(Stage::Analysis), |n, _| n.then(back.clone()));
@@ -489,6 +482,6 @@ mod tests {
         }
         let out = g.execute_session(&mut s).await.unwrap();
         assert!(matches!(out.status, ExecutionStatus::WaitingForInput));
-        assert!(out.response.unwrap().contains("4 veces"));
+        assert!(out.response.unwrap().contains("4 times"));
     }
 }

@@ -1,4 +1,4 @@
-//! Node 9, Lluvia de ideas: unfiltered options to solve the problem.
+//! Node 9, Brainstorm: unfiltered options to solve the problem.
 //!
 //! The model lists every option it can think of, each with a one-line
 //! description, building on the prior solutions found by the research
@@ -20,13 +20,13 @@ use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, Research
 pub const IDEAS_KEY: &str = "brainstorm.ideas";
 
 const SYSTEM: &str = "\
-Eres el nodo «Lluvia de ideas» de una investigación sobre un proyecto de software. Genera \
-opciones para resolver el problema SIN FILTRAR: incluye las obvias, las arriesgadas y las que \
-parecen violar alguna restricción; descartar es trabajo de un paso posterior. Aprovecha las \
-soluciones previas encontradas y combínalas, y añade ideas nuevas. Cada opción lleva una sola \
-línea de descripción y, si se basa en evidencia, sus ids (E1…).
-Responde solo con JSON:
-{\"ideas\": [{\"name\": \"…\", \"description\": \"una línea\", \"evidence_ids\": [\"E1\"]}]}";
+You are the \"Brainstorm\" node of an investigation into a software project. Generate \
+options to solve the problem WITHOUT FILTERING: include the obvious ones, the risky ones and \
+the ones that seem to violate a constraint; discarding is the job of a later step. Build on \
+the prior solutions found, combine them, and add new ideas. Each option has a one-line \
+description and, if it rests on evidence, its ids (E1…).
+Reply only with JSON:
+{\"ideas\": [{\"name\": \"…\", \"description\": \"one line\", \"evidence_ids\": [\"E1\"]}]}";
 
 /// One unfiltered option.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ struct Answer {
     ideas: Vec<Idea>,
 }
 
-/// The Lluvia de ideas node.
+/// The Brainstorm node.
 #[derive(Debug, Default)]
 pub struct Brainstorm;
 
@@ -68,14 +68,14 @@ impl ResearchNode for Brainstorm {
             return Ok(back(
                 ctx,
                 Stage::Definition,
-                "no hay una definición del problema para generar opciones",
+                "there is no problem definition to generate options from",
             ));
         }
         let Some(prior) = ctx.data::<Vec<PriorSolution>>(OPTIONS_KEY) else {
             return Ok(back(
                 ctx,
                 Stage::Research,
-                "falta la investigación de soluciones previas",
+                "the research of prior solutions is missing",
             ));
         };
         let prompt = prompt(ctx, &prior);
@@ -90,7 +90,7 @@ impl ResearchNode for Brainstorm {
         ctx.set_data(IDEAS_KEY, &ideas)?;
         let names: Vec<&str> = ideas.iter().map(|i| i.name.as_str()).collect();
         ctx.log(format!(
-            "{} opciones sin filtrar: {}.",
+            "{} unfiltered options: {}.",
             ideas.len(),
             names.join(", ")
         ));
@@ -99,7 +99,7 @@ impl ResearchNode for Brainstorm {
 }
 
 fn back(ctx: &mut NodeContext, to: Stage, reason: &str) -> NodeOutcome {
-    ctx.log(format!("Regresa a {}: {reason}.", to.name_es()));
+    ctx.log(format!("Goes back to {}: {reason}.", to.name()));
     NodeOutcome::Back {
         to,
         reason: reason.into(),
@@ -108,26 +108,26 @@ fn back(ctx: &mut NodeContext, to: Stage, reason: &str) -> NodeOutcome {
 
 fn prompt(ctx: &NodeContext, prior: &[PriorSolution]) -> String {
     let state = ctx.state();
-    let mut out = String::from("Problema:\n");
+    let mut out = String::from("Problem:\n");
     for p in &state.problem_statements {
         let _ = writeln!(out, "- {p}");
     }
     if !state.constraints.is_empty() {
-        out.push_str("\nRestricciones (no descartes por ellas):\n");
+        out.push_str("\nConstraints (do not discard because of them):\n");
         for c in &state.constraints {
             let _ = writeln!(out, "- {}: {}", c.id, c.statement);
         }
     }
-    out.push_str("\nSoluciones previas encontradas:\n");
+    out.push_str("\nPrior solutions found:\n");
     if prior.is_empty() {
-        out.push_str("- ninguna\n");
+        out.push_str("- none\n");
     }
     for s in prior {
         let ids: Vec<String> = s.evidence_ids.iter().map(ToString::to_string).collect();
         let _ = writeln!(out, "- {} [{}]: {}", s.name, ids.join(", "), s.summary);
     }
     if let Some(reply) = ctx.user_reply() {
-        let _ = write!(out, "\nIndicaciones del usuario: {reply}\n");
+        let _ = write!(out, "\nUser instructions: {reply}\n");
     }
     out
 }
@@ -136,25 +136,28 @@ fn prompt(ctx: &NodeContext, prior: &[PriorSolution]) -> String {
 /// repeated names, and citing only known evidence.
 fn validate(answer: &Answer, known: impl Fn(&[EvidenceId]) -> bool) -> Result<(), String> {
     if answer.ideas.is_empty() {
-        return Err("`ideas` está vacío: genera al menos una opción".into());
+        return Err("`ideas` is empty: generate at least one option".into());
     }
     let mut seen: Vec<String> = Vec::new();
     for idea in &answer.ideas {
         let name = idea.name.trim().to_lowercase();
         if name.is_empty() || idea.description.trim().is_empty() {
-            return Err("cada idea necesita `name` y `description`".into());
+            return Err("each idea needs `name` and `description`".into());
         }
         if idea.description.trim().contains('\n') {
             return Err(format!(
-                "la descripción de «{}» debe ser una sola línea",
+                "the description of \"{}\" must be a single line",
                 idea.name
             ));
         }
         if seen.contains(&name) {
-            return Err(format!("la idea «{}» está repetida", idea.name));
+            return Err(format!("the idea \"{}\" is repeated", idea.name));
         }
         if !known(&idea.evidence_ids) {
-            return Err(format!("«{}» cita evidencia que no existe", idea.name));
+            return Err(format!(
+                "\"{}\" cites evidence that does not exist",
+                idea.name
+            ));
         }
         seen.push(name);
     }
@@ -163,7 +166,7 @@ fn validate(answer: &Answer, known: impl Fn(&[EvidenceId]) -> bool) -> Result<()
 
 fn table(ideas: &[Idea]) -> TableSpec {
     TableSpec {
-        columns: ["#", "Opción", "Descripción", "Evidencia"]
+        columns: ["#", "Option", "Description", "Evidence"]
             .into_iter()
             .map(Column::new)
             .collect(),
@@ -202,9 +205,9 @@ mod tests {
 
     fn state() -> ResearchState {
         let mut state = ResearchState::default();
-        state.problem_statements.push("el login tarda 2 s".into());
+        state.problem_statements.push("login takes 2 s".into());
         state.add_evidence(
-            "moka es una caché concurrente",
+            "moka is a concurrent cache",
             SourceRef::Url {
                 url: "https://github.com/moka-rs/moka".into(),
                 title: None,
@@ -218,7 +221,7 @@ mod tests {
         vec![PriorSolution {
             name: "moka".into(),
             kind: SolutionKind::Library,
-            summary: "caché concurrente".into(),
+            summary: "concurrent cache".into(),
             source: SourceRef::Url {
                 url: "https://github.com/moka-rs/moka".into(),
                 title: None,
@@ -251,7 +254,7 @@ mod tests {
             ModelPolicy::default(),
             Arc::clone(&sink) as _,
         );
-        let mut ctx = NodeContext::new(Stage::Brainstorm, deps, "login lento", state);
+        let mut ctx = NodeContext::new(Stage::Brainstorm, deps, "slow login", state);
         if let Some(prior) = prior {
             ctx.set_data(OPTIONS_KEY, prior).unwrap();
         }
@@ -276,8 +279,8 @@ mod tests {
     #[tokio::test]
     async fn stores_unfiltered_ideas_for_modeling() {
         let answer = ideas(json!([
-            { "name": "Caché con moka", "description": "sesiones en moka con TTL", "evidence_ids": ["E1"] },
-            { "name": "Precalcular sesiones", "description": "las genera un job al arrancar" }
+            { "name": "Cache with moka", "description": "sessions in moka with a TTL", "evidence_ids": ["E1"] },
+            { "name": "Precompute sessions", "description": "a job builds them at startup" }
         ]));
         let run = run(state(), Some(prior()), vec![answer]).await;
         assert_eq!(run.outcome, NodeOutcome::Done);
@@ -298,18 +301,18 @@ mod tests {
         let ContentPart::Text { text } = &req.messages[0].content[0] else {
             panic!("expected text");
         };
-        assert!(text.contains("- moka [E1]: caché concurrente"));
-        assert!(run.state.journal[0].text.contains("2 opciones sin filtrar"));
+        assert!(text.contains("- moka [E1]: concurrent cache"));
+        assert!(run.state.journal[0].text.contains("2 unfiltered options"));
     }
 
     #[tokio::test]
     async fn asks_again_for_multiline_or_repeated_ideas() {
         let bad = ideas(json!([
-            { "name": "A", "description": "una\ndos" },
+            { "name": "A", "description": "one\ntwo" },
         ]));
-        let good = ideas(json!([{ "name": "A", "description": "una" }]));
+        let good = ideas(json!([{ "name": "A", "description": "one" }]));
         let run = run(state(), Some(prior()), vec![bad, good]).await;
-        assert_eq!(run.ideas.unwrap()[0].description, "una");
+        assert_eq!(run.ideas.unwrap()[0].description, "one");
         assert_eq!(run.llm.requests().len(), 2);
 
         let repeated = Answer {
@@ -329,7 +332,7 @@ mod tests {
         assert!(
             validate(&repeated, |_| true)
                 .unwrap_err()
-                .contains("repetida")
+                .contains("repeated")
         );
         assert!(validate(&Answer { ideas: vec![] }, |_| true).is_err());
     }

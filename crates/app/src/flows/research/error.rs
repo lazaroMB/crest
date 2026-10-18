@@ -28,7 +28,7 @@ pub enum FlowError {
     #[error("the research flow already finished")]
     Completed,
     /// `/back` to a stage that is not in the graph or not behind.
-    #[error("cannot go back to {} ({}/{}): {reason}", .stage.name_es(), .stage.index(), Stage::total())]
+    #[error("cannot go back to {} ({}/{}): {reason}", .stage.name(), .stage.index(), Stage::total())]
     InvalidBack {
         /// Requested stage.
         stage: Stage,
@@ -38,7 +38,7 @@ pub enum FlowError {
     /// `/skip` on a stage that is not optional.
     #[error(
         "{} ({}/{}) is not optional; only {} can be skipped",
-        .0.name_es(), .0.index(), Stage::total(), optional_list()
+        .0.name(), .0.index(), Stage::total(), optional_list()
     )]
     NotOptional(Stage),
     /// A chat command could not be parsed.
@@ -49,11 +49,11 @@ pub enum FlowError {
     Graph(#[from] GraphError),
 }
 
-/// "Datos (3) and Prototipo (11)".
+/// "Data (3) and Prototype (11)".
 fn optional_list() -> String {
     super::node::OPTIONAL_STAGES
         .iter()
-        .map(|s| format!("{} ({})", s.name_es(), s.index()))
+        .map(|s| format!("{} ({})", s.name(), s.index()))
         .collect::<Vec<_>>()
         .join(" and ")
 }

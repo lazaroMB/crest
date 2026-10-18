@@ -4,16 +4,18 @@
 //! of:
 //!
 //! - a **magnitude**: a number with a unit (`500 ms`, `3 GB`, `20 %`,
-//!   `500 requests por segundo`);
-//! - a **comparison**: a comparator next to a number (`más de 3`,
-//!   `< 20`, `sube de 10 a 500`);
-//! - a **verifiable condition**: a trigger (`al`, `cuando`, `si`…) and an
-//!   observable outcome (`falla`, `devuelve`, `entra en pánico`…), as in
-//!   "al ejecutar `cargo test` el test `offline` falla".
+//!   `500 requests per second`);
+//! - a **comparison**: a comparator next to a number (`more than 3`,
+//!   `< 20`, `rises from 10 to 500`);
+//! - a **verifiable condition**: a trigger (`when`, `if`, `after`…) and an
+//!   observable outcome (`fails`, `returns`, `panics`…), as in "when
+//!   running `cargo test` the `offline` test fails".
 //!
-//! "a 500 requests por segundo el tiempo de respuesta sube de 10 ms a
-//! 500 ms" passes; "el tiempo de respuesta depende de la carga" does not.
-//! The model judges the statements that pass as a second opinion.
+//! "at 500 requests per second the response time rises from 10 ms to
+//! 500 ms" passes; "the response time depends on the load" does not.
+//! The words are English and Spanish, so statements in either language
+//! are judged. The model judges the statements that pass as a second
+//! opinion.
 
 use std::fmt;
 
@@ -31,7 +33,7 @@ pub enum Measure {
 /// Why a statement is not measurable, written for the model and the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotMeasurable {
-    /// What is missing, in Spanish.
+    /// What is missing.
     pub reason: String,
 }
 
@@ -64,6 +66,17 @@ const UNITS: &[&str] = &[
     "días",
     "dia",
     "dias",
+    "sec",
+    "secs",
+    "second",
+    "seconds",
+    "mins",
+    "minute",
+    "minutes",
+    "hour",
+    "hours",
+    "day",
+    "days",
     // Size.
     "b",
     "kb",
@@ -124,6 +137,30 @@ const UNITS: &[&str] = &[
     "nodos",
     "páginas",
     "iteraciones",
+    "queries",
+    "times",
+    "users",
+    "connections",
+    "files",
+    "lines",
+    "rows",
+    "records",
+    "elements",
+    "errors",
+    "failures",
+    "retries",
+    "attempts",
+    "calls",
+    "messages",
+    "events",
+    "sessions",
+    "clicks",
+    "steps",
+    "characters",
+    "processes",
+    "nodes",
+    "pages",
+    "iterations",
 ];
 
 /// Comparator phrases that make a number a threshold.
@@ -151,6 +188,23 @@ const COMPARATORS: &[&str] = &[
     "pasa de",
     "crece de",
     "cae de",
+    "more than",
+    "less than",
+    "fewer than",
+    "at least",
+    "at most",
+    "no more than",
+    "up to",
+    "above",
+    "below",
+    "greater than",
+    "exceeds",
+    "equal to",
+    "rises from",
+    "drops from",
+    "goes from",
+    "grows from",
+    "falls from",
 ];
 
 /// Comparator symbols.
@@ -158,7 +212,8 @@ const SYMBOLS: &[char] = &['<', '>', '≤', '≥', '='];
 
 /// Words that open a condition.
 const TRIGGERS: &[&str] = &[
-    "al", "cuando", "si", "tras", "después", "despues", "ante", "mientras", "cada",
+    "al", "cuando", "si", "tras", "después", "despues", "ante", "mientras", "cada", "when",
+    "whenever", "if", "after", "upon", "while", "every", "each",
 ];
 
 /// Stems of observable outcomes.
@@ -194,6 +249,26 @@ const OUTCOMES: &[&str] = &[
     "omite",
     "borra",
     "sobrescribe",
+    "fail",
+    "return",
+    "throw",
+    "raise",
+    "show",
+    "print",
+    "exit",
+    "crash",
+    "hang",
+    "reject",
+    "lose",
+    "loses",
+    "duplicate",
+    "corrupt",
+    "close",
+    "exception",
+    "ignore",
+    "omit",
+    "delete",
+    "overwrite",
 ];
 
 /// Vague phrases named in the reason when present.
@@ -212,6 +287,19 @@ const VAGUE: &[&str] = &[
     "más o menos",
     "optimizar",
     "mejorar",
+    "depends on",
+    "sometimes",
+    "slow",
+    "fast",
+    "better",
+    "worse",
+    "a lot",
+    "much",
+    "little",
+    "quite",
+    "more or less",
+    "optimize",
+    "improve",
 ];
 
 /// Checks that `statement` is one measurable sentence.
@@ -223,12 +311,12 @@ pub fn check(statement: &str) -> Result<Measure, NotMeasurable> {
     let text = statement.trim().to_lowercase();
     if text.is_empty() {
         return Err(NotMeasurable {
-            reason: "la definición está vacía".into(),
+            reason: "the definition is empty".into(),
         });
     }
     if sentences(&text) > 1 {
         return Err(NotMeasurable {
-            reason: "debe ser una sola oración; separa cada problema en su propia definición"
+            reason: "it must be a single sentence; split each problem into its own definition"
                 .into(),
         });
     }
@@ -243,9 +331,9 @@ pub fn check(statement: &str) -> Result<Measure, NotMeasurable> {
         return Ok(Measure::Condition);
     }
     let mut reason = String::from(
-        "no tiene una magnitud con unidad (p. ej. «500 ms»), una comparación con un número \
-         (p. ej. «más de 3 reintentos») ni una condición verificable (p. ej. «al ejecutar X, \
-         Y falla»)",
+        "it has no magnitude with a unit (e.g. \"500 ms\"), no comparison with a number \
+         (e.g. \"more than 3 retries\") and no verifiable condition (e.g. \"when running X, \
+         Y fails\")",
     );
     let vague: Vec<&str> = VAGUE
         .iter()
@@ -253,11 +341,11 @@ pub fn check(statement: &str) -> Result<Measure, NotMeasurable> {
         .filter(|v| contains_phrase(&text, v))
         .collect();
     if !vague.is_empty() {
-        reason.push_str("; usa términos vagos: ");
+        reason.push_str("; it uses vague terms: ");
         reason.push_str(
             &vague
                 .iter()
-                .map(|v| format!("«{v}»"))
+                .map(|v| format!("\"{v}\""))
                 .collect::<Vec<_>>()
                 .join(", "),
         );
@@ -367,6 +455,25 @@ mod tests {
     fn accepts_measurable_statements() {
         let cases = [
             (
+                "at 500 requests per second the response time rises from 10 ms to 500 ms",
+                Measure::Magnitude,
+            ),
+            ("login takes 2 s on a cold start", Measure::Magnitude),
+            (
+                "the retry happens more than 3 times per minute",
+                Measure::Magnitude,
+            ),
+            (
+                "startup goes from 1 to 4 on the survey scale",
+                Measure::Comparison,
+            ),
+            ("the queue has > 1000 at peak time", Measure::Comparison),
+            (
+                "when running `cargo test -p store offline` the test fails",
+                Measure::Condition,
+            ),
+            ("if the network drops, the app panics", Measure::Condition),
+            (
                 "a 500 requests por segundo el tiempo de respuesta sube de 10 ms a 500 ms",
                 Measure::Magnitude,
             ),
@@ -412,22 +519,31 @@ mod tests {
     fn rejects_unmeasurable_statements() {
         let cases = [
             (
-                "el tiempo de respuesta depende de la carga",
-                Some("«depende de»"),
+                "the response time depends on the load",
+                Some("\"depends on\""),
             ),
-            ("el login es lento", Some("«lento»")),
+            ("login is slow", Some("\"slow\"")),
+            ("the user experience must improve", Some("\"improve\"")),
+            ("the parser sometimes fails", Some("\"sometimes\"")),
+            ("hypothesis H2 explains the problem [E1]", None),
+            ("the system does not scale", None),
+            (
+                "el tiempo de respuesta depende de la carga",
+                Some("\"depende de\""),
+            ),
+            ("el login es lento", Some("\"lento\"")),
             (
                 "hay que mejorar la experiencia de usuario",
-                Some("«mejorar»"),
+                Some("\"mejorar\""),
             ),
-            ("el parser a veces falla", Some("«a veces»")),
+            ("el parser a veces falla", Some("\"a veces\"")),
             ("la hipótesis H2 explica el problema [E1]", None),
-            ("la versión v2 es peor", Some("«peor»")),
+            ("la versión v2 es peor", Some("\"peor\"")),
             ("el sistema no escala", None),
         ];
         for (statement, vague) in cases {
             let err = check(statement).unwrap_err();
-            assert!(err.reason.contains("magnitud con unidad"), "{statement}");
+            assert!(err.reason.contains("magnitude with a unit"), "{statement}");
             if let Some(word) = vague {
                 assert!(err.reason.contains(word), "{statement}: {err}");
             }
@@ -436,8 +552,9 @@ mod tests {
 
     #[test]
     fn requires_one_sentence() {
-        let err = check("el login tarda 2 s. La búsqueda tarda 3 s.").unwrap_err();
-        assert!(err.reason.contains("una sola oración"));
+        let err = check("login takes 2 s. Search takes 3 s.").unwrap_err();
+        assert!(err.reason.contains("a single sentence"));
+        assert!(check("el login tarda 2 s. La búsqueda tarda 3 s.").is_err());
         assert!(check("tarda 2.5 s con `a.b. c`").is_ok());
         assert!(check("  ").is_err());
     }

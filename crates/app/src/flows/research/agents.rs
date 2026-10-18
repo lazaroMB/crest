@@ -1,7 +1,7 @@
 //! The agents the research nodes run turns with.
 //!
 //! [`explore_agent`] builds the read-only agent of the stages that only
-//! explore (Observación, Datos, Investigación), the same way the `task`
+//! explore (Observation, Data, Research), the same way the `task`
 //! tool builds its subagent:
 //!
 //! - its registry holds only the read tools (`list_files`, `find_file`,
@@ -14,8 +14,8 @@
 //! - its events are dropped: the node shows what it found in its own
 //!   blocks, never the agent's streaming text or its final JSON.
 //!
-//! [`node_agent`] builds the agent of the stages that act (Experimentos,
-//! Prototipo): the chat's tools, permissions and approvals, but its events
+//! [`node_agent`] builds the agent of the stages that act (Experiments,
+//! Prototype): the chat's tools, permissions and approvals, but its events
 //! go through [`NodeEvents`], which keeps the tool calls and approvals in
 //! the timeline and drops the streamed text (the final JSON of the turn)
 //! and the turn framing, which belong to the chat's own turns.

@@ -139,8 +139,8 @@ impl ResearchGraphBuilder {
         if let Some(pair) = stages.windows(2).find(|w| w[0] >= w[1]) {
             return Err(FlowError::InvalidGraph(format!(
                 "{} must come before {}, without repeats",
-                pair[1].name_es(),
-                pair[0].name_es()
+                pair[1].name(),
+                pair[0].name()
             )));
         }
         let mut builder = GraphBuilder::new(GRAPH_ID).with_task_timeout(self.timeout);
