@@ -23,9 +23,10 @@ use domain::modal::{ModalId, ModalSpec, modal_bounds};
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{
-    App, Context, FocusHandle, Focusable, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, Window, div, px,
+    AnyView, App, AppContext as _, Context, FocusHandle, Focusable, FontWeight,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
+    px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -33,6 +34,10 @@ use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use uuid::Uuid;
 
 use application::ports::events::DomainEvent;
+use domain::modal::{ModalPosition, Percent};
+use domain::sysmodel::Board;
+
+use crate::sysboard::SysBoardView;
 
 /// A modal on screen.
 struct Open {
@@ -40,6 +45,9 @@ struct Open {
     /// Parent id of its stateful nodes (tables, images...).
     node_id: BlockId,
     scroll: ScrollHandle,
+    /// A native view shown instead of `spec.content` (the simulation
+    /// board), filling the card.
+    view: Option<AnyView>,
 }
 
 /// Id of the stateful nodes of modal `id`: stable for the same id, so an
@@ -52,6 +60,11 @@ pub fn modal_node_id(id: &ModalId) -> BlockId {
         (hash ^ u128::from(byte)).wrapping_mul(PRIME)
     });
     BlockId(Uuid::from_u128(hash))
+}
+
+/// Id of the board modal of Spec `spec`.
+pub fn board_modal_id(spec: &str) -> ModalId {
+    ModalId::new(format!("crest/simulate/{spec}"))
 }
 
 /// The overlay that shows plugin modals.
@@ -101,11 +114,22 @@ impl ModalHost {
             DomainEvent::ModalOpened { spec } => self.open(spec, window, cx),
             DomainEvent::ModalUpdated { id, content } => self.update(&id, content, cx),
             DomainEvent::ModalClosed { id } => self.close(&id, window, cx),
+            DomainEvent::SimulationReady { board } => self.open_board(*board, window, cx),
             _ => {}
         }
     }
 
     fn open(&mut self, spec: ModalSpec, window: &mut Window, cx: &mut Context<Self>) {
+        self.push(spec, None, window, cx);
+    }
+
+    fn push(
+        &mut self,
+        spec: ModalSpec,
+        view: Option<AnyView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let scroll = match self.stack.iter().position(|open| open.spec.id == spec.id) {
             Some(ix) => self.stack.remove(ix).scroll,
             None => ScrollHandle::new(),
@@ -117,9 +141,51 @@ impl ModalHost {
             node_id: modal_node_id(&spec.id),
             spec,
             scroll,
+            view,
         });
         window.focus(&self.focus_handle, cx);
         cx.notify();
+    }
+
+    /// Opens `view` in a modal described by `spec` (its content is
+    /// ignored); the view fills the card.
+    pub fn open_view(
+        &mut self,
+        spec: ModalSpec,
+        view: AnyView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.push(spec, Some(view), window, cx);
+    }
+
+    /// Opens the simulation board of `board` at full size, replacing the
+    /// board of the same Spec.
+    pub fn open_board(&mut self, board: Board, window: &mut Window, cx: &mut Context<Self>) {
+        let spec = ModalSpec {
+            id: board_modal_id(&board.spec),
+            plugin: "crest".into(),
+            title: format!("Simulation · {} · {}", board.spec, board.title),
+            width: Percent::FULL,
+            height: Percent::FULL,
+            position: ModalPosition::CENTER,
+            content: CustomNode::Text {
+                text: String::new(),
+            },
+        };
+        let view = cx.new(|cx| SysBoardView::new(board, window, cx));
+        let focus = view.focus_handle(cx);
+        self.open_view(spec, view.into(), window, cx);
+        // Keys reach the board first; Esc still bubbles up to the host.
+        window.focus(&focus, cx);
+    }
+
+    /// The native view of modal `id`, if it shows one.
+    pub fn view(&self, id: &ModalId) -> Option<&AnyView> {
+        self.stack
+            .iter()
+            .find(|open| &open.spec.id == id)
+            .and_then(|open| open.view.as_ref())
     }
 
     fn update(&mut self, id: &ModalId, content: CustomNode, cx: &mut Context<Self>) {
@@ -208,7 +274,16 @@ impl ModalHost {
             f32::from(viewport.height),
             &open.spec,
         );
-        let body = crate::blocks::custom::render_node(open.node_id, &open.spec.content, window, cx);
+        let view = open.view.clone();
+        let body = match &view {
+            Some(_) => None,
+            None => Some(crate::blocks::custom::render_node(
+                open.node_id,
+                &open.spec.content,
+                window,
+                cx,
+            )),
+        };
         let theme = cx.theme();
         let id = open.spec.id.clone();
         let subtitle = if open.spec.title == open.spec.plugin {
@@ -270,7 +345,15 @@ impl ModalHost {
             .rounded_md()
             .shadow_lg()
             .child(header)
-            .child(
+            .children(view.map(|view| {
+                div()
+                    .id(("modal-view", ix))
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(view)
+            }))
+            .children(body.map(|body| {
                 div()
                     .id(("modal-body", ix))
                     .flex_1()
@@ -279,8 +362,8 @@ impl ModalHost {
                     .overflow_scroll()
                     .track_scroll(&open.scroll)
                     .child(div().p_3().min_w_0().child(body))
-                    .scrollbar(&open.scroll, ScrollbarAxis::Both),
-            )
+                    .scrollbar(&open.scroll, ScrollbarAxis::Both)
+            }))
     }
 }
 
