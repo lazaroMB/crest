@@ -29,7 +29,11 @@ use domain::workspace::{SensitivePathRules, WorkspaceRoot};
 use crate::detect::{Tool, ToolReport};
 
 pub mod detect;
+pub mod files;
 pub mod process;
+
+#[cfg(test)]
+mod test_support;
 
 /// Search adapter backed by `rg` and `fzf`.
 #[derive(Debug, Clone)]
