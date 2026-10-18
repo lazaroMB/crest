@@ -13,6 +13,17 @@ use serde::{Deserialize, Serialize};
 /// Prefix of the context keys owned by the implementation frame.
 pub const RESERVED_PREFIX: &str = "implement.";
 
+/// Key of the [`ImplementState`].
+pub(crate) const KEY_STATE: &str = "implement.state";
+/// Key of the [`FlowStatus`].
+pub(crate) const KEY_STATUS: &str = "implement.status";
+/// Key of the [`PendingGate`], while a step waits for the user.
+pub(crate) const KEY_GATE: &str = "implement.gate";
+/// Key of the [`GateReply`] to the pending gate.
+pub(crate) const KEY_REPLY: &str = "implement.reply";
+/// Key of the last `(step, task index)` whose header was emitted.
+pub(crate) const KEY_ENTERED: &str = "implement.entered";
+
 /// Prefix of the graph-flow task ids of the steps.
 const TASK_PREFIX: &str = "implement/";
 

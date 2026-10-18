@@ -220,6 +220,20 @@ impl StepContext {
         }
     }
 
+    pub(crate) fn in_flow(
+        step: Step,
+        deps: ImplementDeps,
+        state: ImplementState,
+        reply: Option<String>,
+    ) -> Self {
+        Self {
+            step,
+            deps,
+            state,
+            reply,
+        }
+    }
+
     /// The same context as a rerun after the user answered `reply`.
     #[must_use]
     pub fn with_reply(mut self, reply: impl Into<String>) -> Self {
