@@ -70,14 +70,28 @@ impl WorkspaceGuard {
     ///
     /// Returns the lexical [`WorkspacePath`] (as the caller named it) and
     /// the canonical absolute path, with every symlink resolved. Fails with
-    /// [`PathError::OutsideWorkspace`] when either escapes the root and with
+    /// [`PathError::OutsideWorkspace`] when either escapes the root (also
+    /// for a dangling symlink whose target lies outside) and with
     /// [`FsError::NotFound`] when the path does not exist.
     pub async fn resolve_existing(&self, input: &str) -> Result<(WorkspacePath, PathBuf), FsError> {
         let path = self.root.resolve(input)?;
         let joined = self.root.join(&path);
         let canonical = match tokio::fs::canonicalize(&joined).await {
             Ok(canonical) => canonical,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Err(FsError::NotFound { path }),
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                // A dangling symlink pointing outside must not look like a
+                // plain missing file inside the workspace.
+                return match resolve_lenient(&joined).await? {
+                    Some(target) => {
+                        self.ensure_inside(input, &target)?;
+                        Err(FsError::NotFound { path })
+                    }
+                    None => Err(PathError::OutsideWorkspace {
+                        path: input.to_owned(),
+                    }
+                    .into()),
+                };
+            }
             Err(e) => return Err(io_error(&joined, &e)),
         };
         self.ensure_inside(input, &canonical)?;
@@ -407,5 +421,17 @@ mod tests {
         assert!(f.guard.resolve_for_write("loop-a").await.is_err());
         symlink("missing/../../outside/x", f.ws.join("tricky")).unwrap();
         assert!(is_outside(f.guard.resolve_for_write("tricky").await));
+    }
+
+    #[tokio::test]
+    async fn existing_rejects_dangling_symlink_pointing_outside() {
+        let f = fixture();
+        symlink(f.outside.join("not-yet"), f.ws.join("dangling")).unwrap();
+        assert!(is_outside(f.guard.resolve_existing("dangling").await));
+        symlink("real/missing", f.ws.join("inside")).unwrap();
+        assert!(matches!(
+            f.guard.resolve_existing("inside").await,
+            Err(FsError::NotFound { .. })
+        ));
     }
 }
