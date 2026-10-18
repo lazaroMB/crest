@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+async-trait.workspace = true
 domain.workspace = true
 futures.workspace = true
 gpui.workspace = true

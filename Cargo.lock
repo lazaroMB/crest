@@ -7709,6 +7709,7 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "application",
+ "async-trait",
  "domain",
  "futures",
  "gpui-component",
