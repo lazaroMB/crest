@@ -808,6 +808,57 @@ ensure_search_tools() {
     hash -r
 }
 
+# --- Rust y herramientas de desarrollo ---------------------------------------
+
+clippy_ok() { have cargo && cargo clippy --version </dev/null >/dev/null 2>&1; }
+
+install_rustup() {
+    ensure_work_dir || return 1
+    info "Instalando Rust con rustup"
+    download https://sh.rustup.rs "$WORK_DIR/rustup-init.sh" || return 1
+    # -y: el usuario ya confirmó el plan (o pasó --yes).
+    sh "$WORK_DIR/rustup-init.sh" -y --profile default </dev/null
+}
+
+ensure_rust() {
+    [ "$OPT_NO_RUST" = 1 ] && return 0
+    if ! have cargo; then
+        if have rustup; then
+            info "Instalando el toolchain estable con rustup"
+            rustup default stable </dev/null || err "no se pudo instalar el toolchain estable"
+        else
+            install_rustup || err "no se pudo instalar Rust con rustup"
+        fi
+        hash -r
+    fi
+    have cargo || return 1
+    if have rustfmt && clippy_ok; then
+        return 0
+    fi
+    if have rustup; then
+        info "Añadiendo rustfmt y clippy con rustup"
+        rustup component add rustfmt clippy </dev/null || err "no se pudieron añadir rustfmt y clippy"
+    else
+        warn "Rust no viene de rustup: instala rustfmt y clippy con tu gestor de paquetes o usa rustup"
+    fi
+}
+
+ensure_dev_tools() {
+    [ "$OPT_DEV" = 1 ] || return 0
+    if ! have cargo; then
+        err "sin cargo no se pueden instalar cargo-insta ni cargo-nextest"
+        return 1
+    fi
+    if ! cargo insta --version </dev/null >/dev/null 2>&1; then
+        info "Instalando cargo-insta"
+        cargo install --locked cargo-insta </dev/null || err "no se pudo instalar cargo-insta"
+    fi
+    if ! cargo nextest --version </dev/null >/dev/null 2>&1; then
+        info "Instalando cargo-nextest"
+        cargo install --locked cargo-nextest </dev/null || err "no se pudo instalar cargo-nextest"
+    fi
+}
+
 # Herramientas que el propio instalador necesita para descargar.
 bootstrap_ids() {
     local ids='' c
@@ -839,11 +890,20 @@ run_install() {
     info "Plan de instalación"
     [ -n "$pkgs" ] && printf '  paquetes (%s): %s\n' "$PKG_MGR" "$pkgs"
     printf '  rg y fzf: si faltan o son viejos tras los paquetes, binario oficial de GitHub en %s\n' "$LOCAL_BIN"
+    case " $MISSING " in
+        *" rust "*) [ "$OPT_NO_RUST" = 0 ] && printf '  Rust: rustup (estable, con rustfmt y clippy)\n' ;;
+        *" rustfmt "* | *" clippy "*) printf '  Rust: rustfmt y clippy\n' ;;
+    esac
+    case " $MISSING " in
+        *" cargo-insta "* | *" cargo-nextest "*) printf '  cargo install --locked: cargo-insta, cargo-nextest\n' ;;
+    esac
     confirm "¿Continuar?" || die "instalación cancelada"
     [ -n "$pkgs" ] && setup_sudo
     install_packages "$pkgs" || true
     hash -r
     ensure_search_tools
+    ensure_rust
+    ensure_dev_tools
 }
 
 main() {
