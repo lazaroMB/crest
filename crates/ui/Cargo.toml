@@ -28,6 +28,8 @@ gpui-component = { workspace = true, features = [
     "tree-sitter-yaml",
 ] }
 notify.workspace = true
+rusty-mermaid.workspace = true
+rusty-mermaid-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

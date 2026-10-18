@@ -6432,6 +6432,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-mermaid"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5115ba3fb2c2c5b3f02490619416574f90c676837d6bce5de11a5f46f1e574a3"
+dependencies = [
+ "rusty-mermaid-core",
+ "rusty-mermaid-diagrams",
+]
+
+[[package]]
+name = "rusty-mermaid-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f52a4bbcf5e0a71cb3196ba21d3aeafee381a49d8d861e2af56a4f54cb047d"
+
+[[package]]
+name = "rusty-mermaid-dagre"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8975006c080286313a4f2b5a9fe90727fc10d4905781082ea21a8890017800ee"
+dependencies = [
+ "rusty-mermaid-core",
+ "rusty-mermaid-graph",
+]
+
+[[package]]
+name = "rusty-mermaid-diagrams"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0e9e654d4f8738698f83a1258cf590334ec8de439fcffb486903d53875d2414"
+dependencies = [
+ "rusty-mermaid-core",
+ "rusty-mermaid-dagre",
+ "rusty-mermaid-graph",
+ "thiserror 2.0.21",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "rusty-mermaid-graph"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e443f9d7228eafea805c54d8eadd606613709d99ab7cdb3808d5600da96ecde"
+dependencies = [
+ "rusty-mermaid-core",
+]
+
+[[package]]
 name = "rustybuzz"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7853,6 +7901,8 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "notify",
+ "rusty-mermaid",
+ "rusty-mermaid-core",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

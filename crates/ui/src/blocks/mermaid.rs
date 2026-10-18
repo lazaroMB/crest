@@ -1,5 +1,7 @@
 //! Renderer of the `mermaid` block kind; placeholder until its task lands.
 
+pub mod diagram;
+
 use gpui::{AnyElement, App, Window};
 
 use crate::timeline::TimelineEntry;
