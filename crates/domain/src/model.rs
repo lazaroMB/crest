@@ -391,6 +391,166 @@ pub fn default_aliases() -> BTreeMap<String, ModelId> {
     .collect()
 }
 
+/// Which level of the resolution order chose the model id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecSource {
+    /// Built-in defaults (level 5).
+    Default,
+    /// `~/.config/crest/init.lua` (level 4).
+    Global,
+    /// `<workspace>/.crest/init.lua` (level 3).
+    Workspace,
+    /// `/model …` or a shortcut for this turn (level 1).
+    TurnOverride,
+}
+
+/// What a caller asks the policy for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResolveRequest {
+    /// Role the caller would use by default (usually `main`).
+    pub role: ModelRole,
+    /// Turn override (level 1): an alias, a role name or a literal model id.
+    #[serde(default)]
+    pub turn_override: Option<String>,
+    /// Role pinned by a tool or plugin (level 2), e.g. a subagent asking for
+    /// `explore`. Replaces `role`.
+    #[serde(default)]
+    pub pinned_role: Option<ModelRole>,
+}
+
+impl ResolveRequest {
+    /// A request for `role` with no override and no pinned role.
+    #[must_use]
+    pub const fn new(role: ModelRole) -> Self {
+        Self {
+            role,
+            turn_override: None,
+            pinned_role: None,
+        }
+    }
+}
+
+/// Result of resolving a role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedModel {
+    /// Role whose spec was used (after pinning and role-name overrides).
+    pub role: ModelRole,
+    /// Concrete spec, with aliases expanded.
+    pub spec: ModelSpec,
+    /// Level that chose `spec.id`.
+    pub source: SpecSource,
+}
+
+/// Pure policy that resolves a role to a model.
+///
+/// Resolution order, highest first:
+/// 1. turn override ([`ResolveRequest::turn_override`]);
+/// 2. role pinned by a tool or plugin ([`ResolveRequest::pinned_role`]);
+/// 3. `workspace` layer;
+/// 4. `global` layer;
+/// 5. built-in defaults ([`default_spec`], [`default_aliases`]).
+///
+/// Levels 3–5 merge field by field. Aliases from all layers are merged too
+/// (workspace wins) and expanded once, without recursion, in ids and
+/// fallbacks.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ModelPolicy {
+    /// Global configuration layer.
+    pub global: RoleConfig,
+    /// Workspace configuration layer.
+    pub workspace: RoleConfig,
+}
+
+impl ModelPolicy {
+    /// Policy with the given layers.
+    #[must_use]
+    pub const fn new(global: RoleConfig, workspace: RoleConfig) -> Self {
+        Self { global, workspace }
+    }
+
+    /// Merged aliases of every layer.
+    #[must_use]
+    pub fn aliases(&self) -> BTreeMap<String, ModelId> {
+        let mut aliases = default_aliases();
+        for layer in [&self.global, &self.workspace] {
+            aliases.extend(layer.aliases.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        aliases
+    }
+
+    /// Expands `name` if it is an alias, otherwise takes it as a literal id.
+    #[must_use]
+    pub fn expand(&self, name: &str) -> ModelId {
+        Self::expand_with(&self.aliases(), name)
+    }
+
+    fn expand_with(aliases: &BTreeMap<String, ModelId>, name: &str) -> ModelId {
+        aliases
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| ModelId::new(name))
+    }
+
+    /// Spec for `role` from levels 3–5, with aliases expanded.
+    fn layered(&self, role: ModelRole, aliases: &BTreeMap<String, ModelId>) -> ResolvedModel {
+        let mut spec = default_spec(role);
+        let mut source = SpecSource::Default;
+        for (layer, layer_source) in [
+            (&self.global, SpecSource::Global),
+            (&self.workspace, SpecSource::Workspace),
+        ] {
+            if let Some(patch) = layer.role(role) {
+                patch.apply_to(&mut spec);
+                if patch.id.is_some() {
+                    source = layer_source;
+                }
+            }
+        }
+        spec.id = Self::expand_with(aliases, spec.id.as_str());
+        let fallbacks = std::mem::take(&mut spec.fallbacks);
+        for fallback in fallbacks {
+            let fallback = Self::expand_with(aliases, fallback.as_str());
+            if fallback != spec.id && !spec.fallbacks.contains(&fallback) {
+                spec.fallbacks.push(fallback);
+            }
+        }
+        ResolvedModel { role, spec, source }
+    }
+
+    /// Resolves a request following the five-level order.
+    ///
+    /// A turn override that names a role (`/model plan`) uses that role's
+    /// whole spec. Otherwise it is an alias or a literal id that replaces
+    /// only `spec.id`, keeping the role's `max_tokens`, thinking and
+    /// fallbacks. Aliases are checked before role names.
+    #[must_use]
+    pub fn resolve(&self, req: &ResolveRequest) -> ResolvedModel {
+        let aliases = self.aliases();
+        let role = req.pinned_role.unwrap_or(req.role);
+        let over = req
+            .turn_override
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let Some(over) = over else {
+            return self.layered(role, &aliases);
+        };
+        if let (false, Ok(over_role)) = (aliases.contains_key(over), over.parse::<ModelRole>()) {
+            let mut resolved = self.layered(over_role, &aliases);
+            resolved.source = SpecSource::TurnOverride;
+            return resolved;
+        }
+        let mut resolved = self.layered(role, &aliases);
+        let id = Self::expand_with(&aliases, over);
+        resolved.spec.fallbacks.retain(|f| *f != id);
+        resolved.spec.id = id;
+        resolved.source = SpecSource::TurnOverride;
+        resolved
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,5 +824,230 @@ mod tests {
         let aliases = default_aliases();
         assert_eq!(aliases.get("opus"), Some(&ModelId::from("claude-opus-5-5")));
         assert_eq!(aliases.len(), 4);
+    }
+
+    fn layer(roles: serde_json::Value) -> RoleConfig {
+        serde_json::from_value(roles).unwrap()
+    }
+
+    fn sample_policy() -> ModelPolicy {
+        ModelPolicy::new(
+            layer(serde_json::json!({
+                "roles": {
+                    "main": {"id": "g-main", "max_tokens": 1000, "fallbacks": ["g-fb"]},
+                    "explore": {"id": "g-explore"},
+                    "title": {"max_tokens": 50}
+                },
+                "aliases": {"fast": "g-fast", "big": "g-big"}
+            })),
+            layer(serde_json::json!({
+                "roles": {
+                    "main": {"id": "w-main"},
+                    "plan": {"thinking": {"type": "disabled"}}
+                },
+                "aliases": {"fast": "w-fast"}
+            })),
+        )
+    }
+
+    fn req(role: ModelRole, over: Option<&str>, pinned: Option<ModelRole>) -> ResolveRequest {
+        ResolveRequest {
+            role,
+            turn_override: over.map(str::to_owned),
+            pinned_role: pinned,
+        }
+    }
+
+    /// (request, role, id, max_tokens, thinking, fallbacks, source)
+    type Case = (
+        ResolveRequest,
+        ModelRole,
+        &'static str,
+        u32,
+        ThinkingConfig,
+        Vec<&'static str>,
+        SpecSource,
+    );
+
+    #[test]
+    fn resolve_five_levels() {
+        use ModelRole::{Compact, Explore, Main, Plan, Title};
+        use SpecSource::{Default, Global, TurnOverride, Workspace};
+        let p = sample_policy();
+        let on = |b| ThinkingConfig::Enabled { budget_tokens: b };
+        // (request, role, id, max_tokens, thinking, fallbacks, source)
+        let cases: Vec<Case> = vec![
+            // 5. defaults
+            (
+                req(Compact, None, None),
+                Compact,
+                "claude-haiku-5-5",
+                4_000,
+                ThinkingConfig::Disabled,
+                vec![],
+                Default,
+            ),
+            // 4. global: id from global, thinking from defaults
+            (
+                req(Explore, None, None),
+                Explore,
+                "g-explore",
+                8_000,
+                ThinkingConfig::Disabled,
+                vec![],
+                Global,
+            ),
+            // 4. global patch without id keeps the default id
+            (
+                req(Title, None, None),
+                Title,
+                "claude-haiku-5-5",
+                50,
+                ThinkingConfig::Disabled,
+                vec![],
+                Default,
+            ),
+            // 3. workspace id over global, global max_tokens and fallbacks kept
+            (
+                req(Main, None, None),
+                Main,
+                "w-main",
+                1000,
+                on(8_000),
+                vec!["g-fb"],
+                Workspace,
+            ),
+            // 3. workspace patch without id over defaults
+            (
+                req(Plan, None, None),
+                Plan,
+                "claude-opus-5-5",
+                32_000,
+                ThinkingConfig::Disabled,
+                vec!["claude-sonnet-5-5"],
+                Default,
+            ),
+            // 2. pinned role replaces the requested one
+            (
+                req(Main, None, Some(Explore)),
+                Explore,
+                "g-explore",
+                8_000,
+                ThinkingConfig::Disabled,
+                vec![],
+                Global,
+            ),
+            // 1. override with alias (workspace alias wins) keeps the role's other fields
+            (
+                req(Main, Some("fast"), None),
+                Main,
+                "w-fast",
+                1000,
+                on(8_000),
+                vec!["g-fb"],
+                TurnOverride,
+            ),
+            // 1. override with built-in alias
+            (
+                req(Main, Some("opus"), None),
+                Main,
+                "claude-opus-5-5",
+                1000,
+                on(8_000),
+                vec!["g-fb"],
+                TurnOverride,
+            ),
+            // 1. override beats pinned role, applied on the pinned role's spec
+            (
+                req(Main, Some("big"), Some(Compact)),
+                Compact,
+                "g-big",
+                4_000,
+                ThinkingConfig::Disabled,
+                vec![],
+                TurnOverride,
+            ),
+            // 1. override with a role name uses that role's spec
+            (
+                req(Main, Some("plan"), None),
+                Plan,
+                "claude-opus-5-5",
+                32_000,
+                ThinkingConfig::Disabled,
+                vec!["claude-sonnet-5-5"],
+                TurnOverride,
+            ),
+            // 1. override with a literal id
+            (
+                req(Explore, Some("my-model"), None),
+                Explore,
+                "my-model",
+                8_000,
+                ThinkingConfig::Disabled,
+                vec![],
+                TurnOverride,
+            ),
+            // 1. override equal to a fallback removes it from fallbacks
+            (
+                req(Main, Some("g-fb"), None),
+                Main,
+                "g-fb",
+                1000,
+                on(8_000),
+                vec![],
+                TurnOverride,
+            ),
+            // blank override is ignored
+            (
+                req(Main, Some("  "), None),
+                Main,
+                "w-main",
+                1000,
+                on(8_000),
+                vec!["g-fb"],
+                Workspace,
+            ),
+        ];
+        for (i, (r, role, id, max, thinking, fallbacks, source)) in cases.into_iter().enumerate() {
+            let want = ResolvedModel {
+                role,
+                spec: ModelSpec::new(id, max)
+                    .with_thinking(thinking)
+                    .with_fallbacks(fallbacks),
+                source,
+            };
+            assert_eq!(p.resolve(&r), want, "case {i}: {r:?}");
+        }
+    }
+
+    #[test]
+    fn empty_policy_resolves_to_defaults() {
+        let p = ModelPolicy::default();
+        for role in ModelRole::ALL {
+            let got = p.resolve(&ResolveRequest::new(role));
+            assert_eq!(got.spec, default_spec(role));
+            assert_eq!((got.role, got.source), (role, SpecSource::Default));
+        }
+    }
+
+    #[test]
+    fn aliases_expand_in_ids_and_fallbacks() {
+        let p = ModelPolicy::new(
+            layer(serde_json::json!({
+                "roles": {"main": {"id": "opus", "fallbacks": ["sonnet", "opus", "haiku", "sonnet"]}}
+            })),
+            RoleConfig::default(),
+        );
+        let got = p.resolve(&ResolveRequest::new(ModelRole::Main));
+        assert_eq!(got.spec.id, ModelId::from("claude-opus-5-5"));
+        assert_eq!(
+            got.spec.fallbacks,
+            vec![
+                ModelId::from("claude-sonnet-5-5"),
+                ModelId::from("claude-haiku-5-5")
+            ]
+        );
+        assert_eq!(p.expand("haiku"), ModelId::from("claude-haiku-5-5"));
+        assert_eq!(p.expand("x"), ModelId::from("x"));
     }
 }
