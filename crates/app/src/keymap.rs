@@ -562,6 +562,7 @@ const DEFAULTS: &[(&[Mode], &str, &str)] = &[
     (&[Mode::Normal], "y", "block.yank"),
     (&[Mode::Normal], "<leader>ff", "picker.files"),
     (&[Mode::Normal], "<leader>fg", "picker.grep"),
+    (&[Mode::Normal], "<leader>e", "panel.tree"),
     (&[Mode::Normal], "<leader>m", "model.pick"),
     (&[Mode::Normal], "<leader>p", "permission.cycle"),
     (&[Mode::Normal], ":", "mode.command"),
