@@ -116,6 +116,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     tools.set("register", crate::api::tools::register(lua, sink, origin)?)?;
     app.set("tools", tools)?;
     app.set("on", crate::api::hooks::on(lua, sink, origin)?)?;
+    app.set("ui", crate::api::ui::table(lua, origin)?)?;
     Ok(app)
 }
 

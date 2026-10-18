@@ -68,13 +68,14 @@ impl Vm {
         self.limiter.guard(run)
     }
 
-    /// Runs a keymap or command callback.
+    /// Runs a keymap, command or tool callback. A table built by
+    /// `app.ui.block` comes back as [`PluginOutput::Block`].
     pub(crate) fn invoke(
         &mut self,
         id: CallbackId,
         args: &Value,
     ) -> Result<PluginOutput, PluginError> {
-        self.call(id, args).map(PluginOutput::Value)
+        self.call(id, args).map(crate::api::ui::output)
     }
 
     /// Runs the handler of the plugin tool `name`.
