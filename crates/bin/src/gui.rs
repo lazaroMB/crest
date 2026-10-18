@@ -408,6 +408,7 @@ mod tests {
         let end = futures::executor::block_on(controller.run_turn(TurnRequest {
             prompt: "hola".into(),
             model_override: None,
+            role: None,
             cancel: CancelToken::new(),
         }));
         assert_eq!(end, TurnEnd::Unavailable("falta la API key".into()));

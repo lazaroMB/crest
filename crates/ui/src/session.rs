@@ -28,23 +28,31 @@
 //!   in the next prompt. A file cited by a block (`Sources`) does the same.
 //! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
 //!   `:clear` (a new, empty session; not while a turn runs) and `:q`.
+//! - Any other `:name args` goes to [`SessionController::run_command`]
+//!   (commands of `init.lua`, `:mcp`); a name with a dot runs that builtin
+//!   action (`:picker.files`).
+//! - A mapping to a Lua function runs [`SessionController::run_callback`].
+//!   What it answers ([`Reply`]) is shown or run here: `app.cmd(name)` as a
+//!   `:` command and `app.send(text, { role })` as a prompt with that role.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use application::keymap::{Action, Keymap, Mode, default_keymap};
 use application::ports::events::{DomainEvent, NoticeLevel};
+use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
 use domain::block::{Block, BlockKind};
 use domain::conversation::StopReason;
-use domain::model::ModelId;
+use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspacePath;
-use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _,
     IntoElement, KeyDownEvent, KeystrokeEvent, ParentElement as _, Render, SharedString,
@@ -75,6 +83,8 @@ pub struct TurnRequest {
     pub prompt: String,
     /// Alias, role or id for this turn only (`<leader>m`, `:model`).
     pub model_override: Option<String>,
+    /// Role of the turn instead of `main` (`app.send(text, { role })`).
+    pub role: Option<ModelRole>,
     /// Cancelled by `Ctrl+C`.
     pub cancel: CancelToken,
 }
@@ -90,6 +100,24 @@ pub enum TurnEnd {
     /// error block.
     Unavailable(String),
 }
+
+/// What a command or a Lua callback run by the controller asks the
+/// session to do once it finished.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply {
+    /// Nothing to show.
+    Done,
+    /// A message for the status bar.
+    Notice(NoticeLevel, String),
+    /// A block for the timeline.
+    Block(Block),
+    /// Actions requested by Lua (`app.cmd`, `app.send`), in order.
+    Actions(Vec<PluginAction>),
+}
+
+/// How many times a command may lead to another one (`app.cmd` inside a
+/// command), so a command calling itself stops.
+const MAX_COMMAND_DEPTH: usize = 4;
 
 /// A model the menu offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +149,23 @@ pub trait SessionController: Send + Sync {
 
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
+
+    /// Runs the Lua function `id` of a mapping with `args`.
+    fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
+        let _ = (id, args);
+        futures::future::ready(Reply::Notice(
+            NoticeLevel::Warning,
+            "no hay plugins cargados".into(),
+        ))
+        .boxed()
+    }
+
+    /// Runs the `:name args` command, if the controller has one by that
+    /// name; `None` means there is none.
+    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+        let _ = (name, args);
+        None
+    }
 }
 
 /// The block that shows a prompt sent by the user in the timeline.
@@ -157,6 +202,8 @@ pub struct SessionParts {
     pub model: Option<ModelId>,
     /// Keys of the input.
     pub keymap: Keymap<Action>,
+    /// Wait for the next key of a sequence (`app.opt.timeoutlen`).
+    pub timeoutlen: Option<Duration>,
 }
 
 impl SessionParts {
@@ -178,6 +225,7 @@ impl SessionParts {
             workspace_dir: None,
             model: None,
             keymap: default_keymap(),
+            timeoutlen: None,
         }
     }
 }
@@ -202,7 +250,7 @@ pub struct Session {
     focus_handle: FocusHandle,
     running: Option<CancelToken>,
     turn: Option<Task<()>>,
-    queue: VecDeque<String>,
+    queue: VecDeque<(String, Option<ModelRole>)>,
     model_override: Option<String>,
     menu: Option<ModelMenu>,
     _events: Task<()>,
@@ -258,6 +306,7 @@ impl Session {
             workspace_dir,
             model,
             keymap,
+            timeoutlen,
         } = parts;
         let timeline = cx.new(TimelineView::new);
         let status = cx.new(|_| StatusView::new(workspace_label));
@@ -269,7 +318,13 @@ impl Session {
                 state.set_model(model);
             }
         });
-        let input = cx.new(|cx| InputView::with_keymap(keymap, window, cx));
+        let input = cx.new(|cx| {
+            let mut input = InputView::with_keymap(keymap, window, cx);
+            if let Some(timeoutlen) = timeoutlen {
+                input.sequencer_mut().set_timeoutlen(timeoutlen);
+            }
+            input
+        });
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
         let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
         let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
@@ -452,8 +507,14 @@ impl Session {
 
     /// Sends `prompt`, or queues it while a turn runs.
     pub fn submit(&mut self, prompt: String, cx: &mut Context<Self>) {
+        self.submit_as(prompt, None, cx);
+    }
+
+    /// Sends `prompt` answered with `role` (`main` when `None`), or queues
+    /// it while a turn runs.
+    pub fn submit_as(&mut self, prompt: String, role: Option<ModelRole>, cx: &mut Context<Self>) {
         if self.running.is_some() {
-            self.queue.push_back(prompt);
+            self.queue.push_back((prompt, role));
             let waiting = self.queue.len();
             self.notice(
                 NoticeLevel::Info,
@@ -467,6 +528,7 @@ impl Session {
         let turn = self.controller.run_turn(TurnRequest {
             prompt,
             model_override: self.model_override.take(),
+            role,
             cancel,
         });
         self.turn = Some(cx.spawn(async move |this, cx| {
@@ -497,8 +559,8 @@ impl Session {
                 );
             }
         }
-        if let Some(next) = self.queue.pop_front() {
-            self.submit(next, cx);
+        if let Some((next, role)) = self.queue.pop_front() {
+            self.submit_as(next, role, cx);
         }
         cx.notify();
     }
@@ -547,6 +609,16 @@ impl Session {
 
     /// Runs a `:` command.
     pub fn command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_at(command, 0, window, cx);
+    }
+
+    fn command_at(
+        &mut self,
+        command: &str,
+        depth: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (name, arg) = command.split_once(' ').unwrap_or((command, ""));
         let arg = arg.trim();
         match name {
@@ -560,11 +632,67 @@ impl Session {
                 Err(err) => self.notice(NoticeLevel::Warning, format!(":mode: {err}"), cx),
             },
             "clear" => self.clear(window, cx),
-            _ => self.notice(
-                NoticeLevel::Warning,
-                format!("comando desconocido :{command} (usa :model, :mode, :clear o :q)"),
-                cx,
-            ),
+            _ => {
+                if let Some(reply) = self.controller.run_command(name, arg) {
+                    self.await_reply(reply, depth, window, cx);
+                } else if name.contains('.') {
+                    self.action(&Action::Builtin(name.to_owned()), window, cx);
+                } else {
+                    self.notice(
+                        NoticeLevel::Warning,
+                        format!("comando desconocido :{command} (usa :model, :mode, :clear o :q)"),
+                        cx,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Runs `reply` once the controller answers.
+    fn await_reply(
+        &mut self,
+        reply: BoxFuture<'static, Reply>,
+        depth: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let reply = reply.await;
+            this.update_in(cx, |this, window, cx| this.reply(reply, depth, window, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Shows or runs what a command or callback answered.
+    pub fn reply(
+        &mut self,
+        reply: Reply,
+        depth: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match reply {
+            Reply::Done => {}
+            Reply::Notice(level, message) => self.notice(level, message, cx),
+            Reply::Block(block) => self.dispatch(DomainEvent::BlockAdded { block }, cx),
+            Reply::Actions(actions) => {
+                for action in actions {
+                    match action {
+                        PluginAction::Send { text, role } => self.submit_as(text, role, cx),
+                        PluginAction::Cmd { command } if depth < MAX_COMMAND_DEPTH => {
+                            self.command_at(&command, depth + 1, window, cx);
+                        }
+                        PluginAction::Cmd { command } => self.notice(
+                            NoticeLevel::Warning,
+                            format!(
+                                "app.cmd(\"{command}\") ignorado: demasiados comandos anidados"
+                            ),
+                            cx,
+                        ),
+                    }
+                }
+            }
         }
     }
 
@@ -628,7 +756,11 @@ impl Session {
         }
         let name = match action {
             Action::Builtin(name) => name.as_str(),
-            Action::Callback(_) => "",
+            Action::Callback(id) => {
+                let reply = self.controller.run_callback(*id, serde_json::Value::Null);
+                self.await_reply(reply, 0, window, cx);
+                return;
+            }
         };
         match name {
             INTERRUPT_ACTION => {
@@ -769,7 +901,6 @@ mod tests {
     use domain::model::{ModelPolicy, ModelRole};
     use domain::permission::PermissionPolicy;
     use domain::workspace::WorkspaceRoot;
-    use futures::FutureExt as _;
     use futures::channel::oneshot;
     use gpui::{TestAppContext, VisualTestContext};
     use serde_json::json;
@@ -796,7 +927,8 @@ mod tests {
                     events.emit(DomainEvent::BlockAdded {
                         block: prompt_block(&request.prompt),
                     });
-                    let mut opts = TurnOptions::new(ModelRole::Main).with_cancel(request.cancel);
+                    let role = request.role.unwrap_or(ModelRole::Main);
+                    let mut opts = TurnOptions::new(role).with_cancel(request.cancel);
                     if let Some(model) = request.model_override {
                         opts = opts.with_override(model);
                     }
@@ -843,6 +975,32 @@ mod tests {
                 *conversation.lock().await = Conversation::new("/ws", 0);
             }
             .boxed()
+        }
+
+        /// Callback 7 is `function() app.cmd("clear") end`.
+        fn run_callback(&self, id: u64, _args: serde_json::Value) -> BoxFuture<'static, Reply> {
+            let reply = match id {
+                7 => Reply::Actions(vec![PluginAction::Cmd {
+                    command: "clear".into(),
+                }]),
+                _ => Reply::Notice(NoticeLevel::Error, format!("callback {id}?")),
+            };
+            futures::future::ready(reply).boxed()
+        }
+
+        /// `:review` sends a prompt with the plan role; `:loop` calls itself.
+        fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+            let reply = match name {
+                "review" => Reply::Actions(vec![PluginAction::Send {
+                    text: format!("revisa {args}"),
+                    role: Some(ModelRole::Plan),
+                }]),
+                "loop" => Reply::Actions(vec![PluginAction::Cmd {
+                    command: "loop".into(),
+                }]),
+                _ => return None,
+            };
+            Some(futures::future::ready(reply).boxed())
         }
     }
 
@@ -902,7 +1060,11 @@ mod tests {
             conversation: Arc::new(futures::lock::Mutex::new(Conversation::new("/ws", 0))),
             events: sink.clone(),
         });
-        let parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        parts
+            .keymap
+            .set(Mode::Normal, "<leader>x", Action::Callback(7))
+            .unwrap();
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
         let (_host, cx) = cx.add_window_view(move |window, cx| {
@@ -1120,6 +1282,45 @@ mod tests {
             assert_eq!(s.model_override(), Some("opus"));
         });
         assert!(blocks(&h, cx).is_empty(), ":clear empties the timeline");
+    }
+
+    #[gpui::test]
+    fn a_lua_mapping_runs_the_command_it_asks_for(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("ok")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        assert!(!blocks(&h, cx).is_empty());
+        cx.simulate_keystrokes("escape space x");
+        cx.run_until_parked();
+        assert!(blocks(&h, cx).is_empty(), "app.cmd(\"clear\") ran");
+    }
+
+    #[gpui::test]
+    fn a_controller_command_sends_a_prompt_with_its_role(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("sin riesgos")], cx);
+        cx.simulate_keystrokes("escape :");
+        cx.simulate_input("review todo");
+        cx.simulate_keystrokes("enter");
+        wait_until(&h, cx, "the turn", |s, _| {
+            !s.is_running() && h.llm.remaining() == 0
+        });
+        let request = h.llm.last_request().unwrap();
+        assert_eq!(request.model.role, ModelRole::Plan);
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).next(),
+            Some("> revisa todo\n")
+        );
+    }
+
+    #[gpui::test]
+    fn a_command_calling_itself_stops(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("escape :");
+        cx.simulate_input("loop");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, _| assert!(!s.is_running()));
     }
 
     #[gpui::test]
