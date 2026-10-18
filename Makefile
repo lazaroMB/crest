@@ -40,7 +40,7 @@ fmt-check: ## Verifica el formato sin modificar archivos
 
 .PHONY: lint
 lint: ## Clippy estricto sobre todo el workspace (-D warnings)
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 
 # Usa cargo-nextest si está instalado (más rápido); nextest no corre
 # doctests, así que en ese caso se corren aparte con `cargo test --doc`.
