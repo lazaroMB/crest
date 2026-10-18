@@ -129,10 +129,8 @@ pub fn render_block(entry: &TimelineEntry, cx: &App) -> AnyElement {
             cx,
         ),
         BlockKind::Error { message, hint } => render_error(message, hint.as_deref(), cx),
-        other => div()
-            .text_color(cx.theme().muted_foreground)
-            .child(format!("[{}]", kind_name(other)))
-            .into_any_element(),
+        _ => crate::blocks::render(entry, cx)
+            .unwrap_or_else(|| crate::blocks::placeholder(entry, cx)),
     }
 }
 
