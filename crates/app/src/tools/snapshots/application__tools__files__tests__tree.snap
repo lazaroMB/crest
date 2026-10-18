@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "tree",
+  "description": "Shows the directory tree under `path` (the workspace root when omitted), built from the file listing: directories first and marked with a trailing `/`, two spaces of indentation per level.\n- Use it to get an overview of a project or a directory before reading files.\n- Expands `depth` levels below `path` (default 3); deeper directories show how many files they contain instead. Empty and ignored directories are not shown.\n- Paths are relative to the workspace root.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Directory to start from; the workspace root when omitted.",
+        "default": null
+      },
+      "depth": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "description": "How many directory levels to expand below `path` (default 3).",
+        "default": 3
+      }
+    },
+    "description": "Input of the `tree` tool.",
+    "title": "TreeRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

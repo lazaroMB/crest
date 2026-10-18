@@ -1,0 +1,31 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "find_file",
+  "description": "Finds files by fuzzy-matching `query` against their paths (fzf), best match first, one path per line.\n- Use it when you know part of a file name or path, e.g. `run_turn` or `app/tools/reg`.\n- To search file contents use `grep`; to list files by pattern use `list_files` with a glob.\n- Returns at most `limit` paths (default 20). Paths are relative to the workspace root.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Fuzzy query matched against file paths."
+      },
+      "limit": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "description": "Maximum number of paths to return (default 20).",
+        "default": 20
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "description": "Input of the `find_file` tool.",
+    "title": "FindFileRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

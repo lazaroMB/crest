@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "list_files",
+  "description": "Lists files in the workspace, one path per line, sorted by path. Hidden files are included; files ignored by .gitignore and the .git directory are not.\n- Use it to see what exists, optionally narrowed with `glob` (e.g. `**/*.rs`, `src/**/mod.rs`).\n- To find a file whose name you roughly know, prefer `find_file`; to see the layout of directories, prefer `tree`.\n- Returns at most `limit` paths (default 500); narrow `glob` when the list is cut.\n- Paths are relative to the workspace root.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "glob": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Optional glob that listed paths must match, e.g. `**/*.rs`.",
+        "default": null
+      },
+      "limit": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "description": "Maximum number of paths to return (default 500).",
+        "default": 500
+      }
+    },
+    "description": "Input of the `list_files` tool.",
+    "title": "ListFilesRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

@@ -1,0 +1,64 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "grep",
+  "description": "Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by its context lines as `path-line- text`; groups of lines are separated by `--`.\n- `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to search for a literal string, and `ignore_case` for a case-insensitive search.\n- Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).\n- Files ignored by .gitignore are skipped. Paths are relative to the workspace root.\n- Returns at most `limit` matches (default 100) with `context` lines around each (default 2; use 0 for just the matching lines). Refine the pattern when the result is cut.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Regular expression (ripgrep syntax) to search for, or a literal\nstring when `fixed` is true."
+      },
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "File or directory to search in; the whole workspace when omitted.",
+        "default": null
+      },
+      "glob": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Optional glob that searched files must match, e.g. `*.rs`.",
+        "default": null
+      },
+      "fixed": {
+        "type": "boolean",
+        "description": "Treat `pattern` as a literal string instead of a regex.",
+        "default": false
+      },
+      "ignore_case": {
+        "type": "boolean",
+        "description": "Match case-insensitively.",
+        "default": false
+      },
+      "context": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Lines of context to include before and after each match (default 2).",
+        "default": 2
+      },
+      "limit": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "description": "Maximum number of matches to return (default 100).",
+        "default": 100
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "description": "Input of the `grep` tool.",
+    "title": "GrepRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

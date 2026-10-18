@@ -1,0 +1,29 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "write_file",
+  "description": "Creates a file, or overwrites an existing one, with `content` as its full new content. Missing parent directories are created.\n- Prefer `edit_file` for changes to an existing file: it is cheaper and safer than rewriting it. Read an existing file before overwriting it.\n- The user sees the diff and may need to approve it before it is written.\n- `path` is relative to the workspace root.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to create or overwrite; missing parent directories are created."
+      },
+      "content": {
+        "type": "string",
+        "description": "Full new content of the file."
+      }
+    },
+    "required": [
+      "path",
+      "content"
+    ],
+    "description": "Input of the `write_file` tool.",
+    "title": "WriteFileRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

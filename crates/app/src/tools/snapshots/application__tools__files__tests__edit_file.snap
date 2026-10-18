@@ -1,0 +1,34 @@
+---
+source: crates/app/src/tools/files.rs
+expression: def
+---
+{
+  "name": "edit_file",
+  "description": "Edits an existing file by replacing one exact occurrence of `old` with `new`.\n- `old` must match the current file content exactly, including whitespace and indentation, and must appear exactly once: when it appears several times, include more surrounding lines to make it unique. Do not include the line numbers that `read_file` prints.\n- Read the file first. To create a file or rewrite it entirely, use `write_file`.\n- The user sees the diff and may need to approve it before it is written.\n- `path` is relative to the workspace root.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to edit; it must exist."
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact text to replace; it must occur exactly once in the file."
+      },
+      "new": {
+        "type": "string",
+        "description": "Replacement text."
+      }
+    },
+    "required": [
+      "path",
+      "old",
+      "new"
+    ],
+    "description": "Input of the `edit_file` tool.",
+    "title": "EditFileRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

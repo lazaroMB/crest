@@ -17,7 +17,9 @@ use domain::workspace::PathError;
 use futures::FutureExt;
 
 use super::budget::ResultBudget;
-use super::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
+use super::registry::{
+    PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
+};
 use crate::ports::approval::ApprovalPreview;
 use crate::ports::fs::{
     EditFileRequest, FileContent, FileSystemPort, FsError, PendingChange, ReadFileRequest,
@@ -719,6 +721,48 @@ impl TypedTool for RunCommandTool {
     }
 }
 
+/// The ports the file tools run on.
+#[derive(Clone)]
+pub struct FileToolPorts {
+    /// File listing and fuzzy finding (`list_files`, `find_file`, `tree`).
+    pub file_search: Arc<dyn FileSearchPort>,
+    /// Content search (`grep`).
+    pub content_search: Arc<dyn ContentSearchPort>,
+    /// Reading and changing files (`read_file`, `edit_file`, `write_file`).
+    pub fs: Arc<dyn FileSystemPort>,
+    /// Running commands (`run_command`).
+    pub shell: Arc<dyn ShellPort>,
+}
+
+/// Registers the eight file tools in `registry`, cutting their listings to
+/// the registry's budget.
+///
+/// # Errors
+///
+/// [`RegisterError::Duplicate`] when a tool with one of their names is
+/// already registered.
+pub fn register_file_tools(
+    registry: &mut ToolRegistry,
+    ports: FileToolPorts,
+) -> Result<(), RegisterError> {
+    let budget = registry.budget();
+    let FileToolPorts {
+        file_search,
+        content_search,
+        fs,
+        shell,
+    } = ports;
+    registry.register_typed(ListFilesTool::new(Arc::clone(&file_search), budget))?;
+    registry.register_typed(FindFileTool::new(Arc::clone(&file_search), budget))?;
+    registry.register_typed(TreeTool::new(file_search, budget))?;
+    registry.register_typed(GrepTool::new(content_search, budget))?;
+    registry.register_typed(ReadFileTool::new(Arc::clone(&fs), budget))?;
+    registry.register_typed(EditFileTool::new(Arc::clone(&fs)))?;
+    registry.register_typed(WriteFileTool::new(fs))?;
+    registry.register_typed(RunCommandTool::new(shell, budget))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
@@ -1121,5 +1165,103 @@ mod tests {
         let text = out.text_content();
         assert!(text.contains("líneas más omitidas"), "{text}");
         assert!(text.ends_with("--- stderr ---\nwarning: x"), "{text}");
+    }
+
+    fn registry() -> ToolRegistry {
+        let fs = workspace();
+        let mut registry = ToolRegistry::new();
+        register_file_tools(
+            &mut registry,
+            FileToolPorts {
+                file_search: Arc::clone(&fs) as Arc<dyn FileSearchPort>,
+                content_search: Arc::clone(&fs) as Arc<dyn ContentSearchPort>,
+                fs,
+                shell: Arc::new(ScriptedShell::new()),
+            },
+        )
+        .unwrap();
+        registry
+    }
+
+    #[test]
+    fn definitions_snapshot() {
+        let registry = registry();
+        assert_eq!(
+            registry.names().collect::<Vec<_>>(),
+            [
+                "edit_file",
+                "find_file",
+                "grep",
+                "list_files",
+                "read_file",
+                "run_command",
+                "tree",
+                "write_file"
+            ]
+        );
+        for def in registry.definitions() {
+            insta::assert_json_snapshot!(def.name.clone(), def);
+        }
+    }
+
+    #[test]
+    fn schemas_mark_only_inputs_without_default_as_required() {
+        let required: Vec<(String, Value)> = registry()
+            .definitions()
+            .into_iter()
+            .map(|def| {
+                (
+                    def.name,
+                    def.input_schema
+                        .get("required")
+                        .cloned()
+                        .unwrap_or(json!([])),
+                )
+            })
+            .collect();
+        assert_eq!(
+            required,
+            [
+                ("edit_file".to_owned(), json!(["path", "old", "new"])),
+                ("find_file".to_owned(), json!(["query"])),
+                ("grep".to_owned(), json!(["pattern"])),
+                ("list_files".to_owned(), json!([])),
+                ("read_file".to_owned(), json!(["path"])),
+                ("run_command".to_owned(), json!(["command"])),
+                ("tree".to_owned(), json!([])),
+                ("write_file".to_owned(), json!(["path", "content"])),
+            ]
+        );
+        let defs = registry().definitions();
+        let grep = &defs[2].input_schema["properties"];
+        assert_eq!(grep["context"]["default"], 2);
+        assert_eq!(grep["limit"]["default"], 100);
+        assert_eq!(grep["fixed"]["default"], false);
+    }
+
+    #[test]
+    fn registering_twice_is_a_duplicate() {
+        let mut registry = registry();
+        let fs = workspace();
+        let err = register_file_tools(
+            &mut registry,
+            FileToolPorts {
+                file_search: Arc::clone(&fs) as Arc<dyn FileSearchPort>,
+                content_search: Arc::clone(&fs) as Arc<dyn ContentSearchPort>,
+                fs,
+                shell: Arc::new(ScriptedShell::new()),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, RegisterError::Duplicate("list_files".into()));
+    }
+
+    #[tokio::test]
+    async fn dispatch_reaches_the_ports() {
+        let out = registry()
+            .dispatch("read_file", json!({ "path": "Cargo.toml" }), &ctx())
+            .await
+            .unwrap();
+        assert_eq!(out.text_content(), "     1\t[workspace]");
     }
 }
