@@ -18,18 +18,38 @@
 //! -- Pause and ask before the next model call once the session spent $5.
 //! app.opt.max_session_cost = 5
 //! ```
+//!
+//! [`CostTracker::from_options`] reads both from the loaded options. The
+//! tracker adds up the cost of every answer of a session (including the
+//! summaries of compaction) and, with a cap, the agent loop asks through
+//! the `ApprovalPort` before a model call once the session reached it:
+//! "approve" raises the cap by its original amount (the next pause comes
+//! after spending as much again), "approve always" turns the cap off for
+//! the session, and a denial ends the turn.
+//!
+//! Costs are kept in memory per [`SessionId`]: a session resumed from the
+//! store starts counting from zero.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
-use domain::conversation::Usage;
+use domain::conversation::{SessionId, ToolUseId, Usage};
 use domain::model::{ModelId, ModelPricing};
+use domain::permission::ToolEffect;
 use serde_json::Value;
+
+use crate::ports::approval::{ApprovalPreview, ApprovalRequest, ApprovalRequestId};
+use crate::ports::plugin::AppOptions;
 
 /// Key of the prices in `app.opt`.
 pub const PRICING_OPTION: &str = "pricing";
 
 /// Key of the spending cap in `app.opt`.
 pub const CAP_OPTION: &str = "max_session_cost";
+
+/// Name of the tool in the approval request of the spending cap.
+pub const SPEND_CAP_TOOL: &str = "spend_cap";
 
 /// Fields of one model's prices in the config, in USD per million tokens.
 const PRICE_FIELDS: [&str; 4] = ["input", "output", "cache_read", "cache_write"];
@@ -165,6 +185,162 @@ pub fn cap_from_json(value: &Value) -> Result<f64, CostConfigError> {
     }
 }
 
+/// The session reached its spending cap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CapReached {
+    /// What the session spent, in USD.
+    pub spent: f64,
+    /// The cap in force, in USD.
+    pub cap: f64,
+}
+
+impl CapReached {
+    /// The question shown to the user.
+    #[must_use]
+    pub fn question(&self) -> String {
+        format!(
+            "La sesión gastó ${:.2} de ${:.2}; ¿continuar?",
+            self.spent, self.cap
+        )
+    }
+}
+
+/// Spending of one session.
+#[derive(Debug, Clone, Copy, Default)]
+struct Spend {
+    /// USD of the answers with a price.
+    cost: f64,
+    /// Whether at least one answer had a price.
+    priced: bool,
+    /// Cap in force once raised; `None` uses the configured one.
+    cap: Option<f64>,
+    /// The user turned the cap off for this session.
+    uncapped: bool,
+}
+
+/// Request ids of the cap, apart from the tool approvals' counter.
+const REQUEST_ID_BASE: u64 = 1 << 63;
+
+/// Adds up the cost of each session and enforces the optional cap.
+#[derive(Debug, Default)]
+pub struct CostTracker {
+    pricing: PricingTable,
+    cap: Option<f64>,
+    sessions: Mutex<HashMap<SessionId, Spend>>,
+    next_request: AtomicU64,
+}
+
+impl CostTracker {
+    /// A tracker pricing answers with `pricing`, without a cap.
+    #[must_use]
+    pub fn new(pricing: PricingTable) -> Self {
+        Self {
+            pricing,
+            ..Self::default()
+        }
+    }
+
+    /// Returns the tracker pausing each session once it spent `cap` USD.
+    /// A cap that is not positive is ignored.
+    #[must_use]
+    pub fn with_cap(mut self, cap: f64) -> Self {
+        self.cap = (cap > 0.0 && cap.is_finite()).then_some(cap);
+        self
+    }
+
+    /// A tracker with the `pricing` and `max_session_cost` of `app.opt`.
+    ///
+    /// # Errors
+    ///
+    /// [`CostConfigError`] when either option is malformed.
+    pub fn from_options(options: &AppOptions) -> Result<Self, CostConfigError> {
+        let pricing = match options.extra.get(PRICING_OPTION) {
+            None | Some(Value::Null) => PricingTable::new(),
+            Some(value) => PricingTable::from_json(value)?,
+        };
+        let mut tracker = Self::new(pricing);
+        if let Some(value) = options.extra.get(CAP_OPTION).filter(|v| !v.is_null()) {
+            tracker.cap = Some(cap_from_json(value)?);
+        }
+        Ok(tracker)
+    }
+
+    /// The prices.
+    #[must_use]
+    pub fn pricing(&self) -> &PricingTable {
+        &self.pricing
+    }
+
+    /// The configured cap, in USD.
+    #[must_use]
+    pub fn cap(&self) -> Option<f64> {
+        self.cap
+    }
+
+    fn with_spend<T>(&self, session: SessionId, f: impl FnOnce(&mut Spend) -> T) -> T {
+        let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+        f(sessions.entry(session).or_default())
+    }
+
+    /// Adds the cost of one answer by `model` and returns the session's
+    /// cost, or `None` when `model` has no price (the answer adds
+    /// nothing).
+    pub fn record(&self, session: SessionId, model: &ModelId, usage: &Usage) -> Option<f64> {
+        let cost = self.pricing.cost(model, usage)?;
+        Some(self.with_spend(session, |spend| {
+            spend.cost += cost;
+            spend.priced = true;
+            spend.cost
+        }))
+    }
+
+    /// Cost of `session` so far, when any of its answers had a price.
+    #[must_use]
+    pub fn session_cost(&self, session: SessionId) -> Option<f64> {
+        self.with_spend(session, |spend| spend.priced.then_some(spend.cost))
+    }
+
+    /// Whether `session` must pause before its next model call.
+    #[must_use]
+    pub fn cap_reached(&self, session: SessionId) -> Option<CapReached> {
+        let configured = self.cap?;
+        self.with_spend(session, |spend| {
+            let cap = spend.cap.unwrap_or(configured);
+            (!spend.uncapped && spend.cost >= cap).then_some(CapReached {
+                spent: spend.cost,
+                cap,
+            })
+        })
+    }
+
+    /// The user chose to go on: the next pause comes after spending the
+    /// configured cap again.
+    pub fn raise_cap(&self, session: SessionId) {
+        let Some(step) = self.cap else { return };
+        self.with_spend(session, |spend| spend.cap = Some(spend.cost + step));
+    }
+
+    /// The user chose to go on without a cap for `session`.
+    pub fn lift_cap(&self, session: SessionId) {
+        self.with_spend(session, |spend| spend.uncapped = true);
+    }
+
+    /// The approval request that asks whether to go on past `reached`.
+    pub fn request(&self, reached: CapReached) -> ApprovalRequest {
+        let n = self.next_request.fetch_add(1, Ordering::Relaxed);
+        ApprovalRequest {
+            id: ApprovalRequestId(REQUEST_ID_BASE | n),
+            tool_use_id: ToolUseId::new(format!("{SPEND_CAP_TOOL}_{n}")),
+            tool: SPEND_CAP_TOOL.to_owned(),
+            effect: ToolEffect::Network,
+            subject: format!("{:.2} USD", reached.cap),
+            preview: ApprovalPreview::Text {
+                text: reached.question(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -238,5 +414,87 @@ mod tests {
         assert_eq!(cap_from_json(&json!(2.5)), Ok(2.5));
         assert_eq!(cap_from_json(&json!(0)), Err(CostConfigError::BadCap));
         assert_eq!(cap_from_json(&json!("5")), Err(CostConfigError::BadCap));
+    }
+
+    #[test]
+    fn from_options_reads_pricing_and_cap() {
+        let mut options = AppOptions::default();
+        let tracker = CostTracker::from_options(&options).unwrap();
+        assert!(tracker.pricing().is_empty());
+        assert_eq!(tracker.cap(), None);
+        options.extra.insert(
+            PRICING_OPTION.into(),
+            json!({ "m": { "input": 1, "output": 2, "cache_read": 0, "cache_write": 0 } }),
+        );
+        options.extra.insert(CAP_OPTION.into(), json!(5));
+        let tracker = CostTracker::from_options(&options).unwrap();
+        assert!(tracker.pricing().get(&ModelId::new("m")).is_some());
+        assert_eq!(tracker.cap(), Some(5.0));
+        options.extra.insert(CAP_OPTION.into(), json!(-1));
+        assert!(CostTracker::from_options(&options).is_err());
+    }
+
+    #[test]
+    fn records_per_session_and_ignores_unpriced_models() {
+        let tracker = CostTracker::new(PricingTable::new().with("m", price(1.0, 2.0)));
+        let (a, b) = (SessionId::new(), SessionId::new());
+        assert_eq!(tracker.session_cost(a), None);
+        let m = ModelId::new("m");
+        assert_eq!(tracker.record(a, &m, &usage(1_000_000, 0)), Some(1.0));
+        assert_eq!(tracker.record(a, &m, &usage(0, 1_000_000)), Some(3.0));
+        assert_eq!(tracker.record(a, &ModelId::new("x"), &usage(9, 9)), None);
+        assert_eq!(tracker.session_cost(a), Some(3.0));
+        assert_eq!(tracker.session_cost(b), None);
+    }
+
+    #[test]
+    fn cap_raises_by_its_amount_or_lifts() {
+        let pricing = PricingTable::new().with("m", price(1.0, 0.0));
+        let tracker = CostTracker::new(pricing).with_cap(2.0);
+        let s = SessionId::new();
+        let m = ModelId::new("m");
+        tracker.record(s, &m, &usage(1_000_000, 0));
+        assert_eq!(tracker.cap_reached(s), None);
+        tracker.record(s, &m, &usage(1_500_000, 0));
+        let reached = tracker.cap_reached(s).unwrap();
+        assert_eq!(
+            reached,
+            CapReached {
+                spent: 2.5,
+                cap: 2.0
+            }
+        );
+        assert_eq!(
+            reached.question(),
+            "La sesión gastó $2.50 de $2.00; ¿continuar?"
+        );
+        tracker.raise_cap(s);
+        assert_eq!(tracker.cap_reached(s), None);
+        tracker.record(s, &m, &usage(2_000_000, 0));
+        assert_eq!(tracker.cap_reached(s).map(|r| r.cap), Some(4.5));
+        tracker.lift_cap(s);
+        tracker.record(s, &m, &usage(9_000_000, 0));
+        assert_eq!(tracker.cap_reached(s), None);
+        assert_eq!(CostTracker::default().with_cap(0.0).cap(), None);
+    }
+
+    #[test]
+    fn request_asks_with_the_question() {
+        let tracker = CostTracker::default();
+        let reached = CapReached {
+            spent: 1.0,
+            cap: 1.0,
+        };
+        let (a, b) = (tracker.request(reached), tracker.request(reached));
+        assert_eq!(a.tool, SPEND_CAP_TOOL);
+        assert_eq!(a.effect, ToolEffect::Network);
+        assert_eq!(
+            a.preview,
+            ApprovalPreview::Text {
+                text: reached.question()
+            }
+        );
+        assert_ne!(a.id, b.id);
+        assert_ne!(a.tool_use_id, b.tool_use_id);
     }
 }
