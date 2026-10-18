@@ -61,6 +61,14 @@ similar = "3.2.0"
 tokio-util = "0.7.20"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 
+# UI (GPUI is pre-1.0: exact versions, bump only between phases).
+# gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
+# `gpui-pre =0.3.9` (zed@93d7456); the platform backend is a separate crate
+# of the same family and must move with it.
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-component = "=0.7.3"
+
 # Test-only crates
 insta = { version = "1.49.0", features = ["json"] }
 tempfile = "3.27.0"
