@@ -588,6 +588,204 @@ pub struct WireMetadata {
     pub user_id: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Response
+// ---------------------------------------------------------------------------
+
+/// A `message` object: the non-streaming response, and the `message` of a
+/// `message_start` event (which starts with empty `content` and may lack
+/// `usage`, `model` or `role`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessagesResponse {
+    /// Message id (`msg_...`).
+    pub id: String,
+    /// Model that answered.
+    #[serde(default)]
+    pub model: String,
+    /// Always `assistant`.
+    #[serde(default = "assistant_role")]
+    pub role: WireRole,
+    /// Generated blocks.
+    #[serde(default)]
+    pub content: Vec<WireContentBlock>,
+    /// Why generation stopped; `null` in `message_start`. Kept as a string
+    /// because the API adds values (see `convert::stop_reason`).
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    /// The custom stop sequence that was produced, if any.
+    #[serde(default)]
+    pub stop_sequence: Option<String>,
+    /// Details of a `refusal` stop; `null` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_details: Option<StopDetails>,
+    /// Token accounting.
+    #[serde(default)]
+    pub usage: WireUsage,
+}
+
+fn assistant_role() -> WireRole {
+    WireRole::Assistant
+}
+
+/// `stop_details` of a refused answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopDetails {
+    /// Always `refusal` today.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Policy category (`cyber`, `bio`, ...), if any.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Human-readable explanation, not guaranteed to be stable.
+    #[serde(default)]
+    pub explanation: Option<String>,
+}
+
+/// `usage` of a response or of a `message_delta` event. In
+/// `message_delta` the counts are cumulative and `input_tokens` may be
+/// `null`, hence the `Option`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WireUsage {
+    /// Uncached input tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Output tokens, thinking included.
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Input tokens written to the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    /// Input tokens read from the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    /// Server tool calls billed in this response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_tool_use: Option<ServerToolUsage>,
+}
+
+/// `usage.server_tool_use`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ServerToolUsage {
+    /// Web searches performed.
+    #[serde(default)]
+    pub web_search_requests: u64,
+    /// Web fetches performed.
+    #[serde(default)]
+    pub web_fetch_requests: u64,
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_reference_response() {
+        // Response example of the API reference (container and diagnostics
+        // are not modelled and are ignored).
+        let raw = json!({
+            "id": "msg_013Zva2CMHLNnXjNJJKqJ2EF",
+            "container": {"id": "container_011CpZohnwH4vuy7gazohgSP", "expires_at": "2019-12-27T18:11:19.117Z"},
+            "content": [{
+                "citations": [{
+                    "cited_text": "The grass is green. The sky is blue.",
+                    "document_index": 0,
+                    "document_title": "My Document",
+                    "end_char_index": 0,
+                    "file_id": "file_011CNha8iCJcU1wXNR6q4V8w",
+                    "start_char_index": 0,
+                    "type": "char_location"
+                }],
+                "text": "Hi! My name is Claude.",
+                "type": "text"
+            }],
+            "diagnostics": {"cache_miss_reason": {"cache_missed_input_tokens": 0, "type": "model_changed"}},
+            "model": "claude-opus-5-5",
+            "role": "assistant",
+            "stop_details": {
+                "category": "cyber",
+                "explanation": "This request was declined because it conflicts with Anthropic's Usage Policy.",
+                "type": "refusal"
+            },
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "type": "message",
+            "usage": {
+                "cache_creation": {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0},
+                "cache_creation_input_tokens": 2051,
+                "cache_read_input_tokens": 2051,
+                "inference_geo": "global",
+                "input_tokens": 2095,
+                "output_tokens": 503,
+                "output_tokens_details": {"thinking_tokens": 0},
+                "server_tool_use": {"web_fetch_requests": 2, "web_search_requests": 0},
+                "service_tier": "standard",
+                "speed": "standard"
+            }
+        });
+        let resp: MessagesResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(resp.role, WireRole::Assistant);
+        assert_eq!(
+            resp.stop_details.unwrap().category.as_deref(),
+            Some("cyber")
+        );
+        assert_eq!(
+            resp.usage,
+            WireUsage {
+                input_tokens: Some(2095),
+                output_tokens: 503,
+                cache_creation_input_tokens: Some(2051),
+                cache_read_input_tokens: Some(2051),
+                server_tool_use: Some(ServerToolUsage {
+                    web_search_requests: 0,
+                    web_fetch_requests: 2
+                }),
+            }
+        );
+        assert!(matches!(
+            &resp.content[0],
+            WireContentBlock::Text { citations: Some(c), .. } if matches!(c[0], WireCitation::CharLocation { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_web_search_response() {
+        // From the web search tool docs.
+        let raw = json!({
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "I'll search for when Claude Shannon was born."},
+                {
+                    "type": "server_tool_use",
+                    "id": "srvtoolu_01WYG3ziw53XMcoyKL4XcZmE",
+                    "name": "web_search",
+                    "input": {"query": "claude shannon birth date"}
+                },
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": "srvtoolu_01WYG3ziw53XMcoyKL4XcZmE",
+                    "content": [{
+                        "type": "web_search_result",
+                        "url": "https://en.wikipedia.org/wiki/Claude_Shannon",
+                        "title": "Claude Shannon - Wikipedia",
+                        "encrypted_content": "EqgfCioIARgBIiQ3YTAwMjY1Mi1mZjM5LTQ1NGUtODgxNC1kNjNjNTk1ZWI3Y...",
+                        "page_age": "April 30, 2025"
+                    }]
+                },
+                {"text": "Based on the search results, ", "type": "text"}
+            ],
+            "id": "msg_a930390d3a",
+            "usage": {"input_tokens": 6039, "output_tokens": 931, "server_tool_use": {"web_search_requests": 1}},
+            "stop_reason": "end_turn"
+        });
+        let resp: MessagesResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.content.len(), 4);
+        assert_eq!(resp.usage.server_tool_use.unwrap().web_search_requests, 1);
+        assert_eq!(resp.usage.cache_read_input_tokens, None);
+    }
+}
+
 #[cfg(test)]
 mod request_tests {
     use super::*;
