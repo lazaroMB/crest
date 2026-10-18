@@ -5,9 +5,11 @@
 //! [`PluginHostPort`](application::ports::plugin::PluginHostPort).
 
 mod callbacks;
+mod config;
 mod convert;
 mod host;
 mod sandbox;
 mod vm;
 
+pub use config::default_sources;
 pub use host::{HostOptions, LuaHandle, LuaHost};

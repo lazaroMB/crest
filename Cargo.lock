@@ -114,6 +114,7 @@ version = "0.1.0"
 dependencies = [
  "application",
  "async-trait",
+ "dirs 7.0.0",
  "domain",
  "mlua",
  "serde_json",

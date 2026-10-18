@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 application.workspace = true
 async-trait.workspace = true
+dirs.workspace = true
 domain.workspace = true
 mlua.workspace = true
 serde_json.workspace = true
