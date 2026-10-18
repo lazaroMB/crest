@@ -6,10 +6,21 @@
 //! working directory and an empty stdin. Stdout and stderr are captured up
 //! to [`MAX_CAPTURE_BYTES`] each; the rest is discarded and the output is
 //! marked `truncated`.
+//!
+//! Every command runs in its own process group. When the leader exits, or
+//! the timeout elapses, or the `run` future is dropped, the whole group is
+//! killed with `SIGKILL` (see [`group`](crate::group) for how, without
+//! `unsafe`), so background children never outlive the command nor keep
+//! its pipes open. On timeout the output read so far is returned with
+//! `timed_out` set and no exit status.
 
 mod capture;
+mod group;
 
+use std::io;
+use std::pin::pin;
 use std::process::Stdio;
+use std::time::Duration;
 
 use application::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
 use async_trait::async_trait;
@@ -18,6 +29,12 @@ use tokio::process::Command;
 
 use crate::capture::Capture;
 pub use crate::capture::MAX_CAPTURE_BYTES;
+use crate::group::ProcessGroup;
+
+/// How long the pipes may stay open after the process group was killed on
+/// exit. Only a process that left the group (`setsid`) can hold them past
+/// that; whatever it writes later is not captured.
+const DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 /// [`ShellPort`] backed by [`tokio::process`], running every command in the
 /// workspace root.
@@ -47,6 +64,8 @@ impl LocalShell {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
         command
     }
 }
@@ -58,22 +77,55 @@ impl ShellPort for LocalShell {
             .command(&request)
             .spawn()
             .map_err(|err| ShellError::Spawn(format!("{}: {err}", request.command)))?;
+        let mut group = ProcessGroup::of(&child);
+        let out_pipe = child.stdout.take();
+        let err_pipe = child.stderr.take();
         let mut stdout = Capture::new(MAX_CAPTURE_BYTES);
         let mut stderr = Capture::new(MAX_CAPTURE_BYTES);
-        let (read_out, read_err) = tokio::join!(
-            stdout.read_from(child.stdout.take()),
-            stderr.read_from(child.stderr.take())
-        );
-        let io = |err: std::io::Error| ShellError::Io(err.to_string());
-        read_out.map_err(io)?;
-        read_err.map_err(io)?;
-        let status = child.wait().await.map_err(io)?;
+
+        let work = async {
+            let mut reads = pin!(async {
+                let (read_out, read_err) =
+                    tokio::join!(stdout.read_from(out_pipe), stderr.read_from(err_pipe));
+                read_out.and(read_err)
+            });
+            let mut drained = false;
+            let status = tokio::select! {
+                status = child.wait() => status?,
+                read = &mut reads => {
+                    read?;
+                    drained = true;
+                    child.wait().await?
+                }
+            };
+            // Leftover members of the group (backgrounded children) would
+            // keep the pipes open: kill them and read what is left.
+            group.kill();
+            if !drained && let Ok(read) = tokio::time::timeout(DRAIN_GRACE, &mut reads).await {
+                read?;
+            }
+            Ok::<_, io::Error>(status)
+        };
+        let io = |err: io::Error| ShellError::Io(err.to_string());
+        let (status, timed_out) = match tokio::time::timeout(request.timeout(), work).await {
+            Ok(status) => (status.map_err(io)?.code(), false),
+            Err(_) => {
+                group.kill();
+                // Fallback in case `kill` could not run; harmless otherwise.
+                if let Err(err) = child.start_kill() {
+                    tracing::trace!(%err, "leader already gone");
+                }
+                child.wait().await.map_err(io)?;
+                tracing::debug!(command = %request.display(), "command timed out");
+                (None, true)
+            }
+        };
         Ok(CommandOutput {
-            status: status.code(),
+            status,
             truncated: stdout.truncated() || stderr.truncated(),
             stdout: stdout.text(),
             stderr: stderr.text(),
-            timed_out: false,
+            timed_out,
         })
     }
 }
@@ -139,5 +191,122 @@ mod tests {
         assert!(out.success());
         assert!(out.truncated);
         assert_eq!(out.stdout.len(), MAX_CAPTURE_BYTES);
+    }
+
+    fn with_timeout(command: &str, args: &[&str], timeout_s: u64) -> RunCommandRequest {
+        RunCommandRequest {
+            timeout_s,
+            ..RunCommandRequest::new(command, args.iter().copied())
+        }
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_the_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::time::Instant::now();
+        let out = shell(&dir)
+            .run(with_timeout("sleep", &["30"], 1))
+            .await
+            .unwrap();
+        assert!(out.timed_out);
+        assert_eq!(out.status, None);
+        assert!(start.elapsed() < Duration::from_secs(3));
+    }
+
+    #[tokio::test]
+    async fn timeout_keeps_partial_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = shell(&dir)
+            .run(with_timeout(
+                "sh",
+                &["-c", "echo partial; exec sleep 30"],
+                1,
+            ))
+            .await
+            .unwrap();
+        assert!(out.timed_out);
+        assert_eq!(out.stdout, "partial\n");
+    }
+
+    #[tokio::test]
+    async fn background_children_do_not_hold_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::time::Instant::now();
+        let out = shell(&dir)
+            .run(with_timeout("sh", &["-c", "sleep 30 & echo started"], 20))
+            .await
+            .unwrap();
+        assert!(!out.timed_out);
+        assert!(out.success());
+        assert_eq!(out.stdout, "started\n");
+        assert!(start.elapsed() < Duration::from_secs(3));
+    }
+
+    /// Pid of the running process whose command line is exactly `args`.
+    #[cfg(target_os = "linux")]
+    async fn wait_for_pid(args: &[&str]) -> u32 {
+        let wanted: Vec<u8> = args
+            .iter()
+            .flat_map(|a| [a.as_bytes(), b"\0"].concat())
+            .collect();
+        for _ in 0..250 {
+            for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+                let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+                    continue;
+                };
+                if std::fs::read(entry.path().join("cmdline")).is_ok_and(|c| c == wanted) {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("process {args:?} never started");
+    }
+
+    /// Whether `pid` is gone or a zombie (killed, waiting to be reaped).
+    #[cfg(target_os = "linux")]
+    async fn wait_until_dead(pid: u32) -> bool {
+        for _ in 0..250 {
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(_) => return true,
+                Ok(stat) => {
+                    let state = stat.rsplit_once(')').map(|(_, rest)| rest.trim_start());
+                    if state.is_some_and(|s| s.starts_with('Z')) {
+                        return true;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn timeout_kills_the_whole_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = shell(&dir);
+        let request = with_timeout("sh", &["-c", "sleep 30.4251 & wait"], 1);
+        let (out, pid) = tokio::join!(shell.run(request), wait_for_pid(&["sleep", "30.4251"]));
+        assert!(out.unwrap().timed_out);
+        assert!(wait_until_dead(pid).await, "grandchild {pid} survived");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_the_future_kills_the_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = shell(&dir);
+        let request = with_timeout("sh", &["-c", "sleep 30.4252 & wait"], 60);
+        let mut fut = shell.run(request);
+        let pid = tokio::select! {
+            _ = &mut fut => panic!("command finished early"),
+            pid = wait_for_pid(&["sleep", "30.4252"]) => pid,
+        };
+        drop(fut);
+        assert!(
+            wait_until_dead(pid).await,
+            "grandchild {pid} survived the drop"
+        );
     }
 }
