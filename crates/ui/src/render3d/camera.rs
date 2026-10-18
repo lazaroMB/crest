@@ -65,11 +65,18 @@ impl OrbitCamera {
         self.radius * 2.6 / self.zoom
     }
 
-    /// Height of the visible area at the target, in world units.
+    /// Height of the visible area at the target, in world units, for a
+    /// viewport of `aspect` (narrow viewports see more, so the board fits
+    /// across).
     #[must_use]
-    pub fn view_height(&self) -> f32 {
+    pub fn view_height(&self, aspect: f32) -> f32 {
         if self.ortho {
-            self.radius * 1.25 / self.zoom
+            let aspect = if aspect.is_finite() && aspect > 0.0 {
+                aspect
+            } else {
+                1.0
+            };
+            (self.radius * 1.4).max(self.radius * 2.4 / aspect) / self.zoom
         } else {
             2.0 * self.distance() * (FOV / 2.0).tan()
         }
@@ -103,7 +110,7 @@ impl OrbitCamera {
             1.0
         };
         if self.ortho {
-            let h = self.view_height();
+            let h = self.view_height(aspect);
             math::orthographic(h * aspect, h, 0.1, self.radius * 10.0)
         } else {
             math::perspective(FOV, aspect, 0.1, self.radius * 12.0)
@@ -124,10 +131,11 @@ impl OrbitCamera {
         self.pitch = (self.pitch + dy * 0.008).clamp(0.08, 1.48);
     }
 
-    /// Moves the target by a drag of `(dx, dy)` pixels in a viewport
-    /// `height` pixels tall.
-    pub fn pan(&mut self, dx: f32, dy: f32, height: f32) {
-        let per_px = self.view_height() / height.max(1.0);
+    /// Moves the target by a drag of `(dx, dy)` pixels in a viewport of
+    /// `size` pixels.
+    pub fn pan(&mut self, dx: f32, dy: f32, size: (f32, f32)) {
+        let height = size.1.max(1.0);
+        let per_px = self.view_height(size.0 / height) / height;
         let (sy, cy) = self.yaw.sin_cos();
         let right = [cy, 0.0, -sy];
         let forward = [-sy, 0.0, -cy];
@@ -238,7 +246,7 @@ mod tests {
         cam.zoom_by(f32::NAN);
         assert_eq!(cam.zoom, 8.0);
         let before = cam.target;
-        cam.pan(50.0, 0.0, 600.0);
+        cam.pan(50.0, 0.0, (800.0, 600.0));
         assert_ne!(before, cam.target);
         cam.iso();
         assert!(cam.ortho);

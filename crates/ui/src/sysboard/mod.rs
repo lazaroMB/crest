@@ -396,10 +396,10 @@ impl SysBoardView {
         }
         let d = event.position - drag.last;
         let (dx, dy) = (f(d.x), f(d.y));
-        let height = self.board_size().1;
+        let size = self.board_size();
         match (&self.backend, drag.pan) {
             (Backend::Gpu(_), false) => self.camera.orbit(dx, dy),
-            (Backend::Gpu(_), true) => self.camera.pan(dx, dy, height),
+            (Backend::Gpu(_), true) => self.camera.pan(dx, dy, size),
             (Backend::Vector(_), _) => self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy),
         }
         drag.last = event.position;
