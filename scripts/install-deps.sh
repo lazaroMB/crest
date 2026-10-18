@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# install-deps.sh: instala o verifica las dependencias externas de crest.
+# install-deps.sh: installs or checks crest's external dependencies.
 #
-# Requisitos y tabla de dependencias: README.md, sección "Requirements".
+# Requirements and dependency table: README.md, section "Requirements".
 #
-# Debe funcionar con Bash 3.2 (el de macOS): nada de arrays asociativos,
-# `mapfile`, `${var,,}`, `|&` ni `&>>`. Las listas son cadenas separadas por
-# espacios (ningún nombre de paquete o comando lleva espacios), así que no se
-# usan arrays y `set -u` es seguro.
+# Must work with Bash 3.2 (the macOS one): no associative arrays, `mapfile`,
+# `${var,,}`, `|&` or `&>>`. Lists are space-separated strings (no package or
+# command name contains spaces), so no arrays are used and `set -u` is safe.
 
 set -u
 
@@ -17,7 +16,7 @@ OPT_YES=0
 OPT_DEV=0
 OPT_NO_RUST=0
 
-# --- salida -----------------------------------------------------------------
+# --- output -----------------------------------------------------------------
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
     C_RED=$(printf '\033[31m')
@@ -30,7 +29,7 @@ else
 fi
 
 info() { printf '%s==>%s %s\n' "$C_BOLD" "$C_RESET" "$*"; }
-warn() { printf '%saviso:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+warn() { printf '%swarning:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
 err() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 die() {
     err "$*"
@@ -39,19 +38,19 @@ die() {
 
 usage() {
     cat <<EOF
-Uso: $PROG [opciones]
+Usage: $PROG [options]
 
-Instala las dependencias externas de crest según el sistema y su gestor de
-paquetes (apt, dnf, yum, pacman, zypper, apk, xbps o Homebrew).
+Installs crest's external dependencies for the system and its package
+manager (apt, dnf, yum, pacman, zypper, apk, xbps or Homebrew).
 
-Opciones:
-  --check     Solo verifica, sin instalar ni pedir root. Sale con 1 si falta algo.
-  --yes, -y   No pregunta antes de instalar (modo no interactivo).
-  --dev       Incluye herramientas de desarrollo (cargo-insta, cargo-nextest).
-  --no-rust   No verifica ni instala Rust.
-  -h, --help  Muestra esta ayuda.
+Options:
+  --check     Only check, without installing or asking for root. Exits 1 if anything is missing.
+  --yes, -y   Do not ask before installing (non-interactive mode).
+  --dev       Include development tools (cargo-insta, cargo-nextest).
+  --no-rust   Do not check or install Rust.
+  -h, --help  Show this help.
 
-Códigos de salida: 0 todo presente, 1 falta algo, 2 uso incorrecto.
+Exit codes: 0 everything present, 1 something missing, 2 incorrect usage.
 EOF
 }
 
@@ -67,7 +66,7 @@ parse_args() {
                 exit 0
                 ;;
             *)
-                err "opción desconocida: $1"
+                err "unknown option: $1"
                 usage >&2
                 exit 2
                 ;;
@@ -76,10 +75,10 @@ parse_args() {
     done
 }
 
-# --- detección del sistema --------------------------------------------------
+# --- system detection -------------------------------------------------------
 
 PLATFORM=unknown # linux | macos | unknown
-ARCH=unknown     # x86_64 | aarch64 | lo que diga uname -m
+ARCH=unknown     # x86_64 | aarch64 | whatever uname -m says
 DISTRO_ID=''
 DISTRO_LIKE=''
 DISTRO_NAME=''
@@ -88,13 +87,13 @@ SUDO=''
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Lee un campo de os-release sin hacer `source` del archivo.
+# Reads an os-release field without sourcing the file.
 os_release_field() {
     sed -n "s/^$1=//p" "${OS_RELEASE_FILE:-/etc/os-release}" 2>/dev/null |
         head -n 1 | sed "s/^[\"']//; s/[\"']\$//"
 }
 
-# Imprime el gestor que corresponde a una palabra de ID/ID_LIKE.
+# Prints the package manager matching an ID/ID_LIKE word.
 pkg_mgr_for_distro() {
     case $1 in
         debian | ubuntu | linuxmint | pop | raspbian) echo apt ;;
@@ -106,7 +105,7 @@ pkg_mgr_for_distro() {
     esac
 }
 
-# Binario principal de cada gestor.
+# Main binary of each package manager.
 pkg_mgr_cmd() {
     case $1 in
         apt) echo apt-get ;;
@@ -115,7 +114,7 @@ pkg_mgr_cmd() {
     esac
 }
 
-# Busca Homebrew aunque no esté en PATH (instalación recién hecha).
+# Finds Homebrew even when it is not in the PATH (fresh install).
 find_brew() {
     if have brew; then
         return 0
@@ -137,7 +136,7 @@ detect_pkg_mgr() {
         return 0
     fi
     local word mgr
-    # Primero la pista de os-release; si su gestor no está, por presencia.
+    # os-release's hint first; if its manager is absent, by presence.
     for word in $DISTRO_ID $DISTRO_LIKE; do
         mgr=$(pkg_mgr_for_distro "$word")
         if [ "$mgr" = dnf ] && ! have dnf && have yum; then mgr=yum; fi
@@ -169,7 +168,7 @@ detect_system() {
         DISTRO_ID=$(os_release_field ID)
         DISTRO_LIKE=$(os_release_field ID_LIKE)
         DISTRO_NAME=$(os_release_field PRETTY_NAME)
-        [ -n "$DISTRO_NAME" ] || DISTRO_NAME="Linux ${DISTRO_ID:-desconocido}"
+        [ -n "$DISTRO_NAME" ] || DISTRO_NAME="Linux ${DISTRO_ID:-unknown}"
     elif [ "$PLATFORM" = macos ]; then
         DISTRO_NAME=$(sw_vers -productVersion 2>/dev/null)
         DISTRO_NAME="macOS${DISTRO_NAME:+ $DISTRO_NAME}"
@@ -179,27 +178,27 @@ detect_system() {
     detect_pkg_mgr
 }
 
-# Define SUDO para los gestores del sistema. Solo se usa al instalar.
+# Sets SUDO for the system package managers. Only used when installing.
 setup_sudo() {
     if [ "$PKG_MGR" = brew ] || [ "$(id -u)" = 0 ]; then
         SUDO=''
     elif have sudo; then
-        # Sin terminal, sudo no puede pedir contraseña: que falle en vez de colgarse.
+        # Without a terminal sudo cannot ask for a password: fail instead of hanging.
         if [ -t 0 ]; then SUDO='sudo'; else SUDO='sudo -n'; fi
     elif have doas; then
         if [ -t 0 ]; then SUDO='doas'; else SUDO='doas -n'; fi
     else
-        die "hace falta root para instalar paquetes y no hay sudo ni doas"
+        die "installing packages needs root and there is no sudo or doas"
     fi
 }
 
 print_system() {
-    info "Sistema: $DISTRO_NAME ($PLATFORM, $ARCH), gestor de paquetes: $PKG_MGR"
+    info "System: $DISTRO_NAME ($PLATFORM, $ARCH), package manager: $PKG_MGR"
 }
 
-# --- utilidades de listas y versiones ----------------------------------------
+# --- list and version helpers -----------------------------------------------
 
-# Imprime la lista $1 con la palabra $2 añadida si no estaba.
+# Prints list $1 with word $2 added if it was not there.
 list_add() {
     case " $1 " in
         *" $2 "*) printf '%s\n' "$1" ;;
@@ -208,18 +207,18 @@ list_add() {
 }
 
 list_count() {
-    # shellcheck disable=SC2086 # se cuentan las palabras a propósito
+    # shellcheck disable=SC2086 # word counting on purpose
     set -- $1
     echo $#
 }
 
-# Extrae la primera versión numérica (1.2, 1.2.3...) de la entrada estándar.
+# Extracts the first numeric version (1.2, 1.2.3...) from standard input.
 extract_version() {
     sed -n 's/^[^0-9]*\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*$/\1/p' | head -n 1
 }
 
-# version_ge A B: éxito si la versión A >= B. Compara campo a campo, en número;
-# los campos que faltan cuentan como 0 y los sufijos (-rc1) se ignoran.
+# version_ge A B: succeeds if version A >= B. Compares numerically field by
+# field; missing fields count as 0 and suffixes (-rc1) are ignored.
 version_ge() {
     local a=$1 b=$2 x y
     while [ -n "$a" ] || [ -n "$b" ]; do
@@ -237,12 +236,12 @@ version_ge() {
     return 0
 }
 
-# Versión que informa `cmd [args...] --version`, sin leer de stdin.
+# Version reported by `cmd [args...] --version`, without reading stdin.
 tool_version() {
     "$@" --version </dev/null 2>/dev/null | extract_version
 }
 
-# --- verificación -----------------------------------------------------------
+# --- checks -----------------------------------------------------------------
 
 RG_MIN=13.0
 FZF_MIN=0.36
@@ -250,26 +249,26 @@ LINUX_LIBS="xkbcommon xkbcommon-x11 wayland-client xcb x11-xcb fontconfig freety
 LOCAL_BIN=${CREST_LOCAL_BIN:-$HOME/.local/bin}
 CARGO_BIN=${CARGO_HOME:-$HOME/.cargo}/bin
 ORIG_PATH=$PATH
-MISSING=''        # ids de lo que falta (ver pkg_names)
-SHADOWED_DIRS=''  # directorios añadidos al PATH que el usuario no tiene primero
+MISSING=''        # ids of what is missing (see pkg_names)
+SHADOWED_DIRS=''  # directories added to the PATH that the user's PATH does not put first
 SHADOWED_CMDS=''
-VULKAN_DRIVER=0   # 1 si se encontró un ICD de Vulkan
+VULKAN_DRIVER=0   # 1 if a Vulkan ICD was found
 
-# Los binarios que este script instala en ~/.local/bin o ~/.cargo/bin deben
-# encontrarse aunque esos directorios aún no estén en el PATH del usuario.
+# The binaries this script installs in ~/.local/bin or ~/.cargo/bin must be
+# found even if those directories are not in the user's PATH yet.
 PATH="$LOCAL_BIN:$CARGO_BIN:$PATH"
 export PATH
 
-report_ok() { printf '  %s[ok]%s    %-18s %s\n' "$C_GREEN" "$C_RESET" "$1" "$2"; }
-report_warn() { printf '  %s[aviso]%s %-18s %s\n' "$C_YELLOW" "$C_RESET" "$1" "$2"; }
-# report_missing ID ETIQUETA DETALLE
+report_ok() { printf '  %s[ok]%s      %-18s %s\n' "$C_GREEN" "$C_RESET" "$1" "$2"; }
+report_warn() { printf '  %s[warn]%s    %-18s %s\n' "$C_YELLOW" "$C_RESET" "$1" "$2"; }
+# report_missing ID LABEL DETAIL
 report_missing() {
-    printf '  %s[falta]%s %-18s %s\n' "$C_RED" "$C_RESET" "$2" "$3"
+    printf '  %s[missing]%s %-18s %s\n' "$C_RED" "$C_RESET" "$2" "$3"
     MISSING=$(list_add "$MISSING" "$1")
 }
 
-# Avisa si CMD se encontró en un directorio que añadió este script y el PATH
-# del usuario no lo resuelve a ese mismo binario.
+# Warns if CMD was found in a directory this script added and the user's PATH
+# does not resolve it to that same binary.
 check_shadowed() {
     local cmd=$1 path=$2 user_path
     case $path in
@@ -283,24 +282,24 @@ check_shadowed() {
     fi
 }
 
-# Un solo aviso por directorio que el PATH del usuario no resuelve primero.
+# A single warning per directory the user's PATH does not resolve first.
 report_shadowed() {
     local dir
     for dir in $SHADOWED_DIRS; do
-        report_warn PATH "pon $dir al principio de tu PATH (usado por: $SHADOWED_CMDS)"
+        report_warn PATH "put $dir at the front of your PATH (used by: $SHADOWED_CMDS)"
     done
 }
 
-# check_tool ID CMD ETIQUETA [VERSION_MINIMA]
+# check_tool ID CMD LABEL [MIN_VERSION]
 check_tool() {
     local id=$1 cmd=$2 label=$3 min=${4:-} path ver
     if ! path=$(command -v "$cmd" 2>/dev/null); then
-        report_missing "$id" "$label" "no se encuentra '$cmd'"
+        report_missing "$id" "$label" "'$cmd' not found"
         return 1
     fi
     ver=$(tool_version "$cmd")
     if [ -n "$min" ] && { [ -z "$ver" ] || ! version_ge "$ver" "$min"; }; then
-        report_missing "$id" "$label" "versión ${ver:-desconocida} en $path; se necesita >= $min"
+        report_missing "$id" "$label" "version ${ver:-unknown} at $path; >= $min is needed"
         return 1
     fi
     report_ok "$label" "${ver:+$ver }($path)"
@@ -309,11 +308,11 @@ check_tool() {
 
 check_c_compiler() {
     if have cc; then
-        check_tool cc cc "compilador C"
+        check_tool cc cc "C compiler"
     elif have gcc; then
-        check_tool cc gcc "compilador C"
+        check_tool cc gcc "C compiler"
     else
-        report_missing cc "compilador C" "no se encuentra 'cc' ni 'gcc'"
+        report_missing cc "C compiler" "neither 'cc' nor 'gcc' found"
     fi
 }
 
@@ -321,7 +320,7 @@ check_libs() {
     local lib ver
     if ! have pkg-config; then
         for lib in $LINUX_LIBS; do
-            report_missing "$lib" "lib $lib" "no se puede verificar sin pkg-config"
+            report_missing "$lib" "lib $lib" "cannot be checked without pkg-config"
         done
         return 0
     fi
@@ -329,12 +328,12 @@ check_libs() {
         if ver=$(pkg-config --modversion "$lib" 2>/dev/null); then
             report_ok "lib $lib" "$ver"
         else
-            report_missing "$lib" "lib $lib" "pkg-config no encuentra $lib.pc"
+            report_missing "$lib" "lib $lib" "pkg-config cannot find $lib.pc"
         fi
     done
 }
 
-# El driver depende de la GPU y en CI suele no haberla: solo avisa.
+# The driver depends on the GPU, which CI usually lacks: only warn.
 check_vulkan_driver() {
     local dir f n=0 first=''
     for dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/local/share/vulkan/icd.d; do
@@ -346,10 +345,10 @@ check_vulkan_driver() {
     done
     if [ "$n" -gt 0 ]; then
         VULKAN_DRIVER=1
-        report_ok "driver Vulkan" "$n ICD ($first$([ "$n" -gt 1 ] && printf ', ...'))"
+        report_ok "Vulkan driver" "$n ICD ($first$([ "$n" -gt 1 ] && printf ', ...'))"
     else
         VULKAN_DRIVER=0
-        report_warn "driver Vulkan" "no hay ICD en .../vulkan/icd.d; instala el driver de tu GPU (mesa o nvidia)"
+        report_warn "Vulkan driver" "no ICD in .../vulkan/icd.d; install your GPU driver (mesa or nvidia)"
     fi
 }
 
@@ -361,22 +360,22 @@ check_rust() {
     if have cargo && ver=$(tool_version cargo clippy) && [ -n "$ver" ]; then
         report_ok clippy "$ver"
     else
-        report_missing clippy clippy "'cargo clippy' no disponible"
+        report_missing clippy clippy "'cargo clippy' not available"
     fi
     if have rustup; then
         report_ok rustup "$(tool_version rustup)"
     elif have cargo; then
-        report_warn rustup "Rust no viene de rustup: rust-toolchain.toml no se aplicará"
+        report_warn rustup "Rust does not come from rustup: rust-toolchain.toml will not apply"
     fi
 }
 
-# check_cargo_sub ID SUBCOMANDO
+# check_cargo_sub ID SUBCOMMAND
 check_cargo_sub() {
     local ver
     if have cargo && ver=$(tool_version cargo "$2") && [ -n "$ver" ]; then
         report_ok "$1" "$ver"
     else
-        report_missing "$1" "$1" "'cargo $2' no disponible"
+        report_missing "$1" "$1" "'cargo $2' not available"
     fi
 }
 
@@ -391,31 +390,31 @@ check_macos() {
     local ver
     if clt_installed; then
         report_ok "Command Line Tools" "$(xcode-select -p 2>/dev/null)"
-        # xcrun no abre diálogos; falla si solo están las CLT (sin Xcode).
+        # xcrun opens no dialogs; it fails if only the CLT are present (no Xcode).
         ver=$(xcrun -sdk macosx metal --version </dev/null 2>/dev/null | extract_version)
         if [ -n "$ver" ]; then
-            report_ok "compilador Metal" "$ver"
+            report_ok "Metal compiler" "$ver"
         else
-            report_missing metal "compilador Metal" "'xcrun -sdk macosx metal' no disponible (hace falta Xcode completo)"
+            report_missing metal "Metal compiler" "'xcrun -sdk macosx metal' not available (the full Xcode is needed)"
         fi
     else
-        report_missing clt "Command Line Tools" "'xcode-select -p' no encuentra las herramientas"
-        report_missing metal "compilador Metal" "requiere Xcode"
+        report_missing clt "Command Line Tools" "'xcode-select -p' cannot find the tools"
+        report_missing metal "Metal compiler" "requires Xcode"
     fi
     if find_brew; then
         report_ok Homebrew "$(tool_version brew) ($(command -v brew))"
     else
-        report_missing brew Homebrew "no se encuentra 'brew'"
+        report_missing brew Homebrew "'brew' not found"
     fi
 }
 
-# Explica cómo instalar lo que este script no instala solo en macOS
-# (IDs clt, metal y brew de la lista $1).
+# Explains how to install what this script does not install by itself on
+# macOS (IDs clt, metal and brew from list $1).
 print_macos_help() {
     case " $1 " in
         *" clt "*)
             cat <<'EOF'
-Command Line Tools de Xcode (compilador C, clang, git):
+Xcode Command Line Tools (C compiler, clang, git):
     xcode-select --install
 EOF
             ;;
@@ -423,10 +422,10 @@ EOF
     case " $1 " in
         *" metal "*)
             cat <<'EOF'
-Compilador Metal (shaders de GPUI): instala Xcode completo desde la App Store y luego
+Metal compiler (GPUI shaders): install the full Xcode from the App Store, then
     sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
     sudo xcodebuild -runFirstLaunch
-    xcodebuild -downloadComponent MetalToolchain   # Xcode 26 o posterior
+    xcodebuild -downloadComponent MetalToolchain   # Xcode 26 or later
 EOF
             ;;
     esac
@@ -444,16 +443,16 @@ run_checks() {
     MISSING=''
     SHADOWED_DIRS=''
     SHADOWED_CMDS=''
-    info "Verificando dependencias"
+    info "Checking dependencies"
     if [ "$PLATFORM" = macos ]; then
         check_macos
     fi
     if [ "$PLATFORM" = macos ] && ! clt_installed; then
-        # Sin las Command Line Tools, cc/clang/git de /usr/bin son shims que
-        # abren un diálogo de instalación: no se ejecutan.
-        report_missing cc "compilador C" "requiere las Command Line Tools"
-        report_missing clang clang "requiere las Command Line Tools"
-        report_missing git git "requiere las Command Line Tools"
+        # Without the Command Line Tools, cc/clang/git in /usr/bin are shims
+        # that open an install dialog: do not run them.
+        report_missing cc "C compiler" "requires the Command Line Tools"
+        report_missing clang clang "requires the Command Line Tools"
+        report_missing git git "requires the Command Line Tools"
     else
         check_c_compiler
         check_tool clang clang clang
@@ -478,11 +477,11 @@ run_checks() {
     report_shadowed
 }
 
-# --- paquetes por gestor ----------------------------------------------------
+# --- packages per manager ---------------------------------------------------
 
-# pkg_names GESTOR ID: paquetes que proveen ID (vacío si el gestor no lo
-# provee; p. ej. Rust, que va por rustup). Los IDs son los de MISSING más
-# curl, tar y gzip, que hacen falta para descargar rg, fzf y rustup.
+# pkg_names MANAGER ID: packages that provide ID (empty if the manager does
+# not provide it, e.g. Rust, which goes through rustup). The IDs are those of
+# MISSING plus curl, tar and gzip, needed to download rg, fzf and rustup.
 pkg_names() {
     case $1 in
         apt) case $2 in
@@ -526,7 +525,7 @@ pkg_names() {
             xcb) echo libxcb ;;
             x11-xcb) echo libx11 ;;
             vulkan) echo vulkan-icd-loader ;;
-            # El driver depende de la GPU (vulkan-radeon, vulkan-intel, nvidia-utils).
+            # The driver depends on the GPU (vulkan-radeon, vulkan-intel, nvidia-utils).
         esac ;;
         zypper) case $2 in
             cc) echo "gcc gcc-c++ make" ;;
@@ -567,7 +566,7 @@ pkg_names() {
             vulkan) echo vulkan-loader-devel ;;
         esac ;;
         brew) case $2 in
-            # cc y clang vienen con las Command Line Tools.
+            # cc and clang come with the Command Line Tools.
             cmake | git | jq | fzf | curl) echo "$2" ;;
             pkg-config) echo pkgconf ;;
             rg) echo ripgrep ;;
@@ -575,7 +574,7 @@ pkg_names() {
     esac
 }
 
-# Paquetes (sin repetir) del gestor actual para la lista de IDs $1.
+# Packages (deduplicated) of the current manager for the ID list $1.
 packages_for() {
     local id p pkgs=''
     for id in $1; do
@@ -588,22 +587,22 @@ packages_for() {
 
 as_root() {
     if [ -n "$SUDO" ]; then
-        # shellcheck disable=SC2086 # SUDO puede ser "sudo -n"
+        # shellcheck disable=SC2086 # SUDO may be "sudo -n"
         $SUDO "$@"
     else
         "$@"
     fi
 }
 
-# Actualiza los índices del gestor si hace falta antes de instalar.
+# Refreshes the manager's indexes before installing, when needed.
 pm_refresh() {
     case $PKG_MGR in
         apt) as_root apt-get update ;;
         apk) as_root apk update ;;
         xbps) as_root xbps-install -S ;;
         pacman)
-            # Sin bases sincronizadas (imagen recién creada) -Sy solo dejaría
-            # una actualización parcial; Arch exige -Syu.
+            # Without synced databases (fresh image) -Sy would leave only a
+            # partial upgrade; Arch requires -Syu.
             if [ -z "$(ls /var/lib/pacman/sync 2>/dev/null)" ]; then
                 as_root pacman -Syu --noconfirm
             fi
@@ -624,65 +623,66 @@ pm_install() {
     esac
 }
 
-# Instala la lista $1 en bloque; si falla (p. ej. un nombre que no existe en
-# esta versión de la distro), reintenta uno por uno y reporta los que fallan.
+# Installs list $1 in one go; if that fails (e.g. a name that does not exist
+# in this distro version), retries one by one and reports the failures.
 install_packages() {
     local pkgs=$1 p failed=''
     [ -n "$pkgs" ] || return 0
-    info "Instalando con $PKG_MGR: $pkgs"
-    pm_refresh || warn "no se pudieron actualizar los índices de $PKG_MGR"
-    # shellcheck disable=SC2086 # lista de paquetes separada por espacios
+    info "Installing with $PKG_MGR: $pkgs"
+    pm_refresh || warn "could not refresh the $PKG_MGR indexes"
+    # shellcheck disable=SC2086 # space-separated package list
     if pm_install $pkgs; then
         return 0
     fi
-    warn "la instalación en bloque falló; reintentando paquete por paquete"
+    warn "bulk install failed; retrying package by package"
     for p in $pkgs; do
         pm_install "$p" || failed=$(list_add "$failed" "$p")
     done
     if [ -n "$failed" ]; then
-        err "no se pudieron instalar: $failed"
+        err "could not install: $failed"
         return 1
     fi
 }
 
-# confirm PREGUNTA: éxito si el usuario acepta (o con --yes).
+# confirm QUESTION: succeeds if the user accepts (or with --yes).
 confirm() {
     local ans
     [ "$OPT_YES" = 1 ] && return 0
     if [ ! -t 0 ]; then
-        err "no hay terminal para confirmar; usa --yes para instalar sin preguntar"
+        err "no terminal to confirm; use --yes to install without asking"
         return 1
     fi
-    printf '%s [s/N] ' "$1"
+    printf '%s [y/N] ' "$1"
     read -r ans || return 1
     case $ans in
-        s | S | si | sí | Si | Sí | y | Y | yes) return 0 ;;
+        # Spanish answers (s, si, sí) are kept as aliases.
+        y | Y | yes | Yes | YES | s | S | si | sí | Si | Sí) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-# Resume lo que falta. Éxito si no falta nada.
+# Summarizes what is missing. Succeeds if nothing is.
 print_summary() {
     local pkgs
     if [ -z "$MISSING" ]; then
-        info "${C_GREEN}Todas las dependencias están presentes.${C_RESET}"
+        info "${C_GREEN}All dependencies are present.${C_RESET}"
         return 0
     fi
-    err "faltan $(list_count "$MISSING") dependencias: $MISSING"
+    err "missing $(list_count "$MISSING") dependencies: $MISSING"
     pkgs=$(packages_for "$MISSING")
     if [ -n "$pkgs" ]; then
-        printf 'Paquetes de %s que las proveen: %s\n' "$PKG_MGR" "$pkgs"
+        printf '%s packages that provide them: %s\n' "$PKG_MGR" "$pkgs"
     fi
     if [ "$PLATFORM" = macos ]; then
         print_macos_help "$MISSING"
     fi
-    printf 'Para instalarlas: %s%s%s\n' "$0" \
+    printf 'To install them: %s%s%s\n' "$0" \
         "$([ "$OPT_DEV" = 1 ] && printf ' --dev')" \
         "$([ "$OPT_NO_RUST" = 1 ] && printf ' --no-rust')"
     return 1
 }
 
-# --- binarios oficiales de GitHub (rg, fzf) ---------------------------------
+# --- official GitHub binaries (rg, fzf) -------------------------------------
 
 RG_VERSION=${CREST_RG_VERSION:-15.2.0}
 FZF_VERSION=${CREST_FZF_VERSION:-0.74.5}
@@ -692,26 +692,26 @@ cleanup() {
     if [ -n "$WORK_DIR" ]; then rm -rf "$WORK_DIR"; fi
 }
 
-# Crea WORK_DIR una sola vez. No llamar en un subshell: el trap lo borraría
-# al salir de él.
+# Creates WORK_DIR only once. Do not call it in a subshell: the trap would
+# delete it when the subshell exits.
 ensure_work_dir() {
     if [ -z "$WORK_DIR" ]; then
         WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/crest-deps.XXXXXX") || {
-            err "no se pudo crear un directorio temporal"
+            err "could not create a temporary directory"
             return 1
         }
         trap cleanup EXIT
     fi
 }
 
-# download URL DESTINO
+# download URL DEST
 download() {
     if have curl; then
         curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"
     elif have wget; then
         wget -q -O "$2" "$1"
     else
-        err "hace falta curl o wget para descargar $1"
+        err "curl or wget is needed to download $1"
         return 1
     fi
 }
@@ -726,20 +726,20 @@ sha256_of() {
     fi
 }
 
-# verify_sha256 ARCHIVO SUMA_ESPERADA
+# verify_sha256 FILE EXPECTED_SUM
 verify_sha256() {
     local got
     if ! got=$(sha256_of "$1") || [ -z "$got" ]; then
-        err "no hay sha256sum ni shasum para verificar ${1##*/}"
+        err "no sha256sum or shasum to verify ${1##*/}"
         return 1
     fi
     if [ "$got" != "$2" ]; then
-        err "suma SHA-256 incorrecta para ${1##*/}: $got (esperada $2)"
+        err "wrong SHA-256 sum for ${1##*/}: $got (expected $2)"
         return 1
     fi
 }
 
-# Triple de destino de las releases de ripgrep para esta máquina.
+# Target triple of the ripgrep releases for this machine.
 rg_target() {
     case $PLATFORM:$ARCH in
         linux:x86_64) echo x86_64-unknown-linux-musl ;;
@@ -750,7 +750,7 @@ rg_target() {
     esac
 }
 
-# Sufijo de plataforma de las releases de fzf para esta máquina.
+# Platform suffix of the fzf releases for this machine.
 fzf_target() {
     case $PLATFORM:$ARCH in
         linux:x86_64) echo linux_amd64 ;;
@@ -761,7 +761,7 @@ fzf_target() {
     esac
 }
 
-# install_bin ORIGEN NOMBRE: copia un ejecutable a LOCAL_BIN.
+# install_bin SOURCE NAME: copies an executable to LOCAL_BIN.
 install_bin() {
     mkdir -p "$LOCAL_BIN" || return 1
     cp "$1" "$LOCAL_BIN/$2.tmp" && chmod 755 "$LOCAL_BIN/$2.tmp" &&
@@ -771,14 +771,14 @@ install_bin() {
 install_rg_from_github() {
     local target name base dir sum
     target=$(rg_target) || {
-        err "no hay binario de ripgrep para $PLATFORM/$ARCH"
+        err "no ripgrep binary for $PLATFORM/$ARCH"
         return 1
     }
     name=ripgrep-$RG_VERSION-$target
     base=https://github.com/BurntSushi/ripgrep/releases/download/$RG_VERSION/$name.tar.gz
     ensure_work_dir || return 1
     dir=$WORK_DIR
-    info "Descargando ripgrep $RG_VERSION ($target) a $LOCAL_BIN"
+    info "Downloading ripgrep $RG_VERSION ($target) to $LOCAL_BIN"
     download "$base" "$dir/$name.tar.gz" && download "$base.sha256" "$dir/$name.sha256" || return 1
     sum=$(cut -d ' ' -f 1 "$dir/$name.sha256")
     verify_sha256 "$dir/$name.tar.gz" "$sum" || return 1
@@ -788,26 +788,26 @@ install_rg_from_github() {
 install_fzf_from_github() {
     local target name base dir sum
     target=$(fzf_target) || {
-        err "no hay binario de fzf para $PLATFORM/$ARCH"
+        err "no fzf binary for $PLATFORM/$ARCH"
         return 1
     }
     name=fzf-$FZF_VERSION-$target.tar.gz
     base=https://github.com/junegunn/fzf/releases/download/v$FZF_VERSION
     ensure_work_dir || return 1
     dir=$WORK_DIR
-    info "Descargando fzf $FZF_VERSION ($target) a $LOCAL_BIN"
+    info "Downloading fzf $FZF_VERSION ($target) to $LOCAL_BIN"
     download "$base/$name" "$dir/$name" &&
         download "$base/fzf_${FZF_VERSION}_checksums.txt" "$dir/fzf-checksums.txt" || return 1
     sum=$(grep " $name\$" "$dir/fzf-checksums.txt" | cut -d ' ' -f 1)
     if [ -z "$sum" ]; then
-        err "$name no aparece en fzf_${FZF_VERSION}_checksums.txt"
+        err "$name is not listed in fzf_${FZF_VERSION}_checksums.txt"
         return 1
     fi
     verify_sha256 "$dir/$name" "$sum" || return 1
     mkdir -p "$dir/fzf" && tar -xzf "$dir/$name" -C "$dir/fzf" && install_bin "$dir/fzf/fzf" fzf
 }
 
-# tool_ok CMD MINIMA: éxito si CMD existe y su versión es >= MINIMA.
+# tool_ok CMD MIN: succeeds if CMD exists and its version is >= MIN.
 tool_ok() {
     local ver
     have "$1" || return 1
@@ -815,23 +815,23 @@ tool_ok() {
     [ -n "$ver" ] && version_ge "$ver" "$2"
 }
 
-# Si tras los paquetes rg o fzf faltan o son viejos (el fzf de Ubuntu 22.04
-# es 0.29), instala el binario oficial en ~/.local/bin.
+# If rg or fzf are missing or too old after the packages (Ubuntu 22.04's fzf
+# is 0.29), installs the official binary in ~/.local/bin.
 ensure_search_tools() {
-    tool_ok rg "$RG_MIN" || install_rg_from_github || err "no se pudo instalar ripgrep desde GitHub"
-    tool_ok fzf "$FZF_MIN" || install_fzf_from_github || err "no se pudo instalar fzf desde GitHub"
+    tool_ok rg "$RG_MIN" || install_rg_from_github || err "could not install ripgrep from GitHub"
+    tool_ok fzf "$FZF_MIN" || install_fzf_from_github || err "could not install fzf from GitHub"
     hash -r
 }
 
-# --- Rust y herramientas de desarrollo ---------------------------------------
+# --- Rust and development tools ---------------------------------------------
 
 clippy_ok() { have cargo && cargo clippy --version </dev/null >/dev/null 2>&1; }
 
 install_rustup() {
     ensure_work_dir || return 1
-    info "Instalando Rust con rustup"
+    info "Installing Rust with rustup"
     download https://sh.rustup.rs "$WORK_DIR/rustup-init.sh" || return 1
-    # -y: el usuario ya confirmó el plan (o pasó --yes).
+    # -y: the user already confirmed the plan (or passed --yes).
     sh "$WORK_DIR/rustup-init.sh" -y --profile default </dev/null
 }
 
@@ -839,10 +839,10 @@ ensure_rust() {
     [ "$OPT_NO_RUST" = 1 ] && return 0
     if ! have cargo; then
         if have rustup; then
-            info "Instalando el toolchain estable con rustup"
-            rustup default stable </dev/null || err "no se pudo instalar el toolchain estable"
+            info "Installing the stable toolchain with rustup"
+            rustup default stable </dev/null || err "could not install the stable toolchain"
         else
-            install_rustup || err "no se pudo instalar Rust con rustup"
+            install_rustup || err "could not install Rust with rustup"
         fi
         hash -r
     fi
@@ -851,30 +851,30 @@ ensure_rust() {
         return 0
     fi
     if have rustup; then
-        info "Añadiendo rustfmt y clippy con rustup"
-        rustup component add rustfmt clippy </dev/null || err "no se pudieron añadir rustfmt y clippy"
+        info "Adding rustfmt and clippy with rustup"
+        rustup component add rustfmt clippy </dev/null || err "could not add rustfmt and clippy"
     else
-        warn "Rust no viene de rustup: instala rustfmt y clippy con tu gestor de paquetes o usa rustup"
+        warn "Rust does not come from rustup: install rustfmt and clippy with your package manager or use rustup"
     fi
 }
 
 ensure_dev_tools() {
     [ "$OPT_DEV" = 1 ] || return 0
     if ! have cargo; then
-        err "sin cargo no se pueden instalar cargo-insta ni cargo-nextest"
+        err "cargo-insta and cargo-nextest cannot be installed without cargo"
         return 1
     fi
     if ! cargo insta --version </dev/null >/dev/null 2>&1; then
-        info "Instalando cargo-insta"
-        cargo install --locked cargo-insta </dev/null || err "no se pudo instalar cargo-insta"
+        info "Installing cargo-insta"
+        cargo install --locked cargo-insta </dev/null || err "could not install cargo-insta"
     fi
     if ! cargo nextest --version </dev/null >/dev/null 2>&1; then
-        info "Instalando cargo-nextest"
-        cargo install --locked cargo-nextest </dev/null || err "no se pudo instalar cargo-nextest"
+        info "Installing cargo-nextest"
+        cargo install --locked cargo-nextest </dev/null || err "could not install cargo-nextest"
     fi
 }
 
-# Herramientas que el propio instalador necesita para descargar.
+# Tools the installer itself needs to download.
 bootstrap_ids() {
     local ids='' c
     for c in curl tar gzip; do
@@ -895,24 +895,24 @@ run_install() {
     if [ "$PLATFORM" = macos ]; then
         if ! clt_installed; then
             print_macos_help clt
-            die "instala las Command Line Tools y vuelve a ejecutar este script"
+            die "install the Command Line Tools and run this script again"
         fi
-        # Xcode y Homebrew no se instalan solos: se explica cómo.
+        # Xcode and Homebrew are not installed automatically: explain how.
         print_macos_help "$MISSING"
     elif [ "$PKG_MGR" = none ] && [ -n "$ids" ]; then
-        warn "no hay un gestor de paquetes soportado; instala a mano: $ids"
+        warn "no supported package manager; install by hand: $ids"
     fi
-    info "Plan de instalación"
-    [ -n "$pkgs" ] && printf '  paquetes (%s): %s\n' "$PKG_MGR" "$pkgs"
-    printf '  rg y fzf: si faltan o son viejos tras los paquetes, binario oficial de GitHub en %s\n' "$LOCAL_BIN"
+    info "Installation plan"
+    [ -n "$pkgs" ] && printf '  packages (%s): %s\n' "$PKG_MGR" "$pkgs"
+    printf '  rg and fzf: if missing or too old after the packages, official GitHub binary in %s\n' "$LOCAL_BIN"
     case " $MISSING " in
-        *" rust "*) [ "$OPT_NO_RUST" = 0 ] && printf '  Rust: rustup (estable, con rustfmt y clippy)\n' ;;
-        *" rustfmt "* | *" clippy "*) printf '  Rust: rustfmt y clippy\n' ;;
+        *" rust "*) [ "$OPT_NO_RUST" = 0 ] && printf '  Rust: rustup (stable, with rustfmt and clippy)\n' ;;
+        *" rustfmt "* | *" clippy "*) printf '  Rust: rustfmt and clippy\n' ;;
     esac
     case " $MISSING " in
         *" cargo-insta "* | *" cargo-nextest "*) printf '  cargo install --locked: cargo-insta, cargo-nextest\n' ;;
     esac
-    confirm "¿Continuar?" || die "instalación cancelada"
+    confirm "Continue?" || die "installation cancelled"
     [ -n "$pkgs" ] && setup_sudo
     install_packages "$pkgs" || true
     hash -r
@@ -926,16 +926,16 @@ main() {
     detect_system
     print_system
     if [ "$PLATFORM" = unknown ]; then
-        warn "sistema no soportado: $(uname -s); solo se verificará"
+        warn "unsupported system: $(uname -s); only checking"
         OPT_CHECK=1
     fi
-    # Al verificar, rustup no debe descargar el toolchain de rust-toolchain.toml.
+    # When checking, rustup must not download the rust-toolchain.toml toolchain.
     if [ "$OPT_CHECK" = 1 ]; then
         RUSTUP_AUTO_INSTALL=0
         export RUSTUP_AUTO_INSTALL
     fi
-    # Desde la raíz del repo, para que rustup aplique su rust-toolchain.toml.
-    cd "$(dirname "$0")/.." || die "no se puede entrar a la raíz del repo"
+    # From the repo root, so rustup applies its rust-toolchain.toml.
+    cd "$(dirname "$0")/.." || die "cannot enter the repo root"
     run_checks
     if [ "$OPT_CHECK" = 1 ]; then
         print_summary
@@ -947,7 +947,7 @@ main() {
     print_summary
 }
 
-# Con CREST_INSTALL_DEPS_LIB=1 el script solo define funciones (para tests).
+# With CREST_INSTALL_DEPS_LIB=1 the script only defines functions (for tests).
 if [ "${CREST_INSTALL_DEPS_LIB:-0}" != 1 ]; then
     main "$@"
 fi

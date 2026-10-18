@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Prueba scripts/install-deps.sh en contenedores (docker o podman).
+# Tests scripts/install-deps.sh in containers (docker or podman).
 #
-#   tests/install-deps/run-containers.sh                 # --check en las imágenes por defecto
-#   tests/install-deps/run-containers.sh --install IMG   # instala con --yes --no-rust y vuelve a verificar
+#   tests/install-deps/run-containers.sh                 # --check on the default images
+#   tests/install-deps/run-containers.sh --install IMG   # installs with --yes --no-rust and checks again
 #
-# --check en una imagen limpia debe salir con 1, listar lo que falta y no
-# quedarse esperando entrada. Tras --install, --check --no-rust debe salir con 0.
+# --check on a clean image must exit 1, list what is missing and not wait for
+# input. After --install, --check --no-rust must exit 0.
 
 set -u
 
@@ -15,7 +15,7 @@ TIMEOUT=${CHECK_TIMEOUT:-120}
 DEFAULT_IMAGES="ubuntu:24.04 ubuntu:22.04 fedora:latest archlinux:latest"
 FAILS=0
 
-run() { # imagen, comando dentro del contenedor
+run() { # image, command inside the container
     "$ENGINE" run --rm -i -v "$ROOT:/src:ro" "$1" sh -c "$2" </dev/null
 }
 
@@ -28,25 +28,25 @@ check_image() {
     printf '%s\n' "$out" | sed 's/^/   /'
     case $rc in
         1) case $out in
-               *"faltan "*) echo "   ok: sale con 1 y lista lo que falta" ;;
-               *) echo "   FALLA: sale con 1 pero no lista lo que falta"; FAILS=$((FAILS + 1)) ;;
+               *"missing "*) echo "   ok: exits 1 and lists what is missing" ;;
+               *) echo "   FAIL: exits 1 but does not list what is missing"; FAILS=$((FAILS + 1)) ;;
            esac ;;
-        124) echo "   FALLA: se colgó (más de ${TIMEOUT}s)"; FAILS=$((FAILS + 1)) ;;
-        *) echo "   FALLA: código $rc, se esperaba 1"; FAILS=$((FAILS + 1)) ;;
+        124) echo "   FAIL: hung (more than ${TIMEOUT}s)"; FAILS=$((FAILS + 1)) ;;
+        *) echo "   FAIL: exit code $rc, expected 1"; FAILS=$((FAILS + 1)) ;;
     esac
 }
 
 install_image() {
     local img=$1 rc
-    echo "== $img: --yes --no-rust y luego --check --no-rust"
-    # shellcheck disable=SC2016 # se expande dentro del contenedor
+    echo "== $img: --yes --no-rust, then --check --no-rust"
+    # shellcheck disable=SC2016 # expanded inside the container
     run "$img" 'bash /src/scripts/install-deps.sh --yes --no-rust >/tmp/install.log 2>&1 || { tail -n 40 /tmp/install.log; exit 3; }
         PATH="$HOME/.local/bin:$PATH" bash /src/scripts/install-deps.sh --check --no-rust'
     rc=$?
     if [ "$rc" = 0 ]; then
-        echo "   ok: todo presente tras instalar"
+        echo "   ok: everything present after installing"
     else
-        echo "   FALLA: código $rc"
+        echo "   FAIL: exit code $rc"
         FAILS=$((FAILS + 1))
     fi
 }
@@ -56,10 +56,10 @@ if [ "${1:-}" = --install ]; then
     [ $# -gt 0 ] || set -- ubuntu:24.04
     for img in "$@"; do install_image "$img"; done
 else
-    # shellcheck disable=SC2086 # lista de imágenes separada por espacios
+    # shellcheck disable=SC2086 # space-separated image list
     [ $# -gt 0 ] || set -- $DEFAULT_IMAGES
     for img in "$@"; do check_image "$img"; done
 fi
 
-echo "== $FAILS fallos"
+echo "== $FAILS failures"
 [ "$FAILS" = 0 ]
