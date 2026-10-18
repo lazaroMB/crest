@@ -476,6 +476,146 @@ fn mermaid_label(text: &str) -> String {
     out
 }
 
+impl Plan {
+    /// Human-readable `plan.md`, generated from the plan and never parsed
+    /// back.
+    ///
+    /// Tasks follow [`Plan::topological_order`] when it exists and the
+    /// written order otherwise, so the output is the same for the same
+    /// plan.
+    #[must_use]
+    pub fn to_markdown(&self) -> String {
+        let tasks = self
+            .topological_order()
+            .unwrap_or_else(|_| self.tasks.iter().collect());
+        let mut out = format!(
+            "# Plan: {}\n\n<!-- Generado desde plan.json; no editar a mano. -->\n\n",
+            one_line(&self.spec)
+        );
+        let mermaid = self.to_mermaid();
+        let fence = "`".repeat(longest_tick_run(&mermaid).max(2) + 1);
+        out.push_str(&format!(
+            "## Dependencias\n\n{fence}mermaid\n{mermaid}{fence}\n\n"
+        ));
+        out.push_str("## Tareas\n");
+        for task in tasks {
+            push_task(&mut out, task);
+        }
+        out.push_str("\n## Pruebas de hipótesis\n\n");
+        if self.hypothesis_tests.is_empty() {
+            out.push_str("Ninguna.\n");
+        } else {
+            out.push_str("| Tipo | Comando | Esperado |\n| --- | --- | --- |\n");
+            for test in &self.hypothesis_tests {
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    kind_name(test.kind),
+                    cell(&code(&test.reference)),
+                    cell(&test.expect)
+                ));
+            }
+        }
+        out.push_str("\n## Pruebas de restricciones\n\n");
+        if self.constraint_tests.is_empty() {
+            out.push_str("Ninguna.\n");
+        } else {
+            out.push_str("| Restricción | Tipo | Comando |\n| --- | --- | --- |\n");
+            for test in &self.constraint_tests {
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    test.constraint,
+                    kind_name(test.kind),
+                    cell(&code(&test.reference))
+                ));
+            }
+        }
+        out
+    }
+}
+
+fn push_task(out: &mut String, task: &Task) {
+    out.push_str(&format!(
+        "\n### {}. {}\n\n",
+        one_line(task.id.as_str()),
+        one_line(&task.title)
+    ));
+    let description = task.description.trim();
+    if !description.is_empty() {
+        out.push_str(description);
+        out.push_str("\n\n");
+    }
+    let deps = if task.depends_on.is_empty() {
+        "ninguna".to_owned()
+    } else {
+        task.depends_on
+            .iter()
+            .map(TaskId::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    out.push_str(&format!("- **Depende de**: {}\n", one_line(&deps)));
+    out.push_str(&format!("- **Rol**: `{}`\n", task.role));
+    out.push_str(&format!("- **Riesgo**: {}\n", risk_name(task.risk)));
+    out.push_str("- **Archivos**:\n");
+    for file in &task.files {
+        out.push_str(&format!("  - {}\n", code(file)));
+    }
+    out.push_str("- **Aceptación**:");
+    if task.acceptance.is_empty() {
+        out.push_str(" ninguna\n");
+    } else {
+        out.push('\n');
+        for test in &task.acceptance {
+            out.push_str(&format!(
+                "  - {}: {}\n",
+                kind_name(test.kind),
+                code(&test.reference)
+            ));
+        }
+    }
+}
+
+const fn risk_name(risk: Risk) -> &'static str {
+    match risk {
+        Risk::Low => "bajo",
+        Risk::Medium => "medio",
+        Risk::High => "alto",
+    }
+}
+
+const fn kind_name(kind: TestKind) -> &'static str {
+    match kind {
+        TestKind::Test => "test",
+        TestKind::Command => "command",
+    }
+}
+
+/// The text on a single line.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Text safe inside a table cell.
+fn cell(text: &str) -> String {
+    one_line(text).replace('|', "\\|")
+}
+
+/// An inline code span that survives backticks in `text`.
+fn code(text: &str) -> String {
+    let text = one_line(text);
+    let ticks = "`".repeat(longest_tick_run(&text) + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{ticks}{pad}{text}{pad}{ticks}")
+}
+
+fn longest_tick_run(text: &str) -> usize {
+    text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,5 +866,31 @@ mod tests {
              \x20   t1 --> t3\n\
              \x20   t2 --> t3\n"
         );
+    }
+
+    #[test]
+    fn markdown_of_the_documented_example() {
+        let plan: Plan = serde_json::from_str(PLAN_EXAMPLE).unwrap();
+        insta::assert_snapshot!("plan_example_markdown", plan.to_markdown());
+    }
+
+    #[test]
+    fn markdown_follows_dependency_order_and_escapes() {
+        let mut t1 = task("T1", &["T2"]);
+        t1.title = "Usa la | tabla".into();
+        t1.description = "Línea uno.\n\nLínea dos.".into();
+        t1.risk = Risk::High;
+        t1.role = ModelRole::Plan;
+        t1.acceptance = vec![TestRef {
+            kind: TestKind::Command,
+            reference: "echo `x`".into(),
+        }];
+        let mut p = plan(vec![t1, task("T2", &[])]);
+        p.constraint_tests = vec![ConstraintTest {
+            constraint: "C1".parse().unwrap(),
+            kind: TestKind::Test,
+            reference: "cargo test a|b".into(),
+        }];
+        insta::assert_snapshot!("plan_ordered_markdown", p.to_markdown());
     }
 }

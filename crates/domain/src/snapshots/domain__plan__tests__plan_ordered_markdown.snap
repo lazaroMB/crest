@@ -1,0 +1,51 @@
+---
+source: crates/domain/src/plan.rs
+expression: p.to_markdown()
+---
+# Plan: 0001-demo
+
+<!-- Generado desde plan.json; no editar a mano. -->
+
+## Dependencias
+
+```mermaid
+flowchart TD
+    t1["T1: Usa la | tabla"]
+    t2["T2: Tarea T2"]
+    t2 --> t1
+```
+
+## Tareas
+
+### T2. Tarea T2
+
+- **Depende de**: ninguna
+- **Rol**: `main`
+- **Riesgo**: bajo
+- **Archivos**:
+  - `src/T2.rs`
+- **Aceptación**: ninguna
+
+### T1. Usa la | tabla
+
+Línea uno.
+
+Línea dos.
+
+- **Depende de**: T2
+- **Rol**: `plan`
+- **Riesgo**: alto
+- **Archivos**:
+  - `src/T1.rs`
+- **Aceptación**:
+  - command: `` echo `x` ``
+
+## Pruebas de hipótesis
+
+Ninguna.
+
+## Pruebas de restricciones
+
+| Restricción | Tipo | Comando |
+| --- | --- | --- |
+| C1 | test | `cargo test a\|b` |
