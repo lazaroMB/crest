@@ -1,0 +1,254 @@
+---
+source: crates/domain/src/plan.rs
+expression: "schemars::schema_for!(Plan)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Plan",
+  "description": "Contents of `plan.json`.",
+  "type": "object",
+  "properties": {
+    "spec": {
+      "description": "Folder name of the Spec, e.g. `0007-cache-de-sesiones`.",
+      "type": "string"
+    },
+    "tasks": {
+      "description": "Tasks, in the order they were written.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Task"
+      }
+    },
+    "hypothesis_tests": {
+      "description": "Checks of the hypothesis, run after every task.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HypothesisTest"
+      },
+      "default": []
+    },
+    "constraint_tests": {
+      "description": "Checks of the constraints, run after every task.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConstraintTest"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "spec",
+    "tasks"
+  ],
+  "$defs": {
+    "Task": {
+      "description": "A task of the plan, implemented and committed on its own.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id, e.g. `T1`.",
+          "$ref": "#/$defs/TaskId"
+        },
+        "title": {
+          "description": "Short title, used in the commit message.",
+          "type": "string"
+        },
+        "description": {
+          "description": "What to do, in enough detail to implement it.",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Tasks that must be done first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaskId"
+          }
+        },
+        "files": {
+          "description": "The only files the task may touch without asking.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "acceptance": {
+          "description": "Checks that must pass for the task to be done.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestRef"
+          }
+        },
+        "role": {
+          "description": "Model role that implements it.",
+          "$ref": "#/$defs/ModelRole",
+          "default": "main"
+        },
+        "risk": {
+          "description": "Implementation risk.",
+          "$ref": "#/$defs/Risk"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "description",
+        "depends_on",
+        "files",
+        "acceptance",
+        "risk"
+      ]
+    },
+    "TaskId": {
+      "description": "Id of a task of the plan, e.g. `T1`.\n\nIds order naturally, so `T2` sorts before `T10`.",
+      "type": "string"
+    },
+    "TestRef": {
+      "description": "A runnable check, serialized as `{\"kind\": \"test\", \"ref\": \"...\"}`.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How to run it.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "ref": {
+          "description": "What to run, e.g. `cargo test -p store offline`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ]
+    },
+    "TestKind": {
+      "description": "How a test or check is run.",
+      "oneOf": [
+        {
+          "description": "A test of the project's suite; `ref` is the command that runs it.",
+          "type": "string",
+          "const": "test"
+        },
+        {
+          "description": "Any other command (benchmark, script); `ref` is the command line.",
+          "type": "string",
+          "const": "command"
+        }
+      ]
+    },
+    "ModelRole": {
+      "description": "What an LLM call is for. The policy maps each role to a concrete model.",
+      "oneOf": [
+        {
+          "description": "Conversation and main agent loop (read, edit, use tools).",
+          "type": "string",
+          "const": "main"
+        },
+        {
+          "description": "Plans, architecture design, large refactors.",
+          "type": "string",
+          "const": "plan"
+        },
+        {
+          "description": "Search subagents and broad reading of the project.",
+          "type": "string",
+          "const": "explore"
+        },
+        {
+          "description": "Summarising the history when it approaches the context limit.",
+          "type": "string",
+          "const": "compact"
+        },
+        {
+          "description": "Session title and short names.",
+          "type": "string",
+          "const": "title"
+        },
+        {
+          "description": "Structured data for blocks (charts, Mermaid, tables).",
+          "type": "string",
+          "const": "component"
+        },
+        {
+          "description": "Optional, very hard tasks on demand.",
+          "type": "string",
+          "const": "deep"
+        }
+      ]
+    },
+    "Risk": {
+      "description": "How risky a task is to implement.",
+      "oneOf": [
+        {
+          "description": "Small, well understood change.",
+          "type": "string",
+          "const": "low"
+        },
+        {
+          "description": "Touches several parts or has some unknowns.",
+          "type": "string",
+          "const": "medium"
+        },
+        {
+          "description": "Large or uncertain; review closely.",
+          "type": "string",
+          "const": "high"
+        }
+      ]
+    },
+    "HypothesisTest": {
+      "description": "A command that verifies the hypothesis of the Spec once all tasks are\ndone.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How to run it.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "ref": {
+          "description": "What to run, e.g. `make bench-sessions`.",
+          "type": "string"
+        },
+        "expect": {
+          "description": "Expected result, e.g. `p95 < 20ms`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "expect"
+      ]
+    },
+    "ConstraintTest": {
+      "description": "A check that proves a constraint of the Spec holds.",
+      "type": "object",
+      "properties": {
+        "constraint": {
+          "description": "Constraint it proves, e.g. `C2`.",
+          "$ref": "#/$defs/ConstraintId"
+        },
+        "kind": {
+          "description": "How to run it.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "ref": {
+          "description": "What to run, e.g. `cargo test -p store offline`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "constraint",
+        "kind",
+        "ref"
+      ]
+    },
+    "ConstraintId": {
+      "description": "Readable constraint id, e.g. `C1`.",
+      "type": "string",
+      "pattern": "^C[1-9][0-9]*$"
+    }
+  }
+}
