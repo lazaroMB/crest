@@ -103,6 +103,8 @@ while IFS="$(printf '\t')" read -r name dir; do
     layer="$(layer_of "$dir")"
     if [ "$layer" = unknown ]; then
         fail "crate $name (${dir#"$root"/}) no pertenece a ninguna capa conocida"
+    elif [ "$layer" = app ] && [ "$name" != application ]; then
+        fail "crate $name (capa app) debe llamarse 'application'"
     fi
 done <<EOF
 $packages
