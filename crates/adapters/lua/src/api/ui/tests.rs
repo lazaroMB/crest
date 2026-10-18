@@ -158,3 +158,125 @@ fn plain_values_stay_values() {
     let nested = eval(r#"return { b = app.ui.block("x", app.ui.text("t")) }"#).unwrap();
     assert!(matches!(nested, PluginOutput::Value(_)), "{nested:?}");
 }
+
+#[test]
+fn rich_constructors_build_their_nodes() {
+    use domain::block::{ImageData, ImageFit};
+    let got = tree(
+        r##"return app.ui.block("x", app.ui.col({
+             app.ui.image("shots/a.png"),
+             app.ui.image{ data = "AA==", media_type = "image/png", alt = "dot", fit = "actual" },
+             app.ui.html("<b>hi</b>"),
+             app.ui.json({ a = { 1, 2 } }, { expand = 2 }),
+             app.ui.mermaid("graph TD; a-->b"),
+             app.ui.link("docs", "https://example.com"),
+             app.ui.link("https://crest.dev"),
+             app.ui.diff("@@ -1 +1 @@\n-a\n+b\n"),
+           }))"##,
+    );
+    let CustomNode::Col { children } = got else {
+        panic!("not a col")
+    };
+    assert_eq!(
+        children[0],
+        CustomNode::Image {
+            source: ImageData::Path {
+                path: "shots/a.png".into()
+            },
+            media_type: None,
+            alt: None,
+            fit: ImageFit::Contain,
+        }
+    );
+    assert_eq!(
+        children[1],
+        CustomNode::Image {
+            source: ImageData::Base64 {
+                data: "AA==".into()
+            },
+            media_type: Some("image/png".into()),
+            alt: Some("dot".into()),
+            fit: ImageFit::Actual,
+        }
+    );
+    assert_eq!(
+        children[2],
+        CustomNode::Html {
+            source: "<b>hi</b>".into()
+        }
+    );
+    assert_eq!(
+        children[3],
+        CustomNode::Json {
+            value: serde_json::json!({ "a": [1, 2] }),
+            expand_depth: 2,
+        }
+    );
+    assert!(matches!(children[4], CustomNode::Mermaid { .. }));
+    assert_eq!(
+        children[5],
+        CustomNode::Link {
+            text: "docs".into(),
+            url: "https://example.com".into()
+        }
+    );
+    assert_eq!(
+        children[6],
+        CustomNode::Link {
+            text: "https://crest.dev".into(),
+            url: "https://crest.dev".into()
+        }
+    );
+    assert!(matches!(children[7], CustomNode::Diff { .. }));
+}
+
+#[test]
+fn csv_becomes_a_table() {
+    let got = tree(r#"return app.ui.block("x", app.ui.csv("name,n\na,1\nb,2\n"))"#);
+    assert_eq!(
+        got,
+        CustomNode::Table(TableSpec {
+            columns: vec![Column::new("name"), Column::new("n")],
+            rows: vec![
+                vec![Cell::Text("a".into()), Cell::Number(1.0)],
+                vec![Cell::Text("b".into()), Cell::Number(2.0)],
+            ],
+        })
+    );
+    let tsv = tree(
+        r#"return app.ui.block("x", app.ui.csv("1\t2", { header = false, delimiter = "\t" }))"#,
+    );
+    let CustomNode::Table(spec) = tsv else {
+        panic!("not a table")
+    };
+    assert_eq!(spec.columns.len(), 2);
+    assert_eq!(spec.rows, vec![vec![Cell::Number(1.0), Cell::Number(2.0)]]);
+}
+
+#[test]
+fn rich_constructors_reject_bad_arguments() {
+    let cases = [
+        ("app.ui.image{}", "give `path` (a file) or `data`"),
+        ("app.ui.image{ path = 'a', data = 'b' }", "not both"),
+        ("app.ui.image{ data = 'AA==' }", "needs a media_type"),
+        ("app.ui.image{ path = 'a', fit = 'zoom' }", "app.ui.image"),
+        ("app.ui.image(3)", "expected a path or a table"),
+        (
+            "app.ui.link('x', 'file:///etc/passwd')",
+            "must be an http, https or mailto URL",
+        ),
+        (
+            "app.ui.json({}, { expand = 1.5 })",
+            "`expand` must be a whole number",
+        ),
+        ("app.ui.csv('a\\n\"open', {})", "unclosed quote"),
+        (
+            "app.ui.csv('a', { delimiter = ';;' })",
+            "`delimiter` must be one character",
+        ),
+    ];
+    for (code, expected) in cases {
+        let err = error_of(code);
+        assert!(err.contains(expected), "{code}: {err}");
+    }
+}

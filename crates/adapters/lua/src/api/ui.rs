@@ -27,6 +27,13 @@
 //! | `chart{ title, kind, labels, series }` | chart; `kind` defaults to `"bar"` |
 //! | `code(lang, src)` | code snippet; `lang` may be `nil` |
 //! | `markdown(src)` | rendered markdown |
+//! | `image{ path \| data, media_type, alt, fit }` or `image(path)` | picture with zoom and pan |
+//! | `html(src)` | basic HTML subset |
+//! | `json(value, { expand = n })` | collapsible JSON tree |
+//! | `mermaid(src)` | Mermaid diagram |
+//! | `link(text, url)` or `link(url)` | link opened in the browser |
+//! | `diff(unified)` | colored unified diff |
+//! | `csv(text, { header, delimiter })` | the CSV as a table node |
 
 use std::sync::Arc;
 
@@ -35,6 +42,7 @@ use domain::block::{BlockKind, CustomNode};
 use mlua::{Lua, Table, Value};
 use serde_json::{Value as Json, json};
 
+use super::csv::{self, CsvOptions};
 use crate::config::api::Origin;
 use crate::convert;
 
@@ -46,12 +54,13 @@ fn error(function: &str, message: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(format!("app.ui.{function}: {message}"))
 }
 
-/// Reads one node argument: a string or number is a text node, a table must
-/// be a node built by `app.ui`.
-fn node(lua: &Lua, function: &str, value: Value) -> mlua::Result<CustomNode> {
+/// Reads one node: a string or number is a text node, a table must be a
+/// node built by `app.ui`. Errors are the bare reason, for the caller to
+/// prefix.
+pub(crate) fn parse_node(lua: &Lua, value: Value) -> Result<CustomNode, String> {
     match value {
         Value::String(s) => Ok(CustomNode::Text {
-            text: s.to_str()?.to_owned(),
+            text: s.to_str().map_err(|e| e.to_string())?.to_owned(),
         }),
         Value::Integer(n) => Ok(CustomNode::Text {
             text: n.to_string(),
@@ -60,14 +69,19 @@ fn node(lua: &Lua, function: &str, value: Value) -> mlua::Result<CustomNode> {
             text: n.to_string(),
         }),
         Value::Table(_) => {
-            let json = convert::to_json(lua, value)?;
-            serde_json::from_value(json).map_err(|e| error(function, format!("not a ui node: {e}")))
+            let json = convert::to_json(lua, value).map_err(|e| e.to_string())?;
+            serde_json::from_value(json).map_err(|e| format!("not a ui node: {e}"))
         }
-        other => Err(error(
-            function,
-            format!("expected a ui node or a string, got {}", other.type_name()),
+        other => Err(format!(
+            "expected a ui node or a string, got {}",
+            other.type_name()
         )),
     }
+}
+
+/// Reads one node argument of `app.ui.<function>`.
+fn node(lua: &Lua, function: &str, value: Value) -> mlua::Result<CustomNode> {
+    parse_node(lua, value).map_err(|e| error(function, e))
 }
 
 /// Reads a list of node arguments (a sequence table).
@@ -149,6 +163,99 @@ fn chart_node(lua: &Lua, def: Table) -> mlua::Result<CustomNode> {
     )
 }
 
+fn image_node(lua: &Lua, def: Value) -> mlua::Result<CustomNode> {
+    let def = match def {
+        Value::String(path) => {
+            let path = path.to_str()?.to_owned();
+            return spec_node(
+                "image",
+                json!({ "type": "image", "source": { "type": "path", "path": path } }),
+            );
+        }
+        Value::Table(def) => def,
+        other => {
+            return Err(error(
+                "image",
+                format!("expected a path or a table, got {}", other.type_name()),
+            ));
+        }
+    };
+    let field = |name: &str| -> mlua::Result<Json> { convert::to_json(lua, def.get(name)?) };
+    let source = match (field("path")?, field("data")?) {
+        (Json::String(path), Json::Null) => json!({ "type": "path", "path": path }),
+        (Json::Null, Json::String(data)) => json!({ "type": "base64", "data": data }),
+        (Json::Null, Json::Null) => {
+            return Err(error("image", "give `path` (a file) or `data` (base64)"));
+        }
+        (Json::String(_), Json::String(_)) => {
+            return Err(error("image", "give either `path` or `data`, not both"));
+        }
+        _ => return Err(error("image", "`path` and `data` must be strings")),
+    };
+    let mut node = json!({ "type": "image", "source": source });
+    for key in ["media_type", "alt", "fit"] {
+        let value = field(key)?;
+        if !value.is_null() {
+            node[key] = value;
+        }
+    }
+    spec_node("image", node)
+}
+
+fn json_node(lua: &Lua, value: Value, opts: Option<Table>) -> mlua::Result<CustomNode> {
+    let value = convert::to_json(lua, value)?;
+    let expand_depth = match opts {
+        Some(opts) => match opts.get::<Option<f64>>("expand")? {
+            Some(n) if n >= 0.0 && n.fract() == 0.0 => n as u32,
+            Some(n) => {
+                return Err(error(
+                    "json",
+                    format!("`expand` must be a whole number >= 0, got {n}"),
+                ));
+            }
+            None => 1,
+        },
+        None => 1,
+    };
+    Ok(CustomNode::Json {
+        value,
+        expand_depth,
+    })
+}
+
+fn link_node(text: String, url: Option<String>) -> mlua::Result<CustomNode> {
+    let (text, url) = match url {
+        Some(url) => (text, url),
+        None => (text.clone(), text),
+    };
+    let node = CustomNode::Link { text, url };
+    node.validate().map_err(|e| error("link", e))?;
+    Ok(node)
+}
+
+fn csv_node(text: &str, opts: Option<Table>) -> mlua::Result<CustomNode> {
+    let mut options = CsvOptions::default();
+    if let Some(opts) = opts {
+        if let Some(header) = opts.get::<Option<bool>>("header")? {
+            options.header = header;
+        }
+        if let Some(delimiter) = opts.get::<Option<String>>("delimiter")? {
+            let mut chars = delimiter.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if c != '"' && c != '\n' && c != '\r' => options.delimiter = c,
+                _ => {
+                    return Err(error(
+                        "csv",
+                        format!("`delimiter` must be one character, got {delimiter:?}"),
+                    ));
+                }
+            }
+        }
+    }
+    let spec = csv::parse(text, options).map_err(|e| error("csv", e))?;
+    Ok(CustomNode::Table(spec))
+}
+
 /// Builds the `app.ui` table of one phase; blocks are attributed to the
 /// phase's plugin.
 pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
@@ -201,6 +308,40 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
     ui.set(
         "markdown",
         lua.create_function(|lua, source: String| to_lua(lua, &CustomNode::Markdown { source }))?,
+    )?;
+    ui.set(
+        "image",
+        lua.create_function(|lua, def: Value| to_lua(lua, &image_node(lua, def)?))?,
+    )?;
+    ui.set(
+        "html",
+        lua.create_function(|lua, source: String| to_lua(lua, &CustomNode::Html { source }))?,
+    )?;
+    ui.set(
+        "json",
+        lua.create_function(|lua, (value, opts): (Value, Option<Table>)| {
+            to_lua(lua, &json_node(lua, value, opts)?)
+        })?,
+    )?;
+    ui.set(
+        "mermaid",
+        lua.create_function(|lua, source: String| to_lua(lua, &CustomNode::Mermaid { source }))?,
+    )?;
+    ui.set(
+        "link",
+        lua.create_function(|lua, (text, url): (String, Option<String>)| {
+            to_lua(lua, &link_node(text, url)?)
+        })?,
+    )?;
+    ui.set(
+        "diff",
+        lua.create_function(|lua, unified: String| to_lua(lua, &CustomNode::Diff { unified }))?,
+    )?;
+    ui.set(
+        "csv",
+        lua.create_function(|lua, (text, opts): (String, Option<Table>)| {
+            to_lua(lua, &csv_node(&text, opts)?)
+        })?,
     )?;
     let plugin = origin.plugin.clone();
     ui.set(
