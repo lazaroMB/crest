@@ -9,13 +9,18 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+async-trait.workspace = true
 domain.workspace = true
+eventsource-stream.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

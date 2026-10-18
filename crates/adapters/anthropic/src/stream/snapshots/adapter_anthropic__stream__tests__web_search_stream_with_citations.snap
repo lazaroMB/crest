@@ -1,0 +1,118 @@
+---
+source: crates/adapters/anthropic/src/stream/tests.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "claude-opus-5-5",
+        ),
+    },
+    Usage(
+        Usage {
+            input_tokens: 2679,
+            output_tokens: 3,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    TextDelta {
+        index: 0,
+        text: "",
+    },
+    TextDelta {
+        index: 0,
+        text: "I'll check",
+    },
+    TextDelta {
+        index: 0,
+        text: " the current weather in New York City for you",
+    },
+    TextDelta {
+        index: 0,
+        text: ".",
+    },
+    BlockStop {
+        index: 0,
+    },
+    ServerToolUse {
+        index: 1,
+        name: "web_search",
+    },
+    ProviderBlock {
+        index: 1,
+        raw: Object {
+            "type": String("server_tool_use"),
+            "id": String("srvtoolu_014hJH82Qum7Td6UV8gDXThB"),
+            "name": String("web_search"),
+            "input": Object {
+                "query": String("weather NYC today"),
+            },
+        },
+    },
+    BlockStop {
+        index: 1,
+    },
+    ProviderBlock {
+        index: 2,
+        raw: Object {
+            "type": String("web_search_tool_result"),
+            "tool_use_id": String("srvtoolu_014hJH82Qum7Td6UV8gDXThB"),
+            "content": Array [
+                Object {
+                    "type": String("web_search_result"),
+                    "url": String("https://world-weather.info/forecast/usa/new_york/may-2025/"),
+                    "title": String("Weather in New York City in May 2025 (New York) - detailed Weather Forecast for a month"),
+                    "encrypted_content": String("Ev0DCioIAxgCIiQ3NmU4ZmI4OC1k..."),
+                },
+            ],
+        },
+    },
+    BlockStop {
+        index: 2,
+    },
+    TextDelta {
+        index: 3,
+        text: "",
+    },
+    TextDelta {
+        index: 3,
+        text: "Here's the current weather information for New York",
+    },
+    Citation {
+        index: 3,
+        citation: Citation {
+            url: "https://world-weather.info/forecast/usa/new_york/may-2025/",
+            title: Some(
+                "Weather in New York City in May 2025 (New York) - detailed Weather Forecast for a month",
+            ),
+            cited_text: "Weather in New York City in May 2025",
+        },
+    },
+    TextDelta {
+        index: 3,
+        text: " City:\n\n# Weather",
+    },
+    TextDelta {
+        index: 3,
+        text: " in New York City",
+    },
+    TextDelta {
+        index: 3,
+        text: "\n\n",
+    },
+    BlockStop {
+        index: 3,
+    },
+    Usage(
+        Usage {
+            input_tokens: 10682,
+            output_tokens: 510,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    MessageStop {
+        stop_reason: EndTurn,
+    },
+]

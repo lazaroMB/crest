@@ -1,0 +1,123 @@
+---
+source: crates/adapters/anthropic/src/stream/tests.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "claude-opus-5",
+        ),
+    },
+    Usage(
+        Usage {
+            input_tokens: 472,
+            output_tokens: 2,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    TextDelta {
+        index: 0,
+        text: "",
+    },
+    TextDelta {
+        index: 0,
+        text: "Okay",
+    },
+    TextDelta {
+        index: 0,
+        text: ",",
+    },
+    TextDelta {
+        index: 0,
+        text: " let",
+    },
+    TextDelta {
+        index: 0,
+        text: "'s",
+    },
+    TextDelta {
+        index: 0,
+        text: " check",
+    },
+    TextDelta {
+        index: 0,
+        text: " the",
+    },
+    TextDelta {
+        index: 0,
+        text: " weather",
+    },
+    TextDelta {
+        index: 0,
+        text: " for",
+    },
+    TextDelta {
+        index: 0,
+        text: " San",
+    },
+    TextDelta {
+        index: 0,
+        text: " Francisco",
+    },
+    TextDelta {
+        index: 0,
+        text: ",",
+    },
+    TextDelta {
+        index: 0,
+        text: " CA",
+    },
+    TextDelta {
+        index: 0,
+        text: ":",
+    },
+    BlockStop {
+        index: 0,
+    },
+    ToolUseStart {
+        index: 1,
+        id: ToolUseId(
+            "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+        ),
+        name: "get_weather",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: "",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: "{\"location\":",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: " \"San",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: " Francisc",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: "o,",
+    },
+    ToolInputDelta {
+        index: 1,
+        partial_json: " CA\"}",
+    },
+    BlockStop {
+        index: 1,
+    },
+    Usage(
+        Usage {
+            input_tokens: 472,
+            output_tokens: 89,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    MessageStop {
+        stop_reason: ToolUse,
+    },
+]

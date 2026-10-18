@@ -1,0 +1,60 @@
+---
+source: crates/adapters/anthropic/src/stream/tests.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "claude-opus-5-5",
+        ),
+    },
+    Usage(
+        Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    ThinkingDelta {
+        index: 0,
+        thinking: "",
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "I need to find the GCD of 1071 and 462 using the Euclidean algorithm.\n\n1071 = 2 × 462 + 147",
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "\n462 = 3 × 147 + 21",
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "\n147 = 7 × 21 + 0",
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "\nThe remainder is 0, so GCD(1071, 462) = 21.",
+    },
+    SignatureDelta {
+        index: 0,
+        signature: "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds...",
+    },
+    BlockStop {
+        index: 0,
+    },
+    TextDelta {
+        index: 1,
+        text: "",
+    },
+    TextDelta {
+        index: 1,
+        text: "The greatest common divisor of 1071 and 462 is **21**.",
+    },
+    BlockStop {
+        index: 1,
+    },
+    MessageStop {
+        stop_reason: EndTurn,
+    },
+]

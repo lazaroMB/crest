@@ -1,0 +1,45 @@
+---
+source: crates/adapters/anthropic/src/stream/tests.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "claude-opus-5-5",
+        ),
+    },
+    Usage(
+        Usage {
+            input_tokens: 25,
+            output_tokens: 1,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    TextDelta {
+        index: 0,
+        text: "",
+    },
+    TextDelta {
+        index: 0,
+        text: "Hello",
+    },
+    TextDelta {
+        index: 0,
+        text: "!",
+    },
+    BlockStop {
+        index: 0,
+    },
+    Usage(
+        Usage {
+            input_tokens: 25,
+            output_tokens: 15,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    MessageStop {
+        stop_reason: EndTurn,
+    },
+]
