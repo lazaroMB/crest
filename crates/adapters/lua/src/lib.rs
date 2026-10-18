@@ -4,6 +4,9 @@
 //! through a [`LuaHandle`], which implements
 //! [`PluginHostPort`](application::ports::plugin::PluginHostPort).
 
+mod callbacks;
+mod convert;
 mod host;
+mod vm;
 
 pub use host::{HostOptions, LuaHandle, LuaHost};

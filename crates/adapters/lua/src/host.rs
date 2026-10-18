@@ -9,9 +9,16 @@
 use std::sync::mpsc;
 use std::thread;
 
-use application::ports::plugin::PluginError;
-use mlua::Lua;
+use application::ports::plugin::{
+    CallbackId, ConfigSources, HookEvent, HookOutcome, LoadedConfig, PluginError, PluginHostPort,
+    PluginOutput,
+};
+use async_trait::async_trait;
+use serde_json::Value;
 use tokio::sync::oneshot;
+
+use crate::callbacks::CallbackIds;
+use crate::vm::Vm;
 
 /// Name of the VM thread, as shown by debuggers and panics.
 const THREAD_NAME: &str = "crest-lua";
@@ -34,21 +41,6 @@ impl Default for HostOptions {
     }
 }
 
-/// State owned by the VM thread.
-pub(crate) struct Vm {
-    pub(crate) lua: Lua,
-    pub(crate) options: HostOptions,
-}
-
-impl Vm {
-    pub(crate) fn new(options: HostOptions) -> Result<Self, PluginError> {
-        Ok(Self {
-            lua: Lua::new(),
-            options,
-        })
-    }
-}
-
 /// Work sent to the VM thread.
 type Request = Box<dyn FnOnce(&mut Vm) + Send>;
 
@@ -61,7 +53,7 @@ impl LuaHost {
     ///
     /// The thread ends when the last [`LuaHandle`] is dropped.
     pub fn spawn(options: HostOptions) -> Result<LuaHandle, PluginError> {
-        let vm = Vm::new(options)?;
+        let vm = Vm::new(options, CallbackIds::default())?;
         let (tx, rx) = mpsc::channel::<Request>();
         thread::Builder::new()
             .name(THREAD_NAME.into())
@@ -106,11 +98,38 @@ impl LuaHandle {
     }
 }
 
+#[async_trait]
+impl PluginHostPort for LuaHandle {
+    async fn load_config(&self, _sources: ConfigSources) -> Result<LoadedConfig, PluginError> {
+        self.run(|vm| vm.reset().map(|()| LoadedConfig::default()))
+            .await?
+    }
+
+    async fn invoke_callback(
+        &self,
+        id: CallbackId,
+        args: Value,
+    ) -> Result<PluginOutput, PluginError> {
+        self.run(move |vm| vm.invoke(id, &args)).await?
+    }
+
+    async fn call_tool(&self, name: &str, input: Value) -> Result<PluginOutput, PluginError> {
+        let name = name.to_owned();
+        self.run(move |vm| vm.call_tool(&name, &input)).await?
+    }
+
+    async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError> {
+        self.run(move |vm| vm.run_hooks(event)).await?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
+
+    use serde_json::json;
 
     use super::*;
 
@@ -199,6 +218,71 @@ mod tests {
         .unwrap();
         ticker.abort();
         assert!(ticks.load(Ordering::SeqCst) >= 10, "runtime was blocked");
+    }
+
+    async fn register(host: &LuaHandle, code: &'static str) -> CallbackId {
+        host.run(move |vm| crate::vm::register_code(vm, code))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_port_calls_are_all_answered() {
+        let host = spawn();
+        let id = register(&host, "return function(n) return n * n end").await;
+        let port: Arc<dyn PluginHostPort> = Arc::new(host);
+        let tasks: Vec<_> = (0..16_i64)
+            .map(|i| {
+                let port = Arc::clone(&port);
+                tokio::spawn(async move { port.invoke_callback(id, json!(i)).await.unwrap() })
+            })
+            .collect();
+        for (i, task) in (0_i64..).zip(tasks) {
+            assert_eq!(task.await.unwrap(), PluginOutput::Value(json!(i * i)));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_slow_callback_does_not_stop_other_tasks() {
+        let host = spawn();
+        let slow = register(
+            &host,
+            "return function() local t = os.clock(); while os.clock() - t < 0.3 do end; return 'slow' end",
+        )
+        .await;
+        let fast_done = Arc::new(AtomicU64::new(0));
+        let other = {
+            let fast_done = Arc::clone(&fast_done);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                fast_done.store(1, Ordering::SeqCst);
+            })
+        };
+        let out = host.invoke_callback(slow, Value::Null).await.unwrap();
+        assert_eq!(out, PluginOutput::Value(json!("slow")));
+        assert_eq!(
+            fast_done.load(Ordering::SeqCst),
+            1,
+            "the other task never ran"
+        );
+        other.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn port_errors_come_back_to_the_caller() {
+        let host = spawn();
+        let missing = host.invoke_callback(CallbackId(404), Value::Null).await;
+        assert!(matches!(missing, Err(PluginError::NotFound(_))));
+        let tool = host.call_tool("nope", Value::Null).await;
+        assert!(matches!(tool, Err(PluginError::NotFound(_))));
+        let hook = host
+            .run_hook(HookEvent::BeforeTool {
+                name: "t".into(),
+                input: json!({}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(hook, HookOutcome::Continue);
     }
 
     #[tokio::test]
