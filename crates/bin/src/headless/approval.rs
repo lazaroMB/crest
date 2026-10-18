@@ -76,6 +76,34 @@ impl StdinApproval {
         }
     }
 
+    /// Reads one line of the input (the answers to approvals and to the
+    /// gates of a flow share it); `None` once it is closed. A keyboard
+    /// already echoed the line; piped lines are echoed so the transcript
+    /// shows what was decided.
+    ///
+    /// # Errors
+    ///
+    /// Why the input cannot be read.
+    pub async fn read_line(&self) -> Result<Option<String>, String> {
+        let input = Arc::clone(&self.input);
+        let (read, line) = tokio::task::spawn_blocking(move || {
+            let mut line = String::new();
+            let mut input = input.lock().unwrap_or_else(PoisonError::into_inner);
+            input.read_line(&mut line).map(|read| (read, line))
+        })
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| format!("cannot read stdin: {err}"))?;
+        let mut w = self.terminal.lock();
+        if self.echo {
+            w.raw(line.trim_end());
+            w.raw("\n");
+        } else {
+            w.assume_line_start();
+        }
+        Ok((read > 0).then(|| line.trim_end_matches(['\r', '\n']).to_owned()))
+    }
+
     fn show(&self, req: &ApprovalRequest) {
         let mut w = self.terminal.lock();
         match &req.preview {
@@ -142,31 +170,11 @@ impl ApprovalPort for StdinApproval {
         }
         loop {
             self.prompt(&req);
-            let input = Arc::clone(&self.input);
-            let line = tokio::task::spawn_blocking(move || {
-                let mut line = String::new();
-                let mut input = input.lock().unwrap_or_else(PoisonError::into_inner);
-                input.read_line(&mut line).map(|read| (read, line))
-            })
-            .await
-            .map_err(|err| ApprovalError::Unavailable(err.to_string()))?
-            .map_err(|err| ApprovalError::Unavailable(format!("cannot read stdin: {err}")))?;
-            let (read, line) = line;
-            // A keyboard already echoed the answer and its newline; piped
-            // answers are echoed so the transcript shows what was decided.
-            let mut w = self.terminal.lock();
-            if self.echo {
-                w.raw(line.trim_end());
-                w.raw("\n");
-            } else {
-                w.assume_line_start();
-            }
-            drop(w);
-            if read == 0 {
+            let Some(line) = self.read_line().await.map_err(ApprovalError::Unavailable)? else {
                 return Ok(ApprovalResponse::Deny {
                     reason: Some("no answer: stdin is closed".into()),
                 });
-            }
+            };
             match parse_answer(&line) {
                 Some(Answer::Yes) => return Ok(ApprovalResponse::Approve),
                 Some(Answer::Always) => {
@@ -247,6 +255,17 @@ mod tests {
             approval.request(command_request()).await.unwrap(),
             ApprovalResponse::Deny { reason: Some(_) }
         ));
+    }
+
+    #[tokio::test]
+    async fn lines_are_read_and_echoed_until_the_input_closes() {
+        let (approval, buf) = approval("volver al spec\r\n", false);
+        assert_eq!(
+            approval.read_line().await.unwrap().as_deref(),
+            Some("volver al spec")
+        );
+        assert_eq!(approval.read_line().await.unwrap(), None);
+        assert_eq!(buf.text(), "volver al spec\n\n");
     }
 
     #[tokio::test]
