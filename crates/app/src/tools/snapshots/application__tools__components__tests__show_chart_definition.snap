@@ -1,0 +1,94 @@
+---
+source: crates/app/src/tools/components.rs
+expression: definition(ShowChartTool)
+---
+{
+  "name": "show_chart",
+  "description": "Shows numeric data as a chart in the user's timeline (the user can toggle it to a table). Use it for quantities across categories or over time, e.g. file sizes by extension or test durations per run. Every series needs one finite value per label; a pie chart takes exactly one series. Returns only a short confirmation: do not repeat the data in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Chart title, shown above it."
+      },
+      "kind": {
+        "$ref": "#/$defs/ChartKind",
+        "description": "`bar` compares categories, `line` and `area` show a trend along an\nordered axis (time, versions), `pie` shows parts of a whole and takes\nexactly one series."
+      },
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Category labels (x axis or pie slices), in display order."
+      },
+      "series": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Series"
+        },
+        "description": "One or more named series, each with exactly one value per label."
+      }
+    },
+    "required": [
+      "title",
+      "kind",
+      "labels",
+      "series"
+    ],
+    "description": "Input of `show_chart`.",
+    "title": "ShowChart",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "ChartKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "bar",
+            "description": "Vertical bars."
+          },
+          {
+            "type": "string",
+            "const": "line",
+            "description": "Lines."
+          },
+          {
+            "type": "string",
+            "const": "area",
+            "description": "Filled areas."
+          },
+          {
+            "type": "string",
+            "const": "pie",
+            "description": "Pie; takes exactly one series."
+          }
+        ],
+        "description": "How a chart is drawn."
+      },
+      "Series": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Legend name."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Values, aligned with the chart labels."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "A named series of values, one per chart label."
+      }
+    }
+  }
+}
