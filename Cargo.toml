@@ -51,3 +51,10 @@ uuid = { version = "1.28.0", features = ["v4", "serde"] }
 # Test-only crates
 insta = { version = "1.49.0", features = ["json"] }
 tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
