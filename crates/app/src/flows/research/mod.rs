@@ -5,6 +5,10 @@ pub mod builder;
 pub mod error;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
+pub mod flow;
 pub mod gate;
 pub mod node;
 pub mod task;
+
+#[cfg(test)]
+mod tests;
