@@ -8,8 +8,10 @@
 //!   adapter must release the underlying connection when that happens and
 //!   must not keep working in the background.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
-use domain::conversation::{Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
+use domain::conversation::{ContentPart, Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
 use domain::model::{ModelId, ResolvedModel};
 use futures::stream::BoxStream;
 use schemars::JsonSchema;
@@ -422,6 +424,273 @@ pub trait LlmPort: Send + Sync {
     }
 }
 
+/// Error turning an event stream into a message: the stream broke the
+/// protocol described in [`LlmEvent`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AssembleError {
+    /// An event refers to a block that was never started.
+    #[error("event for unknown block {index}")]
+    UnknownBlock {
+        /// Block index.
+        index: usize,
+    },
+    /// A block was started twice.
+    #[error("block {index} started twice")]
+    DuplicateBlock {
+        /// Block index.
+        index: usize,
+    },
+    /// An event does not match the kind of its block (e.g. text into a
+    /// tool use).
+    #[error("event does not match the kind of block {index}")]
+    BlockKindMismatch {
+        /// Block index.
+        index: usize,
+    },
+    /// An event arrived for a block that already stopped.
+    #[error("block {index} already stopped")]
+    BlockAlreadyStopped {
+        /// Block index.
+        index: usize,
+    },
+    /// The accumulated input of a tool use is not valid JSON.
+    #[error("invalid JSON input for tool `{name}` (block {index}): {message}")]
+    InvalidToolInput {
+        /// Block index.
+        index: usize,
+        /// Tool name.
+        name: String,
+        /// Parser message.
+        message: String,
+    },
+    /// The stream ended without [`LlmEvent::MessageStop`].
+    #[error("stream ended before the message stopped")]
+    Incomplete,
+}
+
+impl From<AssembleError> for LlmError {
+    fn from(err: AssembleError) -> Self {
+        Self::Decode(err.to_string())
+    }
+}
+
+/// The final assistant message built by [`MessageAssembler`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssembledMessage {
+    /// Assistant message with its parts in block order.
+    pub message: Message,
+    /// Model that answered, from [`LlmEvent::MessageStart`].
+    pub model: Option<ModelId>,
+    /// Last cumulative usage reported.
+    pub usage: Usage,
+    /// Why the model stopped.
+    pub stop_reason: StopReason,
+    /// Citations in arrival order.
+    pub citations: Vec<Citation>,
+}
+
+/// A content block still receiving deltas.
+#[derive(Debug, Clone, PartialEq)]
+enum OpenBlock {
+    Text(String),
+    Thinking {
+        thinking: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(String),
+    ToolUse {
+        id: ToolUseId,
+        name: String,
+        json: String,
+    },
+    /// A server tool block; produces no domain content part.
+    ServerTool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum BlockState {
+    Open(OpenBlock),
+    Stopped(Option<ContentPart>),
+}
+
+/// Pure helper that folds [`LlmEvent`]s into the final assistant
+/// [`Message`], its usage and its stop reason.
+///
+/// Feed every event with [`push`](Self::push) and call
+/// [`finish`](Self::finish) after the stream ends. A new
+/// [`LlmEvent::MessageStart`] discards everything accumulated so far.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MessageAssembler {
+    model: Option<ModelId>,
+    blocks: BTreeMap<usize, BlockState>,
+    citations: Vec<Citation>,
+    usage: Usage,
+    stop_reason: Option<StopReason>,
+}
+
+impl MessageAssembler {
+    /// An empty assembler.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Applies one event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`AssembleError`] when the event breaks the block
+    /// protocol, or when a stopped tool use has invalid JSON input.
+    pub fn push(&mut self, event: LlmEvent) -> Result<(), AssembleError> {
+        match event {
+            LlmEvent::MessageStart { model } => {
+                *self = Self {
+                    model: Some(model),
+                    ..Self::default()
+                };
+            }
+            LlmEvent::TextDelta { index, text } => {
+                match self.open_or_start(index, || OpenBlock::Text(String::new()))? {
+                    OpenBlock::Text(buf) => buf.push_str(&text),
+                    _ => return Err(AssembleError::BlockKindMismatch { index }),
+                }
+            }
+            LlmEvent::ThinkingDelta { index, thinking } => {
+                let start = || OpenBlock::Thinking {
+                    thinking: String::new(),
+                    signature: None,
+                };
+                match self.open_or_start(index, start)? {
+                    OpenBlock::Thinking { thinking: buf, .. } => buf.push_str(&thinking),
+                    _ => return Err(AssembleError::BlockKindMismatch { index }),
+                }
+            }
+            LlmEvent::SignatureDelta { index, signature } => match self.open(index)? {
+                OpenBlock::Thinking { signature: sig, .. } => {
+                    sig.get_or_insert_with(String::new).push_str(&signature);
+                }
+                _ => return Err(AssembleError::BlockKindMismatch { index }),
+            },
+            LlmEvent::RedactedThinking { index, data } => {
+                self.start(index, OpenBlock::RedactedThinking(data))?;
+            }
+            LlmEvent::ToolUseStart { index, id, name } => {
+                let json = String::new();
+                self.start(index, OpenBlock::ToolUse { id, name, json })?;
+            }
+            LlmEvent::ToolInputDelta {
+                index,
+                partial_json,
+            } => match self.open(index)? {
+                OpenBlock::ToolUse { json, .. } => json.push_str(&partial_json),
+                _ => return Err(AssembleError::BlockKindMismatch { index }),
+            },
+            LlmEvent::ServerToolUse { index, .. } => self.start(index, OpenBlock::ServerTool)?,
+            LlmEvent::Citation { citation, .. } => self.citations.push(citation),
+            LlmEvent::BlockStop { index } => {
+                let block = std::mem::replace(self.open(index)?, OpenBlock::ServerTool);
+                let part = close(index, block)?;
+                self.blocks.insert(index, BlockState::Stopped(part));
+            }
+            LlmEvent::Usage(usage) => self.usage = usage,
+            LlmEvent::ModelFallback { .. } | LlmEvent::Retrying { .. } => {}
+            LlmEvent::MessageStop { stop_reason } => self.stop_reason = Some(stop_reason),
+        }
+        Ok(())
+    }
+
+    /// Builds the final message once the stream has ended. Blocks that never
+    /// got a [`LlmEvent::BlockStop`] are closed implicitly.
+    ///
+    /// # Errors
+    ///
+    /// [`AssembleError::Incomplete`] if no [`LlmEvent::MessageStop`] was
+    /// seen, or [`AssembleError::InvalidToolInput`] for an implicitly closed
+    /// tool use with invalid JSON.
+    pub fn finish(self) -> Result<AssembledMessage, AssembleError> {
+        let stop_reason = self.stop_reason.ok_or(AssembleError::Incomplete)?;
+        let mut parts = Vec::with_capacity(self.blocks.len());
+        for (index, state) in self.blocks {
+            let part = match state {
+                BlockState::Open(block) => close(index, block)?,
+                BlockState::Stopped(part) => part,
+            };
+            parts.extend(part);
+        }
+        Ok(AssembledMessage {
+            message: Message::assistant(parts),
+            model: self.model,
+            usage: self.usage,
+            stop_reason,
+            citations: self.citations,
+        })
+    }
+
+    /// The open block at `index`.
+    fn open(&mut self, index: usize) -> Result<&mut OpenBlock, AssembleError> {
+        match self.blocks.get_mut(&index) {
+            Some(BlockState::Open(block)) => Ok(block),
+            Some(BlockState::Stopped(_)) => Err(AssembleError::BlockAlreadyStopped { index }),
+            None => Err(AssembleError::UnknownBlock { index }),
+        }
+    }
+
+    /// The open block at `index`, starting it with `start` if it is new.
+    fn open_or_start(
+        &mut self,
+        index: usize,
+        start: impl FnOnce() -> OpenBlock,
+    ) -> Result<&mut OpenBlock, AssembleError> {
+        self.blocks
+            .entry(index)
+            .or_insert_with(|| BlockState::Open(start()));
+        self.open(index)
+    }
+
+    /// Starts a new block at `index`.
+    fn start(&mut self, index: usize, block: OpenBlock) -> Result<(), AssembleError> {
+        if self.blocks.contains_key(&index) {
+            return Err(AssembleError::DuplicateBlock { index });
+        }
+        self.blocks.insert(index, BlockState::Open(block));
+        Ok(())
+    }
+}
+
+/// Turns a finished block into its content part, parsing tool input JSON
+/// (an empty input means `{}`).
+fn close(index: usize, block: OpenBlock) -> Result<Option<ContentPart>, AssembleError> {
+    Ok(match block {
+        OpenBlock::Text(text) => Some(ContentPart::Text { text }),
+        OpenBlock::Thinking {
+            thinking,
+            signature,
+        } => Some(ContentPart::Thinking {
+            thinking,
+            signature,
+        }),
+        OpenBlock::RedactedThinking(data) => Some(ContentPart::RedactedThinking { data }),
+        OpenBlock::ToolUse { id, name, json } => {
+            let input = if json.trim().is_empty() {
+                serde_json::Value::Object(serde_json::Map::new())
+            } else {
+                match serde_json::from_str(&json) {
+                    Ok(input) => input,
+                    Err(err) => {
+                        return Err(AssembleError::InvalidToolInput {
+                            index,
+                            name,
+                            message: err.to_string(),
+                        });
+                    }
+                }
+            };
+            Some(ContentPart::ToolUse { id, name, input })
+        }
+        OpenBlock::ServerTool => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,5 +783,241 @@ mod tests {
         let req = LlmRequest::new(resolved(), Vec::new());
         assert_eq!(port.count_tokens(&req).await, Err(LlmError::Unsupported));
         assert!(port.stream(req).await.is_ok());
+    }
+
+    fn assemble(events: Vec<LlmEvent>) -> Result<AssembledMessage, AssembleError> {
+        let mut asm = MessageAssembler::new();
+        for event in events {
+            asm.push(event)?;
+        }
+        asm.finish()
+    }
+
+    fn start() -> LlmEvent {
+        LlmEvent::MessageStart {
+            model: ModelId::new("claude-sonnet-5-5"),
+        }
+    }
+
+    fn stop(stop_reason: StopReason) -> LlmEvent {
+        LlmEvent::MessageStop { stop_reason }
+    }
+
+    fn text(index: usize, text: &str) -> LlmEvent {
+        LlmEvent::TextDelta {
+            index,
+            text: text.into(),
+        }
+    }
+
+    fn tool_start(index: usize, id: &str, name: &str) -> LlmEvent {
+        LlmEvent::ToolUseStart {
+            index,
+            id: ToolUseId::new(id),
+            name: name.into(),
+        }
+    }
+
+    fn json(index: usize, partial_json: &str) -> LlmEvent {
+        LlmEvent::ToolInputDelta {
+            index,
+            partial_json: partial_json.into(),
+        }
+    }
+
+    fn block_stop(index: usize) -> LlmEvent {
+        LlmEvent::BlockStop { index }
+    }
+
+    #[test]
+    fn text_in_several_deltas_with_usage() {
+        let usage = Usage {
+            input_tokens: 10,
+            output_tokens: 3,
+            ..Usage::default()
+        };
+        let out = assemble(vec![
+            start(),
+            LlmEvent::Usage(Usage {
+                input_tokens: 10,
+                ..Usage::default()
+            }),
+            text(0, "Hola, "),
+            text(0, "mundo"),
+            block_stop(0),
+            LlmEvent::Usage(usage),
+            stop(StopReason::EndTurn),
+        ])
+        .unwrap();
+        assert_eq!(out.message.role, domain::conversation::Role::Assistant);
+        assert_eq!(out.message.content, vec![ContentPart::text("Hola, mundo")]);
+        assert_eq!(out.usage, usage);
+        assert_eq!(out.stop_reason, StopReason::EndTurn);
+        assert_eq!(out.model, Some(ModelId::new("claude-sonnet-5-5")));
+    }
+
+    #[test]
+    fn thinking_with_signature_precedes_text() {
+        let out = assemble(vec![
+            start(),
+            LlmEvent::ThinkingDelta {
+                index: 0,
+                thinking: "pien".into(),
+            },
+            LlmEvent::ThinkingDelta {
+                index: 0,
+                thinking: "so".into(),
+            },
+            LlmEvent::SignatureDelta {
+                index: 0,
+                signature: "sig".into(),
+            },
+            block_stop(0),
+            text(1, "listo"),
+            block_stop(1),
+            stop(StopReason::EndTurn),
+        ])
+        .unwrap();
+        assert_eq!(
+            out.message.content,
+            vec![
+                ContentPart::Thinking {
+                    thinking: "pienso".into(),
+                    signature: Some("sig".into()),
+                },
+                ContentPart::text("listo"),
+            ]
+        );
+    }
+
+    #[test]
+    fn interleaved_tool_uses_are_ordered_by_index() {
+        let out = assemble(vec![
+            start(),
+            tool_start(1, "toolu_b", "read_file"),
+            tool_start(0, "toolu_a", "grep"),
+            json(1, "{\"path\":"),
+            json(0, "{\"pattern\""),
+            json(1, "\"src/main.rs\"}"),
+            json(0, ":\"fn main\"}"),
+            block_stop(1),
+            block_stop(0),
+            tool_start(2, "toolu_c", "list_dir"),
+            block_stop(2),
+            stop(StopReason::ToolUse),
+        ])
+        .unwrap();
+        let tool = |id: &str, name: &str, input| ContentPart::ToolUse {
+            id: ToolUseId::new(id),
+            name: name.into(),
+            input,
+        };
+        assert_eq!(
+            out.message.content,
+            vec![
+                tool(
+                    "toolu_a",
+                    "grep",
+                    serde_json::json!({ "pattern": "fn main" })
+                ),
+                tool(
+                    "toolu_b",
+                    "read_file",
+                    serde_json::json!({ "path": "src/main.rs" })
+                ),
+                tool("toolu_c", "list_dir", serde_json::json!({})),
+            ]
+        );
+        assert_eq!(out.stop_reason, StopReason::ToolUse);
+    }
+
+    #[test]
+    fn invalid_tool_json_is_a_typed_error() {
+        let mut asm = MessageAssembler::new();
+        asm.push(start()).unwrap();
+        asm.push(tool_start(0, "toolu_a", "grep")).unwrap();
+        asm.push(json(0, "{\"pattern\":")).unwrap();
+        let err = asm.push(block_stop(0)).unwrap_err();
+        assert!(matches!(
+            err,
+            AssembleError::InvalidToolInput { index: 0, ref name, .. } if name == "grep"
+        ));
+        assert!(matches!(LlmError::from(err), LlmError::Decode(_)));
+    }
+
+    #[test]
+    fn protocol_violations_are_rejected() {
+        let mut asm = MessageAssembler::new();
+        asm.push(start()).unwrap();
+        assert_eq!(
+            asm.push(json(3, "{}")),
+            Err(AssembleError::UnknownBlock { index: 3 })
+        );
+        asm.push(tool_start(0, "toolu_a", "grep")).unwrap();
+        assert_eq!(
+            asm.push(text(0, "x")),
+            Err(AssembleError::BlockKindMismatch { index: 0 })
+        );
+        assert_eq!(
+            asm.push(tool_start(0, "toolu_b", "grep")),
+            Err(AssembleError::DuplicateBlock { index: 0 })
+        );
+        asm.push(block_stop(0)).unwrap();
+        assert_eq!(
+            asm.push(json(0, "{}")),
+            Err(AssembleError::BlockAlreadyStopped { index: 0 })
+        );
+        assert_eq!(asm.finish(), Err(AssembleError::Incomplete));
+    }
+
+    #[test]
+    fn server_tools_keep_citations_but_no_parts() {
+        let citation = Citation {
+            url: "https://docs.rs".into(),
+            title: Some("Docs.rs".into()),
+            cited_text: "docs".into(),
+        };
+        let out = assemble(vec![
+            start(),
+            LlmEvent::ServerToolUse {
+                index: 0,
+                name: "web_search".into(),
+            },
+            block_stop(0),
+            text(1, "Según docs.rs"),
+            LlmEvent::Citation {
+                index: 1,
+                citation: citation.clone(),
+            },
+            block_stop(1),
+            stop(StopReason::EndTurn),
+        ])
+        .unwrap();
+        assert_eq!(
+            out.message.content,
+            vec![ContentPart::text("Según docs.rs")]
+        );
+        assert_eq!(out.citations, vec![citation]);
+    }
+
+    #[test]
+    fn new_message_start_resets_and_open_blocks_close_on_finish() {
+        let out = assemble(vec![
+            start(),
+            text(0, "intento fallido"),
+            LlmEvent::ModelFallback {
+                from: ModelId::new("claude-sonnet-5-5"),
+                to: ModelId::new("claude-haiku-5-5"),
+                reason: LlmError::Overloaded,
+            },
+            LlmEvent::MessageStart {
+                model: ModelId::new("claude-haiku-5-5"),
+            },
+            text(0, "ok"),
+            stop(StopReason::MaxTokens),
+        ])
+        .unwrap();
+        assert_eq!(out.message.content, vec![ContentPart::text("ok")]);
+        assert_eq!(out.model, Some(ModelId::new("claude-haiku-5-5")));
     }
 }
