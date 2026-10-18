@@ -158,6 +158,34 @@ async fn an_uncited_claim_goes_back_to_the_evidence_stage() {
 }
 
 #[tokio::test]
+async fn without_data_an_uncited_claim_goes_back_to_the_observation() {
+    let state = state();
+    let md = spec_md(&format!("{SOUND}\n\n{UNCITED}"), &state);
+    let stages: Arc<[Stage]> = Stage::ALL
+        .into_iter()
+        .filter(|s| *s != Stage::Data)
+        .collect();
+    let mut ctx = context(
+        Arc::new(ScriptedLlm::new([])),
+        Arc::new(RecordingSink::new()),
+        state,
+        md,
+    )
+    .with_stages(stages);
+    let outcome = Review::new().run(&mut ctx).await.unwrap();
+    assert!(
+        matches!(
+            outcome,
+            NodeOutcome::Back {
+                to: Stage::Observation,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_citation_to_unknown_evidence_is_rejected_without_the_model() {
     let state = state();
     let md = spec_md(SOUND, &state).replace("[E2].", "[E9].");

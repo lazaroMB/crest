@@ -108,11 +108,8 @@ impl ResearchNode for Definition {
 
     async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
         if ctx.state().evidence.is_empty() {
-            return Ok(back(
-                ctx,
-                Stage::Data,
-                "no hay evidencia para definir el problema",
-            ));
+            let to = ctx.first_stage_of(&[Stage::Data, Stage::Observation]);
+            return Ok(back(ctx, to, "no hay evidencia para definir el problema"));
         }
         if ctx.state().hypotheses.is_empty() {
             return Ok(back(

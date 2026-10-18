@@ -12,6 +12,10 @@ use super::super::spec::render::SECTIONS;
 /// Stage that collects evidence; claims without sources go back there.
 pub const EVIDENCE_STAGE: Stage = Stage::Data;
 
+/// Where claims without sources go back to: [`EVIDENCE_STAGE`], or
+/// Observación when the graph has no Datos.
+pub const EVIDENCE_STAGES: [Stage; 2] = [EVIDENCE_STAGE, Stage::Observation];
+
 /// Section of `spec.md` whose paragraphs are factual claims.
 const BACKGROUND: &str = SECTIONS[1];
 
@@ -150,9 +154,10 @@ fn claims(body: &str) -> Vec<String> {
 
 /// Gaps of `spec_md` against the evidence of `state`: unknown citations,
 /// empty sections of the template, uncited background claims and
-/// constraints without a test.
+/// constraints without a test. Missing evidence is asked to
+/// `evidence_stage` (one of [`EVIDENCE_STAGES`]).
 #[must_use]
-pub fn spec_gaps(spec_md: &str, state: &ResearchState) -> Vec<Gap> {
+pub fn spec_gaps(spec_md: &str, state: &ResearchState, evidence_stage: Stage) -> Vec<Gap> {
     let mut gaps = Vec::new();
     let cited = extract_citations(spec_md);
     if let Err(unknown) = state.cites_only_known_evidence(&cited) {
@@ -164,7 +169,7 @@ pub fn spec_gaps(spec_md: &str, state: &ResearchState) -> Vec<Gap> {
             gaps.push(Gap::major(
                 claim,
                 format!("cita la evidencia {id}, que no existe"),
-                EVIDENCE_STAGE,
+                evidence_stage,
             ));
         }
     }
@@ -185,7 +190,7 @@ pub fn spec_gaps(spec_md: &str, state: &ResearchState) -> Vec<Gap> {
                 gaps.push(Gap::major(
                     claim,
                     "la afirmación no cita ninguna evidencia",
-                    EVIDENCE_STAGE,
+                    evidence_stage,
                 ));
             }
         }

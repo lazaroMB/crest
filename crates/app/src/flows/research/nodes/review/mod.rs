@@ -43,7 +43,7 @@ use domain::workspace::WorkspacePath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use self::checks::{Gap, plan_gaps, spec_gaps};
+use self::checks::{EVIDENCE_STAGES, Gap, plan_gaps, spec_gaps};
 use super::plan::PLANS_KEY;
 use super::spec::render::describe_source;
 use super::spec::sink::{MemorySpecSink, SPECS_DIR, SpecSink};
@@ -157,7 +157,7 @@ impl ResearchNode for Review {
                 None => self.read_plan(&draft.folder).await?,
             };
             let mut gaps = self
-                .deterministic(ctx.state(), draft, &planned, plan.as_ref())
+                .deterministic(ctx, draft, &planned, plan.as_ref())
                 .await?;
             let blocked = gaps.iter().any(Gap::is_major);
             if blocked {
@@ -221,12 +221,14 @@ impl Review {
     /// Every deterministic gap of `draft`.
     async fn deterministic(
         &self,
-        state: &ResearchState,
+        ctx: &NodeContext,
         draft: &SpecDraft,
         planned: &[String],
         plan: Option<&Plan>,
     ) -> Result<Vec<Gap>, NodeError> {
-        let mut gaps = spec_gaps(&draft.spec_md, state);
+        let state = ctx.state();
+        let evidence_stage = ctx.first_stage_of(&EVIDENCE_STAGES);
+        let mut gaps = spec_gaps(&draft.spec_md, state, evidence_stage);
         gaps.extend(self.missing_files(state, &draft.spec_md).await?);
         let claim = format!("{}/plan.json", draft.folder);
         match plan {
