@@ -763,4 +763,85 @@ mod tests {
             }]
         );
     }
+
+    // -- parity with the agent's tools --------------------------------------
+
+    /// Output of the registered file tool `name` for `input`, as the model
+    /// would get it.
+    fn tool_output(fs: &Arc<InMemoryFs>, name: &str, input: serde_json::Value) -> String {
+        use application::testing::fs::ScriptedShell;
+        use application::tools::files::{FileToolPorts, register_file_tools};
+        use application::tools::registry::{ToolContext, ToolRegistry};
+        use domain::conversation::{SessionId, ToolUseId, TurnId};
+
+        let mut registry = ToolRegistry::new();
+        register_file_tools(
+            &mut registry,
+            FileToolPorts {
+                file_search: fs.clone(),
+                content_search: fs.clone(),
+                fs: fs.clone(),
+                shell: Arc::new(ScriptedShell::new()),
+            },
+        )
+        .unwrap();
+        let tool = registry.get(name).unwrap();
+        let ctx = ToolContext::new(SessionId::new(), TurnId::new(), ToolUseId::new("toolu_1"));
+        block_on(async {
+            let prepared = tool.prepare(input, &ctx).await.unwrap();
+            prepared.run.await.unwrap()
+        })
+        .text_content()
+    }
+
+    #[gpui::test]
+    fn file_picker_lists_what_find_file_returns(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let (picker, cx) = picker(fs.clone(), cx);
+        open(&picker, FILES_ACTION, cx);
+        cx.simulate_input("main");
+        settle(cx);
+        let output = tool_output(&fs, "find_file", serde_json::json!({"query": "main"}));
+        let tool_paths: Vec<&str> = output.lines().collect();
+        picker.read_with(cx, |picker, _| {
+            let paths: Vec<String> = picker.items().iter().map(|i| i.path.to_string()).collect();
+            assert_eq!(paths, tool_paths);
+        });
+    }
+
+    #[gpui::test]
+    fn text_picker_lists_what_grep_returns(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let (picker, cx) = picker(fs.clone(), cx);
+        open(&picker, GREP_ACTION, cx);
+        cx.simulate_input("run");
+        settle(cx);
+        let output = tool_output(&fs, "grep", serde_json::json!({"pattern": "run"}));
+        // Match lines are `path:line: text`; context lines use `-` and
+        // groups are separated by `--`.
+        let tool_matches: Vec<&str> = output
+            .lines()
+            .filter(|line| {
+                line.split_once(':').is_some_and(|(_, rest)| {
+                    rest.split_once(": ")
+                        .is_some_and(|(n, _)| n.chars().all(|c| c.is_ascii_digit()))
+                })
+            })
+            .collect();
+        assert_eq!(tool_matches.len(), 4);
+        picker.read_with(cx, |picker, _| {
+            let rows: Vec<String> = picker
+                .items()
+                .iter()
+                .map(|i| {
+                    let (line, text) = (
+                        i.line.unwrap_or_default(),
+                        i.text.clone().unwrap_or_default(),
+                    );
+                    format!("{}:{line}: {text}", i.path)
+                })
+                .collect();
+            assert_eq!(rows, tool_matches);
+        });
+    }
 }
