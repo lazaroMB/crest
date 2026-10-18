@@ -16,6 +16,12 @@
 //! `ApprovalRequested` and waits for the [`ApprovalPort`] (see
 //! [`super::approval`]). A rejected call ends with status `Denied`.
 //!
+//! With a plugin host ([`AgentService::with_plugin_host`]) the
+//! `before_tool` hooks run before each call is prepared: `Deny` answers the
+//! model with `denied by hook: <reason>` without asking (status `Denied`)
+//! and `ReplaceInput` prepares the call with the new input. A hook that
+//! fails is reported as a warning `Notice` and the call goes on.
+//!
 //! Cancelling [`TurnOptions::cancel`] interrupts the turn at any await
 //! point: the model stream or the running tool future is dropped (which
 //! closes the connection or kills the process), the partial answer is kept
@@ -45,6 +51,7 @@ use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
     SystemBlock,
 };
+use crate::ports::plugin::{HookEvent, HookOutcome, PluginError, PluginHostPort};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
@@ -152,6 +159,7 @@ pub struct AgentService {
     tools: ToolRegistry,
     models: ModelPolicy,
     gate: ApprovalGate,
+    plugins: Option<Arc<dyn PluginHostPort>>,
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
@@ -186,6 +194,7 @@ impl AgentService {
             tools,
             models,
             gate: ApprovalGate::new(Arc::clone(&deps.approval), permissions),
+            plugins: None,
             deps,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
@@ -197,6 +206,14 @@ impl AgentService {
     #[must_use]
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = prompt.into();
+        self
+    }
+
+    /// Runs the `before_tool` and `after_tool` hooks of `host` around
+    /// every tool call.
+    #[must_use]
+    pub fn with_plugin_host(mut self, host: Arc<dyn PluginHostPort>) -> Self {
+        self.plugins = Some(host);
         self
     }
 
@@ -630,6 +647,18 @@ impl TurnRun<'_> {
         let Some(tool) = self.service.tools.get(name) else {
             return failed(ToolError::UnknownTool(name.to_owned()));
         };
+        let input = match self.before_tool(name, input.clone()).await {
+            Ok(input) => input,
+            Err(denial) => {
+                self.emit(DomainEvent::BlockUpdated {
+                    block: Block {
+                        id: block_id,
+                        kind: tool_call_kind(&ctx.tool_use_id, name, input, String::new()),
+                    },
+                });
+                return (ToolOutput::error(denial), ToolStatus::Denied);
+            }
+        };
         let effect = tool.effect(&input);
         let mut prepared = match tool.prepare(input.clone(), ctx).await {
             Ok(prepared) => prepared,
@@ -685,6 +714,35 @@ impl TurnRun<'_> {
                 }
             }
         }
+    }
+
+    /// Runs the `before_tool` hooks and returns the input to prepare the
+    /// call with, or the denial to send to the model.
+    async fn before_tool(&self, name: &str, input: Value) -> Result<Value, String> {
+        let Some(host) = &self.service.plugins else {
+            return Ok(input);
+        };
+        let event = HookEvent::BeforeTool {
+            name: name.to_owned(),
+            input: input.clone(),
+        };
+        match host.run_hook(event).await {
+            Ok(HookOutcome::Continue) => Ok(input),
+            Ok(HookOutcome::ReplaceInput(replaced)) => Ok(replaced),
+            Ok(HookOutcome::Deny { reason }) => Err(hook_denial(reason.as_deref())),
+            Err(err) => {
+                self.hook_failed("before_tool", name, &err);
+                Ok(input)
+            }
+        }
+    }
+
+    /// Reports a hook that failed; the turn goes on.
+    fn hook_failed(&self, hook: &str, tool: &str, err: &PluginError) {
+        self.emit(DomainEvent::Notice {
+            level: NoticeLevel::Warning,
+            message: format!("{hook} hook failed for `{tool}`: {err}"),
+        });
     }
 
     /// Adds a block to the timeline and returns it.
@@ -761,6 +819,14 @@ fn tool_call_kind(id: &ToolUseId, name: &str, input: Value, summary: String) -> 
     }
 }
 
+/// Message for the model when a hook denies a call.
+fn hook_denial(reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => format!("denied by hook: {reason}"),
+        None => "denied by hook".to_owned(),
+    }
+}
+
 /// First line of `text`, cut to [`OUTPUT_SUMMARY_CHARS`].
 fn summarize(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default();
@@ -779,5 +845,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 mod approval_tests;
 #[cfg(test)]
 mod cancel_tests;
+#[cfg(test)]
+mod hook_tests;
 #[cfg(test)]
 mod tests;
