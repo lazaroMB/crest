@@ -658,6 +658,103 @@ impl ResearchState {
     }
 }
 
+/// Evidence ids cited in a markdown text, as `[E3]` or `[E1, E4]`.
+///
+/// Brackets count only when everything inside them is a comma-separated
+/// list of evidence ids, so links like `[docs](...)` are ignored. Fenced
+/// code blocks and inline code spans are skipped. Ids come back without
+/// repeats, in the order they are first cited.
+#[must_use]
+pub fn extract_citations(markdown: &str) -> Vec<EvidenceId> {
+    let mut ids = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    for line in markdown.lines() {
+        if let Some(marker) = fence_marker(line) {
+            match fence {
+                None => fence = Some(marker),
+                Some((ch, len)) if marker.0 == ch && marker.1 >= len => fence = None,
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_none() {
+            collect_bracketed_ids(&strip_code_spans(line), &mut ids);
+        }
+    }
+    ids
+}
+
+/// The fence character and length when `line` opens or closes a code
+/// fence (up to three spaces of indentation, then 3+ backticks or tildes).
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let trimmed = line.trim_start_matches(' ');
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let ch = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let len = trimmed.chars().take_while(|c| *c == ch).count();
+    (len >= 3).then_some((ch, len))
+}
+
+/// The line with every closed inline code span removed.
+fn strip_code_spans(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find('`') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let ticks = after.len() - after.trim_start_matches('`').len();
+        let body = &after[ticks..];
+        let closing = find_tick_run(body, ticks);
+        match closing {
+            Some(end) => rest = &body[end + ticks..],
+            None => {
+                out.push_str(&after[..ticks]);
+                rest = body;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Byte offset of the first run of exactly `n` backticks in `s`.
+fn find_tick_run(s: &str, n: usize) -> Option<usize> {
+    let mut offset = 0;
+    while let Some(start) = s[offset..].find('`') {
+        let at = offset + start;
+        let run = s[at..].len() - s[at..].trim_start_matches('`').len();
+        if run == n {
+            return Some(at);
+        }
+        offset = at + run;
+    }
+    None
+}
+
+/// Appends the ids of every `[E1, E2]` group of `text` not seen yet.
+fn collect_bracketed_ids(text: &str, ids: &mut Vec<EvidenceId>) {
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let inner = &rest[open + 1..];
+        let Some(close) = inner.find(['[', ']']) else {
+            return;
+        };
+        if inner.as_bytes()[close] == b']' {
+            let group: Result<Vec<EvidenceId>, _> = inner[..close]
+                .split(',')
+                .map(|p| p.trim().parse())
+                .collect();
+            for id in group.into_iter().flatten() {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        rest = &inner[close..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,6 +986,45 @@ mod tests {
         insta::assert_json_snapshot!(
             "research_state_schema",
             schemars::schema_for!(ResearchState)
+        );
+    }
+
+    fn ids(text: &str) -> Vec<String> {
+        extract_citations(text)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn citations_are_extracted_in_first_cited_order() {
+        let text = "La latencia sube [E3] con la carga [E1, E4].\n\nOtra vez [E3] y [ E2 ].";
+        assert_eq!(ids(text), ["E3", "E1", "E4", "E2"]);
+    }
+
+    #[test]
+    fn non_citation_brackets_are_ignored() {
+        let text = "[docs](https://x) [E1 y E2] [E0] [H1] [E1, docs] [] [[E5]] - [x] tarea [E6";
+        assert_eq!(ids(text), ["E5"]);
+    }
+
+    #[test]
+    fn citations_inside_code_are_ignored() {
+        let text = "Antes [E1] y `arr[E2]` y ``x `[E3]` y``.\n\
+                    ```rust\nlet a = v[E4];\n```\n\
+                    ~~~~\n```\n[E5]\n~~~~\n\
+                    Después [E6] y `sin cerrar [E7]";
+        assert_eq!(ids(text), ["E1", "E6", "E7"]);
+    }
+
+    #[test]
+    fn citations_feed_the_known_evidence_check() {
+        let mut state = ResearchState::default();
+        state.add_evidence("a", url("https://a"), 1);
+        let cited = extract_citations("Sí [E1]; no [E2].");
+        assert_eq!(
+            state.cites_only_known_evidence(&cited),
+            Err(vec![EvidenceId(2)])
         );
     }
 }
