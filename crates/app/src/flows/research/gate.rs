@@ -12,6 +12,21 @@ use serde::{Deserialize, Serialize};
 /// Prefix of the context keys owned by the frame.
 pub const RESERVED_PREFIX: &str = "research.";
 
+/// Key of the [`ResearchState`](domain::research::ResearchState).
+pub(crate) const KEY_STATE: &str = "research.state";
+/// Key of the original request of the user (a `String`).
+pub(crate) const KEY_PROBLEM: &str = "research.problem";
+/// Key of the [`FlowStatus`].
+pub(crate) const KEY_STATUS: &str = "research.status";
+/// Key of the [`PendingGate`], while a node waits for the user.
+pub(crate) const KEY_GATE: &str = "research.gate";
+/// Key of the [`GateReply`] to the pending gate.
+pub(crate) const KEY_REPLY: &str = "research.reply";
+/// Key of the last stage whose `StageHeader` was emitted.
+pub(crate) const KEY_ENTERED: &str = "research.entered";
+/// Key of the `Back` count per requesting stage.
+pub(crate) const KEY_BACKS: &str = "research.backs";
+
 /// Prefix of the graph-flow task ids of the nodes.
 const TASK_PREFIX: &str = "research/";
 
