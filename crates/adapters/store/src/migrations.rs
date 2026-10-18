@@ -24,10 +24,16 @@ pub struct Migration {
 }
 
 /// Every migration, in order.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    name: "0001_init",
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        name: "0001_init",
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        name: "0002_turn_count",
+        sql: include_str!("../migrations/0002_turn_count.sql"),
+    },
+];
 
 /// Version a fully migrated database has.
 #[must_use]
@@ -164,5 +170,49 @@ mod tests {
         );
         assert_eq!(current_version(&conn).unwrap(), 1);
         assert!(!tables(&conn).contains(&"half_done".to_owned()));
+    }
+
+    #[test]
+    fn migrates_a_version_1_database_with_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(migrate_with(&mut conn, &MIGRATIONS[..1]).unwrap(), 1);
+        conn.execute_batch(
+            r#"
+            INSERT INTO sessions VALUES
+                ('a', '/ws', 'two turns', 1, 2, '{"id":"a","turns":[{},{}]}'),
+                ('b', '/ws', NULL, 1, 3, '{"id":"b"}'),
+                ('c', '/ws', NULL, 1, 4, 'not json');
+            INSERT INTO timeline_blocks VALUES ('a', 0, 'blk', 'text', '{"type":"text"}');
+            INSERT INTO permission_rules VALUES ('a', 0, '{"tool":"bash"}');
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), latest_version());
+
+        let mut stmt = conn
+            .prepare("SELECT id, title, updated_at, turn_count FROM sessions ORDER BY id")
+            .unwrap();
+        let rows: Vec<(String, Option<String>, i64, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("a".into(), Some("two turns".into()), 2, 2),
+                ("b".into(), None, 3, 0),
+                ("c".into(), None, 4, 0),
+            ]
+        );
+        let blocks: i64 = conn
+            .query_row("SELECT count(*) FROM timeline_blocks", [], |r| r.get(0))
+            .unwrap();
+        let rules: i64 = conn
+            .query_row("SELECT count(*) FROM permission_rules", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((blocks, rules), (1, 1));
     }
 }
