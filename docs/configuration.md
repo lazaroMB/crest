@@ -60,6 +60,8 @@ Changes to `init.lua` are read at startup, so you have to reopen crest for them 
 
 ## Anthropic API key
 
+The easiest way: open crest and paste the key in the dialog it shows when there is none, or run `/login` at any time. crest checks the key with Anthropic (`GET /v1/models`), stores it in the system keyring and restarts the agent of the window; a key Anthropic rejects is not stored, and one that cannot be checked (no network) is stored with a warning. `/logout` deletes it. The key goes from that masked field to the keyring: it is not added to the prompt history nor to the timeline.
+
 crest looks for the key in this order:
 
 1. The `ANTHROPIC_API_KEY` environment variable, if it is not empty.

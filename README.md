@@ -136,12 +136,12 @@ make deps       # installs what is missing: rg, fzf, the GPUI libraries...
 make install    # the same app install, from your build (make uninstall removes it)
 ```
 
-Then give it your Anthropic API key, in the system keyring (recommended) or the environment:
+Then open crest and give it your Anthropic API key: without one the window asks for it (or run `/login`). It is checked with Anthropic and stored in the system keyring (GNOME Keyring, KWallet or the macOS Keychain), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
 
 ```bash
 secret-tool store --label="crest" service crest username ANTHROPIC_API_KEY   # Linux
 security add-generic-password -s crest -a ANTHROPIC_API_KEY -w               # macOS
-# or: export ANTHROPIC_API_KEY=sk-ant-...
+# or: export ANTHROPIC_API_KEY=sk-ant-...   (opened from the app menu, crest only sees it in ~/.profile or ~/.zprofile)
 ```
 
 Requirements, every `make` target and the repository layout are in [docs/development.md](docs/development.md).

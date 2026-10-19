@@ -102,6 +102,8 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
 | `/project` | Closes this project and goes back to the [project picker](#opening-a-project). Not while a turn or command runs. |
+| `/login` | Asks for your Anthropic API key in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). See [configuration.md](configuration.md#anthropic-api-key). |
+| `/logout` | Deletes the API key from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
 | `/mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
@@ -114,7 +116,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/<name> <args>` | A command registered with `app.commands.register`. |
 | `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /project, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /project, /login, /logout, /modal, /q; /help lists every command)`.
 
 ### Shell commands (`/!`)
 

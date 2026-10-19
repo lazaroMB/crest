@@ -197,12 +197,9 @@ hints() { # target
         esac
     fi
     say ""
-    say "Next: store your Anthropic API key in the system keyring:"
-    case "$1" in
-        *-apple-darwin) say "  security add-generic-password -s crest -a ANTHROPIC_API_KEY -w" ;;
-        *) say "  secret-tool store --label=crest service crest username ANTHROPIC_API_KEY" ;;
-    esac
-    say "Started from the app menu, crest reads the environment of your login shell"
+    say "Next: open crest (from the app menu or with \`crest\`) and paste your Anthropic"
+    say "API key when it asks (or run /login). It is stored in the system keyring."
+    say "Opened from the app menu, crest reads the environment of your login shell"
     say "(~/.zprofile, ~/.profile), not ~/.zshrc or ~/.bashrc."
 }
 
