@@ -6,7 +6,8 @@
 #   scripts/package.sh --target <t>
 #
 # Produces <out>/crest-<version>-<target>.tar.gz (a directory with the
-# binary, README.txt with the runtime requirements, LICENSE* if present and
+# binary, README.txt with the runtime requirements, LICENSE* and
+# THIRD-PARTY.md if present and
 # the icon: share/ with the .desktop entry and the hicolor icons on Linux,
 # crest.icns on macOS when it was generated) and its checksum <file>.sha256
 # in the `sha256sum -c` format.
@@ -75,7 +76,7 @@ trap 'rm -rf "$staging"' EXIT
 mkdir "$staging/$name"
 
 cp "$bin_path" "$staging/$name/$BIN"
-for license in LICENSE*; do
+for license in LICENSE* THIRD-PARTY.md; do
     if [ -f "$license" ]; then
         cp "$license" "$staging/$name/"
     fi

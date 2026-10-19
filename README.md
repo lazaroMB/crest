@@ -9,7 +9,7 @@
 A native, GPU-rendered workspace for Claude: it reads, searches and edits your code with your approval,<br>
 and answers with charts, tables, diagrams, diffs and 3D models instead of a wall of text.
 
-![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
 ![Release](https://img.shields.io/badge/release-v0.6.0-d9604a)
@@ -188,4 +188,4 @@ flowchart TB
 
 crest is a **work in progress** by TwoCrest Systems. [docs/status.md](docs/status.md) lists what has been verified, what has not, and the known limitations.
 
-Licensed under either of MIT or Apache-2.0, at your option.
+crest is free software: you can redistribute it and modify it under the terms of the [GNU General Public License](LICENSE), version 3 or (at your option) any later version. For a commercial license, contact TwoCrest Systems. Third-party code keeps its own license: see [THIRD-PARTY.md](THIRD-PARTY.md).

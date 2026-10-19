@@ -208,6 +208,8 @@ If a tool should show something rich in the timeline, return `ToolOutput::text(c
 
 ## Commit conventions
 
+crest is licensed under GPL-3.0-or-later (see [LICENSE](../LICENSE)); contributions are accepted under the same license.
+
 We use [Conventional Commits](https://www.conventionalcommits.org/) with the crate as the scope (`domain`, `application`, `search`, `ui`, `crest`, ...; `docs`, `ci` or `build` for what is not code). Messages are in the imperative:
 
 ```text
