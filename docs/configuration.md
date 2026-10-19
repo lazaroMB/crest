@@ -142,6 +142,41 @@ app.opt.web = {
 - **Pages.** HTML is converted to plain text without navigation, headers, footers, scripts and styles; other text types (JSON, XML, plain text) are kept as is; PDFs and binary files are refused. curl follows up to 5 redirects and reads at most 5 MB; the text is cut to the tool result budget.
 - A workspace `app.opt.web` replaces the global one as a whole (it is one `app.opt` key).
 
+## Decision model (Cloudflare Clef)
+
+A decision model answers typed questions (yes/no, a choice, a score) about a text with probabilities instead of writing an answer. It is much cheaper and faster than a model call, so crest uses it, when it is available, to:
+
+- **judge the problem definitions** of the research flow's Definition stage (instead of a keyword heuristic and a judge call to the `plan` model), and read a free-text answer that accepts them as they are;
+- **read free-text answers at the gates** of the research and implementation flows (approve, retry, skip, abort, back to the Spec, or instructions) when they are not one of the fixed phrases;
+- **route each chat prompt**: offer only the optional tool groups it needs (charts and tables, web, simulation, subagent, each MCP server, each plugin tool; the file tools are always offered) and pick its model by difficulty (a trivial prompt goes to `models.trivial`, a hard one to `models.hard`, a normal one keeps the `main` role).
+
+It is optional: without credentials, or when a call fails or takes longer than `timeout_ms`, everything works as without it.
+
+The model is [Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/) on Cloudflare Workers AI. It needs an API token with Workers AI permission and the account id, from `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` or from the keyring (service `crest`, entries `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`), like the Anthropic key:
+
+```bash
+secret-tool store --label="crest" service crest username CLOUDFLARE_API_TOKEN
+secret-tool store --label="crest" service crest username CLOUDFLARE_ACCOUNT_ID
+```
+
+```lua
+app.opt.decision = {
+  enabled = true,              -- false never uses it
+  model = "clef-flash",        -- or "clef" (larger, slower, longer context)
+  account_id = "…",            -- instead of CLOUDFLARE_ACCOUNT_ID (the token never goes here)
+  timeout_ms = 1500,           -- per call (1-30000); a late answer falls back
+  tools = true,                -- route the tool groups of each prompt
+  model_routing = true,        -- route the model of each prompt
+  models = { trivial = "haiku", hard = "opus" },  -- aliases, role names or model ids
+}
+-- Prices in USD per million tokens (take the current ones from Cloudflare); output is free.
+app.opt.pricing = { ["clef-flash"] = { input = 0.038, output = 0 } }
+```
+
+- Prompts are routed only in the chat, and only when the turn has no `--model` override or pinned role. A notice says what the routing changed ("Decision model: haiku for a simple prompt; tools left out: web, subagent").
+- A tool group the session already used is always offered again, so the history never names a tool the model lacks.
+- `/help` shows the decision model in use, or why it is off.
+
 ## Models by role
 
 Every model call asks for a **role**, and the configuration decides which model serves each role.
@@ -282,6 +317,7 @@ Only a plugin whose capabilities were approved can read secrets, and only its ow
 | Variable | Effect |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | The API key. Takes priority over the keyring. |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Credentials of the decision model (see [Decision model](#decision-model-cloudflare-clef)). Take priority over the keyring. |
 | `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute. |
 | `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute. |
 | `CREST_PLUGIN_<PLUGIN>_<NAME>` | A plugin secret, read by `app.secret("<name>")` when the keyring has no entry (see [Plugin capabilities and secrets](#plugin-capabilities-and-secrets)). Never passed to the programs crest runs. |

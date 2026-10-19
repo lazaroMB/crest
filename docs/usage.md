@@ -311,6 +311,10 @@ The bar shows the accumulated cost of the session:
 
 See [configuration.md](configuration.md#cost-and-spending-cap).
 
+### Decision model
+
+With Cloudflare credentials, a small decision model (Clef) chooses, before each chat prompt, which optional tools the turn gets and whether a simpler or a stronger model answers it; a notice in the log says what it changed. It also judges the problem definitions of the research flow and reads free-text answers at the flows' gates. Without credentials crest works as before. See [configuration.md](configuration.md#decision-model-cloudflare-clef).
+
 ### Opening a project
 
 Without a directory (`crest`, or the desktop launcher), or with `--pick`, the window opens in the **project picker**:
