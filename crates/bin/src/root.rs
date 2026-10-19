@@ -555,6 +555,7 @@ pub async fn build_app(
                     shell: Some(shell),
                     extra_tools: Vec::new(),
                     activity: Arc::clone(&events),
+                    web: web.clone(),
                 },
                 workspace: ResearchWorkspace {
                     fs,

@@ -11,14 +11,16 @@ use super::*;
 use crate::flows::research::node::NodeDeps;
 use crate::ports::approval::ApprovalResponse;
 use crate::ports::events::DomainEvent;
-use crate::ports::llm::Citation;
-use crate::ports::llm::{LlmEvent, LlmRequest};
+use crate::ports::llm::LlmRequest;
+use crate::ports::web::{SearchHit, WebPage};
 use crate::testing::fs::InMemoryFs;
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
+use crate::testing::web::ScriptedWeb;
 use crate::tools::budget::ResultBudget;
 use crate::tools::files::ReadFileTool;
 use crate::tools::registry::ToolRegistry;
+use crate::tools::web::register_web_tools;
 use crate::usecases::run_turn::{AgentDeps, AgentService};
 
 const CACHE: &str = "pub struct LruCache;\nimpl LruCache {\n    pub fn get(&self) {}\n}\n";
@@ -44,53 +46,62 @@ fn repo_answer() -> ScriptedResponse {
     )
 }
 
-/// A web answer whose text is split around a citation of moka.
-fn web_answer() -> ScriptedResponse {
-    let text = json!({ "options": [
+/// The web turn: a search, the moka page, then the options as JSON.
+fn web_turn() -> Vec<ScriptedResponse> {
+    let options = json!({ "options": [
         { "name": "moka", "kind": "library", "summary": "concurrent cache", "url": MOKA },
         { "name": "Caching sessions", "kind": "article", "summary": "per-session TTL", "url": BLOG }
-    ]})
-    .to_string();
-    let (a, b) = text.split_at(20);
-    ScriptedResponse::events(vec![
-        LlmEvent::MessageStart {
-            model: "claude-test".into(),
-        },
-        LlmEvent::ServerToolUse {
-            index: 0,
-            name: "web_search".into(),
-        },
-        LlmEvent::BlockStop { index: 0 },
-        LlmEvent::TextDelta {
-            index: 1,
-            text: a.into(),
-        },
-        LlmEvent::Citation {
-            index: 1,
-            citation: Citation {
-                url: MOKA.into(),
-                title: Some("moka".into()),
-                cited_text: "A fast concurrent cache library for Rust".into(),
-            },
-        },
-        LlmEvent::TextDelta {
-            index: 1,
-            text: b.into(),
-        },
-        LlmEvent::BlockStop { index: 1 },
-        LlmEvent::MessageStop {
-            stop_reason: domain::conversation::StopReason::EndTurn,
-        },
-    ])
+    ]});
+    vec![
+        ScriptedResponse::tool_use(
+            "w1",
+            "web_search",
+            json!({ "query": "rust concurrent cache" }),
+        ),
+        ScriptedResponse::tool_use("w2", "web_fetch", json!({ "url": MOKA })),
+        ScriptedResponse::text(options.to_string()),
+    ]
 }
 
-fn agent(llm: &Arc<ScriptedLlm>, sink: &Arc<RecordingSink>) -> Arc<AgentService> {
+fn web() -> Arc<ScriptedWeb> {
+    Arc::new(
+        ScriptedWeb::new()
+            .on_search(
+                "rust concurrent cache",
+                vec![
+                    SearchHit {
+                        title: "moka".into(),
+                        url: MOKA.into(),
+                        snippet: "Moka is a fast cache".into(),
+                    },
+                    SearchHit {
+                        title: "Caching sessions".into(),
+                        url: BLOG.into(),
+                        snippet: "TTL per session".into(),
+                    },
+                ],
+            )
+            .on_fetch(
+                MOKA,
+                WebPage {
+                    url: MOKA.into(),
+                    title: Some("moka".into()),
+                    text: "A fast concurrent cache library for Rust".into(),
+                },
+            ),
+    )
+}
+
+fn agent(llm: &Arc<ScriptedLlm>, sink: &Arc<RecordingSink>, with_web: bool) -> Arc<AgentService> {
     let fs = Arc::new(
         InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/cache.rs", CACHE),
     );
     let budget = ResultBudget::default();
     let mut tools = ToolRegistry::new().with_budget(budget);
     tools.register_typed(ReadFileTool::new(fs, budget)).unwrap();
+    if with_web {
+        register_web_tools(&mut tools, web(), 5).unwrap();
+    }
     let deps = AgentDeps {
         llm: Arc::clone(llm) as _,
         events: Arc::clone(sink) as _,
@@ -114,7 +125,15 @@ struct Run {
     options: Option<Vec<PriorSolution>>,
 }
 
-async fn run(state: ResearchState, with_agent: bool, script: Vec<ScriptedResponse>) -> Run {
+/// Which agent the node gets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum With {
+    Nothing,
+    Agent,
+    AgentAndWeb,
+}
+
+async fn run(state: ResearchState, with: With, script: Vec<ScriptedResponse>) -> Run {
     let llm = Arc::new(ScriptedLlm::new(script));
     let sink = Arc::new(RecordingSink::new());
     let mut deps = NodeDeps::new(
@@ -123,8 +142,8 @@ async fn run(state: ResearchState, with_agent: bool, script: Vec<ScriptedRespons
         Arc::clone(&sink) as _,
     )
     .with_clock(|| 5);
-    if with_agent {
-        deps = deps.with_agent(agent(&llm, &sink));
+    if with != With::Nothing {
+        deps = deps.with_agent(agent(&llm, &sink, with == With::AgentAndWeb));
     }
     let mut ctx = NodeContext::new(Stage::Research, deps, "login is slow", state);
     let outcome = Research::new().run(&mut ctx).await.unwrap();
@@ -148,15 +167,16 @@ async fn run(state: ResearchState, with_agent: bool, script: Vec<ScriptedRespons
 
 #[tokio::test]
 async fn records_repo_and_web_solutions_as_evidence() {
-    let script = vec![
+    let mut script = vec![
         ScriptedResponse::tool_use("toolu_1", "read_file", json!({ "path": "src/cache.rs" })),
         repo_answer(),
-        web_answer(),
     ];
-    let run = run(state(), true, script).await;
+    script.extend(web_turn());
+    let run = run(state(), With::AgentAndWeb, script).await;
     assert_eq!(run.outcome, NodeOutcome::Done);
 
-    // E1 from the repo, E2 from the moka citation, E3 for the uncited blog.
+    // E1 from the repo, E2 from the moka page read, E3 for the blog it
+    // only found.
     let evidence = &run.state.evidence;
     assert_eq!(evidence.len(), 3);
     assert!(
@@ -186,17 +206,23 @@ async fn records_repo_and_web_solutions_as_evidence() {
     assert_eq!(table.rows[1][1], Cell::Text("library".into()));
     assert_eq!(sources.len(), 3);
 
-    // The agent read the file with the explore role; the web request
-    // carries the server tools.
-    assert_eq!(run.requests.len(), 3);
+    // The agent read the file and the web with the explore role and local
+    // tools only.
+    assert_eq!(run.requests.len(), 5);
     assert!(
         run.requests
             .iter()
-            .all(|r| r.model.role == ModelRole::Explore)
+            .all(|r| r.model.role == ModelRole::Explore && r.server_tools.is_empty())
     );
-    assert!(run.requests[0].tools.iter().any(|t| t.name == "read_file"));
-    assert!(run.requests[0].server_tools.is_empty());
-    assert_eq!(run.requests[2].server_tools.len(), 2);
+    let tools: Vec<&str> = run.requests[0]
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert!(
+        tools.contains(&"read_file") && tools.contains(&"web_fetch"),
+        "{tools:?}"
+    );
     assert!(
         run.state
             .journal
@@ -208,21 +234,39 @@ async fn records_repo_and_web_solutions_as_evidence() {
 }
 
 #[tokio::test]
-async fn without_an_agent_only_searches_the_web() {
-    let run = run(state(), false, vec![web_answer()]).await;
+async fn without_web_tools_only_the_repo_is_explored() {
+    let script = vec![repo_answer()];
+    let run = run(state(), With::Agent, script).await;
     assert_eq!(run.outcome, NodeOutcome::Done);
     assert_eq!(run.requests.len(), 1);
-    assert_eq!(run.options.unwrap().len(), 2);
+    assert_eq!(run.options.unwrap().len(), 1);
     assert!(
         run.state.journal[0]
             .text
-            .contains("the repo was not explored")
+            .contains("the web was not searched")
+    );
+}
+
+#[tokio::test]
+async fn without_an_agent_nothing_is_searched() {
+    let run = run(state(), With::Nothing, vec![]).await;
+    assert_eq!(run.outcome, NodeOutcome::Done);
+    assert!(run.requests.is_empty());
+    assert!(run.options.unwrap().is_empty());
+    let journal: Vec<&str> = run.state.journal.iter().map(|e| e.text.as_str()).collect();
+    assert!(
+        journal[0].contains("the repo was not explored"),
+        "{journal:?}"
+    );
+    assert!(
+        journal[1].contains("the web was not searched"),
+        "{journal:?}"
     );
 }
 
 #[tokio::test]
 async fn goes_back_without_a_problem_definition() {
-    let run = run(ResearchState::default(), true, vec![]).await;
+    let run = run(ResearchState::default(), With::Agent, vec![]).await;
     assert!(matches!(
         run.outcome,
         NodeOutcome::Back {

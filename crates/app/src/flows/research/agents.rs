@@ -39,6 +39,7 @@ use crate::tools::files::{
     FindFileTool, GrepTool, ListFilesTool, ReadFileTool, RunCommandTool, TreeTool,
 };
 use crate::tools::registry::{RegisterError, Tool, ToolRegistry};
+use crate::tools::web::WebTools;
 use crate::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions};
 
 /// Most model calls of one explore turn.
@@ -47,10 +48,12 @@ pub const EXPLORE_MAX_ITERATIONS: u32 = 30;
 /// System prompt of the read-only agent.
 pub const EXPLORE_SYSTEM_PROMPT: &str = "\
 You are the read-only research agent of crest, a coding assistant. You investigate the \
-workspace for one stage of a research flow. You can only read: list_files, find_file, grep, \
-tree, read_file and, when offered, run_command for read-only git commands and read-only MCP \
-tools. You cannot edit, write or run other commands, and you cannot ask the user anything.
+workspace and the web for one stage of a research flow. You can only read: list_files, \
+find_file, grep, tree, read_file and, when offered, web_search and web_fetch, run_command for \
+read-only git commands and read-only MCP tools. You cannot edit, write or run other commands, \
+and you cannot ask the user anything.
 - Search broadly first (grep, find_file, tree), then read only the parts that matter.
+- On the web, search, read the most relevant pages with web_fetch and give their URLs.
 - Cite what you read with its workspace path and line numbers.
 - End with exactly the answer format the task asks for.";
 
@@ -73,6 +76,8 @@ pub struct ExplorePorts {
     pub shell: Option<Arc<dyn ShellPort>>,
     /// Extra read-only tools (MCP queries registered with a read effect).
     pub extra_tools: Vec<Arc<dyn Tool>>,
+    /// `web_search` and `web_fetch`, when the web is configured.
+    pub web: Option<WebTools>,
     /// Receives one [`DomainEvent::Activity`] per tool call of the agent
     /// (see [`ExploreActivity`]); nothing else of its turns.
     pub activity: Arc<dyn EventSink>,
@@ -99,6 +104,9 @@ pub fn read_only_tools(
     }
     for tool in &ports.extra_tools {
         tools.register(Arc::clone(tool))?;
+    }
+    if let Some(web) = &ports.web {
+        web.register(&mut tools)?;
     }
     Ok(tools)
 }
@@ -269,6 +277,7 @@ mod tests {
             shell: Some(Arc::new(ScriptedShell::new())),
             extra_tools: Vec::new(),
             activity: Arc::new(DiscardEvents),
+            web: None,
         }
     }
 

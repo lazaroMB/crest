@@ -21,7 +21,6 @@
 
 use std::sync::Arc;
 
-use adapter_anthropic::ServerToolConfig;
 use adapter_store::SqliteFlowStorage;
 use application::flows::research::agents::{ExplorePorts, explore_agent, node_agent};
 use application::flows::research::error::FlowError;
@@ -30,46 +29,12 @@ use application::flows::research::gate::FlowStatus;
 use application::flows::research::graph::{ResearchWorkspace, research_graph};
 use application::flows::research::node::NodeDeps;
 use application::flows::research::session::{ResearchSession, describe_reply, describe_status};
-use application::ports::llm::{LlmError, LlmPort, LlmRequest, LlmStream, ToolChoice};
+use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::run_turn::{AgentDeps, SharedPermissions};
-use async_trait::async_trait;
 use domain::model::ModelPolicy;
 use domain::permission::ToolEffect;
 use domain::workspace::WorkspaceRoot;
-
-/// [`LlmPort`] that gives each request the web tools of its role
-/// ([`ServerToolConfig`]: `explore` and `plan` search and fetch), unless
-/// the node set its own or forces a tool.
-pub struct WebToolsLlm {
-    inner: Arc<dyn LlmPort>,
-    config: ServerToolConfig,
-}
-
-impl WebToolsLlm {
-    /// Wraps `inner` with the default config.
-    #[must_use]
-    pub fn new(inner: Arc<dyn LlmPort>) -> Self {
-        Self {
-            inner,
-            config: ServerToolConfig::default(),
-        }
-    }
-}
-
-#[async_trait]
-impl LlmPort for WebToolsLlm {
-    async fn stream(&self, mut req: LlmRequest) -> Result<LlmStream, LlmError> {
-        if req.server_tools.is_empty() && !matches!(req.tool_choice, ToolChoice::Tool(_)) {
-            self.config.apply(&mut req);
-        }
-        self.inner.stream(req).await
-    }
-
-    async fn count_tokens(&self, req: &LlmRequest) -> Result<u64, LlmError> {
-        self.inner.count_tokens(req).await
-    }
-}
 
 /// What the research flow is built from, all shared with the chat.
 pub struct ResearchParts {
@@ -82,7 +47,8 @@ pub struct ResearchParts {
     pub permissions: SharedPermissions,
     /// Model selection.
     pub models: ModelPolicy,
-    /// Ports of the read-only agent; its MCP tools are taken from `tools`.
+    /// Ports of the read-only agent (with the web tools, when configured);
+    /// its MCP tools are taken from `tools`.
     pub explore: ExplorePorts,
     /// Where the Specs are written.
     pub workspace: ResearchWorkspace,
@@ -123,7 +89,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         root,
         storage,
     } = parts;
-    let llm: Arc<dyn LlmPort> = Arc::new(WebToolsLlm::new(Arc::clone(&agent.llm)));
+    let llm: Arc<dyn LlmPort> = Arc::clone(&agent.llm);
     explore.llm = Arc::clone(&llm);
     explore.extra_tools.extend(read_only_mcp(&tools));
     let explorer = explore_agent(explore)?;

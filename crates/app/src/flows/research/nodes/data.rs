@@ -3,9 +3,9 @@
 //! - The read-only agent reads the history of the files Observation marked
 //!   as key (`git log` when the shell is available), logs and metrics in
 //!   the repository and, when MCP tools (`mcp__*`) are offered, issues.
-//! - The stage's model (`explore`, which the adapter gives web search)
-//!   looks up the documentation of the libraries involved; its citations
-//!   become evidence with
+//! - When the agent has the web tools, it looks up the documentation of
+//!   the libraries involved with `web_search` and `web_fetch`; the pages it
+//!   read become evidence with
 //!   [`citations_to_evidence`](crate::usecases::evidence::citations_to_evidence).
 //!
 //! The node shows a `Chart` of commits per week when the history has
@@ -17,18 +17,17 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, ChartKind, ChartSpec, Column, Series, SourceRef, TableSpec};
-use domain::conversation::Message;
 use domain::research::{EvidenceId, Stage};
 use serde::{Deserialize, Serialize};
 
 use super::intake::{BRIEF_KEY, IntakeBrief};
 use super::observation::{
-    self, ObservationReport, explore_json, has_shell, sources_block, validate_source,
+    self, ObservationReport, explore_json, explore_web, has_shell, has_web, sources_block,
+    validate_source,
 };
 use super::spec::record_charts;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
-use crate::ports::llm::Citation;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Flow data key of the [`DataReport`].
@@ -58,9 +57,10 @@ const FORMAT: &str = "When you finish, answer only with a JSON object, with no t
  \"libraries\": [\"external libraries involved whose documentation is worth checking\"]}
 Use empty lists when there is nothing.";
 
-const WEB_SYSTEM: &str = "You are investigating a software problem. Search the web for the \
-official documentation, changelogs and known issues of the given libraries that are relevant to \
-the problem. Answer in 3 to 5 short bullets and cite the sources.";
+const WEB_SYSTEM: &str = "You are investigating a software problem. Search the web with \
+web_search for the official documentation, changelogs and known issues of the given libraries \
+that are relevant to the problem, and read the most relevant pages with web_fetch (up to 4). \
+Answer in 3 to 5 short bullets and give the URL of each source.";
 
 /// What Data gathered, read by Analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,13 +258,6 @@ fn source_kind(source: &SourceRef) -> &'static str {
     }
 }
 
-/// Asks the stage's model, which the adapter gives web search, and
-/// returns its answer and citations.
-async fn search_web(ctx: &NodeContext, prompt: &str) -> Result<(String, Vec<Citation>), NodeError> {
-    let req = ctx.request(WEB_SYSTEM, vec![Message::user_text(prompt)]);
-    ctx.complete_with_citations(req).await
-}
-
 #[async_trait]
 impl ResearchNode for Data {
     fn stage(&self) -> Stage {
@@ -337,13 +330,13 @@ impl ResearchNode for Data {
             .collect();
         let mut web_summary = None;
         let mut web = 0;
-        if !libraries.is_empty() {
+        if !libraries.is_empty() && has_web(ctx) {
             let prompt = format!(
-                "Problem: {}\nLibraries: {}",
+                "{WEB_SYSTEM}\n\nProblem: {}\nLibraries: {}",
                 brief.restated,
                 libraries.join(", ")
             );
-            match search_web(ctx, &prompt).await {
+            match explore_web(ctx, &prompt).await {
                 Ok((text, citations)) => {
                     web = citations.len();
                     for id in citations_to_evidence(&citations, ctx.state_mut(), now) {
@@ -438,21 +431,22 @@ mod tests {
 
     use crate::ports::llm::LlmError;
 
-    use domain::conversation::{StopReason, Usage};
-    use domain::model::{ModelId, ModelRole};
+    use domain::model::ModelRole;
     use domain::permission::ToolEffect;
     use serde_json::json;
 
     use super::observation::testing::{agent, blocks, brief, context, workspace};
     use super::observation::{KeyFile, ObservationReport};
     use super::*;
-    use crate::ports::llm::LlmEvent;
     use crate::ports::mcp::McpTool as McpSpec;
     use crate::ports::shell::CommandOutput;
+    use crate::ports::web::{SearchHit, WebPage};
     use crate::testing::fs::ScriptedShell;
     use crate::testing::llm::{FakeMcp, ScriptedLlm, ScriptedResponse};
     use crate::testing::system::RecordingSink;
+    use crate::testing::web::ScriptedWeb;
     use crate::tools::mcp::McpTool;
+    use crate::tools::web::register_web_tools;
 
     fn observed() -> ObservationReport {
         ObservationReport {
@@ -467,32 +461,37 @@ mod tests {
         }
     }
 
-    fn web_answer() -> ScriptedResponse {
-        let citation = Citation {
-            url: "https://docs.rs/argon2".into(),
-            title: Some("argon2 - docs.rs".into()),
-            cited_text: "The default parameters use 19 MiB of memory.".into(),
-        };
-        ScriptedResponse::events(vec![
-            LlmEvent::MessageStart {
-                model: ModelId::new("fake"),
-            },
-            LlmEvent::ServerToolUse {
-                index: 0,
-                name: "web_search".into(),
-            },
-            LlmEvent::BlockStop { index: 0 },
-            LlmEvent::TextDelta {
-                index: 1,
-                text: "- argon2 is slow by design.".into(),
-            },
-            LlmEvent::Citation { index: 1, citation },
-            LlmEvent::BlockStop { index: 1 },
-            LlmEvent::Usage(Usage::default()),
-            LlmEvent::MessageStop {
-                stop_reason: StopReason::EndTurn,
-            },
-        ])
+    const DOCS: &str = "https://docs.rs/argon2";
+
+    fn web() -> Arc<ScriptedWeb> {
+        Arc::new(
+            ScriptedWeb::new()
+                .on_search(
+                    "argon2 parameters",
+                    vec![SearchHit {
+                        title: "argon2 - docs.rs".into(),
+                        url: DOCS.into(),
+                        snippet: "Pure Rust Argon2".into(),
+                    }],
+                )
+                .on_fetch(
+                    DOCS,
+                    WebPage {
+                        url: DOCS.into(),
+                        title: Some("argon2 - docs.rs".into()),
+                        text: "The default parameters use 19 MiB of memory.".into(),
+                    },
+                ),
+        )
+    }
+
+    /// The web turn: a search, a page, then the bullets.
+    fn web_turn() -> [ScriptedResponse; 3] {
+        [
+            ScriptedResponse::tool_use("w1", "web_search", json!({"query": "argon2 parameters"})),
+            ScriptedResponse::tool_use("w2", "web_fetch", json!({"url": DOCS})),
+            ScriptedResponse::text("- argon2 is slow by design."),
+        ]
     }
 
     fn agent_answer() -> String {
@@ -530,8 +529,11 @@ mod tests {
             ),
             ScriptedResponse::tool_use("t2", "mcp__github__search_issues", json!({"q": "login"})),
             ScriptedResponse::text(agent_answer()),
-            web_answer(),
         ]));
+        for response in web_turn() {
+            llm.push(response);
+        }
+        let web = web();
         let shell = Arc::new(ScriptedShell::new().on(
             "git",
             git_log,
@@ -543,7 +545,9 @@ mod tests {
         ));
         let mcp =
             Arc::new(FakeMcp::new().with_text_tool("github", "search_issues", "#12 slow login"));
+        let tools_web = web.clone();
         let service = agent(&llm, &workspace(), Some(shell.clone()), |tools| {
+            register_web_tools(tools, tools_web.clone(), 5).unwrap();
             let spec = McpSpec {
                 server: "github".into(),
                 name: "search_issues".into(),
@@ -565,6 +569,7 @@ mod tests {
 
         assert_eq!(shell.calls().len(), 1);
         assert_eq!(mcp.calls().len(), 1);
+        assert_eq!(web.fetches(), [DOCS]);
         let requests = llm.requests();
         let sent = format!("{:?}", requests[0].messages);
         assert!(sent.contains("src/login.rs") && sent.contains("mcp__github__search_issues"));
@@ -580,8 +585,10 @@ mod tests {
         assert!(
             matches!(&state.evidence[3].source, SourceRef::Url { url, .. } if url.ends_with("/12"))
         );
-        assert!(
-            matches!(&state.evidence[4].source, SourceRef::Url { url, .. } if url == "https://docs.rs/argon2")
+        assert!(matches!(&state.evidence[4].source, SourceRef::Url { url, .. } if url == DOCS));
+        assert_eq!(
+            state.evidence[4].claim,
+            "The default parameters use 19 MiB of memory."
         );
         assert!(state.journal[0].text.contains("E1, E2, E3, E4, E5"));
 
@@ -636,7 +643,9 @@ mod tests {
             ScriptedResponse::text(r#"{"libraries": ["argon2"]}"#),
             ScriptedResponse::open_error(LlmError::Overloaded),
         ]));
-        let service = agent(&llm, &workspace(), None, |_| {});
+        let service = agent(&llm, &workspace(), None, |tools| {
+            register_web_tools(tools, web(), 5).unwrap();
+        });
         let sink = Arc::new(RecordingSink::new());
         let mut ctx = context(Stage::Data, &llm, &sink, Some(service));
         ctx.set_data(BRIEF_KEY, brief()).unwrap();
@@ -648,6 +657,23 @@ mod tests {
                 .text
                 .contains("Could not search the web")
         );
+    }
+
+    #[tokio::test]
+    async fn without_web_tools_the_docs_are_not_searched() {
+        let llm = Arc::new(ScriptedLlm::new([ScriptedResponse::text(
+            r#"{"libraries": ["argon2"]}"#,
+        )]));
+        let service = agent(&llm, &workspace(), None, |_| {});
+        let sink = Arc::new(RecordingSink::new());
+        let mut ctx = context(Stage::Data, &llm, &sink, Some(service));
+        ctx.set_data(BRIEF_KEY, brief()).unwrap();
+        ctx.set_data(observation::REPORT_KEY, observed()).unwrap();
+
+        assert_eq!(Data::new().run(&mut ctx).await.unwrap(), NodeOutcome::Done);
+        assert_eq!(llm.requests().len(), 1, "no web turn");
+        let report: DataReport = ctx.data(REPORT_KEY).unwrap();
+        assert_eq!(report.web_summary, None);
     }
 
     #[tokio::test]

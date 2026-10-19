@@ -5,10 +5,11 @@
 //! - **the repo**: a turn of the agent ([`NodeContext::agent`]) told to
 //!   only read, looking for patterns and pieces already present; each
 //!   finding becomes evidence with its file and lines;
-//! - **the web**: one request with the provider's web search and fetch
-//!   tools, looking for libraries, articles and issues; every citation
-//!   becomes evidence ([`citations_to_evidence`]), and so does the page of
-//!   each option that no citation covers.
+//! - **the web**: a turn of the read-only agent with `web_search` and
+//!   `web_fetch` ([`explore_web`]), looking for libraries, articles and
+//!   issues; every page it read becomes evidence ([`citations_to_evidence`]),
+//!   and so does the page of each option it did not read. Without the web
+//!   tools (no curl, `app.opt.web.enabled = false`) the web is skipped.
 //!
 //! The options found are shown as a table with their sources and stored
 //! under [`OPTIONS_KEY`] for the brainstorm and the modeling. Without a
@@ -22,18 +23,13 @@ use domain::conversation::Message;
 use domain::research::{EvidenceId, Stage};
 use serde::{Deserialize, Serialize};
 
+use super::observation::{explore_web, has_web};
 use crate::flows::research::json::final_text;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
-use crate::ports::llm::ServerTool;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Key of the prior solutions found (`Vec<PriorSolution>`).
 pub const OPTIONS_KEY: &str = "investigation.options";
-
-/// Searches the web may run in the request.
-const WEB_SEARCHES: u32 = 5;
-/// Pages the web fetch may read in the request.
-const WEB_FETCHES: u32 = 3;
 
 const REPO_PROMPT: &str = "\
 You are the \"Research\" node of an investigation of this repository. YOU MAY ONLY READ: \
@@ -47,8 +43,9 @@ line_start and line_end may be null. If there is nothing, return \"findings\": [
 
 const WEB_SYSTEM: &str = "\
 You are the \"Research\" node of an investigation of a software project. Search the web \
-for prior solutions to the problem: libraries, articles and issues of similar projects. Cite the \
-sources. Do not make up URLs: include only pages you found.
+with web_search for prior solutions to the problem: libraries, articles and issues of similar \
+projects. Read the most relevant results with web_fetch (up to 5 pages) and search again with \
+other words if the first results fall short. Do not make up URLs: include only pages you found.
 When you finish, answer only with JSON:
 {\"options\": [{\"name\": \"…\", \"kind\": \"library\", \"summary\": \"one line\", \
 \"url\": \"https://…\"}]}
@@ -258,23 +255,19 @@ async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSol
         .collect())
 }
 
-/// Libraries, articles and issues from the web, with their citations.
+/// Libraries, articles and issues from the web, with the pages read.
 async fn web_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolution>, NodeError> {
-    let messages = vec![Message::user_text(brief)];
-    let mut req = ctx.request(WEB_SYSTEM, messages.clone());
-    req.server_tools = vec![
-        ServerTool::WebSearch {
-            max_uses: Some(WEB_SEARCHES),
-        },
-        ServerTool::WebFetch {
-            max_uses: Some(WEB_FETCHES),
-        },
-    ];
-    let (text, citations) = ctx.complete_with_citations(req).await?;
+    if !has_web(ctx) {
+        ctx.log("No web tools (curl or app.opt.web): the web was not searched.");
+        return Ok(Vec::new());
+    }
+    let prompt = format!("{WEB_SYSTEM}\n\n{brief}");
+    let (text, citations) = explore_web(ctx, &prompt).await?;
     let now = ctx.now();
     let cited = citations_to_evidence(&citations, ctx.state_mut(), now);
+    let messages = vec![Message::user_text(prompt)];
     let answer: WebAnswer = ctx
-        .fix_json(WEB_SYSTEM, messages, text, |a: &WebAnswer| {
+        .fix_json("", messages, text, |a: &WebAnswer| {
             a.options.iter().try_for_each(|o| {
                 if o.name.trim().is_empty() || o.summary.trim().is_empty() {
                     Err("every option needs `name` and `summary`".to_owned())

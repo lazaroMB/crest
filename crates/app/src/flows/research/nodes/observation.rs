@@ -11,7 +11,9 @@
 //! goes back there.
 //!
 //! [`explore_json`] (one turn of the read-only agent that must end in a
-//! JSON object) is shared with the Data node.
+//! JSON object) is shared with the Data node, and [`explore_web`] (a turn
+//! that researches on the web, with the pages it read as citations) with
+//! Data and Research.
 
 use std::fmt::Write as _;
 
@@ -22,7 +24,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::intake::{BRIEF_KEY, IntakeBrief};
+use crate::flows::research::json::final_text;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
+use crate::ports::llm::Citation;
+use crate::tools::web::WEB_SEARCH_TOOL;
+use crate::usecases::web_sources::web_sources;
 
 /// Flow data key of the [`ObservationReport`].
 pub const REPORT_KEY: &str = "observation.report";
@@ -158,6 +164,50 @@ pub(crate) async fn explore_json<T: DeserializeOwned>(
     let agent = ctx.explore_agent()?;
     let mut session = ctx.new_session();
     ctx.agent_json(agent, &mut session, input, validate).await
+}
+
+/// Whether the read-only agent can search the web (`app.opt.web` and curl).
+pub(crate) fn has_web(ctx: &NodeContext) -> bool {
+    ctx.explore_agent()
+        .is_ok_and(|agent| agent.tools().get(WEB_SEARCH_TOOL).is_some())
+}
+
+/// Runs one turn of the read-only agent with `prompt`, which asks it to
+/// research on the web, and returns its last answer and the sources it
+/// used as citations: the pages it read (with an excerpt), or the search
+/// results (with their snippet) when it read none.
+///
+/// # Errors
+///
+/// [`NodeError::Unavailable`] without an agent, or the turn's errors.
+pub(crate) async fn explore_web(
+    ctx: &NodeContext,
+    prompt: &str,
+) -> Result<(String, Vec<Citation>), NodeError> {
+    let agent = ctx.explore_agent()?;
+    let mut session = ctx.new_session();
+    agent
+        .run_turn(&mut session, prompt.to_owned(), ctx.turn_options())
+        .await?;
+    let sources = web_sources(session.turns.iter().flat_map(|turn| turn.messages.iter()));
+    let used = if sources.read.is_empty() {
+        sources.found
+    } else {
+        sources.read
+    };
+    let citations = used
+        .into_iter()
+        .map(|mut citation| {
+            if citation.cited_text.trim().is_empty() {
+                citation.cited_text = citation
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| citation.url.clone());
+            }
+            citation
+        })
+        .collect();
+    Ok((final_text(&session), citations))
 }
 
 /// Whether the agent can run read-only git commands.
