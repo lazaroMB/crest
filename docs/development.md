@@ -59,14 +59,17 @@ crates/
 scripts/
   install-deps.sh       installs or checks dependencies (Bash 3.2+)
   check-arch.sh         hexagonal architecture rules
-  package.sh            builds the release tarball
+  package.sh            builds the release tarball (crest.app on macOS)
+  install.sh            installs crest as an app from a release or a tarball (POSIX sh)
   screenshots.sh        takes the README's screenshots from the UI examples
   icons.sh              renders the app icons from assets/logo.svg
-assets/                 logo, icons, .desktop entry and screenshots/
+assets/                 logo, icons, .desktop entry, crest-launcher.sh,
+                        macos/Info.plist.in and screenshots/
 examples/plugins/       showcase: a demo Lua plugin with every extension point
 tests/
   arch/                 fixtures and tests for check-arch.sh
   install-deps/         tests for install-deps.sh
+  install/              tests for install.sh and the app layout of package.sh
 docs/                   user and developer guides
 .github/workflows/      ci.yml, live.yml, release.yml
 ```
@@ -86,10 +89,11 @@ docs/                   user and developer guides
 | `make test` / `make test-live` | Offline tests / tests against the real API (needs `ANTHROPIC_API_KEY`). |
 | `make arch` / `make test-arch` | Architecture rules / their tests. |
 | `make test-deps` | Tests for `install-deps.sh`. |
-| `make check` | `fmt-check`, `lint`, `test`, `arch`, `test-arch` and `test-deps`. |
+| `make test-install` | Tests for `install.sh` and the app layout of `package.sh`. |
+| `make check` | `fmt-check`, `lint`, `test`, `arch`, `test-arch`, `test-deps` and `test-install`. |
 | `make ci` | `doctor` + `check`. |
 | `make package` | Release tarball in `dist/`. |
-| `make install` | Copies the binary to `$(PREFIX)/bin` (`PREFIX=~/.local`). |
+| `make install` / `make uninstall` | Packages the release build and installs it with `scripts/install.sh`: `$(PREFIX)/bin/crest` plus the app menu entry on Linux, `~/Applications/crest.app` on macOS (`PREFIX=~/.local`). |
 | `make clean` | `cargo clean`. |
 
 ### Screenshots
@@ -117,6 +121,7 @@ make check   # fmt-check + lint + test + arch + test-arch + test-deps
 | `make test-live` | The `#[ignore]` tests whose name contains `live`, with `ANTHROPIC_LIVE_TEST=1`. Needs `ANTHROPIC_API_KEY` in the environment. |
 | `make arch` / `make test-arch` | `scripts/check-arch.sh` and its fixtures. |
 | `make test-deps` | The tests of `scripts/install-deps.sh` (helpers and a macOS simulation). |
+| `make test-install` | `tests/install/run.sh`: packages a fake binary for Linux and macOS and installs, launches and uninstalls it in a temporary prefix. |
 
 Code rules, enforced by the workspace lints:
 

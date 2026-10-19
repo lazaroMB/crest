@@ -9,7 +9,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - It has not been tested against the real Anthropic API in the development environment: every test uses scripted models or `wiremock`, and `make test-live` has not been run here. The default model ids (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`) are validated against `GET /v1/models` at startup.
 - macOS has not been tested on a real machine: CI builds and tests there, but nobody has used the window on a Mac.
 - The decision model (Cloudflare Clef) has only been tested against a mock server, not with a real token.
-- There is no desktop launcher on macOS (no `.app` bundle) and the Linux one (`make install`) has not been tried on a desktop session.
+- The installer (`scripts/install.sh`) is tested on a temporary prefix with a fake binary on Linux and macOS (CI), but `crest.app` has not been opened on a real Mac, and the app is neither signed nor notarized (the installer removes the quarantine).
 - Reading the API key or plugin secrets from the system keyring has not been tested (the tests use the environment fallback).
 - The rtk integration (`app.opt.rtk`) has only been tested with a fake `rtk` script that follows the `rtk rewrite` exit-code contract, not with the real binary.
 - The privacy layer works by patterns: it catches well-known key formats and validated personal data, not every secret (a password with only letters, a custom token format). Add `app.opt.privacy.patterns` for your own formats.

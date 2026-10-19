@@ -118,14 +118,22 @@ app.plugins = { "~/path/to/crest/examples/plugins/showcase" }
 
 ## Install
 
-**From a release.** Download the tarball for your platform from the [latest release](https://github.com/lazaroMB/crest/releases/latest): Linux x86_64, macOS Apple Silicon or Intel. Extract it and put `crest` on your `PATH`. The macOS binaries are not signed yet; the tarball's README explains how to remove the quarantine.
+**One line** (Linux x86_64, macOS Apple Silicon or Intel; no sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
+```
+
+It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.7.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
+
+Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
 **From source** (Rust 1.99+):
 
 ```bash
 git clone https://github.com/lazaroMB/crest && cd crest
 make deps       # installs what is missing: rg, fzf, the GPUI libraries...
-make install    # ~/.local/bin/crest, with its icon and desktop entry
+make install    # the same app install, from your build (make uninstall removes it)
 ```
 
 Then give it your Anthropic API key, in the system keyring (recommended) or the environment:
