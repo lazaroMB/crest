@@ -6,6 +6,8 @@
 //! - `1`–`8` jump to a section, `Tab`/`Shift+Tab` go to the next or the
 //!   previous one;
 //! - `j`/`k` (or the arrows) move, `PageUp`/`PageDown`, `Home`/`End`;
+//!   `Shift+Up`/`Shift+Down` and `Ctrl+D`/`Ctrl+U` scroll without moving
+//!   (to read a tall expanded row);
 //! - `Enter` expands the selected row (a tool's input schema, a plugin's
 //!   details), `y` copies its command or name;
 //! - `/` goes to the search box, where typing filters every section live;
@@ -200,8 +202,24 @@ impl HelpView {
             match keys.key.as_str() {
                 "n" => self.move_selection(1, cx),
                 "p" => self.move_selection(-1, cx),
+                // Scroll without moving the selection: a tall expanded row
+                // (a tool schema) is read this way.
+                "d" => {
+                    crate::keyscroll::scroll_key(&self.scroll, "pagedown");
+                    cx.notify();
+                }
+                "u" => {
+                    crate::keyscroll::scroll_key(&self.scroll, "pageup");
+                    cx.notify();
+                }
                 _ => return,
             }
+            cx.stop_propagation();
+            return;
+        }
+        if m.shift && matches!(keys.key.as_str(), "up" | "down") {
+            crate::keyscroll::scroll_key(&self.scroll, &keys.key);
+            cx.notify();
             cx.stop_propagation();
             return;
         }
@@ -390,7 +408,8 @@ impl Render for HelpView {
                     "nothing matches the search"
                 })
         });
-        let hint = "/ search · 1–8 or Tab sections · j/k move · Enter expand · y copy · Esc close";
+        let hint = "/ search · 1–8 or Tab sections · ↑↓ move · Ctrl+D/U scroll · Enter expand · \
+                    y copy · Esc close";
         let footer = h_flex()
             .gap_3()
             .px_3()

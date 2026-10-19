@@ -21,8 +21,8 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -206,7 +206,8 @@ struct Shown {
 /// pending and covers the window otherwise.
 ///
 /// Keys while open: `y` approve, `a` approve always, `n` reject with an
-/// optional reason (typed, then `Enter`; `Esc` goes back), `Esc` reject.
+/// optional reason (typed, then `Enter`; `Esc` goes back), `Esc` reject;
+/// `Up`/`Down`, `PageUp`/`PageDown` and `Home`/`End` scroll the preview.
 /// Requests that arrive while one is open wait in a queue.
 pub struct ApprovalView {
     focus_handle: FocusHandle,
@@ -214,6 +215,8 @@ pub struct ApprovalView {
     queue: VecDeque<Shown>,
     /// The reason being typed after `n`, if any.
     reason: Option<String>,
+    /// Scroll of the preview (`Up`/`Down`, `PageUp`/`PageDown`).
+    preview_scroll: ScrollHandle,
     restore_focus: Option<FocusHandle>,
     next_key: u64,
     _inbox: Task<()>,
@@ -242,6 +245,7 @@ impl ApprovalView {
             current: None,
             queue: VecDeque::new(),
             reason: None,
+            preview_scroll: ScrollHandle::new(),
             restore_focus: None,
             next_key: 0,
             _inbox: task,
@@ -393,6 +397,7 @@ impl ApprovalView {
                 KeyCode::Char('a') => self.approve_always(window, cx),
                 KeyCode::Char('n') => self.reason = Some(String::new()),
                 KeyCode::Esc => self.reject(None, window, cx),
+                _ if crate::keyscroll::scroll_key(&self.preview_scroll, &event.keystroke.key) => {}
                 _ => return,
             },
         }
@@ -525,6 +530,7 @@ impl Render for ApprovalView {
                     .id("approval-preview")
                     .max_h(px(420.))
                     .overflow_y_scroll()
+                    .track_scroll(&self.preview_scroll)
                     .child(Self::render_preview(&request.preview, cx)),
             );
         if !self.queue.is_empty() {

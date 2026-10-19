@@ -2,10 +2,12 @@
 //! `/simulate` and the `simulate_solution` tool.
 //!
 //! - Centre: the board, drawn by the offscreen [`crate::render3d`] renderer
-//!   (isometric preset, drag to orbit, right-drag or shift-drag to pan,
-//!   wheel to zoom, `i` back to the preset), or by the 2.5D [`vector`]
-//!   fallback when there is no GPU adapter. Labels are GPUI text placed at
-//!   the projected chip positions. Click a chip to inspect it.
+//!   (isometric preset, drag or `Shift`+arrows to orbit, right-drag,
+//!   shift-drag or `w`/`a`/`s`/`d` to pan, wheel or `+`/`-` to zoom, `i`
+//!   back to the preset), or by the 2.5D [`vector`] fallback when there is
+//!   no GPU adapter. Labels are GPUI text placed at the projected chip
+//!   positions. Click a chip, or `Tab`/`Shift+Tab` through them, to
+//!   inspect it.
 //! - Bottom: the timeline: play/pause (`space`), step to the previous or
 //!   next event (`←`/`→`), speed, and a scrub bar with a red marker per
 //!   failed assertion. Packet positions are a pure function of the
@@ -56,6 +58,8 @@ pub const RENDER3D_ENV: &str = "CREST_RENDER3D";
 const PANEL_WIDTH: f32 = 340.0;
 /// Zoom step of one wheel notch.
 const ZOOM_STEP: f32 = 1.15;
+/// Pixels of drag one keyboard orbit or pan step stands for.
+const KEY_STEP: f32 = 40.0;
 /// A press that moves less than this is a click.
 const CLICK_SLOP: f32 = 4.0;
 
@@ -428,12 +432,66 @@ impl SysBoardView {
         cx.notify();
     }
 
+    /// Orbits (or pans, with `pan`) the board by a keyboard step.
+    fn nudge(&mut self, dx: f32, dy: f32, pan: bool, cx: &mut Context<Self>) {
+        let size = self.board_size();
+        match (&self.backend, pan) {
+            (Backend::Gpu(_), false) => self.camera.orbit(dx, dy),
+            (Backend::Gpu(_), true) => self.camera.pan(dx, dy, size),
+            (Backend::Vector(_), _) => self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy),
+        }
+        cx.notify();
+    }
+
+    /// Selects the next (or previous) component, in model order.
+    fn cycle_selection(&mut self, back: bool, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self
+            .board
+            .model
+            .components
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let len = ids.len();
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|s| ids.iter().position(|id| id == s));
+        let next = match (at, back) {
+            (None, false) => 0,
+            (None, true) => len - 1,
+            (Some(ix), false) => (ix + 1) % len,
+            (Some(ix), true) => (ix + len - 1) % len,
+        };
+        self.select(Some(&ids[next]), cx);
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return;
         }
+        if k.modifiers.shift {
+            match k.key.as_str() {
+                "left" => self.nudge(-KEY_STEP, 0.0, false, cx),
+                "right" => self.nudge(KEY_STEP, 0.0, false, cx),
+                "up" => self.nudge(0.0, -KEY_STEP, false, cx),
+                "down" => self.nudge(0.0, KEY_STEP, false, cx),
+                "tab" => self.cycle_selection(true, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+            return;
+        }
         match k.key.as_str() {
+            "w" => self.nudge(0.0, -KEY_STEP, true, cx),
+            "s" => self.nudge(0.0, KEY_STEP, true, cx),
+            "a" => self.nudge(-KEY_STEP, 0.0, true, cx),
+            "d" => self.nudge(KEY_STEP, 0.0, true, cx),
+            "tab" => self.cycle_selection(false, cx),
             "space" => self.toggle_play(cx),
             "right" => self.step_forward(cx),
             "left" => self.step_back(cx),
@@ -709,7 +767,10 @@ impl SysBoardView {
                     .bottom_1()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("drag: orbit · right/shift-drag: pan · wheel: zoom · i: iso · click: inspect"),
+                    .child(
+                        "drag/Shift+arrows: orbit · right-drag/wasd: pan · wheel/+-: zoom · \
+                         i: iso · click/Tab: inspect",
+                    ),
             )
             .into_any_element()
     }

@@ -10,7 +10,8 @@
 //! close button) and a body that scrolls both ways when the content is
 //! larger. A dimmed backdrop covers the window behind the cards.
 //!
-//! `Esc` (or a click on the backdrop) closes the front modal. The host
+//! `Esc` (or a click on the backdrop) closes the front modal; `Up`/`Down`,
+//! `PageUp`/`PageDown` and `Home`/`End` scroll its body. The host
 //! takes the focus when the first modal opens and gives it back when the
 //! last one closes.
 //!
@@ -253,11 +254,20 @@ impl ModalHost {
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keys = &event.keystroke;
         let m = &keys.modifiers;
-        if keys.key == "escape"
-            && !(m.control || m.alt || m.platform || m.shift)
-            && self.close_top(window, cx)
+        if m.control || m.alt || m.platform || m.shift {
+            return;
+        }
+        if keys.key == "escape" && self.close_top(window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        // The body of a plugin modal scrolls with the keyboard too; a
+        // view (the help) scrolls itself.
+        if let Some(top) = self.stack.last().filter(|open| open.view.is_none())
+            && crate::keyscroll::scroll_key(&top.scroll, &keys.key)
         {
             cx.stop_propagation();
+            cx.notify();
         }
     }
 

@@ -8,6 +8,7 @@ pub mod brand;
 pub mod commands;
 pub mod help;
 pub mod input;
+pub mod keyscroll;
 pub mod modal;
 pub mod picker;
 pub mod render3d;
