@@ -4,6 +4,7 @@ pub mod approval;
 pub mod cancel;
 pub mod compact;
 pub mod evidence;
+pub mod git_status;
 pub mod resume;
 pub mod run_turn;
 pub mod simulate;
