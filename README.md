@@ -12,7 +12,7 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
-![Release](https://img.shields.io/badge/release-v0.6.0-d9604a)
+![Release](https://img.shields.io/badge/release-v0.7.0-d9604a)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
 
 <img src="assets/screenshots/hero.png" alt="crest finding a bug, fixing it, running the tests and charting their timings" width="900">
