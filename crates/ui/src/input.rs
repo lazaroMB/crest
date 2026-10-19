@@ -399,9 +399,16 @@ impl InputView {
     }
 
     /// Feeds a key typed while another panel has focus, so the shortcuts
-    /// work everywhere. Returns whether a mapping took it (or it is part
-    /// of a pending prefix); an unmatched key is left to the caller.
+    /// work everywhere. Only chords, `Esc`, function keys and the keys
+    /// after a pending prefix count: plain keys (`Enter`, the arrows) are
+    /// the panel's. Returns whether a mapping took it (or it is part of a
+    /// pending prefix); an unmatched key is left to the caller.
     pub fn feed_key(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let chord = key.mods.ctrl || key.mods.alt || key.mods.cmd;
+        let global = chord || matches!(key.code, KeyCode::Esc | KeyCode::F(_));
+        if !global && self.sequencer.pending().is_empty() {
+            return false;
+        }
         self.feed(key, false, window, cx)
     }
 

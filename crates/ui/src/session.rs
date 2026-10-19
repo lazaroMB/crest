@@ -1070,11 +1070,18 @@ impl Session {
 
     fn action(&mut self, action: &Action, window: &mut Window, cx: &mut Context<Self>) {
         if self
+            .tree
+            .update(cx, |tree, cx| tree.handle_action(action, window, cx))
+        {
+            // A hidden tree cannot keep the focus.
+            if !self.tree.read(cx).is_visible() {
+                self.focus_input(window, cx);
+            }
+            return;
+        }
+        if self
             .timeline
             .update(cx, |view, cx| view.handle_action(action, cx))
-            || self
-                .tree
-                .update(cx, |tree, cx| tree.handle_action(action, window, cx))
             || self
                 .picker
                 .update(cx, |picker, cx| picker.handle_action(action, window, cx))
