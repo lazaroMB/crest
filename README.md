@@ -224,8 +224,8 @@ All 11 phases of the original plan are implemented and `make check` passes on Li
 
 **Not available yet**
 
-- `app.opt.theme` is read but has no effect: there is no light theme and no configurable font.
-- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use space. Actions such as `session.resume` are not implemented.
+- The font is not configurable (JetBrains Mono when installed).
+- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use `Ctrl+Space`. Actions such as `session.resume` are not implemented.
 - There is no command to list or pick older sessions: the workspace's last one is always resumed.
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
 - `/mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run. (`/plugin trust`, by contrast, takes effect at once.)
