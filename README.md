@@ -159,6 +159,7 @@ Opening crest again in the same directory resumes the last session; `crest --new
 | [Workflows](docs/workflows.md) | Research, simulation and implementation, stage by stage. |
 | [Architecture](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, persistence. |
 | [Development](docs/development.md) | Requirements, `make` targets, tests, fakes, conventions and CI. |
+| [Vision](docs/vision.md) | Where crest is going: principles and roadmap. |
 | [Status](docs/status.md) | What is verified, what is not, and what is missing. |
 
 ## Built with
@@ -183,6 +184,10 @@ flowchart TB
     adapters --> app & domain
     app --> domain
 ```
+
+## Vision and roadmap
+
+crest is heading to **your project and your sessions** (compatible with `AGENTS.md` and `CLAUDE.md`, session tabs as in tmux, context and cost you can see, a definition of done), then **pipelines written in Lua** and **any model**, local ones included, then **review and trust** (a review panel, sandboxed commands, workspace trust). Read the [vision and roadmap](docs/vision.md).
 
 ## Status and license
 

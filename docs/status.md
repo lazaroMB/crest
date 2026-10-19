@@ -1,5 +1,7 @@
 # Project status
 
+Where crest is going next: [vision and roadmap](vision.md).
+
 crest is a **work in progress**. Every phase of the original plan is implemented, `make check` passes, and CI runs on Ubuntu 24.04 and macOS 15 on every push; releases (Linux x86_64, macOS arm64 and x86_64) are built by `release.yml` on each `v*` tag. Before relying on crest for real work, keep in mind what has not been tested and what is still missing.
 
 ## Unverified
