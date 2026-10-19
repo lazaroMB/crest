@@ -12,6 +12,97 @@ make build
 
 The toolchain is stable Rust (`rust-toolchain.toml`), edition 2024, with `rust-version = 1.99`. If Rust does not come from rustup, `make doctor` warns that `rust-toolchain.toml` will not be applied.
 
+### Requirements
+
+| Component | Version | Notes |
+| --- | --- | --- |
+| Linux or macOS | — | Windows is out of scope. |
+| Rust (rustup, rustfmt, clippy) | stable, ≥ 1.99 | Edition 2024. `rust-toolchain.toml` pins `stable`. |
+| C compiler, `pkg-config`, `cmake`, `clang` | — | On macOS, the Xcode Command Line Tools. |
+| GPUI libraries on Linux | — | `libxkbcommon`, `libxkbcommon-x11`, `wayland`, `libxcb`, `libx11-xcb`, `fontconfig`, `freetype`. |
+| Vulkan on Linux | — | The loader and a GPU driver (GPUI renders with Vulkan). |
+| macOS | ≥ 11 | Xcode with the Metal compiler (`make doctor` checks it). |
+| `ripgrep` (`rg`) | ≥ 13.0 | The `grep`, `list_files`, `find_file` and `tree` tools. |
+| `fzf` | ≥ 0.36 | `find_file` (`--filter --scheme=path`). Without `fzf`, it falls back to substring search. |
+| `git` | — | Repo data and workflows. |
+| `curl` | — | The `web_search` and `web_fetch` tools. Without it the model has no web. |
+| `jq` | — | Only for `scripts/check-arch.sh`. |
+| Anthropic API key | — | `ANTHROPIC_API_KEY` or the system keyring (service `crest`, entry `ANTHROPIC_API_KEY`). |
+
+SQLite is compiled into the binary and TLS uses rustls, so neither `libsqlite3` nor OpenSSL is needed.
+
+### Installing the dependencies
+
+`make deps` uses `scripts/install-deps.sh`, which accepts:
+
+- `--check`: only checks;
+- `--yes`: does not ask before installing;
+- `--dev`: adds `cargo-insta` and `cargo-nextest`;
+- `--no-rust`: neither checks nor installs Rust.
+
+If your distro's `rg` or `fzf` is older than the minimum (Ubuntu 22.04's `fzf` is 0.29), the script downloads the official binaries to `~/.local/bin`. `make deps-dev` is the same as `make deps` with `--dev`.
+
+### Repository layout
+
+```text
+Cargo.toml              workspace, shared dependencies and lints
+Makefile                build, test and check targets
+rust-toolchain.toml     stable toolchain with rustfmt and clippy
+crates/
+  domain/               pure types and rules
+  app/                  `application`: ports, use cases, tools, workflows, fakes
+  adapters/             anthropic, cloudflare, search, fs, shell, web, store, lua, mcp,
+                        telemetry, export
+                        (export/vendor/three/ holds the inlined three.js, MIT)
+  ui/                   GPUI views (plus runnable examples/, `showcase` among them)
+  bin/                  the `crest` binary and end-to-end integration tests
+scripts/
+  install-deps.sh       installs or checks dependencies (Bash 3.2+)
+  check-arch.sh         hexagonal architecture rules
+  package.sh            builds the release tarball
+  screenshots.sh        takes the README's screenshots from the UI examples
+  icons.sh              renders the app icons from assets/logo.svg
+assets/                 logo, icons, .desktop entry and screenshots/
+examples/plugins/       showcase: a demo Lua plugin with every extension point
+tests/
+  arch/                 fixtures and tests for check-arch.sh
+  install-deps/         tests for install-deps.sh
+docs/                   user and developer guides
+.github/workflows/      ci.yml, live.yml, release.yml
+```
+
+### Makefile targets
+
+| Target | What it does |
+| --- | --- |
+| `make help` | Lists the targets (default). |
+| `make deps` / `make deps-dev` | Installs the dependencies (with development tools in the second). |
+| `make doctor` | Checks the dependencies without installing. |
+| `make build` / `make release` | Builds the workspace (debug) / the optimized `target/release/crest` binary. |
+| `make run WORKSPACE=<dir>` | Opens the window on a directory (`.` by default). |
+| `make run-headless PROMPT="..." [WORKSPACE=<dir>]` | One turn without a window. |
+| `make fmt` / `make fmt-check` | Formats / checks the formatting. |
+| `make lint` | Strict Clippy (`-D warnings`). |
+| `make test` / `make test-live` | Offline tests / tests against the real API (needs `ANTHROPIC_API_KEY`). |
+| `make arch` / `make test-arch` | Architecture rules / their tests. |
+| `make test-deps` | Tests for `install-deps.sh`. |
+| `make check` | `fmt-check`, `lint`, `test`, `arch`, `test-arch` and `test-deps`. |
+| `make ci` | `doctor` + `check`. |
+| `make package` | Release tarball in `dist/`. |
+| `make install` | Copies the binary to `$(PREFIX)/bin` (`PREFIX=~/.local`). |
+| `make clean` | `cargo clean`. |
+
+### Screenshots
+
+The README's screenshots (`assets/screenshots/`) come from the UI examples, which run on scripted fakes (no API key): the `showcase` example has one scene per screenshot, and `sysboard` draws the simulation board. `scripts/screenshots.sh` builds them, opens each window on the X display (through XWayland under a Wayland session), captures it with ImageMagick's `import` and writes the PNGs:
+
+```bash
+scripts/screenshots.sh              # every scene
+scripts/screenshots.sh hero help    # some of them
+```
+
+It needs ImageMagick and `xprop`; the windows show up on your screen for a few seconds. Run it again when the UI changes.
+
 ## Before every commit
 
 ```bash

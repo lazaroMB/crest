@@ -13,6 +13,8 @@ A plugin is an `init.lua` that uses the `app` table to add things to crest:
 
 The global config and the workspace config use the same API. The declarative options (`app.opt`, `app.models`, permissions) are in [configuration.md](configuration.md).
 
+> **A runnable tour:** [`examples/plugins/showcase/init.lua`](../examples/plugins/showcase/init.lua) uses every extension point below (a command, a tool, a keymap, a hook, `Custom` blocks and modals with every kind of node). Add its folder to `app.plugins` and type `/demo`.
+
 ## Where they live and load order
 
 ```text
