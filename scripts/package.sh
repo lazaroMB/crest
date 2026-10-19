@@ -6,8 +6,10 @@
 #   scripts/package.sh --target <t>
 #
 # Produces <out>/crest-<version>-<target>.tar.gz (a directory with the
-# binary, README.txt with the runtime requirements, and LICENSE* if present)
-# and its checksum <file>.sha256 in the `sha256sum -c` format.
+# binary, README.txt with the runtime requirements, LICENSE* if present and
+# the icon: share/ with the .desktop entry and the hicolor icons on Linux,
+# crest.icns on macOS when it was generated) and its checksum <file>.sha256
+# in the `sha256sum -c` format.
 #
 # Compatible with Bash 3.2 (macOS).
 
@@ -81,6 +83,19 @@ done
 
 case "$target" in
     *-apple-darwin)
+        if [ -f assets/icons/crest.icns ]; then
+            cp assets/icons/crest.icns "$staging/$name/"
+        fi
+        ;;
+    *)
+        mkdir -p "$staging/$name/share/applications" "$staging/$name/share/icons"
+        cp assets/crest.desktop "$staging/$name/share/applications/"
+        cp -R assets/icons/hicolor "$staging/$name/share/icons/"
+        ;;
+esac
+
+case "$target" in
+    *-apple-darwin)
         platform_notes="macOS
 -----
 - The binary is neither signed nor notarized. If Gatekeeper blocks it:
@@ -103,6 +118,8 @@ cat >"$staging/$name/README.txt" <<EOF
 crest $version ($target)
 
 Installation: copy \`crest\` to a directory in the PATH, for example ~/.local/bin.
+On Linux, copy share/ over ~/.local/share (cp -R share ~/.local/) for the
+app icon and the launcher entry.
 
 Runtime requirements
 --------------------

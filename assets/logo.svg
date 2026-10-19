@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -24 128 128">
+  <defs>
+    <mask id="m" maskUnits="userSpaceOnUse" x="0" y="-14" width="128" height="94">
+      <rect x="0" y="-14" width="128" height="94" fill="#fff"/>
+      <polygon points="46,74 86,6 124,74" fill="#000" stroke="#000" stroke-width="6" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <rect x="0" y="-24" width="128" height="128" rx="24" fill="#0B0B0C"/>
+  <polygon mask="url(#m)" points="4,74 37,24 70,74" fill="#F4F1EC"/>
+  <polygon points="46,74 86,6 124,74" fill="#D9604A"/>
+</svg>

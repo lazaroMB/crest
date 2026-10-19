@@ -111,10 +111,13 @@ package: release ## Build the release tarball (dist/)
 	$(BASH) $(SCRIPTS)/package.sh
 
 .PHONY: install
-install: release ## Copy target/release/crest to PREFIX/bin (PREFIX=~/.local)
-	mkdir -p "$(PREFIX)/bin"
+install: release ## Copy crest to PREFIX/bin, with its icon and .desktop entry (PREFIX=~/.local)
+	mkdir -p "$(PREFIX)/bin" "$(PREFIX)/share/applications" "$(PREFIX)/share/icons"
 	cp target/release/$(BIN) "$(PREFIX)/bin/$(BIN)"
-	@echo "installed to $(PREFIX)/bin/$(BIN)"
+	cp assets/crest.desktop "$(PREFIX)/share/applications/crest.desktop"
+	cp -R assets/icons/hicolor "$(PREFIX)/share/icons/"
+	-command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$(PREFIX)/share/icons/hicolor"
+	@echo "installed to $(PREFIX)/bin/$(BIN) (icon and desktop entry under $(PREFIX)/share)"
 
 .PHONY: clean
 clean: ## Delete the build artifacts (cargo clean)

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=crest
+GenericName=Coding agent
+Comment=A coding agent for your workspace, by TwoCrest Systems
+Exec=crest
+Icon=crest
+Terminal=false
+StartupWMClass=crest
+Categories=Development;IDE;
+Keywords=agent;code;claude;research;
