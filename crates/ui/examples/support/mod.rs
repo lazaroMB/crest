@@ -15,6 +15,15 @@ use gpui_component::{Root, Theme, ThemeMode};
 /// Runs GPUI with crest's dark theme and opens one window whose root view
 /// `build` returns, focusing it.
 pub fn run(title: &str, build: impl FnOnce(&mut Window, &mut App) -> AnyView + 'static) {
+    run_sized(title, (1280.0, 800.0), build);
+}
+
+/// [`run`] with a window of `width × height` logical pixels.
+pub fn run_sized(
+    title: &str,
+    (width, height): (f32, f32),
+    build: impl FnOnce(&mut Window, &mut App) -> AnyView + 'static,
+) {
     let title = SharedString::from(title.to_owned());
     gpui_platform::application().run(move |cx: &mut App| {
         gpui_component::init(cx);
@@ -27,7 +36,7 @@ pub fn run(title: &str, build: impl FnOnce(&mut Window, &mut App) -> AnyView + '
             }
         })
         .detach();
-        let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+        let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
