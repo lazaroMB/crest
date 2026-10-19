@@ -5,6 +5,8 @@
 //! Errors are the research flow's [`NodeError`]: the flow stays at the
 //! last checkpoint and the error is shown.
 
+use crate::decide::Decider;
+use crate::flows::implement::gate::{GateChoice, interpret};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -126,6 +128,7 @@ pub struct ImplementDeps {
     fs: Arc<dyn FileSystemPort>,
     shell: Arc<dyn ShellPort>,
     agent: Option<AgentKit>,
+    decider: Decider,
     clock: fn() -> u64,
 }
 
@@ -151,8 +154,17 @@ impl ImplementDeps {
             fs,
             shell,
             agent: None,
+            decider: Decider::none(),
             clock: system_now_ms,
         }
+    }
+
+    /// The decision model that reads answers at the gates (none by
+    /// default: only the fixed phrases are understood).
+    #[must_use]
+    pub fn with_decider(mut self, decider: Decider) -> Self {
+        self.decider = decider;
+        self
     }
 
     /// Lets the steps run agent turns built from `kit`.
@@ -273,6 +285,13 @@ impl StepContext {
     #[must_use]
     pub fn user_reply(&self) -> Option<&str> {
         self.reply.as_deref()
+    }
+
+    /// The user's answer read as a gate choice: the fixed phrases, then
+    /// the decision model for free text ([`interpret`]).
+    pub async fn user_choice(&self) -> Option<GateChoice> {
+        let reply = self.reply.as_deref()?;
+        Some(interpret(reply, &self.deps.decider).await)
     }
 
     /// Current time in Unix epoch milliseconds.

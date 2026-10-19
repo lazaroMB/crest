@@ -5,6 +5,9 @@
 //! (the Spanish words still work); anything else is free text (feedback)
 //! for the step.
 
+use domain::decision::{DecisionRequest, Question};
+
+use crate::decide::Decider;
 use crate::flows::research::gate::{is_approval, normalize};
 
 /// The user's answer at a gate.
@@ -56,6 +59,54 @@ pub fn parse_choice(text: &str) -> GateChoice {
     }
 }
 
+/// Confidence from which the decision model's reading of an answer is
+/// taken.
+const CHOICE_CONFIDENCE: f32 = 0.7;
+
+/// Reads an answer typed at a gate: the fixed phrases of
+/// [`parse_choice`], then, for free text, the decision model (when it is
+/// confident the text means one of the choices rather than instructions).
+pub async fn interpret(text: &str, decider: &Decider) -> GateChoice {
+    let parsed = parse_choice(text);
+    if !matches!(parsed, GateChoice::Other(_)) || !decider.is_available() {
+        return parsed;
+    }
+    let request = DecisionRequest::new(text).ask(
+        "choice",
+        Question::choice(
+            "The implementation flow stopped at a gate and the user typed this answer. What \
+             does it ask for?",
+            [
+                ("continue", "go on (approve, accept as it is)"),
+                ("retry", "try the same step again"),
+                ("skip", "skip the current task"),
+                ("abort", "stop the implementation"),
+                (
+                    "back_to_spec",
+                    "go back to the Spec or the plan to change it",
+                ),
+                (
+                    "instructions",
+                    "gives instructions or details for the next attempt",
+                ),
+            ],
+        ),
+    );
+    let picked = decider.decide(&request).await.and_then(|r| {
+        r.choice("choice")
+            .filter(|(_, confidence)| *confidence >= CHOICE_CONFIDENCE)
+            .map(|(choice, _)| choice.to_owned())
+    });
+    match picked.as_deref() {
+        Some("continue") => GateChoice::Continue,
+        Some("retry") => GateChoice::Retry,
+        Some("skip") => GateChoice::Skip,
+        Some("abort") => GateChoice::Abort,
+        Some("back_to_spec") => GateChoice::BackToSpec,
+        _ => parsed,
+    }
+}
+
 /// The options line shown at the gates that stop on a problem.
 pub const PROBLEM_OPTIONS: &str = "Answer \"retry\" (or write instructions for the \
 agent), \"continue\" to go on with the task as it is, \"skip\" to leave it without a \
@@ -63,7 +114,46 @@ commit, \"abort\", or \"back to spec\" if the plan turned out to be unworkable."
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::decide::DecisionOptions;
+    use crate::testing::decision::{ScriptedDecider, choice};
+
+    fn decider(option: &'static str, confidence: f32) -> (Decider, Arc<ScriptedDecider>) {
+        let port = Arc::new(ScriptedDecider::answering(move |_, _| {
+            choice(option, confidence)
+        }));
+        let decider = Decider::new(Arc::clone(&port) as _, DecisionOptions::default());
+        (decider, port)
+    }
+
+    #[tokio::test]
+    async fn free_text_is_read_by_the_decision_model_when_it_is_sure() {
+        let (sure, port) = decider("retry", 0.9);
+        assert_eq!(interpret("retry", &sure).await, GateChoice::Retry);
+        assert!(port.requests().is_empty(), "fixed phrases need no model");
+        assert_eq!(
+            interpret("dale otra vuelta por favor", &sure).await,
+            GateChoice::Retry
+        );
+        assert_eq!(port.requests().len(), 1);
+
+        let (unsure, _) = decider("abort", 0.4);
+        assert_eq!(
+            interpret("hmm no sé", &unsure).await,
+            GateChoice::Other("hmm no sé".into())
+        );
+        let (instructions, _) = decider("instructions", 0.95);
+        assert_eq!(
+            interpret("use a Mutex", &instructions).await,
+            GateChoice::Other("use a Mutex".into())
+        );
+        assert_eq!(
+            interpret("dale otra vuelta", &Decider::none()).await,
+            GateChoice::Other("dale otra vuelta".into())
+        );
+    }
 
     #[test]
     fn parses_the_gate_words() {

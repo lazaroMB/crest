@@ -588,7 +588,8 @@ pub async fn build_app(
     );
     kit.system_prompt = system_prompt(&root);
     let implement = ImplementDeps::new(Arc::clone(&events), Arc::clone(&fs), Arc::clone(&shell))
-        .with_agent(kit);
+        .with_agent(kit)
+        .with_decider(decider.clone());
     let flow_storage = match open_flow_storage(overrides.db_path.as_deref()) {
         Ok(storage) => Some(Arc::new(storage)),
         Err(err) => {

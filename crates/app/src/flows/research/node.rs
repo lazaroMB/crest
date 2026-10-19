@@ -153,6 +153,10 @@ impl NodeDeps {
         }
     }
 
+    pub(crate) fn decider(&self) -> &Decider {
+        &self.decider
+    }
+
     /// The decision model the nodes judge and classify with (none by
     /// default: they fall back to the model and fixed rules).
     #[must_use]

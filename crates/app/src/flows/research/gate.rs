@@ -6,6 +6,9 @@
 //! their own data under any other key (see
 //! [`NodeContext::set_data`](super::node::NodeContext::set_data)).
 
+use domain::decision::{DecisionRequest, Question};
+
+use crate::decide::Decider;
 use domain::research::Stage;
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +129,41 @@ pub struct GateReply {
     pub text: String,
 }
 
+/// Confidence from which the decision model's reading of an answer is
+/// taken.
+const APPROVAL_CONFIDENCE: f32 = 0.7;
+
+/// Whether `text` approves a confirmation gate: a fixed "yes" of
+/// [`is_approval`], or free text the decision model confidently reads as
+/// one (rather than instructions).
+pub async fn approves(text: &str, decider: &Decider) -> bool {
+    if is_approval(text) {
+        return true;
+    }
+    let request = DecisionRequest::new(text).ask(
+        "answer",
+        Question::choice(
+            "The research flow asked the user to confirm a step and this is the answer. What \
+             does it do?",
+            [
+                ("approve", "approves or says to go on"),
+                (
+                    "instructions",
+                    "asks for changes or gives instructions or details",
+                ),
+            ],
+        ),
+    );
+    decider
+        .decide(&request)
+        .await
+        .and_then(|r| {
+            r.choice("answer")
+                .map(|(c, p)| c == "approve" && p >= APPROVAL_CONFIDENCE)
+        })
+        .unwrap_or(false)
+}
+
 /// Whether `text` approves a confirmation gate: empty, or a short "yes"
 /// such as `yes`, `ok` or `continue` (case and accents ignored, trailing
 /// punctuation allowed). Spanish yeses such as `sí`, `continuar` or `dale`
@@ -186,7 +224,26 @@ pub(crate) fn normalize(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::decide::DecisionOptions;
+    use crate::testing::decision::{ScriptedDecider, choice};
+
+    #[tokio::test]
+    async fn free_text_approves_only_when_the_decision_model_is_sure() {
+        let answer = |option: &'static str, p: f32| {
+            Decider::new(
+                Arc::new(ScriptedDecider::answering(move |_, _| choice(option, p))),
+                DecisionOptions::default(),
+            )
+        };
+        assert!(approves("sí", &Decider::none()).await);
+        assert!(!approves("me parece bien, adelante con eso", &Decider::none()).await);
+        assert!(approves("me parece bien, adelante con eso", &answer("approve", 0.9)).await);
+        assert!(!approves("me parece bien, adelante con eso", &answer("approve", 0.5)).await);
+        assert!(!approves("añade un test", &answer("instructions", 0.9)).await);
+    }
 
     #[test]
     fn task_ids_round_trip_for_every_stage() {

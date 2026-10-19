@@ -10,7 +10,7 @@ use domain::block::BlockKind;
 use domain::workspace::WorkspacePath;
 
 use super::verify::check_label;
-use crate::flows::implement::gate::{GateChoice, parse_choice};
+use crate::flows::implement::gate::GateChoice;
 use crate::flows::implement::node::{ImplementNode, NodeError, StepContext, StepOutcome};
 use crate::flows::implement::state::{
     EntryKind, ImplementState, JournalEntry, Step, TaskRecord, TaskStatus,
@@ -245,7 +245,7 @@ impl ImplementNode for WriteReport {
     }
 
     async fn run(&self, ctx: &mut StepContext) -> Result<StepOutcome, NodeError> {
-        let rewrite = match ctx.user_reply().map(parse_choice) {
+        let rewrite = match ctx.user_choice().await {
             None => true,
             Some(GateChoice::Continue) => return Ok(StepOutcome::Finish),
             Some(GateChoice::Abort) => {

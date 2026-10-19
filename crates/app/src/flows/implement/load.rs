@@ -6,7 +6,7 @@ use domain::block::{BlockKind, Cell, Column, MermaidSpec, TableSpec};
 use domain::plan::{Plan, PlanError, TaskId};
 use domain::workspace::{PathError, WorkspacePath};
 
-use super::gate::{GateChoice, parse_choice};
+use super::gate::GateChoice;
 use super::node::{ImplementNode, NodeError, StepContext, StepOutcome};
 use super::state::{EntryKind, Step};
 use crate::ports::events::NoticeLevel;
@@ -276,7 +276,7 @@ impl ImplementNode for LoadNode {
         };
         let branch = branch_name(&plan);
         let order = ctx.state().order.clone();
-        match parse_choice(ctx.user_reply().unwrap_or_default()) {
+        match ctx.user_choice().await.unwrap_or(GateChoice::Continue) {
             GateChoice::Continue => {}
             GateChoice::Abort => {
                 return Ok(StepOutcome::Abort {

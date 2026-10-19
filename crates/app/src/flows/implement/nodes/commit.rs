@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use domain::plan::Task;
 use domain::workspace::WorkspacePath;
 
-use crate::flows::implement::gate::{GateChoice, parse_choice};
+use crate::flows::implement::gate::GateChoice;
 use crate::flows::implement::node::{ImplementNode, NodeError, StepContext, StepOutcome};
 use crate::flows::implement::state::{EntryKind, Step, TaskStatus};
 use crate::ports::fs::{FileSystemPort, ReadFileRequest};
@@ -206,8 +206,8 @@ impl ImplementNode for CommitTask {
         let Some(task) = ctx.state().current_task().cloned() else {
             return Ok(StepOutcome::GoTo(Step::Verify));
         };
-        if let Some(reply) = ctx.user_reply() {
-            match parse_choice(reply) {
+        if let Some(choice) = ctx.user_choice().await {
+            match choice {
                 GateChoice::Continue | GateChoice::Skip => {
                     ctx.log(
                         EntryKind::Deviation,

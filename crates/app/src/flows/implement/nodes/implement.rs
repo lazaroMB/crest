@@ -10,7 +10,7 @@ use domain::plan::Task;
 use domain::research::TestKind;
 
 use super::{AgentStatus, run_agent, skip_task};
-use crate::flows::implement::gate::{GateChoice, PROBLEM_OPTIONS, parse_choice};
+use crate::flows::implement::gate::{GateChoice, PROBLEM_OPTIONS};
 use crate::flows::implement::node::{ImplementNode, NodeError, StepContext, StepOutcome};
 use crate::flows::implement::state::{EntryKind, Step, TaskStatus};
 
@@ -69,8 +69,8 @@ impl ImplementNode for ImplementTask {
             return Ok(StepOutcome::GoTo(Step::Verify));
         };
         let mut hint = None;
-        if let Some(reply) = ctx.user_reply() {
-            match parse_choice(reply) {
+        if let Some(choice) = ctx.user_choice().await {
+            match choice {
                 GateChoice::Retry => {}
                 GateChoice::Other(text) => hint = Some(text),
                 GateChoice::Continue => {

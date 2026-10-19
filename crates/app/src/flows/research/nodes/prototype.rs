@@ -55,7 +55,7 @@ use domain::research::{Decision, EvidenceId, Stage};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::flows::research::gate::is_approval;
+use crate::flows::research::gate::approves;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
 use crate::ports::shell::RunCommandRequest;
@@ -181,7 +181,7 @@ impl ResearchNode for Prototype {
                 return Ok(NodeOutcome::NeedsInput { prompt });
             }
         };
-        if !is_approval(&reply) {
+        if !approves(&reply, ctx.decider()).await {
             ctx.log(format!(
                 "No prototype: the user did not authorize the spike ({reply})."
             ));

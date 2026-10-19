@@ -28,7 +28,7 @@ use serde::Serialize;
 
 use super::gate::{
     FlowStatus, GateKind, GateReply, KEY_BACKS, KEY_ENTERED, KEY_GATE, KEY_PROBLEM, KEY_REPLY,
-    KEY_STATE, KEY_STATUS, PendingGate, is_approval, task_id,
+    KEY_STATE, KEY_STATUS, PendingGate, approves, task_id,
 };
 use super::node::{NodeContext, NodeDeps, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
@@ -234,7 +234,7 @@ impl NodeTask {
                     &format!("User answer: {}", reply.text.trim()),
                 )?;
             }
-            if gate.kind == GateKind::Confirm && is_approval(&reply.text) {
+            if gate.kind == GateKind::Confirm && approves(&reply.text, self.deps.decider()).await {
                 return self.advance(&ctx);
             }
             feedback = Some(reply.text);
