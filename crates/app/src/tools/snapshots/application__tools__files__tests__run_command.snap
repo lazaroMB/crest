@@ -4,7 +4,7 @@ expression: def
 ---
 {
   "name": "run_command",
-  "description": "Runs a program in the workspace root and returns its exit code, stdout and stderr.\n- `command` is the program and `args` its arguments, one per element. No shell is involved: pipes, redirections, `&&`, globs and variables are not interpreted.\n- Use it to build, test, format or inspect history (`git log`, `git blame`, `git diff`, `git status`, `git show` run without approval). Other commands may need the user's approval.\n- Prefer `grep`, `find_file`, `list_files`, `tree` and `read_file` over `rg`, `find`, `ls` or `cat`, and `edit_file`/`write_file` over commands that modify files.\n- The process is killed after `timeout_s` seconds (default 120). Long output is cut; a non-zero exit code is reported in the result, not as a failure of the tool.",
+  "description": "Runs a program in the workspace root and returns its exit code, stdout and stderr.\n- `command` is the program and `args` its arguments, one per element. No shell is involved: pipes, redirections, `&&`, globs and variables are not interpreted.\n- Use it to build, test, format or inspect history (`git log`, `git blame`, `git diff`, `git status`, `git show` run without approval). Other commands may need the user's approval.\n- Prefer `grep`, `find_file`, `list_files`, `tree` and `read_file` over `rg`, `find`, `ls` or `cat`, and `edit_file`/`write_file` over commands that modify files.\n- The process is killed after `timeout_s` seconds (default 120). Long output is cut; a non-zero exit code is reported in the result, not as a failure of the tool.\n- The output of common commands may come compacted (the result says so); set `raw` to true to run it again with the full output.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -26,6 +26,10 @@ expression: def
         "minimum": 0,
         "description": "Seconds before the process is killed (default 120).",
         "default": 120
+      },
+      "raw": {
+        "type": "boolean",
+        "description": "Set to true for the full, uncompacted output when the command\noutput was compacted (by rtk) and something is missing."
       }
     },
     "required": [

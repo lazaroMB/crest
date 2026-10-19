@@ -225,6 +225,7 @@ mod tests {
     }
 
     /// A fake `rtk` that answers `rewrite` with `stdout` and `code`.
+    #[allow(clippy::unwrap_used)]
     fn fake_rtk(dir: &Path, stdout: &str, code: i32) -> RtkRewriter {
         let path = dir.join("rtk");
         let script = format!(

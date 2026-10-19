@@ -231,7 +231,7 @@ fn card(text: &str) -> bool {
             (false, _) => d,
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// 15 to 34 characters passing the ISO 13616 mod-97 check.
