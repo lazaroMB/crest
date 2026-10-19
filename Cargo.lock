@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-anthropic"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-export"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "domain",
@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-lua"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-search"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-shell"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "base64 0.23.1",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "domain",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "crest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "adapter-anthropic",
  "adapter-export",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "insta",
  "schemars",
@@ -8290,7 +8290,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "application",
  "async-trait",
