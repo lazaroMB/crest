@@ -138,6 +138,14 @@ check "mac uninstall" mac --uninstall --prefix "$M" >/dev/null 2>&1
 check "no app left" not test -e "$APPS/crest.app"
 check "no link left" not test -L "$M/bin/crest"
 
+# --- An old tarball (no launcher) installs nothing ------------------------
+mkdir -p "$TMP/old/crest-0.0.0-x86_64-unknown-linux-gnu"
+cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/crest" "$TMP/old/crest-0.0.0-x86_64-unknown-linux-gnu/"
+tar -czf "$TMP/old.tar.gz" -C "$TMP/old" crest-0.0.0-x86_64-unknown-linux-gnu
+err=$(linux --tarball "$TMP/old.tar.gz" --prefix "$TMP/old/.local" 2>&1)
+check "an old tarball is refused" contains "$err" "releases before v0.8.0"
+check "and leaves nothing behind" not test -e "$TMP/old/.local/bin/crest"
+
 # --- Platforms -------------------------------------------------------------
 check "linux arm64 is refused" not env CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=aarch64 \
     sh "$INSTALL" --tarball /nonexistent >/dev/null 2>&1

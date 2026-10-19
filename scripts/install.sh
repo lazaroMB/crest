@@ -141,7 +141,11 @@ sha256_check() { # dir with <file> and <file>.sha256, file
 
 install_linux() { # extracted dir
     src="$1"
+    # Checked before copying anything, so a bad tarball leaves no half install.
     [ -x "$src/crest" ] || die "the tarball has no crest binary for Linux"
+    for f in crest-launcher share/applications/crest.desktop share/icons/hicolor; do
+        [ -e "$src/$f" ] || die "the tarball has no $f: releases before v0.8.0 cannot be installed with this script"
+    done
     mkdir -p "$prefix/bin" "$prefix/lib/crest" "$prefix/share/applications" "$prefix/share/icons"
     # Through a temporary name, so a running crest is not overwritten in place.
     cp "$src/crest" "$prefix/bin/.crest.new"
