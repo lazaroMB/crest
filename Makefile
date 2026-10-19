@@ -87,8 +87,12 @@ test-deps: ## Tests for scripts/install-deps.sh
 	$(BASH) tests/install-deps/test-helpers.sh
 	$(BASH) tests/install-deps/test-macos-sim.sh
 
+.PHONY: test-install
+test-install: ## Tests for scripts/install.sh and the app bundle of scripts/package.sh
+	$(BASH) tests/install/run.sh
+
 .PHONY: check
-check: fmt-check lint test arch test-arch test-deps ## What must pass to close a phase
+check: fmt-check lint test arch test-arch test-deps test-install ## What must pass to close a phase
 
 .PHONY: ci
 ci: doctor check ## doctor + check
@@ -111,13 +115,13 @@ package: release ## Build the release tarball (dist/)
 	$(BASH) $(SCRIPTS)/package.sh
 
 .PHONY: install
-install: release ## Copy crest to PREFIX/bin, with its icon and .desktop entry (PREFIX=~/.local)
-	mkdir -p "$(PREFIX)/bin" "$(PREFIX)/share/applications" "$(PREFIX)/share/icons"
-	cp target/release/$(BIN) "$(PREFIX)/bin/$(BIN)"
-	cp assets/crest.desktop "$(PREFIX)/share/applications/crest.desktop"
-	cp -R assets/icons/hicolor "$(PREFIX)/share/icons/"
-	-command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$(PREFIX)/share/icons/hicolor"
-	@echo "installed to $(PREFIX)/bin/$(BIN) (icon and desktop entry under $(PREFIX)/share)"
+install: release ## Install crest as an app: app menu on Linux, ~/Applications on macOS (PREFIX=~/.local)
+	tarball="$$($(BASH) $(SCRIPTS)/package.sh --out target/dist | tail -n 1)" && \
+		sh $(SCRIPTS)/install.sh --tarball "$$tarball" --prefix "$(PREFIX)"
+
+.PHONY: uninstall
+uninstall: ## Remove what `make install` installed (PREFIX=~/.local)
+	sh $(SCRIPTS)/install.sh --uninstall --prefix "$(PREFIX)"
 
 .PHONY: clean
 clean: ## Delete the build artifacts (cargo clean)
