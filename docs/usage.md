@@ -252,6 +252,8 @@ The focus goes back to where it was when the last modal closes. An approval dial
 
 `/simulate <spec>` (or the agent's `simulate_solution` tool) opens the board of a simulated Spec in a modal at 100%. The board is drawn in real 3D by an offscreen GPU renderer; on a machine without a usable GPU adapter it falls back, automatically, to a 2.5D vector drawing (the header says which one: `3D · <adapter>` or `2.5D · <reason>`; `CREST_RENDER3D=off` forces the fallback).
 
+The board is black with graphite chips: the top of each chip glows with the colour of its machine's state (teal for the first, usually idle, state; orange, blue, violet… for the others; red when it is down), brighter while it is handling a message, with its queue as small amber blocks. A trace lights up in the colour of the message travelling it. **Selecting a chip** dims everything it is not connected to: its traces glow in the TwoCrest coral (or in the colour of the message on them), the chips at their other end keep a thin ring, and the inspector lists those connections (`→ db (query)`, `← web (request)`) and the chip's last activity (`1.200 ms · sent query → db`, `idle → busy on request`…).
+
 | Key or action | Effect |
 | --- | --- |
 | Drag, `Shift+←/→/↑/↓` | Orbits (leaves the isometric preset for perspective). In the 2.5D fallback, pans. |
@@ -259,9 +261,9 @@ The focus goes back to where it was when the last modal closes. An approval dial
 | Wheel, `+` / `-` | Zooms. |
 | `i`, or the `iso` button | Back to the isometric preset (orthographic, 30°). |
 | Click a chip, `Tab` / `Shift+Tab` | Inspects it: state, variables, queue and its machine as a state diagram with the current state lit. |
-| `Space`, `▶` / `⏸` | Plays or pauses the scenario (at `1×` a whole scenario lasts 10 s). |
+| `Space`, `▶` / `⏸` | Plays or pauses the scenario. Playing is paced by events: at `1×` each stretch between two moments where something happens (a message sent or arriving, a component starting or finishing its work) lasts between 0.8 and 3 s, so every message can be followed; quiet periods do not stretch and bursts do not flash by. |
 | `←` / `→`, `⏮` / `⏭` | Previous / next event. |
-| `−` / `+` next to the speed | Slower / faster (0.1× to 4×). |
+| `−` / `+` next to the speed | Slower / faster (0.1× to 8×). |
 | Click or drag the bar | Scrubs; the red marks are failed assertions. |
 | A failed check on the right | Jumps to its counterexample. |
 | Scenario buttons, seed `−` / `+` | Shows another scenario; re-runs this one with another seed. |

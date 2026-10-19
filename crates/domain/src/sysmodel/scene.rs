@@ -1,6 +1,12 @@
 //! A renderer-agnostic 3D description of the board, built from the model
 //! and its [`Layout`]: the board slab, chips (bevelled boxes), pins, trace
-//! ribbons and label anchors, each with a material. The window's wgpu
+//! ribbons and label anchors, each with a material.
+//!
+//! The look is a modern dark one: a near-black board, graphite chips whose
+//! top glows with the colour of their state ([`STATE_COLORS`], red when
+//! down), dark traces that light up with the colour of the message
+//! travelling them, and [`Scene::related`] for highlighting what a
+//! selected chip talks to. The window's wgpu
 //! renderer, its 2.5D fallback and the HTML export all draw this same
 //! geometry.
 //!
@@ -117,6 +123,12 @@ impl Chip {
 pub struct Ribbon {
     /// Connection id.
     pub id: String,
+    /// Component it leaves from.
+    #[serde(default)]
+    pub from: String,
+    /// Component it arrives at.
+    #[serde(default)]
+    pub to: String,
     /// Polyline just above the board.
     pub points: Vec<V3>,
     /// Width.
@@ -149,11 +161,68 @@ pub struct Scene {
     pub labels: Vec<SceneLabel>,
 }
 
+/// What a selected chip is connected to: highlighted, the rest dimmed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Related {
+    /// The selected chip and the chips at the other end of its traces.
+    pub chips: Vec<String>,
+    /// The traces that leave from or arrive at the selected chip.
+    pub ribbons: Vec<String>,
+}
+
+impl Related {
+    /// Whether chip `id` is highlighted.
+    #[must_use]
+    pub fn has_chip(&self, id: &str) -> bool {
+        self.chips.iter().any(|c| c == id)
+    }
+
+    /// Whether trace `id` is highlighted.
+    #[must_use]
+    pub fn has_ribbon(&self, id: &str) -> bool {
+        self.ribbons.iter().any(|r| r == id)
+    }
+}
+
+impl Scene {
+    /// What chip `id` is connected to, in both directions.
+    #[must_use]
+    pub fn related(&self, id: &str) -> Related {
+        let mut related = Related {
+            chips: vec![id.to_owned()],
+            ribbons: Vec::new(),
+        };
+        for ribbon in &self.ribbons {
+            let other = if ribbon.from == id {
+                &ribbon.to
+            } else if ribbon.to == id {
+                &ribbon.from
+            } else {
+                continue;
+            };
+            related.ribbons.push(ribbon.id.clone());
+            if !related.has_chip(other) {
+                related.chips.push(other.clone());
+            }
+        }
+        related
+    }
+
+    /// The ribbon of connection `id`.
+    #[must_use]
+    pub fn ribbon(&self, id: &str) -> Option<&Ribbon> {
+        self.ribbons.iter().find(|r| r.id == id)
+    }
+}
+
 /// A message in flight.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Packet {
     /// Message id.
     pub msg: u32,
+    /// Connection it travels.
+    #[serde(default)]
+    pub conn: String,
     /// Message type.
     pub kind: String,
     /// Where it is now.
@@ -200,38 +269,49 @@ pub const PACKET_Y: f32 = 0.35;
 pub const PACKET_RADIUS: f32 = 0.28;
 
 const fn kind_style(kind: ComponentKind) -> (Rgb, f32) {
-    // Base colour (dark: the state glows on top) and height.
+    // Graphite with a faint tint per kind (the state glows on top), and
+    // the height, which tells the kinds apart.
     match kind {
-        ComponentKind::Client => ([0.06, 0.12, 0.24], 0.9),
-        ComponentKind::Service => ([0.05, 0.07, 0.10], 1.1),
-        ComponentKind::Queue => ([0.18, 0.12, 0.03], 0.8),
-        ComponentKind::Db => ([0.03, 0.13, 0.11], 1.6),
-        ComponentKind::Cache => ([0.15, 0.04, 0.16], 1.0),
-        ComponentKind::Lb => ([0.11, 0.12, 0.03], 0.7),
-        ComponentKind::External => ([0.10, 0.10, 0.11], 1.0),
-        ComponentKind::Timer => ([0.14, 0.07, 0.03], 0.6),
+        ComponentKind::Client => ([0.020, 0.022, 0.030], 0.9),
+        ComponentKind::Service => ([0.022, 0.022, 0.024], 1.1),
+        ComponentKind::Queue => ([0.028, 0.022, 0.016], 0.8),
+        ComponentKind::Db => ([0.016, 0.026, 0.024], 1.6),
+        ComponentKind::Cache => ([0.026, 0.018, 0.028], 1.0),
+        ComponentKind::Lb => ([0.024, 0.024, 0.018], 0.7),
+        ComponentKind::External => ([0.024, 0.024, 0.026], 1.0),
+        ComponentKind::Timer => ([0.028, 0.020, 0.016], 0.6),
     }
 }
+
+/// The colours of the states of a machine, in the order the machine lists
+/// them (the first is usually the idle one, a calm teal), and of the
+/// message types.
+pub const STATE_COLORS: [Rgb; 8] = [
+    [0.05, 0.65, 0.55],
+    [1.00, 0.55, 0.12],
+    [0.30, 0.55, 1.00],
+    [0.75, 0.40, 1.00],
+    [0.95, 0.85, 0.25],
+    [1.00, 0.40, 0.70],
+    [0.35, 0.90, 0.35],
+    [0.20, 0.80, 1.00],
+];
 
 /// A bright, distinct colour for the `i`-th of something (states,
 /// message types).
 #[must_use]
 pub fn palette(i: usize) -> Rgb {
-    const COLORS: [Rgb; 8] = [
-        [0.10, 0.85, 1.00],
-        [0.25, 1.00, 0.45],
-        [1.00, 0.70, 0.10],
-        [0.90, 0.35, 1.00],
-        [1.00, 0.45, 0.55],
-        [0.55, 0.65, 1.00],
-        [0.95, 0.95, 0.35],
-        [0.30, 1.00, 0.85],
-    ];
-    COLORS[i % COLORS.len()]
+    STATE_COLORS[i % STATE_COLORS.len()]
 }
 
 /// Colour of a dead chip.
-pub const DOWN: Rgb = [1.0, 0.12, 0.10];
+pub const DOWN: Rgb = [1.0, 0.10, 0.08];
+/// The near-black of the board.
+pub const BOARD: Rgb = [0.004, 0.004, 0.005];
+/// A trace at rest.
+pub const TRACE: Rgb = [0.035, 0.035, 0.040];
+/// The glow of a highlighted trace (the TwoCrest coral).
+pub const HIGHLIGHT: Rgb = [0.85, 0.25, 0.15];
 
 fn lift(p: P2, y: f32) -> V3 {
     [p.0, y, p.1]
@@ -297,15 +377,18 @@ pub fn build_scene(model: &SysModel, layout: &Layout) -> Scene {
         for p in route {
             grow(*p);
         }
+        let owner = |end: &str| end.split_once('.').map_or(end, |(c, _)| c).to_owned();
         ribbons.push(Ribbon {
             id: conn.id.clone(),
+            from: owner(&conn.from),
+            to: owner(&conn.to),
             points: route.iter().map(|p| lift(*p, RIBBON_Y)).collect(),
-            width: 0.22,
+            width: 0.16,
             material: Material {
-                base: [0.75, 0.55, 0.20],
-                emissive: [0.08, 0.05, 0.01],
-                metallic: 0.9,
-                roughness: 0.35,
+                base: TRACE,
+                emissive: [0.010, 0.010, 0.012],
+                metallic: 0.3,
+                roughness: 0.6,
             },
         });
     }
@@ -317,7 +400,7 @@ pub fn build_scene(model: &SysModel, layout: &Layout) -> Scene {
         board: Slab {
             min: [lo[0] - margin, -0.4, lo[1] - margin],
             max: [hi[0] + margin, 0.0, hi[1] + margin],
-            material: Material::matte([0.010, 0.045, 0.030]),
+            material: Material::matte(BOARD),
         },
         chips,
         ribbons,
@@ -399,6 +482,7 @@ pub fn frame_at(model: &SysModel, scene: &Scene, trace: &Trace, t_us: u64) -> Fr
             .collect();
         packets.push(Packet {
             msg: *msg,
+            conn: conn.clone(),
             kind: kind.clone(),
             at: along(&ribbon.points, f),
             trail,

@@ -3,7 +3,7 @@
 //! top), pins, trace ribbons, emissive packets with trails, queue markers
 //! and a selection ring. Rebuilt per rendered frame; boards are small.
 
-use domain::sysmodel::scene::{DOWN, Frame, PACKET_RADIUS, Rgb, Scene};
+use domain::sysmodel::scene::{DOWN, Frame, HIGHLIGHT, PACKET_RADIUS, Rgb, Scene};
 
 use super::math::{self, V3};
 
@@ -217,10 +217,20 @@ fn mix(a: Rgb, s: f32) -> Rgb {
     [a[0] * s, a[1] * s, a[2] * s]
 }
 
-/// The triangles of `scene` at `frame`, with `selected` highlighted.
+/// How much an element that is not related to the selection keeps of its
+/// colour.
+const DIM: f32 = 0.22;
+
+/// The triangles of `scene` at `frame`, with `selected` highlighted: its
+/// traces glow and the chips at their other end stay lit, while the rest
+/// of the board dims. A trace with a message in flight glows in the
+/// message's colour.
 #[must_use]
 pub fn build(scene: &Scene, frame: &Frame, selected: Option<&str>) -> Mesh {
     let mut mesh = Mesh::default();
+    let related = selected.map(|id| scene.related(id));
+    let lit_chip = |id: &str| related.as_ref().is_none_or(|r| r.has_chip(id));
+    let lit_ribbon = |id: &str| related.as_ref().is_none_or(|r| r.has_ribbon(id));
     let board = &scene.board;
     let center = [
         (board.min[0] + board.max[0]) / 2.0,
@@ -237,45 +247,60 @@ pub fn build(scene: &Scene, frame: &Frame, selected: Option<&str>) -> Mesh {
         board.material.emissive,
     );
     for ribbon in &scene.ribbons {
-        mesh.ribbon(
-            &ribbon.points,
-            ribbon.width,
-            ribbon.material.base,
-            ribbon.material.emissive,
-        );
+        let traffic = frame.packets.iter().find(|p| p.conn == ribbon.id);
+        let mut glow = match traffic {
+            Some(packet) => mix(packet.color, 0.35),
+            None => ribbon.material.emissive,
+        };
+        let mut base = ribbon.material.base;
+        if related.is_some() {
+            if lit_ribbon(&ribbon.id) {
+                glow = match traffic {
+                    Some(packet) => mix(packet.color, 0.9),
+                    None => HIGHLIGHT,
+                };
+            } else {
+                glow = mix(glow, DIM);
+                base = mix(base, DIM);
+            }
+        }
+        mesh.ribbon(&ribbon.points, ribbon.width, base, glow);
     }
     for chip in &scene.chips {
         let look = frame.chips.iter().find(|c| c.id == chip.id);
         let (state, busy, up, queued) = look.map_or(([0.2; 3], false, true, 0), |l| {
             (l.emissive, l.busy, l.up, l.queued)
         });
+        let lit = lit_chip(&chip.id);
+        let dim = if lit { 1.0 } else { DIM };
         let top = if up {
-            mix(state, if busy { 0.8 } else { 0.12 })
+            mix(state, if busy { 1.1 } else { 0.35 } * dim)
         } else {
-            mix(DOWN, 1.2)
+            mix(DOWN, 1.2 * dim)
         };
         let is_selected = selected == Some(chip.id.as_str());
+        // A thin coloured edge: the state, or the accent when selected.
         let side = if is_selected {
-            [0.10, 0.16, 0.22]
+            mix(HIGHLIGHT, 0.6)
         } else {
-            chip.material.emissive
+            mix(if up { state } else { DOWN }, 0.06 * dim)
         };
         mesh.bevelled_box(
             chip.center,
             chip.size,
             chip.bevel,
-            chip.material.base,
+            mix(chip.material.base, dim),
             top,
             side,
         );
         for pin in &chip.pins {
             mesh.bevelled_box(
                 pin.at,
-                [0.36, 0.12, 0.22],
+                [0.30, 0.08, 0.16],
                 0.0,
-                [0.8, 0.62, 0.25],
-                [0.05, 0.04, 0.0],
-                [0.05, 0.04, 0.0],
+                mix([0.10, 0.10, 0.11], dim),
+                [0.0; 3],
+                [0.0; 3],
             );
         }
         let top_y = chip.center[1] + chip.size[1] / 2.0;
@@ -285,34 +310,40 @@ pub fn build(scene: &Scene, frame: &Frame, selected: Option<&str>) -> Mesh {
                 [x, top_y + 0.1, chip.center[2] + chip.size[2] / 2.0 - 0.35],
                 [0.26, 0.2, 0.26],
                 0.04,
-                [0.3, 0.2, 0.05],
-                [1.6, 0.9, 0.1],
-                [0.8, 0.45, 0.05],
+                [0.05, 0.04, 0.02],
+                mix([1.6, 0.9, 0.1], dim),
+                mix([0.8, 0.45, 0.05], dim),
             );
         }
-        if is_selected {
+        if is_selected || (lit && related.is_some()) {
+            let (width, glow) = if is_selected {
+                (0.12, mix(HIGHLIGHT, 2.0))
+            } else {
+                (0.06, mix(HIGHLIGHT, 0.8))
+            };
             mesh.ring(
                 [chip.center[0], 0.04, chip.center[2]],
                 [chip.size[0] / 2.0 + 0.35, chip.size[2] / 2.0 + 0.35],
-                0.12,
-                [0.6, 1.4, 2.0],
+                width,
+                glow,
             );
         }
     }
     for packet in &frame.packets {
+        let dim = if lit_ribbon(&packet.conn) { 1.0 } else { DIM };
         mesh.sphere(
             packet.at,
             PACKET_RADIUS,
-            packet.color,
-            mix(packet.color, 2.5),
+            mix(packet.color, dim),
+            mix(packet.color, 2.5 * dim),
         );
         for (i, p) in packet.trail.iter().enumerate() {
             let fade = 1.0 - (i as f32 + 1.0) / (packet.trail.len() as f32 + 1.0);
             mesh.sphere(
                 *p,
                 PACKET_RADIUS * (0.4 + 0.5 * fade),
-                packet.color,
-                mix(packet.color, 1.6 * fade),
+                mix(packet.color, dim),
+                mix(packet.color, 1.6 * fade * dim),
             );
         }
     }

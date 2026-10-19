@@ -88,7 +88,7 @@ fn the_timeline_scrubs_steps_and_marks_failures(cx: &mut TestAppContext) {
     );
     cx.simulate_click(middle, Modifiers::none());
     draw(&view, cx);
-    let p = view.read_with(cx, |v, _| v.playback());
+    let p = view.read_with(cx, |v, _| v.playback().clone());
     let half = p.until_us / 2;
     assert!(
         p.t_us.abs_diff(half) <= p.until_us / 50,

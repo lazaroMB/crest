@@ -461,6 +461,35 @@ fn the_scene_and_frames_follow_the_trace() {
 }
 
 #[test]
+fn a_chip_is_related_to_the_chips_its_traces_reach() {
+    let m = model();
+    let scene = build_scene(&m, &layout(&m));
+    let c1 = scene.ribbon("c1").unwrap();
+    assert_eq!((c1.from.as_str(), c1.to.as_str()), ("client", "api"));
+    let db = scene.related("db");
+    assert_eq!(db.chips, ["db", "api"]);
+    assert_eq!(db.ribbons, ["c2", "c3"]);
+    assert!(!db.has_chip("client"));
+    let api = scene.related("api");
+    assert_eq!(api.ribbons.len(), 4);
+    assert!(api.has_chip("client") && api.has_chip("db"));
+    // A packet knows the trace it travels.
+    let trace = simulate(&m, &m.scenarios[0]).unwrap();
+    let sent = trace
+        .events
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::Sent {
+                conn, arrive_us, ..
+            } => Some((e.at_us, *arrive_us, conn.clone())),
+            _ => None,
+        })
+        .unwrap();
+    let frame = frame_at(&m, &scene, &trace, (sent.0 + sent.1) / 2);
+    assert_eq!(frame.packets[0].conn, sent.2);
+}
+
+#[test]
 fn boards_report_overall_results() {
     let m = model();
     let runs = run_all(&m).unwrap();

@@ -189,14 +189,16 @@ impl SysBoardView {
         let scene = Rc::new(scene_of(&board.model));
         let camera = OrbitCamera::fit(&scene);
         let runs = board.runs.clone();
-        let until = runs.first().map_or(1, |r| r.trace.until_us);
+        let playback = runs
+            .first()
+            .map_or_else(|| Playback::new(1), |r| Playback::for_trace(&r.trace));
         Self {
             board,
             runs,
             camera,
             scene,
             scenario: 0,
-            playback: Playback::new(until),
+            playback,
             selected: None,
             backend,
             iso: IsoView::default(),
@@ -234,8 +236,8 @@ impl SysBoardView {
     }
 
     /// The timeline.
-    pub fn playback(&self) -> Playback {
-        self.playback
+    pub fn playback(&self) -> &Playback {
+        &self.playback
     }
 
     /// The selected component.
@@ -280,7 +282,7 @@ impl SysBoardView {
     pub fn select_scenario(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix < self.runs.len() {
             self.scenario = ix;
-            self.playback = Playback::new(self.runs[ix].trace.until_us);
+            self.playback = Playback::for_trace(&self.runs[ix].trace);
             self.last_tick = None;
             cx.notify();
         }
@@ -297,8 +299,11 @@ impl SysBoardView {
         let seed = run.trace.seed.wrapping_add_signed(delta);
         if let Ok(new) = run_scenario_with_seed(&self.board.model, &scenario, seed) {
             let t = self.playback.t_us;
+            // The new run has other events: pace by them.
+            let mut playback = Playback::for_trace(&new.trace);
+            playback.seek(t);
             self.runs[self.scenario] = new;
-            self.playback.seek(t);
+            self.playback = playback;
             cx.notify();
         }
     }
@@ -843,6 +848,44 @@ impl SysBoardView {
                         );
                     }
                 }
+                let links = inspector::connections(&self.scene, &comp.id);
+                if !links.is_empty() {
+                    section = section.child(
+                        div()
+                            .pt_1()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Connected to (lit on the board)"),
+                    );
+                    for link in links {
+                        section = section.child(
+                            div()
+                                .text_xs()
+                                .font_family(theme.mono_font_family.clone())
+                                .child(SharedString::from(link)),
+                        );
+                    }
+                }
+                if let Some(run) = self.run() {
+                    let recent = inspector::activity(&run.trace, &comp.id, self.playback.t_us, 6);
+                    if !recent.is_empty() {
+                        section = section.child(
+                            div()
+                                .pt_1()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Last activity"),
+                        );
+                        for line in recent {
+                            section = section.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(SharedString::from(line)),
+                            );
+                        }
+                    }
+                }
                 if !comp.cites.is_empty() {
                     section =
                         section.child(div().text_xs().text_color(theme.muted_foreground).child(
@@ -909,7 +952,7 @@ impl SysBoardView {
 
     fn render_timeline(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let p = self.playback;
+        let p = self.playback.clone();
         let markers = self.markers();
         let bounds_cell = Rc::clone(&self.scrub_bounds);
         let (track, head, danger) = (theme.secondary, theme.primary, theme.danger);

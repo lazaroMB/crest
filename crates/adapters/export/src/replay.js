@@ -5,8 +5,17 @@
 (function () {
   "use strict";
   const DATA = JSON.parse(document.getElementById("data").textContent);
-  const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 4];
+  const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 4, 8];
+  // Playing is paced by events, as in the window: each stretch between two
+  // moments where something happens lasts MIN_STEP..MAX_STEP seconds at 1×
+  // (its share of PLAY_SECONDS, clamped), so every message can be followed.
   const PLAY_SECONDS = 10;
+  const MIN_STEP = 0.8;
+  const MAX_STEP = 3.0;
+  // The glow of what a selected chip is connected to, and the dimming of
+  // the rest.
+  const HIGHLIGHT = [0.85, 0.25, 0.15];
+  const DIM = 0.22;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const ms = (us) => (us >= 1e7 ? (us / 1e6).toFixed(2) + " s" : (us / 1000).toFixed(3) + " ms");
@@ -39,7 +48,7 @@
     const b = S.board;
     const center = new THREE.Vector3((b.min[0] + b.max[0]) / 2, 0, (b.min[2] + b.max[2]) / 2);
     const radius = Math.max(1, new THREE.Vector3(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]).length() / 2);
-    const edgeMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0.35, 0.75, 1.0), transparent: true, opacity: 0.55 });
+    const edgeMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0.22, 0.22, 0.25), transparent: true, opacity: 0.6 });
     const box = (min, max, mat, edges) => {
       const g = new THREE.BoxGeometry(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
       const m = new THREE.Mesh(g, mat);
@@ -55,8 +64,10 @@
     const std = (m) => new THREE.MeshStandardMaterial({ color: color(m.base), emissive: color(m.emissive), metalness: m.metallic, roughness: m.roughness });
     box(b.min, b.max, std(b.material), true);
 
+    const ribbonMats = [];
     for (const r of S.ribbons) {
       const mat = std(r.material);
+      ribbonMats.push(mat);
       for (let i = 0; i + 1 < r.points.length; i++) {
         const a = r.points[i], c = r.points[i + 1];
         const w = r.width / 2;
@@ -79,11 +90,11 @@
       scene.add(top);
       for (const p of c.pins) {
         box([p.at[0] - 0.18, p.at[1] - 0.06, p.at[2] - 0.11], [p.at[0] + 0.18, p.at[1] + 0.06, p.at[2] + 0.11],
-          new THREE.MeshStandardMaterial({ color: new THREE.Color(0.8, 0.62, 0.25), metalness: 0.9, roughness: 0.35 }), false);
+          new THREE.MeshStandardMaterial({ color: new THREE.Color(0.10, 0.10, 0.11), metalness: 0.3, roughness: 0.6 }), false);
       }
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0, 1, 4, 1),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(0.5, 0.9, 1.0), transparent: true, opacity: 0.0, side: THREE.DoubleSide })
+        new THREE.MeshBasicMaterial({ color: color(HIGHLIGHT), transparent: true, opacity: 0.0, side: THREE.DoubleSide })
       );
       ring.rotation.x = -Math.PI / 2;
       ring.rotation.z = Math.PI / 4;
@@ -139,15 +150,31 @@
 
     function draw(frame) {
       resize();
+      const rel = related(state.selected);
+      for (const [k, r] of S.ribbons.entries()) {
+        const traffic = frame.packets.find((p) => p.ribbon === k);
+        let glow = traffic ? color(traffic.color).multiplyScalar(0.35) : color(r.material.emissive);
+        let base = color(r.material.base);
+        if (rel) {
+          if (rel.ribbons.has(k)) glow = traffic ? color(traffic.color).multiplyScalar(0.9) : color(HIGHLIGHT);
+          else { glow.multiplyScalar(DIM); base.multiplyScalar(DIM); }
+        }
+        ribbonMats[k].emissive = glow;
+        ribbonMats[k].color = base;
+      }
       for (const [i, c] of chips.entries()) {
         const look = frame.looks[i];
+        const lit = !rel || rel.chips.has(i);
+        const dim = lit ? 1 : DIM;
         const glow = look ? look.emissive : [0.2, 0.2, 0.2];
-        const k = look && !look.up ? 1.2 : look && look.busy ? 0.8 : 0.12;
-        c.top.material.emissive = color(glow).multiplyScalar(k);
-        c.ring.material.opacity = state.selected === i ? 0.35 : 0.0;
+        const k = look && !look.up ? 1.2 : look && look.busy ? 1.1 : 0.35;
+        c.top.material.emissive = color(look && !look.up ? [1.0, 0.1, 0.08] : glow).multiplyScalar(k * dim);
+        c.body.material.color = color(c.def.material.base).multiplyScalar(dim);
+        c.ring.material.opacity = state.selected === i ? 0.45 : rel && lit ? 0.18 : 0.0;
       }
       let n = 0;
       for (const p of frame.packets) {
+        const pdim = !rel || rel.ribbons.has(p.ribbon) ? 1 : DIM;
         const parts = [{ at: p.at, s: 1 }].concat(p.trail.map((t, j) => ({ at: t, s: 0.8 - j * 0.15 })));
         for (const part of parts) {
           const m = packet(n++);
@@ -156,8 +183,8 @@
           m.glow.position.copy(m.core.position);
           m.core.scale.setScalar(part.s);
           m.glow.scale.setScalar(part.s);
-          m.core.material.color = color(p.color).multiplyScalar(1.6);
-          m.glow.material.color = color(p.color);
+          m.core.material.color = color(p.color).multiplyScalar(1.6 * pdim);
+          m.glow.material.color = color(p.color).multiplyScalar(pdim);
         }
       }
       for (let i = n; i < pool.length; i++) pool[i].core.visible = pool[i].glow.visible = false;
@@ -226,6 +253,56 @@
 
   function run() { return DATA.scenarios[state.scenario]; }
 
+  // What chip index `i` is connected to: chip and ribbon indices.
+  function related(i) {
+    if (i === null || i === undefined) return null;
+    const S = DATA.scene;
+    const id = S.chips[i].id;
+    const chips = new Set([i]);
+    const ribbons = new Set();
+    for (const [k, r] of S.ribbons.entries()) {
+      const other = r.from === id ? r.to : r.to === id ? r.from : null;
+      if (other === null) continue;
+      ribbons.add(k);
+      const j = S.chips.findIndex((c) => c.id === other);
+      if (j >= 0) chips.add(j);
+    }
+    return { chips, ribbons };
+  }
+
+  // The pace of scenario `r`: simulated stops and the real second each is
+  // reached at 1×, linear in between (cached on the scenario).
+  function pace(r) {
+    if (r._pace) return r._pace;
+    const set = new Set([0, r.until_us]);
+    for (const t of r.times) set.add(t);
+    for (const [, at, arrive] of r.trips) { set.add(at); set.add(arrive); }
+    const us = [...set].filter((t) => t <= r.until_us).sort((a, b) => a - b);
+    const s = [0];
+    for (let i = 1; i < us.length; i++) {
+      const share = ((us[i] - us[i - 1]) / Math.max(1, r.until_us)) * PLAY_SECONDS;
+      s.push(s[i - 1] + Math.min(MAX_STEP, Math.max(MIN_STEP, share)));
+    }
+    r._pace = { us, s };
+    return r._pace;
+  }
+
+  function realAt(r, t) {
+    const { us, s } = pace(r);
+    for (let i = 1; i < us.length; i++) {
+      if (t <= us[i]) return s[i - 1] + (s[i] - s[i - 1]) * (t - us[i - 1]) / Math.max(1e-9, us[i] - us[i - 1]);
+    }
+    return s[s.length - 1];
+  }
+
+  function timeAt(r, real) {
+    const { us, s } = pace(r);
+    for (let i = 1; i < s.length; i++) {
+      if (real <= s[i]) return us[i - 1] + (us[i] - us[i - 1]) * (real - s[i - 1]) / Math.max(1e-9, s[i] - s[i - 1]);
+    }
+    return r.until_us;
+  }
+
   function along(points, f) {
     let total = 0;
     const seg = [];
@@ -254,7 +331,7 @@
       if (at > t || arrive <= t || arrive <= at) continue;
       const pts = DATA.scene.ribbons[ribbon].points;
       const f = (t - at) / (arrive - at);
-      packets.push({ kind, color: c, at: along(pts, f), trail: [1, 2, 3, 4].map((k) => along(pts, Math.max(0, f - 0.05 * k))) });
+      packets.push({ ribbon, kind, color: c, at: along(pts, f), trail: [1, 2, 3, 4].map((k) => along(pts, Math.max(0, f - 0.05 * k))) });
     }
     const looks = DATA.scene.chips.map(() => null);
     for (const k of r.keys) {
@@ -312,7 +389,8 @@
     if (state.playing) {
       const r = run();
       if (state.last !== null) {
-        state.t = Math.min(r.until_us, state.t + ((r.until_us / PLAY_SECONDS) * SPEEDS[state.speed] * (now - state.last)) / 1000);
+        const real = realAt(r, state.t) + (SPEEDS[state.speed] * (now - state.last)) / 1000;
+        state.t = Math.min(r.until_us, timeAt(r, real));
         if (state.t >= r.until_us) state.playing = false;
       }
       state.last = now;

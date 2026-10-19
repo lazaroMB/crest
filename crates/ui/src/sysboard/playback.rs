@@ -2,18 +2,122 @@
 //! speed, stepping from event to event and scrubbing, plus the red
 //! markers of the failed assertions. Pure, so it is tested without a
 //! window; the view only feeds it real time.
+//!
+//! Playing is **paced by events** ([`Pace`]): simulated time is not mapped
+//! linearly to real time, because the events of a scenario come in bursts
+//! (a request fans out in microseconds, then nothing happens for a
+//! second). At `1×` every stretch between two consecutive moments where
+//! something happens lasts between [`MIN_STEP_S`] and [`MAX_STEP_S`] real
+//! seconds, so each message can be followed with the eye.
 
 use std::time::Duration;
 
+use domain::sysmodel::trace::EventKind;
 use domain::sysmodel::{ScenarioRun, Trace};
 
-/// Playback speeds; `1×` plays the whole scenario in [`PLAY_SECONDS`].
-pub const SPEEDS: [f32; 6] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
-/// Real seconds a scenario lasts at `1×`.
+/// Playback speeds; `1×` is the paced speed.
+pub const SPEEDS: [f32; 7] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
+/// Real seconds a scenario would last at `1×` if its time ran linearly;
+/// each stretch between events gets its share of it, within
+/// [`MIN_STEP_S`]..[`MAX_STEP_S`].
 pub const PLAY_SECONDS: f32 = 10.0;
+/// Shortest real time a stretch between two events lasts at `1×`.
+pub const MIN_STEP_S: f64 = 0.8;
+/// Longest real time a stretch between two events lasts at `1×`.
+pub const MAX_STEP_S: f64 = 3.0;
+
+/// How simulated time maps to real playing time: the moments where
+/// something happens (`stops_us`) and the real second each one is reached
+/// at `1×` (`stops_s`); linear in between.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pace {
+    stops_us: Vec<u64>,
+    stops_s: Vec<f64>,
+}
+
+impl Pace {
+    /// Linear: the whole of `until_us` in [`PLAY_SECONDS`].
+    #[must_use]
+    pub fn linear(until_us: u64) -> Self {
+        Self {
+            stops_us: vec![0, until_us.max(1)],
+            stops_s: vec![0.0, f64::from(PLAY_SECONDS)],
+        }
+    }
+
+    /// Paced by the events of `trace`: sends, arrivals, handling starts
+    /// and ends, failures.
+    #[must_use]
+    pub fn of(trace: &Trace) -> Self {
+        let until = trace.until_us.max(1);
+        let mut stops = vec![0, until];
+        for event in &trace.events {
+            stops.push(event.at_us);
+            match &event.kind {
+                EventKind::Sent { arrive_us, .. } => stops.push(*arrive_us),
+                EventKind::Started { done_us, .. } => stops.push(*done_us),
+                _ => {}
+            }
+        }
+        stops.retain(|t| *t <= until);
+        stops.sort_unstable();
+        stops.dedup();
+        let mut real = Vec::with_capacity(stops.len());
+        let mut acc = 0.0;
+        real.push(acc);
+        for pair in stops.windows(2) {
+            let share = (pair[1] - pair[0]) as f64 / until as f64 * f64::from(PLAY_SECONDS);
+            acc += share.clamp(MIN_STEP_S, MAX_STEP_S);
+            real.push(acc);
+        }
+        Self {
+            stops_us: stops,
+            stops_s: real,
+        }
+    }
+
+    /// Real seconds the scenario lasts at `1×`.
+    #[must_use]
+    pub fn duration_s(&self) -> f64 {
+        self.stops_s.last().copied().unwrap_or(0.0)
+    }
+
+    /// Simulated time reached after `real_s` seconds at `1×`.
+    #[must_use]
+    pub fn time_at(&self, real_s: f64) -> u64 {
+        let i = self.stops_s.partition_point(|s| *s <= real_s);
+        if i == 0 {
+            return 0;
+        }
+        if i >= self.stops_s.len() {
+            return self.stops_us.last().copied().unwrap_or(0);
+        }
+        let (s0, s1) = (self.stops_s[i - 1], self.stops_s[i]);
+        let (t0, t1) = (self.stops_us[i - 1], self.stops_us[i]);
+        let f = ((real_s - s0) / (s1 - s0)).clamp(0.0, 1.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let dt = ((t1 - t0) as f64 * f).floor() as u64;
+        t0 + dt
+    }
+
+    /// Real seconds at `1×` at which simulated time `t_us` is reached.
+    #[must_use]
+    pub fn real_at(&self, t_us: u64) -> f64 {
+        let i = self.stops_us.partition_point(|t| *t <= t_us);
+        if i == 0 {
+            return 0.0;
+        }
+        if i >= self.stops_us.len() {
+            return self.duration_s();
+        }
+        let (t0, t1) = (self.stops_us[i - 1], self.stops_us[i]);
+        let (s0, s1) = (self.stops_s[i - 1], self.stops_s[i]);
+        s0 + (s1 - s0) * (t_us - t0) as f64 / (t1 - t0) as f64
+    }
+}
 
 /// Where the timeline is.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Playback {
     /// Simulated time shown.
     pub t_us: u64,
@@ -22,21 +126,39 @@ pub struct Playback {
     /// Whether time advances.
     pub playing: bool,
     speed: usize,
-    /// Fraction of a microsecond carried between ticks.
-    carry: f64,
+    pace: Pace,
+    /// Real seconds played at `1×`.
+    real_s: f64,
 }
 
 impl Playback {
-    /// At the start, paused, at `1×`.
+    /// At the start, paused, at `1×`, with time running linearly.
     #[must_use]
     pub fn new(until_us: u64) -> Self {
+        Self::with_pace(until_us, Pace::linear(until_us))
+    }
+
+    /// At the start, paused, at `1×`, paced by the events of `trace`.
+    #[must_use]
+    pub fn for_trace(trace: &Trace) -> Self {
+        Self::with_pace(trace.until_us, Pace::of(trace))
+    }
+
+    fn with_pace(until_us: u64, pace: Pace) -> Self {
         Self {
             t_us: 0,
             until_us: until_us.max(1),
             playing: false,
             speed: 3,
-            carry: 0.0,
+            pace,
+            real_s: 0.0,
         }
+    }
+
+    /// Real seconds the scenario lasts at the current speed.
+    #[must_use]
+    pub fn duration_s(&self) -> f64 {
+        self.pace.duration_s() / f64::from(self.speed())
     }
 
     /// The speed factor.
@@ -58,10 +180,9 @@ impl Playback {
     /// Play or pause; playing at the end starts over.
     pub fn toggle(&mut self) {
         if !self.playing && self.t_us >= self.until_us {
-            self.t_us = 0;
+            self.seek(0);
         }
         self.playing = !self.playing;
-        self.carry = 0.0;
     }
 
     /// Moves time on by `real` elapsed time; returns whether it moved.
@@ -70,15 +191,12 @@ impl Playback {
         if !self.playing {
             return false;
         }
-        let rate = self.until_us as f64 / f64::from(PLAY_SECONDS) * f64::from(self.speed());
-        let step = rate * real.as_secs_f64() + self.carry;
-        let whole = (step + 1e-6).floor();
-        self.carry = (step - whole).max(0.0);
+        let end = self.pace.duration_s();
+        self.real_s = (self.real_s + real.as_secs_f64() * f64::from(self.speed())).min(end);
         let before = self.t_us;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let whole = whole as u64;
-        self.t_us = self.t_us.saturating_add(whole).min(self.until_us);
-        if self.t_us >= self.until_us {
+        self.t_us = self.pace.time_at(self.real_s).min(self.until_us);
+        if self.real_s >= end {
+            self.t_us = self.until_us;
             self.playing = false;
         }
         self.t_us != before
@@ -87,7 +205,7 @@ impl Playback {
     /// Jumps to `t_us` (clamped).
     pub fn seek(&mut self, t_us: u64) {
         self.t_us = t_us.min(self.until_us);
-        self.carry = 0.0;
+        self.real_s = self.pace.real_at(self.t_us);
     }
 
     /// Jumps to `fraction` of the scenario.
@@ -241,6 +359,35 @@ mod tests {
         assert_eq!(p.t_us, 0);
         p.scrub(7.0);
         assert_eq!(p.t_us, 10_000);
+    }
+
+    #[test]
+    fn events_get_time_to_be_followed() {
+        // A burst at 100..103 µs and a lone event at 9 000 µs.
+        let t = trace(&[100, 101, 103, 9_000]);
+        let pace = Pace::of(&t);
+        // Stops: 0, 100, 101, 103, 9 000, 10 000: five stretches.
+        let d = pace.duration_s();
+        assert!(d >= 5.0 * MIN_STEP_S - 1e-9, "{d}");
+        assert!(d <= 5.0 * MAX_STEP_S + 1e-9, "{d}");
+        // The 1 µs stretch of the burst lasts a visible while.
+        let a = pace.real_at(100);
+        let b = pace.real_at(101);
+        assert!(b - a >= MIN_STEP_S - 1e-9, "{a} {b}");
+        // time_at and real_at invert each other at the stops.
+        for t_us in [0, 100, 101, 103, 9_000, 10_000] {
+            assert_eq!(pace.time_at(pace.real_at(t_us)), t_us);
+        }
+        let mut p = Playback::for_trace(&t);
+        p.toggle();
+        p.advance(Duration::from_secs_f64(a + 0.01));
+        assert_eq!(
+            p.t_us, 100,
+            "the first second reaches the burst, not past it"
+        );
+        p.advance(Duration::from_secs(1_000));
+        assert_eq!(p.t_us, 10_000);
+        assert!(!p.playing);
     }
 
     #[test]

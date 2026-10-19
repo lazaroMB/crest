@@ -1,10 +1,14 @@
 //! Text of the state inspector: a component's machine as a Mermaid state
-//! diagram with the current state lit, and one-line summaries.
+//! diagram with the current state lit, one-line summaries, what it is
+//! connected to and what it did last.
 
 use std::fmt::Write as _;
 
 use domain::sysmodel::model::Component;
-use domain::sysmodel::trace::CompState;
+use domain::sysmodel::scene::Scene;
+use domain::sysmodel::trace::{CompState, EventKind, Trace};
+
+use super::playback::time_label;
 
 /// Mermaid ids are words; state names may not be.
 fn node(name: &str) -> String {
@@ -64,6 +68,77 @@ pub fn machine_diagram(comp: &Component, current: Option<&str>) -> String {
         );
     }
     out
+}
+
+/// What component `id` is connected to: `→ db (query)` for a trace that
+/// leaves it, `← web (request)` for one that arrives.
+#[must_use]
+pub fn connections(scene: &Scene, id: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for ribbon in &scene.ribbons {
+        if ribbon.from == id {
+            out.push(format!("→ {} ({})", ribbon.to, ribbon.id));
+        }
+        if ribbon.to == id {
+            out.push(format!("← {} ({})", ribbon.from, ribbon.id));
+        }
+    }
+    out
+}
+
+/// The last `n` things component `id` did up to `t_us`, newest first:
+/// `1.200 ms · sent query → db`, `received request`, `idle → busy on
+/// request`...
+#[must_use]
+pub fn activity(trace: &Trace, id: &str, t_us: u64, n: usize) -> Vec<String> {
+    let until = trace.events_until(t_us);
+    trace.events[..until]
+        .iter()
+        .rev()
+        .filter_map(|event| {
+            let what = match &event.kind {
+                EventKind::Sent { kind, from, to, .. } if from == id => {
+                    format!("sent {kind} → {to}")
+                }
+                EventKind::Sent { kind, from, to, .. } if to == id => {
+                    format!("{from} sent it {kind}")
+                }
+                EventKind::Started { kind, comp, .. } if comp == id => {
+                    format!("handling {kind}")
+                }
+                EventKind::Enqueued { kind, comp, .. } if comp == id => format!("queued {kind}"),
+                EventKind::Handled {
+                    kind,
+                    comp,
+                    from_state,
+                    to_state,
+                    ..
+                } if comp == id => {
+                    if from_state == to_state {
+                        format!("handled {kind} in {from_state}")
+                    } else {
+                        format!("{from_state} → {to_state} on {kind}")
+                    }
+                }
+                EventKind::Unhandled {
+                    kind, comp, state, ..
+                } if comp == id => format!("ignored {kind} in {state}"),
+                EventKind::Rejected { kind, comp, .. } if comp == id => format!("rejected {kind}"),
+                EventKind::Dropped {
+                    kind, comp, reason, ..
+                } if comp == id => format!("dropped {kind} ({reason:?})"),
+                EventKind::Killed { comp, lost } if comp == id => {
+                    format!("went down ({lost} lost)")
+                }
+                EventKind::Restarted { comp, state, .. } if comp == id => {
+                    format!("restarted in {state}")
+                }
+                _ => return None,
+            };
+            Some(format!("{} · {what}", time_label(event.at_us)))
+        })
+        .take(n)
+        .collect()
 }
 
 /// `busy · 2 in progress · 3 queued` / `down`.

@@ -15,10 +15,11 @@ const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The final image: BGRA, as GPUI's images are, sRGB-encoded by the GPU.
 const OUT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+/// The background around the board: the TwoCrest ink (`#0b0b0c`), linear.
 const CLEAR: wgpu::Color = wgpu::Color {
-    r: 0.010,
-    g: 0.013,
-    b: 0.020,
+    r: 0.0033,
+    g: 0.0033,
+    b: 0.0037,
     a: 1.0,
 };
 

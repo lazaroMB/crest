@@ -7,7 +7,7 @@
 //! thin bright one; packets are glowing dots. Pan and zoom move the
 //! projection; picking tests the projected outline of each chip.
 
-use domain::sysmodel::scene::{DOWN, Frame, Rgb, Scene, V3};
+use domain::sysmodel::scene::{DOWN, Frame, HIGHLIGHT, Rgb, Scene, V3};
 use gpui::{Bounds, ContentMask, Hsla, PathBuilder, Pixels, Rgba, Window, point, px};
 
 const COS30: f32 = 0.866_025_4;
@@ -188,7 +188,13 @@ impl Painter<'_> {
     }
 }
 
-/// Paints `frame` of `scene` in `bounds` with `selected` highlighted.
+/// How much an element that is not related to the selection keeps of its
+/// colour.
+const DIM: f32 = 0.25;
+
+/// Paints `frame` of `scene` in `bounds` with `selected` highlighted: its
+/// traces and the chips they reach stay lit, the rest dims, as in the 3D
+/// renderer.
 pub fn paint(
     scene: &Scene,
     frame: &Frame,
@@ -197,8 +203,11 @@ pub fn paint(
     bounds: Bounds<Pixels>,
     window: &mut Window,
 ) {
+    let related = selected.map(|id| scene.related(id));
+    let lit_chip = |id: &str| related.as_ref().is_none_or(|r| r.has_chip(id));
+    let lit_ribbon = |id: &str| related.as_ref().is_none_or(|r| r.has_ribbon(id));
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        window.paint_quad(gpui::fill(bounds, color([0.010, 0.013, 0.020], 1.0)));
+        window.paint_quad(gpui::fill(bounds, color([0.0033, 0.0033, 0.0037], 1.0)));
         let mut p = Painter {
             proj,
             origin: bounds.origin,
@@ -208,7 +217,7 @@ pub fn paint(
         p.block(
             board.min,
             board.max,
-            add(board.material.base, [0.02, 0.05, 0.03], 1.0),
+            add(board.material.base, [0.004, 0.004, 0.005], 1.0),
             board.material.base,
         );
         let scale = proj.scale;
@@ -216,16 +225,24 @@ pub fn paint(
             if ribbon.points.len() < 2 {
                 continue;
             }
+            let traffic = frame.packets.iter().find(|pk| pk.conn == ribbon.id);
+            let mut line = match traffic {
+                Some(packet) => shade(packet.color, 0.35),
+                None => [0.03, 0.03, 0.035],
+            };
+            if related.is_some() {
+                line = if lit_ribbon(&ribbon.id) {
+                    traffic.map_or(HIGHLIGHT, |pk| pk.color)
+                } else {
+                    shade(line, DIM)
+                };
+            }
             p.stroke(
                 &ribbon.points,
-                ribbon.width * scale * 1.8,
-                color([0.02, 0.03, 0.02], 1.0),
+                ribbon.width * scale * 1.6,
+                color([0.0, 0.0, 0.0], 1.0),
             );
-            p.stroke(
-                &ribbon.points,
-                ribbon.width * scale * 0.7,
-                color(ribbon.material.base, 1.0),
-            );
+            p.stroke(&ribbon.points, ribbon.width * scale * 0.8, color(line, 1.0));
         }
         let mut chips: Vec<_> = scene.chips.iter().collect();
         chips.sort_by(|a, b| (a.center[0] + a.center[2]).total_cmp(&(b.center[0] + b.center[2])));
@@ -233,9 +250,15 @@ pub fn paint(
             let look = frame.chips.iter().find(|c| c.id == chip.id);
             let (state, busy, up) =
                 look.map_or(([0.2; 3], false, true), |l| (l.emissive, l.busy, l.up));
+            let dim = if lit_chip(&chip.id) { 1.0 } else { DIM };
             let glow = if up { state } else { DOWN };
-            let top = add(chip.material.base, glow, if busy { 0.85 } else { 0.4 });
-            if selected == Some(chip.id.as_str()) {
+            let top = add(
+                shade(chip.material.base, dim),
+                glow,
+                if busy { 0.85 } else { 0.3 } * dim,
+            );
+            if related.is_some() && lit_chip(&chip.id) {
+                let is_selected = selected == Some(chip.id.as_str());
                 let (lo, hi) = (chip.min(), chip.max());
                 let ring = [
                     [lo[0] - 0.35, 0.02, lo[2] - 0.35],
@@ -244,30 +267,36 @@ pub fn paint(
                     [lo[0] - 0.35, 0.02, hi[2] + 0.35],
                     [lo[0] - 0.35, 0.02, lo[2] - 0.35],
                 ];
-                p.stroke(&ring, (0.12 * scale).max(1.5), color([0.5, 0.9, 1.0], 1.0));
+                let width = if is_selected { 0.12 } else { 0.06 };
+                p.stroke(&ring, (width * scale).max(1.0), color(HIGHLIGHT, 1.0));
             }
-            p.block(chip.min(), chip.max(), top, chip.material.base);
+            p.block(chip.min(), chip.max(), top, shade(chip.material.base, dim));
             for pin in &chip.pins {
-                let h = [0.18, 0.06, 0.11];
+                let h = [0.15, 0.04, 0.08];
                 p.block(
                     [pin.at[0] - h[0], pin.at[1] - h[1], pin.at[2] - h[2]],
                     [pin.at[0] + h[0], pin.at[1] + h[1], pin.at[2] + h[2]],
-                    [0.8, 0.62, 0.25],
-                    [0.5, 0.38, 0.12],
+                    shade([0.10, 0.10, 0.11], dim),
+                    shade([0.06, 0.06, 0.07], dim),
                 );
             }
         }
         for packet in &frame.packets {
+            let dim = if lit_ribbon(&packet.conn) { 1.0 } else { DIM };
             for (i, t) in packet.trail.iter().enumerate() {
                 let fade = 1.0 - (i as f32 + 1.0) / (packet.trail.len() as f32 + 1.0);
                 p.dot(
                     *t,
                     (0.18 * scale).max(1.5) * fade,
-                    color(packet.color, 0.6 * fade),
+                    color(packet.color, 0.6 * fade * dim),
                 );
             }
-            p.dot(packet.at, (0.5 * scale).max(3.0), color(packet.color, 0.25));
-            p.dot(packet.at, (0.28 * scale).max(2.0), color(packet.color, 1.0));
+            p.dot(
+                packet.at,
+                (0.5 * scale).max(3.0),
+                color(packet.color, 0.25 * dim),
+            );
+            p.dot(packet.at, (0.28 * scale).max(2.0), color(packet.color, dim));
         }
     });
 }
