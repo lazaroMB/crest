@@ -283,10 +283,12 @@ fn typed_text(key: &Key) -> Option<String> {
 pub use application::usecases::user_blocks::prompt_block;
 
 /// What `@` reference a file chosen in the tree or a picker inserts.
+/// A path with spaces is quoted: `@"My Docs/a.rs":12 `.
 pub fn file_reference(path: &WorkspacePath, line: Option<u64>) -> String {
+    let at = crate::input::paths::at_path(&path.to_string());
     match line {
-        Some(line) => format!("@{path}:{line} "),
-        None => format!("@{path} "),
+        Some(line) => format!("{at}:{line} "),
+        None => format!("{at} "),
     }
 }
 
@@ -2249,6 +2251,8 @@ mod tests {
         let path = WorkspacePath::parse("src/lib.rs").unwrap();
         assert_eq!(file_reference(&path, None), "@src/lib.rs ");
         assert_eq!(file_reference(&path, Some(3)), "@src/lib.rs:3 ");
+        let spaced = WorkspacePath::parse("My Docs/a b.rs").unwrap();
+        assert_eq!(file_reference(&spaced, Some(3)), "@\"My Docs/a b.rs\":3 ");
     }
 
     fn paste_png(h: &Harness, cx: &mut VisualTestContext) {

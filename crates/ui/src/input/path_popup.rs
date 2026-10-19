@@ -289,6 +289,17 @@ mod tests {
             path_key(&key(KeyCode::Enter), &popup, "@ma", 1),
             PathKey::SetText("@main.rs ".into())
         );
+        // A name with spaces switches to the quoted form, which keeps
+        // completing inside the directory.
+        let spaced = entries(&[("My Docs", true), ("notes v2.md", false)]);
+        assert_eq!(
+            path_key(&key(KeyCode::Tab), &spaced, "/open @My", 0),
+            PathKey::SetText("/open @\"My Docs/".into())
+        );
+        assert_eq!(
+            path_key(&key(KeyCode::Enter), &spaced, "/open @\"My Docs/no", 1),
+            PathKey::SetText("/open @\"My Docs/notes v2.md\" ".into())
+        );
         // The word already is the entry: Enter is the input's.
         let file = entries(&[("main.rs", false)]);
         assert_eq!(

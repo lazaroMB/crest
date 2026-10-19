@@ -89,7 +89,8 @@ pub enum OpenError {
     },
 }
 
-/// The workspace path named by `arg` (`@src/main.rs`).
+/// The workspace path named by `arg` (`@src/main.rs`, or quoted when it
+/// has spaces: `@"My Docs/a.md"`).
 ///
 /// # Errors
 ///
@@ -100,6 +101,7 @@ pub fn parse_target(fs: &dyn FileSystemPort, arg: &str) -> Result<WorkspacePath,
     let path = arg
         .trim()
         .strip_prefix('@')
+        .map(unquote)
         .filter(|path| !path.is_empty())
         .ok_or(OpenError::Usage)?;
     fs.root().resolve(path).map_err(|err| match err {
@@ -114,6 +116,13 @@ pub fn parse_target(fs: &dyn FileSystemPort, arg: &str) -> Result<WorkspacePath,
             }
         }
     })
+}
+
+/// `path` without its quotes: `"a b/c.md"` and the still open `"a b/c.md`
+/// (as completion leaves it) are both `a b/c.md`.
+fn unquote(path: &str) -> &str {
+    path.strip_prefix('"')
+        .map_or(path, |inner| inner.strip_suffix('"').unwrap_or(inner))
 }
 
 /// Reads the file `arg` names and builds the modal that shows it.
@@ -286,6 +295,7 @@ mod tests {
             .with_bytes("shot.png", [0x89, b'P', b'N', b'G', 0, 0])
             .with_bytes("app.bin", [0, 1, 2])
             .with_file(".env", "KEY=1")
+            .with_file("My Docs/notes v2.md", "# Notes")
     }
 
     async fn open(fs: &InMemoryFs, arg: &str) -> Result<ModalSpec, OpenError> {
@@ -356,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn bad_arguments_and_paths_are_explained() {
         let fs = fs();
-        for arg in ["", "  ", "@", "README.md"] {
+        for arg in ["", "  ", "@", "README.md", "@\"\"", "@\""] {
             assert_eq!(open(&fs, arg).await, Err(OpenError::Usage), "{arg:?}");
         }
         for arg in ["@../etc/passwd", "@/etc/passwd", "@src/../../x"] {
@@ -385,6 +395,18 @@ mod tests {
             open(&fs, "@.env").await,
             Err(OpenError::Sensitive { pattern, .. }) if pattern == ".env*"
         ));
+    }
+
+    #[tokio::test]
+    async fn quoted_paths_may_have_spaces() {
+        let fs = fs();
+        for arg in [
+            "@\"My Docs/notes v2.md\"",
+            "@\"My Docs/notes v2.md",
+            "@My Docs/notes v2.md",
+        ] {
+            assert_eq!(open(&fs, arg).await.unwrap().title, "notes v2.md", "{arg}");
+        }
     }
 
     #[tokio::test]

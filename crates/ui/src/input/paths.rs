@@ -3,6 +3,10 @@
 //! prompt). The text up to its last `/` is the directory listed; the rest
 //! filters the entries.
 //!
+//! A path with spaces is quoted: `@"My Docs/notes v2.md"`. Completion
+//! switches to that form when an entry has whitespace, keeps the quote open
+//! while it goes down directories and closes it after a file.
+//!
 //! Suggestions are always rooted at the workspace root: an absolute path
 //! or one that climbs out with `..` gets no listing, only a message (and
 //! `/open` refuses it).
@@ -19,6 +23,8 @@ pub struct PathToken<'a> {
     pub dir_text: &'a str,
     /// What follows the last `/`: filters the entries of the directory.
     pub prefix: &'a str,
+    /// Written as `@"…` (the path may have spaces).
+    pub quoted: bool,
 }
 
 /// The directory a [`PathToken`] lists.
@@ -39,21 +45,51 @@ pub struct PathEntry {
     pub dir: bool,
 }
 
-/// The `@` word the prompt ends with, if any. A trailing space ends the
-/// word, so a completed file (`@src/main.rs `) shows nothing.
+/// The `@` word the prompt ends with, if any: an open `@"…` (spaces
+/// included) or else the last word. A trailing space ends a plain word and
+/// a closing `"` a quoted one, so a completed file (`@src/main.rs `,
+/// `@"My Docs/a.md" `) shows nothing.
 pub fn path_token(text: &str) -> Option<PathToken<'_>> {
+    if let Some(token) = quoted_token(text) {
+        return Some(token);
+    }
     let start = text
         .char_indices()
         .rev()
         .find(|(_, c)| c.is_whitespace())
         .map_or(0, |(ix, c)| ix + c.len_utf8());
     let rest = text[start..].strip_prefix('@')?;
+    Some(split_token(start, rest, false))
+}
+
+/// The last `@"` that starts a word and is not closed yet.
+fn quoted_token(text: &str) -> Option<PathToken<'_>> {
+    let start = text.rfind("@\"")?;
+    let at_word_start = text[..start]
+        .chars()
+        .next_back()
+        .is_none_or(char::is_whitespace);
+    let rest = &text[start + 2..];
+    (at_word_start && !rest.contains('"')).then(|| split_token(start, rest, true))
+}
+
+fn split_token(start: usize, rest: &str, quoted: bool) -> PathToken<'_> {
     let split = rest.rfind('/').map_or(0, |ix| ix + 1);
-    Some(PathToken {
+    PathToken {
         start,
         dir_text: &rest[..split],
         prefix: &rest[split..],
-    })
+        quoted,
+    }
+}
+
+/// The `@` reference to `path`: quoted when it has whitespace.
+pub fn at_path(path: &str) -> String {
+    if path.contains(char::is_whitespace) {
+        format!("@\"{path}\"")
+    } else {
+        format!("@{path}")
+    }
 }
 
 /// The directory `token` lists.
@@ -98,15 +134,19 @@ pub fn path_matches<'a>(entries: &'a [PathEntry], prefix: &str) -> Vec<&'a PathE
 }
 
 /// The prompt with `token` replaced by `entry`: a directory ends in `/`
-/// (so its entries are listed next), a file in a space.
+/// (so its entries are listed next), a file in a space. A quoted token, or
+/// a path with whitespace, is written `@"…`: the quote stays open after a
+/// directory and closes after a file.
 pub fn complete(text: &str, token: &PathToken<'_>, entry: &PathEntry) -> String {
-    let end = if entry.dir { "/" } else { " " };
-    format!(
-        "{}@{}{}{end}",
-        &text[..token.start],
-        token.dir_text,
-        entry.name
-    )
+    let before = &text[..token.start];
+    let path = format!("{}{}", token.dir_text, entry.name);
+    let quoted = token.quoted || path.contains(char::is_whitespace);
+    match (quoted, entry.dir) {
+        (false, true) => format!("{before}@{path}/"),
+        (false, false) => format!("{before}@{path} "),
+        (true, true) => format!("{before}@\"{path}/"),
+        (true, false) => format!("{before}@\"{path}\" "),
+    }
 }
 
 #[cfg(test)]
@@ -130,7 +170,8 @@ mod tests {
             Some(PathToken {
                 start: 0,
                 dir_text: "",
-                prefix: ""
+                prefix: "",
+                quoted: false
             })
         );
         assert_eq!(
@@ -138,7 +179,8 @@ mod tests {
             Some(PathToken {
                 start: 6,
                 dir_text: "src/",
-                prefix: "comp"
+                prefix: "comp",
+                quoted: false
             })
         );
         assert_eq!(
@@ -146,10 +188,31 @@ mod tests {
             Some(PathToken {
                 start: 4,
                 dir_text: "src/ui/",
-                prefix: ""
+                prefix: "",
+                quoted: false
             })
         );
         assert_eq!(path_token("ñ @a").map(|t| t.start), Some(3));
+    }
+
+    #[test]
+    fn an_open_quote_takes_the_spaces() {
+        assert_eq!(
+            path_token("/open @\"My Docs/no"),
+            Some(PathToken {
+                start: 6,
+                dir_text: "My Docs/",
+                prefix: "no",
+                quoted: true
+            })
+        );
+        assert_eq!(path_token("/open @\"a b/c.md\" "), None);
+        assert_eq!(path_token("/open @\"a b/c.md\""), None);
+        let empty = path_token("x @\"").unwrap();
+        assert_eq!((empty.dir_text, empty.prefix, empty.quoted), ("", "", true));
+        // A quote that is not after `@` leaves the plain rule.
+        assert_eq!(path_token("say \"hi\" @sr").map(|t| t.prefix), Some("sr"));
+        assert_eq!(path_token("mail a@\"b").map(|t| t.quoted), None);
     }
 
     #[test]
@@ -204,5 +267,25 @@ mod tests {
             complete(text, &token, &entry("config.rs", false)),
             "/open @src/config.rs "
         );
+    }
+
+    #[test]
+    fn names_with_spaces_are_quoted() {
+        let text = "/open @My";
+        let token = path_token(text).unwrap();
+        let docs = complete(text, &token, &entry("My Docs", true));
+        assert_eq!(docs, "/open @\"My Docs/");
+        let token = path_token(&docs).unwrap();
+        assert_eq!(
+            complete(&docs, &token, &entry("notes v2.md", false)),
+            "/open @\"My Docs/notes v2.md\" "
+        );
+        assert_eq!(
+            complete(&docs, &token, &entry("src", true)),
+            "/open @\"My Docs/src/",
+            "a quoted token keeps its quote"
+        );
+        assert_eq!(at_path("src/a.rs"), "@src/a.rs");
+        assert_eq!(at_path("My Docs/a.rs"), "@\"My Docs/a.rs\"");
     }
 }
