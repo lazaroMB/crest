@@ -49,7 +49,7 @@ fn main() {
         ("Binary garbage", garbage.into_owned()),
     ];
     for (title, source) in &diagrams {
-        match diagram::parse(source, true) {
+        match diagram::parse(source) {
             Ok(d) => eprintln!(
                 "mermaid_block: {title}: {} shapes, {:.0}x{:.0}",
                 d.shapes.len(),

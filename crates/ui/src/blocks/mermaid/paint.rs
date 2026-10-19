@@ -11,11 +11,14 @@ use super::diagram::{Anchor, Diagram, Label, Pt, Segment, Shape};
 pub const MIN_ZOOM: f32 = 0.2;
 /// See [`MIN_ZOOM`].
 pub const MAX_ZOOM: f32 = 8.0;
+/// Largest fitted scale: a small diagram grows up to this to fill the width.
+pub const MAX_FIT: f32 = 1.5;
 /// Labels smaller than this on screen are skipped; they would be noise.
 const MIN_FONT_PX: f32 = 2.0;
 
-/// How the diagram sits in its viewport: `zoom` 1 fits it (never above its
-/// natural size) and centers it; `pan` moves it, in pixels.
+/// How the diagram sits in its viewport: `zoom` 1 fits it to the width (up
+/// to [`MAX_FIT`]), centered, or aligned to the top when it is taller than
+/// the viewport; `pan` moves it, in pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
     /// Zoom over the fitted scale.
@@ -34,11 +37,11 @@ impl Default for Camera {
 }
 
 impl Camera {
-    /// Scale that fits `diagram` (with its padding) in `size`, at most 1.
+    /// Scale that fits the width of `diagram` (with its padding) in
+    /// `size`, at most [`MAX_FIT`]. A taller diagram is panned, not shrunk.
     pub fn fit(diagram: &Diagram, size: Pt) -> f32 {
         let width = diagram.width + diagram.padding * 2.0;
-        let height = diagram.height + diagram.padding * 2.0;
-        (size.0 / width).min(size.1 / height).clamp(0.01, 1.0)
+        (size.0 / width).clamp(0.01, MAX_FIT)
     }
 
     /// Diagram units to pixels.
@@ -48,11 +51,20 @@ impl Camera {
 
     /// Where the diagram's origin lands, relative to the viewport origin.
     pub fn origin(&self, diagram: &Diagram, size: Pt) -> Pt {
-        let scale = self.scale(diagram, size);
-        (
-            size.0 / 2.0 - diagram.width / 2.0 * scale + self.pan.0,
-            size.1 / 2.0 - diagram.height / 2.0 * scale + self.pan.1,
-        )
+        let base = Self::unpanned_origin(diagram, size, self.scale(diagram, size));
+        (base.0 + self.pan.0, base.1 + self.pan.1)
+    }
+
+    /// The origin at `scale` without pan: centered, or with the top padding
+    /// at the top of the viewport when the diagram is taller than it.
+    fn unpanned_origin(diagram: &Diagram, size: Pt, scale: f32) -> Pt {
+        let x = size.0 / 2.0 - diagram.width / 2.0 * scale;
+        let y = if (diagram.height + diagram.padding * 2.0) * scale > size.1 {
+            diagram.padding * scale
+        } else {
+            size.1 / 2.0 - diagram.height / 2.0 * scale
+        };
+        (x, y)
     }
 
     /// Moves the diagram by `delta` pixels.
@@ -75,9 +87,10 @@ impl Camera {
         );
         self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
         let after = self.scale(diagram, size);
+        let base = Self::unpanned_origin(diagram, size, after);
         self.pan = (
-            anchor.0 - size.0 / 2.0 + (diagram.width / 2.0 - under.0) * after,
-            anchor.1 - size.1 / 2.0 + (diagram.height / 2.0 - under.1) * after,
+            anchor.0 - base.0 - under.0 * after,
+            anchor.1 - base.1 - under.1 * after,
         );
     }
 }
@@ -256,29 +269,54 @@ mod tests {
     }
 
     #[test]
-    fn fits_and_centers_without_upscaling() {
+    fn fits_the_width_up_to_max_fit_and_centers() {
         let d = diagram();
         let camera = Camera::default();
         assert_eq!(Camera::fit(&d, (100.0, 100.0)), 0.5);
-        assert_eq!(Camera::fit(&d, (1000.0, 1000.0)), 1.0);
-        assert_eq!(camera.origin(&d, (400.0, 200.0)), (100.0, 50.0));
+        assert_eq!(
+            Camera::fit(&d, (250.0, 10.0)),
+            1.25,
+            "the height does not shrink it"
+        );
+        assert_eq!(Camera::fit(&d, (1000.0, 1000.0)), MAX_FIT);
+        assert_eq!(camera.origin(&d, (200.0, 200.0)), (0.0, 50.0));
+    }
+
+    #[test]
+    fn a_tall_diagram_starts_at_the_top() {
+        let d = Diagram {
+            height: 1000.0,
+            padding: 10.0,
+            ..diagram()
+        };
+        let camera = Camera::default();
+        // Fit 1.0: 1020 px high in a 300 px viewport.
+        assert_eq!(camera.origin(&d, (220.0, 300.0)), (10.0, 10.0));
     }
 
     #[test]
     fn zoom_keeps_the_point_under_the_cursor() {
-        let d = diagram();
-        let size = (400.0, 200.0);
-        let mut camera = Camera::default();
-        let anchor = (150.0, 60.0);
-        let to_diagram = |c: &Camera| {
-            let (o, s) = (c.origin(&d, size), c.scale(&d, size));
-            ((anchor.0 - o.0) / s, (anchor.1 - o.1) / s)
+        let tall = Diagram {
+            height: 1000.0,
+            ..diagram()
         };
-        let before = to_diagram(&camera);
-        camera.zoom_at(2.0, anchor, &d, size);
-        assert_eq!(camera.zoom, 2.0);
-        let after = to_diagram(&camera);
-        assert!((before.0 - after.0).abs() < 1e-3 && (before.1 - after.1).abs() < 1e-3);
+        for d in [diagram(), tall] {
+            let size = (400.0, 200.0);
+            let mut camera = Camera::default();
+            let anchor = (150.0, 60.0);
+            let to_diagram = |c: &Camera| {
+                let (o, s) = (c.origin(&d, size), c.scale(&d, size));
+                ((anchor.0 - o.0) / s, (anchor.1 - o.1) / s)
+            };
+            let before = to_diagram(&camera);
+            camera.zoom_at(2.0, anchor, &d, size);
+            assert_eq!(camera.zoom, 2.0);
+            let after = to_diagram(&camera);
+            assert!(
+                (before.0 - after.0).abs() < 1e-3 && (before.1 - after.1).abs() < 1e-3,
+                "{before:?} vs {after:?}"
+            );
+        }
     }
 
     #[test]

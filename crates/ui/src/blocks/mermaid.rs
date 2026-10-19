@@ -1,6 +1,8 @@
 //! Renderer of the `mermaid` block kind: the diagram, laid out by
 //! rusty-mermaid ([`diagram`]) and painted with GPUI ([`paint`]), in a
-//! viewport with pan and zoom.
+//! viewport with pan and zoom. The viewport is a TwoCrest card in both app
+//! themes: ink background, coral border and coral buttons. The diagram
+//! fills its width; a taller one starts at the top and is dragged.
 //!
 //! Drag pans; ctrl/cmd + wheel zooms around the cursor; with the viewport
 //! focused (click it) `+`/`-` zoom and `0` resets; the toolbar does the
@@ -17,20 +19,25 @@ use std::rc::Rc;
 
 use domain::block::{BlockKind, MermaidSpec};
 use gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
+    AnyElement, App, Bounds, Context, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
-    Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, canvas, div, px,
+    Pixels, Render, Rgba, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Window, canvas, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use crate::theme::palette::{ACCENT, INK, TEXT_2};
 use crate::timeline::TimelineEntry;
 use diagram::Diagram;
 use paint::Camera;
 
 /// Viewport height limits.
 const MIN_HEIGHT: f32 = 140.0;
-const MAX_HEIGHT: f32 = 420.0;
+const MAX_HEIGHT: f32 = 640.0;
+/// The coral of the buttons under the pointer (`primary.hover` of the theme).
+const ACCENT_HOVER: &str = "#e2745f";
+/// Ink at 70 %, behind the zoom level.
+const INK_CHIP: &str = "#0b0b0cb3";
 /// Zoom step of the keys, the buttons and one wheel notch.
 const ZOOM_STEP: f32 = 1.25;
 /// Characters of a source shown in the error view; garbage can be huge.
@@ -39,7 +46,6 @@ const MAX_SOURCE_CHARS: usize = 8_000;
 /// Per-block state: the parsed diagram and its camera.
 pub struct MermaidView {
     source: String,
-    dark: bool,
     diagram: Result<Rc<Diagram>, String>,
     show_source: bool,
     camera: Camera,
@@ -51,11 +57,10 @@ pub struct MermaidView {
 }
 
 impl MermaidView {
-    fn new(source: &str, dark: bool, cx: &mut Context<Self>) -> Self {
+    fn new(source: &str, cx: &mut Context<Self>) -> Self {
         Self {
             source: source.to_owned(),
-            dark,
-            diagram: diagram::parse(source, dark).map(Rc::new),
+            diagram: diagram::parse(source).map(Rc::new),
             show_source: false,
             camera: Camera::default(),
             drag: None,
@@ -64,13 +69,12 @@ impl MermaidView {
         }
     }
 
-    /// Reparses when the source or the theme changed (resetting the camera)
-    /// and switches between diagram and source.
-    fn sync(&mut self, source: &str, dark: bool, show_source: bool, cx: &mut Context<Self>) {
-        if self.source != source || self.dark != dark {
+    /// Reparses when the source changed (resetting the camera) and switches
+    /// between diagram and source.
+    fn sync(&mut self, source: &str, show_source: bool, cx: &mut Context<Self>) {
+        if self.source != source {
             self.source = source.to_owned();
-            self.dark = dark;
-            self.diagram = diagram::parse(source, dark).map(Rc::new);
+            self.diagram = diagram::parse(source).map(Rc::new);
             self.camera = Camera::default();
             cx.notify();
         }
@@ -189,14 +193,15 @@ impl MermaidView {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
         let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
                 .px_1p5()
                 .rounded_sm()
-                .bg(theme.secondary)
-                .hover(|style| style.bg(theme.secondary_hover))
+                .bg(palette_color(ACCENT))
+                .hover(|style| style.bg(palette_color(ACCENT_HOVER)))
+                .text_color(palette_color(INK))
+                .font_weight(FontWeight::SEMIBOLD)
                 .child(label)
         };
         h_flex()
@@ -205,8 +210,14 @@ impl MermaidView {
             .right_1()
             .gap_1()
             .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(format!("{:.0}%", self.camera.zoom * 100.0))
+            .child(
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .bg(palette_color(INK_CHIP))
+                    .text_color(palette_color(TEXT_2))
+                    .child(format!("{:.0}%", self.camera.zoom * 100.0)),
+            )
             .child(
                 button("mermaid-zoom-out", "−")
                     .on_click(cx.listener(|this, _, _, cx| this.zoom(1.0 / ZOOM_STEP, None, cx))),
@@ -222,15 +233,32 @@ impl MermaidView {
             .into_any_element()
     }
 
+    /// The diagram's height at the scale that fits the last painted width
+    /// (its natural height before the first paint), within the limits.
+    fn viewport_height(&self, diagram: &Diagram) -> f32 {
+        let natural = diagram.height + diagram.padding * 2.0;
+        let width = self.viewport_size().0;
+        let fitted = if width > 0.0 {
+            natural * Camera::fit(diagram, (width, 0.0))
+        } else {
+            natural
+        };
+        fitted.clamp(MIN_HEIGHT, MAX_HEIGHT)
+    }
+
     fn render_diagram(&self, diagram: &Rc<Diagram>, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let height = (diagram.height + diagram.padding * 2.0).clamp(MIN_HEIGHT, MAX_HEIGHT);
+        let height = self.viewport_height(diagram);
         let family = theme.mono_font_family.clone();
-        let border = theme.border;
         let radius = theme.radius;
         let (painted, bounds_cell, camera) = (diagram.clone(), self.bounds.clone(), self.camera);
         let surface = canvas(
-            move |bounds, _, _| bounds_cell.set(bounds),
+            move |bounds, window, _| {
+                // The height follows the width: draw again when it changes.
+                if bounds_cell.replace(bounds).size.width != bounds.size.width {
+                    window.refresh();
+                }
+            },
             move |bounds, (), window, cx| {
                 paint::paint(&painted, camera, bounds, &family, window, cx);
             },
@@ -244,8 +272,9 @@ impl MermaidView {
             .h(px(height))
             .overflow_hidden()
             .rounded(radius)
+            .bg(palette_color(INK))
             .border_1()
-            .border_color(border)
+            .border_color(palette_color(ACCENT))
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
@@ -297,14 +326,19 @@ pub fn mermaid_view(
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<MermaidView> {
-    let dark = cx.theme().is_dark();
     let view = super::block_state(entry.block.id, window, cx, |_, cx| {
-        MermaidView::new(&spec.source, dark, cx)
+        MermaidView::new(&spec.source, cx)
     });
     view.update(cx, |view, cx| {
-        view.sync(&spec.source, dark, entry.alt_view, cx);
+        view.sync(&spec.source, entry.alt_view, cx);
     });
     view
+}
+
+/// A `#rrggbb` or `#rrggbbaa` color of the TwoCrest palette; the values are
+/// static, so a bad one only falls back to transparent.
+fn palette_color(hex: &str) -> Hsla {
+    Rgba::try_from(hex).map(Hsla::from).unwrap_or_default()
 }
 
 /// Draws the block held by `entry`.
@@ -434,6 +468,13 @@ mod tests {
             let mermaid = view_of(cx, block.id, source);
             let error = mermaid.read_with(cx, |m, _| m.error().map(str::to_owned));
             assert_eq!(error.is_none(), ix < 2, "block {ix}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn palette_colors_parse() {
+        for hex in [ACCENT, ACCENT_HOVER, INK, INK_CHIP, TEXT_2] {
+            assert!(Rgba::try_from(hex).is_ok(), "{hex}");
         }
     }
 

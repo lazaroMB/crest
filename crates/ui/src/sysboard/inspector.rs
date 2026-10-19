@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn the_diagram_parses() {
         let d = machine_diagram(&comp(), Some("idle"));
-        crate::blocks::mermaid::diagram::parse(&d, true).unwrap();
+        crate::blocks::mermaid::diagram::parse(&d).unwrap();
     }
 
     #[test]

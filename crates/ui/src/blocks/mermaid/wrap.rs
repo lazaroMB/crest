@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 
 /// Columns of a label line before it wraps.
-pub const LABEL_COLUMNS: usize = 24;
+pub const LABEL_COLUMNS: usize = 36;
 
 /// Statements whose brackets are not labels.
 const VERBATIM: [&str; 9] = [

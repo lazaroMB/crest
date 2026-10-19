@@ -5,13 +5,17 @@
 //! flattens it once into [`Diagram`]: every primitive becomes a path or a
 //! label in diagram coordinates, with group transforms, markers and style
 //! defaults already resolved, so painting a frame is only a coordinate
-//! mapping. Parsing never panics: a panic inside the parser is caught and
+//! mapping. Colors come from the TwoCrest palette ([`crest_theme`]): the
+//! diagram is always painted on the ink background. Parsing never panics: a panic inside the parser is caught and
 //! reported like a parse error, and a diagram with nothing to draw is an
 //! error too.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::wrap;
+use crate::theme::palette::{
+    ACCENT, AMBER, INK, LINE, LINE_2, MUTED, PAPER, SURFACE, SURFACE_2, TEXT_2, TEXT_3,
+};
 use gpui::Rgba;
 use rusty_mermaid_core::{
     Color, FontWeight, MarkerPath, MarkerType, PathSegment, Point, Primitive, Style, TextAnchor,
@@ -119,14 +123,61 @@ pub struct Diagram {
     pub shapes: Vec<Shape>,
 }
 
-/// Parses and lays out `source` with the dark or light Mermaid theme.
+/// The Mermaid theme in the TwoCrest palette: ink background, surface
+/// nodes with a coral edge, paper text and amber notes.
+pub fn crest_theme() -> Theme {
+    Theme {
+        node_fill: hex(SURFACE),
+        node_stroke: hex(ACCENT),
+        node_text: hex(PAPER),
+        edge_stroke: hex(TEXT_2),
+        edge_label_text: hex(TEXT_3),
+        edge_label_bg: hex(INK),
+        start_fill: hex(ACCENT),
+        end_inner_fill: hex(ACCENT),
+        composite_fill: hex(SURFACE_2),
+        composite_stroke: hex(LINE_2),
+        composite_label: hex(TEXT_3),
+        note_fill: hex(SURFACE_2),
+        note_stroke: hex(AMBER),
+        note_text: hex(PAPER),
+        subgraph_fill: hex(SURFACE_2),
+        subgraph_stroke: hex(LINE_2),
+        subgraph_label: hex(TEXT_3),
+        divider_stroke: hex(LINE_2),
+        region_stroke: hex(LINE_2),
+        lifeline_stroke: hex(MUTED),
+        activation_fill: hex(SURFACE),
+        activation_stroke: hex(ACCENT),
+        grid_stroke: hex(LINE),
+        muted_text: hex(MUTED),
+        face_fill: hex(AMBER),
+        detail_stroke: hex(INK),
+        background: hex(INK),
+        ..Theme::dark()
+    }
+}
+
+/// A `#rrggbb` palette color; the palette is static and tested, so a bad
+/// value only falls back to black.
+fn hex(color: &str) -> Color {
+    let channel = |i: usize| {
+        color
+            .get(1 + i * 2..3 + i * 2)
+            .and_then(|c| u8::from_str_radix(c, 16).ok())
+            .unwrap_or(0)
+    };
+    Color::rgb(channel(0), channel(1), channel(2))
+}
+
+/// Parses and lays out `source` with the [`crest_theme`].
 ///
 /// # Errors
 ///
 /// The parser's message when the source is not a diagram rusty-mermaid
 /// understands, when it panics, or when the result is empty.
-pub fn parse(source: &str, dark: bool) -> Result<Diagram, String> {
-    let theme = if dark { Theme::dark() } else { Theme::light() };
+pub fn parse(source: &str) -> Result<Diagram, String> {
+    let theme = crest_theme();
     let source = wrap::wrap_labels(source, wrap::LABEL_COLUMNS);
     let scene = catch_unwind(AssertUnwindSafe(|| rusty_mermaid::render(&source, &theme)))
         .map_err(|_| "the Mermaid parser crashed on this input".to_owned())?
@@ -635,7 +686,7 @@ mod tests {
 
     #[test]
     fn flowchart_has_nodes_edges_and_arrows() {
-        let diagram = parse(FLOWCHART, true).unwrap_or_else(|err| panic!("{err}"));
+        let diagram = parse(FLOWCHART).unwrap_or_else(|err| panic!("{err}"));
         let text = labels(&diagram);
         for label in ["Start", "Ok?", "Done", "Retry", "yes", "no"] {
             assert!(
@@ -672,8 +723,20 @@ mod tests {
     }
 
     #[test]
+    fn the_diagram_uses_the_twocrest_palette() {
+        let diagram = parse(FLOWCHART).unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(diagram.background, rgba(hex(INK), 1.0));
+        let coral = rgba(hex(ACCENT), 1.0);
+        let coral_edge = diagram.shapes.iter().any(|shape| {
+            matches!(shape, Shape::Path { stroke: Some(Stroke { color, .. }), .. } if *color == coral)
+        });
+        assert!(coral_edge, "nodes are outlined in coral");
+        assert_eq!(hex("#d9604a"), Color::rgb(0xd9, 0x60, 0x4a));
+    }
+
+    #[test]
     fn sequence_diagram_parses() {
-        let diagram = parse(SEQUENCE, false).unwrap_or_else(|err| panic!("{err}"));
+        let diagram = parse(SEQUENCE).unwrap_or_else(|err| panic!("{err}"));
         let text = labels(&diagram);
         for label in ["Alice", "Bob", "Hi", "Hello", "chat"] {
             assert!(
@@ -707,20 +770,21 @@ mod tests {
             random.as_str(),
         ];
         for input in inputs {
-            if let Err(err) = parse(input, true) {
+            if let Err(err) = parse(input) {
                 assert!(!err.is_empty(), "error for {input:?} has a message");
             }
         }
         for input in ["", "   \n", "not a diagram", garbage.as_str()] {
-            assert!(parse(input, true).is_err(), "{input:?} should not parse");
+            assert!(parse(input).is_err(), "{input:?} should not parse");
         }
     }
 
     #[test]
     fn long_labels_wrap_into_narrower_nodes() {
-        let long = "Validate the user input and check every permission";
+        let long =
+            "Validate the user input, check every permission and log the result of the request";
         let source = format!("flowchart LR\n  A[{long}]\n");
-        let diagram = parse(&source, true).unwrap_or_else(|err| panic!("{err}"));
+        let diagram = parse(&source).unwrap_or_else(|err| panic!("{err}"));
         let label = diagram
             .shapes
             .iter()
@@ -731,7 +795,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no label"));
         assert_eq!(label.lines.len(), 3, "{:?}", label.lines);
         assert_eq!(label.lines.join(" "), long);
-        let theme = Theme::dark();
+        let theme = crest_theme();
         let unwrapped =
             rusty_mermaid::render(&source, &theme).unwrap_or_else(|err| panic!("{err}"));
         assert!(
