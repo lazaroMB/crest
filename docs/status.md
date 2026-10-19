@@ -11,6 +11,8 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - The decision model (Cloudflare Clef) has only been tested against a mock server, not with a real token.
 - There is no desktop launcher on macOS (no `.app` bundle) and the Linux one (`make install`) has not been tried on a desktop session.
 - Reading the API key or plugin secrets from the system keyring has not been tested (the tests use the environment fallback).
+- The rtk integration (`app.opt.rtk`) has only been tested with a fake `rtk` script that follows the `rtk rewrite` exit-code contract, not with the real binary.
+- The privacy layer works by patterns: it catches well-known key formats and validated personal data, not every secret (a password with only letters, a custom token format). Add `app.opt.privacy.patterns` for your own formats.
 
 ## Behavior to keep in mind
 

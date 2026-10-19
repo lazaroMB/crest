@@ -53,6 +53,8 @@ The agent answers with real components, drawn natively on the GPU: bar, line, ar
 
 Nothing touches your files or runs a command without asking (unless you choose `auto-edit`). The dialog shows the exact diff or command line; `y` approves, `a` always approves that file or command, `n` rejects. A `plan` mode lets the agent read but never write.
 
+Secrets and personal data never leave your machine by accident: API keys, tokens, private keys, passwords, emails, cards, IBANs and national ids in tool results and in your prompts are masked as `[REDACTED:kind]` before the model, the timeline or the saved session see them. [What is masked](docs/configuration.md#privacy-secrets-and-personal-data).
+
 <img src="assets/screenshots/approval.png" alt="An edit waiting for approval with its diff" width="900">
 
 ## Simulate before you build
@@ -81,6 +83,8 @@ With Cloudflare credentials, a small **decision model** ([Clef](https://develope
 - **what you meant** at the flows' gates ("looks good, go on"), and whether a problem definition is measurable.
 
 Without credentials crest works exactly as before. [How to turn it on](docs/configuration.md#decision-model-cloudflare-clef).
+
+With [rtk](https://github.com/rtk-ai/rtk) installed, `app.opt.rtk = true` compacts the output of `git`, `cargo`, test runners and other common commands before the model reads it. [How it works](docs/configuration.md#compact-command-output-with-rtk).
 
 <img src="assets/screenshots/routing.png" alt="A sequence diagram of how a prompt is routed" width="900">
 

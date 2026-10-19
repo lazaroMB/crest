@@ -263,6 +263,45 @@ An invalid pattern (empty, or with a `/` in the middle) makes crest fall back to
 
 The "always allow" rules you grant in an approval dialog are saved with the session and come back when the session is resumed. There is no Lua syntax to declare them.
 
+## Privacy: secrets and personal data
+
+Every tool result (`read_file`, `grep`, `run_command`, the web tools, MCP and plugin tools) is masked **before anyone reads it**: the model, the timeline, the saved session and the `after_tool` hooks only see `[REDACTED:<kind>]` placeholders. Your prompts are masked as well before they reach the router or the model, and a notice tells you what was masked.
+
+- **Secrets, always on:** AWS, GitHub, Anthropic, OpenAI, Slack, Stripe and Google keys, JWTs, private key blocks (even cut ones), `Bearer`/`Basic` tokens, passwords in URLs (`postgres://user:[REDACTED:password]@db`) and literal values of `password`, `token`, `api_key`, `secret`… assignments. Code such as `let token = next_token()`, `${PASSWORD}`, environment variable names and filler values (`changeme`, `<your-key>`) is left alone.
+- **Personal data, on by default:** emails (except `git@…`, `noreply` and `example.com`-style addresses), card numbers (Luhn check), IBANs (mod-97), Spanish DNI/NIE (control letter) and US SSNs, and international phone numbers (`+34 600 123 456`).
+- A masked result ends with a note telling the model that the placeholders are not the real content. `write_file` refuses content that carries a placeholder, and so does `edit_file` when `new` adds one, so a masked value never overwrites the real one on disk.
+
+```lua
+app.opt.privacy = {
+  enabled = true,       -- false masks nothing (global config only)
+  prompts = true,       -- also mask your prompts
+  pii = { email = true, card = true, iban = true, national_id = true, phone = true },
+  patterns = {          -- your own: the whole match, or its first group
+    { name = "ticket", regex = "ACME-[0-9]{6}" },
+    { name = "pin", regex = "pin=([0-9]{4})" },
+  },
+  allow = { "me@company.com" },   -- exact values never masked (global config only)
+}
+```
+
+- **A workspace can only make it stricter.** A `.crest/init.lua` may add `patterns` and set categories or `prompts` to `true`, but its `enabled = false`, its `false` values and its `allow` list are ignored, so a cloned repository cannot switch the protection off.
+- An invalid table (unknown field, bad regex) shows a notice and every rule stays on.
+- Images in tool results are not inspected. `/open` and `/!` commands show your files and output unmasked: they stay on your machine (the context note of a `/!` command does go to the model).
+
+## Compact command output with rtk
+
+[rtk](https://github.com/rtk-ai/rtk) compacts the output of common commands (`git status/log/diff`, `cargo test/build/clippy`, `pytest`, `jest`, `ls`, `docker ps`…) before the model reads it, often by 60-90%. It is off by default:
+
+```lua
+app.opt.rtk = { enabled = true, path = "rtk" }   -- or app.opt.rtk = true
+```
+
+- Install it with `cargo install --git https://github.com/rtk-ai/rtk rtk` (or from its releases). When it is enabled but not found, crest warns at startup and runs commands as they are.
+- Only the model's `run_command` goes through it: for each call crest asks `rtk rewrite "<command>"` and, when rtk has an equivalent, runs that instead. The approval dialog, the permission rules and the read-only classification still use the **original** command. A rewritten line with shell syntax, an rtk deny rule or a failure to start rtk all fall back to the original command.
+- The result says `output compacted by rtk`; the model can call `run_command` again with `raw = true` for the full output.
+- rtk records its own savings: run `rtk gain` to see them. Output still goes through the privacy layer after rtk.
+- `/!` commands, `/git` status, and the commands of the implementation workflow (checks, commits) never go through rtk.
+
 ## MCP servers
 
 They are declared in `app.mcp`, either as a table keyed by name or with `app.mcp.add`. All fields are described in [plugins.md](plugins.md#appmcp-mcp-servers).
