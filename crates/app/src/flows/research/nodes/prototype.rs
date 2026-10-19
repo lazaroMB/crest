@@ -449,6 +449,7 @@ mod tests {
                 content_search: fs.clone(),
                 fs,
                 shell: shell.clone(),
+                rewriter: None,
             },
         )
         .unwrap();

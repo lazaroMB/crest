@@ -787,6 +787,7 @@ mod tests {
                 content_search: fs.clone(),
                 fs: fs.clone(),
                 shell: Arc::new(ScriptedShell::new()),
+                rewriter: None,
             },
         )
         .unwrap();

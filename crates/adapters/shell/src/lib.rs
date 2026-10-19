@@ -20,6 +20,7 @@
 
 mod capture;
 mod group;
+mod rtk;
 
 use std::ffi::OsString;
 use std::io;
@@ -35,6 +36,7 @@ use tokio::process::{Child, Command};
 use crate::capture::Capture;
 pub use crate::capture::MAX_CAPTURE_BYTES;
 use crate::group::ProcessGroup;
+pub use crate::rtk::RtkRewriter;
 
 /// Environment variables removed from the inherited environment: API keys
 /// and tokens of LLM providers, starting with the one crest reads, and the

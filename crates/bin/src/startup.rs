@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use adapter_cloudflare::{ACCOUNT_NAME, ClefClient, TOKEN_NAME, secret_from_env_or_keyring};
+use adapter_shell::RtkRewriter;
 use adapter_web::{CurlWeb, brave_key_from_env_or_keyring};
 use application::decide::{DECISION_OPTION, Decider, DecisionOptions};
 use application::ports::decision::DecisionPort;
@@ -14,12 +15,15 @@ use application::ports::llm::ModelCatalogPort;
 use application::ports::plugin::{
     AppOptions, ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort,
 };
+use application::ports::shell::CommandRewritePort;
 use application::ports::web::WebPort;
+use application::privacy::{PrivacyOptions, Redactor};
+use application::rtk::RtkOptions;
 use application::tools::web::WebTools;
 use application::web::{SearchBackend, WebOptions};
 use domain::block::{Block, BlockKind};
 use domain::model::{ModelId, ModelPolicy};
-use domain::workspace::SensitivePathRules;
+use domain::workspace::{SensitivePathRules, WorkspaceRoot};
 
 /// How long the catalog may take before startup goes on without it.
 pub const CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
@@ -81,6 +85,45 @@ pub fn sensitive_rules(config: &LoadedConfig) -> (SensitivePathRules, Option<Str
                 )),
             ),
         },
+    }
+}
+
+/// The redactor of `app.opt.privacy`, or the defaults (every rule on,
+/// with a warning) when it is invalid.
+pub fn redactor(options: &AppOptions) -> (Redactor, Option<String>) {
+    match PrivacyOptions::from_options(options).and_then(|o| Redactor::new(&o)) {
+        Ok(redactor) => (redactor, None),
+        Err(err) => (
+            Redactor::default(),
+            Some(format!("{err}; every privacy rule is on")),
+        ),
+    }
+}
+
+/// The rtk rewriter of `app.opt.rtk` in `root`: `None` when it is off,
+/// and also when its binary is missing or the config is broken, with a
+/// warning saying so.
+pub fn rtk(
+    options: &AppOptions,
+    root: &WorkspaceRoot,
+) -> (Option<Arc<dyn CommandRewritePort>>, Option<String>) {
+    let options = match RtkOptions::from_options(options) {
+        Ok(options) => options,
+        Err(err) => return (None, Some(format!("{err}; rtk is off"))),
+    };
+    if !options.enabled {
+        return (None, None);
+    }
+    match RtkRewriter::detect(&options.path, root.clone()) {
+        Some(rtk) => (Some(Arc::new(rtk)), None),
+        None => (
+            None,
+            Some(format!(
+                "rtk is enabled but `{}` was not found; commands run uncompacted \
+                 (install it with `cargo install --git https://github.com/rtk-ai/rtk rtk`)",
+                options.path
+            )),
+        ),
     }
 }
 

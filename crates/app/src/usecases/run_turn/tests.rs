@@ -547,3 +547,64 @@ async fn images_that_break_the_limits_are_refused() {
     }
     assert!(llm.requests().is_empty());
 }
+
+#[tokio::test]
+async fn secrets_are_masked_in_prompts_and_tool_results() {
+    let mut h = Harness::new(vec![
+        ScriptedResponse::tool_use(
+            "toolu_1",
+            "echo",
+            json!({ "text": "key AKIAIOSFODNN7EXAMPLE of ana@acme.io" }),
+        ),
+        ScriptedResponse::text("ok"),
+    ]);
+    h.run("use token=a1b2c3d4e5f6 please").await.unwrap();
+
+    let sent = &h.llm.requests()[0].messages[0];
+    let prompt = serde_json::to_string(&sent.content).unwrap();
+    assert!(prompt.contains("token=[REDACTED:secret]"), "{prompt}");
+    assert!(!prompt.contains("a1b2c3d4e5f6"), "{prompt}");
+    assert!(h.sink.events().iter().any(|e| matches!(
+        e,
+        DomainEvent::Notice { message, .. } if message.contains("1 secret")
+    )));
+
+    let (text, _) = &h.tool_results()[0];
+    assert!(
+        text.starts_with("echo: key [REDACTED:aws_key] of [REDACTED:email]\n[crest redacted 2"),
+        "{text}"
+    );
+    let shown: Vec<_> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            DomainEvent::ToolStatusChanged {
+                output: Some(output),
+                ..
+            } => Some(output),
+            _ => None,
+        })
+        .collect();
+    assert!(shown.iter().all(|o| !o.contains("AKIA")), "{shown:?}");
+}
+
+#[tokio::test]
+async fn a_disabled_redactor_masks_nothing() {
+    let mut h = Harness::with(
+        vec![
+            ScriptedResponse::tool_use(
+                "toolu_1",
+                "echo",
+                json!({ "text": "AKIAIOSFODNN7EXAMPLE" }),
+            ),
+            ScriptedResponse::text("ok"),
+        ],
+        PermissionMode::Ask,
+        |tools| {
+            *tools = std::mem::take(tools).with_redactor(crate::privacy::Redactor::disabled());
+        },
+    );
+    h.run("hola").await.unwrap();
+    assert_eq!(h.tool_results()[0].0, "echo: AKIAIOSFODNN7EXAMPLE");
+}

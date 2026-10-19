@@ -23,6 +23,7 @@ use serde_json::Value;
 use super::budget::ResultBudget;
 use crate::ports::approval::ApprovalPreview;
 use crate::ports::llm::ToolDefinition;
+use crate::privacy::Redactor;
 
 /// Where a tool call happens; handed to [`Tool::prepare`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,12 +300,13 @@ fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// The tools offered to the model, by name, and the budget their results
-/// are truncated to.
+/// The tools offered to the model, by name, the redactor their results
+/// go through and the budget they are truncated to.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
     budget: ResultBudget,
+    redactor: Redactor,
 }
 
 impl ToolRegistry {
@@ -325,6 +327,27 @@ impl ToolRegistry {
     #[must_use]
     pub fn budget(&self) -> ResultBudget {
         self.budget
+    }
+
+    /// Returns the same registry masking results with `redactor`
+    /// (by default every built-in rule is on).
+    #[must_use]
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = redactor;
+        self
+    }
+
+    /// Redactor applied to every tool result, before the budget.
+    #[must_use]
+    pub fn redactor(&self) -> &Redactor {
+        &self.redactor
+    }
+
+    /// `output` masked by the [`redactor`](Self::redactor), then cut to
+    /// the [`budget`](Self::budget): what the model and the timeline get.
+    #[must_use]
+    pub fn finish(&self, output: ToolOutput) -> ToolOutput {
+        self.budget.apply(self.redactor.redact_output(output))
     }
 
     /// Adds `tool`.
@@ -405,7 +428,7 @@ impl ToolRegistry {
     }
 
     /// Prepares and runs a call to `name` without asking for approval,
-    /// truncating its output to the [`budget`](Self::budget).
+    /// masking and truncating its output as [`finish`](Self::finish) does.
     ///
     /// # Errors
     ///
@@ -417,7 +440,7 @@ impl ToolRegistry {
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let output = self.prepare(name, input, ctx).await?.run.await?;
-        Ok(self.budget.apply(output))
+        Ok(self.finish(output))
     }
 }
 
@@ -426,6 +449,7 @@ impl fmt::Debug for ToolRegistry {
         f.debug_struct("ToolRegistry")
             .field("tools", &self.tools.keys().collect::<Vec<_>>())
             .field("budget", &self.budget)
+            .field("redactor", &self.redactor.enabled())
             .finish()
     }
 }

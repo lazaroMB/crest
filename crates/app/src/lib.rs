@@ -5,6 +5,8 @@ pub mod decide;
 pub mod flows;
 pub mod keymap;
 pub mod ports;
+pub mod privacy;
+pub mod rtk;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tools;

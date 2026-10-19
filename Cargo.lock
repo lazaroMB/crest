@@ -438,6 +438,7 @@ dependencies = [
  "futures",
  "graph-flow",
  "insta",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

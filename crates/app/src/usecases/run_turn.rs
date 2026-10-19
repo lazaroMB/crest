@@ -80,6 +80,7 @@ use crate::ports::llm::{
 };
 use crate::ports::plugin::{HookEvent, HookOutcome, PluginError, PluginHostPort};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
+use crate::privacy;
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
 pub use super::approval::SharedPermissions;
@@ -382,6 +383,30 @@ impl AgentService {
         self.deps.events.emit(event);
     }
 
+    /// The prompt with its secrets and personal data masked, before the
+    /// router or the model see it; a notice says what was masked.
+    fn mask_prompt(&self, mut input: UserInput) -> UserInput {
+        let redactor = self.tools.redactor();
+        if !redactor.masks_prompts() {
+            return input;
+        }
+        let redacted = redactor.redact(&input.text);
+        if redacted.total() == 0 {
+            return input;
+        }
+        self.emit(DomainEvent::Notice {
+            level: NoticeLevel::Warning,
+            message: format!(
+                "masked {} sensitive value{} in your prompt before sending it ({})",
+                redacted.total(),
+                if redacted.total() == 1 { "" } else { "s" },
+                privacy::describe(&redacted.counts),
+            ),
+        });
+        input.text = redacted.text.into_owned();
+        input
+    }
+
     /// Refuses images that break the limits or that a model of the turn
     /// (with its fallbacks) does not take.
     fn check_input_images(
@@ -420,7 +445,7 @@ impl AgentService {
         input: impl Into<UserInput>,
         mut opts: TurnOptions,
     ) -> Result<TurnOutcome, TurnError> {
-        let input = input.into();
+        let input = self.mask_prompt(input.into());
         let routing = self.route(session, &input.text, &opts).await;
         if let Some(model) = routing.as_ref().and_then(|r| r.model.clone()) {
             opts.turn_override = Some(model);
@@ -1237,7 +1262,9 @@ impl TurnRun<'_> {
         });
         let started = Instant::now();
         let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
-        let mut output = self.service.tools.budget().apply(output);
+        // Masked before anyone reads it: the model, the timeline, the
+        // store and the `after_tool` hooks.
+        let mut output = self.service.tools.finish(output);
         self.service.deps.telemetry.tool_call(ToolCallRecord {
             parent: self.span,
             name: name.to_owned(),

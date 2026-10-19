@@ -351,6 +351,7 @@ mod tests {
                     content_search: fs.clone(),
                     fs: fs.clone(),
                     shell: shell.clone(),
+                    rewriter: None,
                 },
             )
             .unwrap();

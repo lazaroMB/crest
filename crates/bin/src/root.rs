@@ -482,7 +482,11 @@ pub async fn build_app(
     let (decider, decider_warnings) =
         startup::decider(&loaded.options, overrides.decision.clone()).await;
     warnings.extend(decider_warnings);
-    let mut tools = ToolRegistry::new();
+    let (redactor, privacy_warning) = startup::redactor(&loaded.options);
+    warnings.extend(privacy_warning);
+    let (rewriter, rtk_warning) = startup::rtk(&loaded.options, &root);
+    warnings.extend(rtk_warning);
+    let mut tools = ToolRegistry::new().with_redactor(redactor);
     register_file_tools(
         &mut tools,
         FileToolPorts {
@@ -490,6 +494,7 @@ pub async fn build_app(
             content_search: search.clone(),
             fs: Arc::clone(&fs),
             shell: Arc::clone(&shell),
+            rewriter,
         },
     )
     .context("tool registration")?;

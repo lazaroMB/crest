@@ -218,7 +218,9 @@ pub fn scoped_tools(
     tools: &ToolRegistry,
     scope: &Arc<TaskScope>,
 ) -> Result<ToolRegistry, RegisterError> {
-    let mut scoped = ToolRegistry::new().with_budget(tools.budget());
+    let mut scoped = ToolRegistry::new()
+        .with_budget(tools.budget())
+        .with_redactor(tools.redactor().clone());
     for name in tools.names() {
         let Some(tool) = tools.get(name) else {
             continue;

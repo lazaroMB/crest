@@ -123,6 +123,7 @@ impl Harness {
                 content_search: Arc::clone(&self.fs) as _,
                 fs: Arc::clone(&self.fs) as _,
                 shell: Arc::clone(&self.shell),
+                rewriter: None,
             },
         )
         .unwrap();

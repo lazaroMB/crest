@@ -16,10 +16,13 @@
 //! - sensitive paths: the global layer may replace the built-in defaults,
 //!   but the workspace can only add patterns, so a cloned repository cannot
 //!   switch the protection off.
+//! - privacy (`app.opt.privacy`): likewise, the workspace can only make it
+//!   stricter (see [`application::privacy::tighten`]).
 
 use std::collections::BTreeMap;
 
 use application::ports::plugin::{AppOptions, CallbackId, ConfigOrigin, HookSpec, LoadedConfig};
+use application::privacy::{self, PRIVACY_OPTION};
 use domain::model::RoleConfig;
 use domain::workspace::DEFAULT_SENSITIVE_PATTERNS;
 
@@ -92,7 +95,16 @@ pub(crate) fn merge(
         },
     ) in ranked
     {
-        overlay_options(&mut config.options, declared.options);
+        let mut options = declared.options;
+        if is_workspace && let Some(ws) = options.extra.remove(PRIVACY_OPTION) {
+            let base = config.options.extra.get(PRIVACY_OPTION);
+            let tightened = privacy::tighten(base, &ws);
+            config
+                .options
+                .extra
+                .insert(PRIVACY_OPTION.to_owned(), tightened);
+        }
+        overlay_options(&mut config.options, options);
         if is_workspace {
             config.workspace_roles = declared.roles;
             if let Some(extra) = declared.sensitive_paths {

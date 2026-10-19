@@ -29,7 +29,10 @@ use crate::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit, GrepRequest,
     ListFilesRequest, SearchError, TreeNode, TreeNodeKind, TreeRequest,
 };
-use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellPort};
+use crate::ports::shell::{
+    CommandOutput, CommandRewritePort, RunCommandRequest, ShellError, ShellPort,
+};
+use crate::privacy;
 
 /// Tokens kept free below the registry budget for the notes the tools add
 /// after a cut, so the registry's own truncation never cuts them again.
@@ -518,6 +521,23 @@ fn change_call(fs: Arc<dyn FileSystemPort>, change: PendingChange) -> PreparedCa
         .with_block(BlockKind::Diff(spec))
 }
 
+fn placeholders(text: &str) -> usize {
+    text.matches(privacy::PLACEHOLDER_PREFIX).count()
+}
+
+/// The model saw a masked value and tried to write its placeholder,
+/// which would overwrite the real value on disk.
+fn placeholder_error(tool: &str) -> ToolError {
+    ToolError::InvalidInput {
+        tool: tool.to_owned(),
+        message: format!(
+            "the text contains a {}…] placeholder of a masked value; writing it would replace \
+             the real value on disk. Edit around the masked value with edit_file instead",
+            privacy::PLACEHOLDER_PREFIX
+        ),
+    }
+}
+
 fn prepare_error(err: &FsError) -> ToolError {
     ToolError::Execution(fs_error_message(err))
 }
@@ -565,6 +585,11 @@ impl TypedTool for EditFileTool {
         input: EditFileRequest,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
+        // A placeholder in `old` only matches a file that really holds
+        // it; one more in `new` would replace a real value with it.
+        if placeholders(&input.new) > placeholders(&input.old) {
+            return Err(placeholder_error("edit_file"));
+        }
         let change = self
             .fs
             .prepare_edit(input)
@@ -616,6 +641,9 @@ impl TypedTool for WriteFileTool {
         input: WriteFileRequest,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
+        if privacy::contains_placeholder(&input.content) {
+            return Err(placeholder_error("write_file"));
+        }
         let change = self
             .fs
             .prepare_write(input)
@@ -634,26 +662,66 @@ pipes, redirections, `&&`, globs and variables are not interpreted.
 - Prefer `grep`, `find_file`, `list_files`, `tree` and `read_file` over `rg`, `find`, `ls` \
 or `cat`, and `edit_file`/`write_file` over commands that modify files.
 - The process is killed after `timeout_s` seconds (default 120). Long output is cut; a \
-non-zero exit code is reported in the result, not as a failure of the tool.";
+non-zero exit code is reported in the result, not as a failure of the tool.
+- The output of common commands may come compacted (the result says so); set `raw` to true \
+to run it again with the full output.";
 
 /// `run_command`: a program run without a shell in the workspace root.
 pub struct RunCommandTool {
     shell: Arc<dyn ShellPort>,
     budget: ResultBudget,
+    rewriter: Option<Arc<dyn CommandRewritePort>>,
 }
 
 impl RunCommandTool {
     /// The tool over `shell`, cutting results to `budget`.
     #[must_use]
     pub fn new(shell: Arc<dyn ShellPort>, budget: ResultBudget) -> Self {
-        Self { shell, budget }
+        Self {
+            shell,
+            budget,
+            rewriter: None,
+        }
     }
+
+    /// Returns the same tool running the compact equivalent `rewriter`
+    /// gives for each command, unless the call sets `raw`.
+    #[must_use]
+    pub fn with_rewriter(mut self, rewriter: Option<Arc<dyn CommandRewritePort>>) -> Self {
+        self.rewriter = rewriter;
+        self
+    }
+}
+
+/// Runs `input`, or its compact equivalent from `rewriter`; falls back
+/// to `input` when the rewritten program cannot be started. Returns the
+/// name of the rewriter when its command ran.
+async fn run_rewritten(
+    shell: &dyn ShellPort,
+    rewriter: Option<&dyn CommandRewritePort>,
+    input: &RunCommandRequest,
+) -> (Result<CommandOutput, ShellError>, Option<String>) {
+    let rewritten = match rewriter {
+        Some(rewriter) if !input.raw => rewriter
+            .rewrite(input)
+            .await
+            .map(|request| (request, rewriter.name().to_owned())),
+        _ => None,
+    };
+    if let Some((request, name)) = rewritten {
+        match shell.run(request).await {
+            Err(ShellError::NotFound { .. } | ShellError::Spawn(_)) => {}
+            result => return (result, Some(name)),
+        }
+    }
+    (shell.run(input.clone()).await, None)
 }
 
 fn render_command_output(
     request: &RunCommandRequest,
     output: &CommandOutput,
     budget: ResultBudget,
+    compacted_by: Option<&str>,
 ) -> String {
     let mut out = match output.status {
         _ if output.timed_out => format!(
@@ -663,6 +731,12 @@ fn render_command_output(
         Some(code) => format!("exit code: {code}"),
         None => "killed by a signal".to_owned(),
     };
+    if let Some(name) = compacted_by {
+        let _ = write!(
+            out,
+            " (output compacted by {name}; run again with raw: true for the full output)"
+        );
+    }
     // Each stream gets half of the budget, so stderr is never crowded out.
     let half = ResultBudget::new(inner_budget(budget).max_tokens / 2);
     for (name, text) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
@@ -710,10 +784,18 @@ impl TypedTool for RunCommandTool {
             cwd: ".".to_owned(),
         };
         let shell = Arc::clone(&self.shell);
+        let rewriter = self.rewriter.clone();
         let budget = self.budget;
         let run = async move {
-            Ok(match shell.run(input.clone()).await {
-                Ok(output) => ToolOutput::text(render_command_output(&input, &output, budget)),
+            let (result, compacted_by) =
+                run_rewritten(shell.as_ref(), rewriter.as_deref(), &input).await;
+            Ok(match result {
+                Ok(output) => ToolOutput::text(render_command_output(
+                    &input,
+                    &output,
+                    budget,
+                    compacted_by.as_deref(),
+                )),
                 Err(err) => ToolOutput::error(err.to_string()),
             })
         };
@@ -732,6 +814,8 @@ pub struct FileToolPorts {
     pub fs: Arc<dyn FileSystemPort>,
     /// Running commands (`run_command`).
     pub shell: Arc<dyn ShellPort>,
+    /// Compact equivalents of commands (rtk), when configured.
+    pub rewriter: Option<Arc<dyn CommandRewritePort>>,
 }
 
 /// Registers the eight file tools in `registry`, cutting their listings to
@@ -751,6 +835,7 @@ pub fn register_file_tools(
         content_search,
         fs,
         shell,
+        rewriter,
     } = ports;
     registry.register_typed(ListFilesTool::new(Arc::clone(&file_search), budget))?;
     registry.register_typed(FindFileTool::new(Arc::clone(&file_search), budget))?;
@@ -759,7 +844,7 @@ pub fn register_file_tools(
     registry.register_typed(ReadFileTool::new(Arc::clone(&fs), budget))?;
     registry.register_typed(EditFileTool::new(Arc::clone(&fs)))?;
     registry.register_typed(WriteFileTool::new(fs))?;
-    registry.register_typed(RunCommandTool::new(shell, budget))?;
+    registry.register_typed(RunCommandTool::new(shell, budget).with_rewriter(rewriter))?;
     Ok(())
 }
 
@@ -1148,6 +1233,114 @@ mod tests {
         assert_eq!(out.text_content(), "command not found: nope");
     }
 
+    /// Rewrites every command to `rtk <command> <args>…`.
+    struct PrefixRewriter;
+
+    #[async_trait]
+    impl CommandRewritePort for PrefixRewriter {
+        fn name(&self) -> &str {
+            "rtk"
+        }
+
+        async fn rewrite(&self, request: &RunCommandRequest) -> Option<RunCommandRequest> {
+            let mut args = vec![request.command.clone()];
+            args.extend(request.args.iter().cloned());
+            Some(RunCommandRequest {
+                command: "rtk".into(),
+                args,
+                ..request.clone()
+            })
+        }
+    }
+
+    fn ok(stdout: &str) -> CommandOutput {
+        CommandOutput {
+            status: Some(0),
+            stdout: stdout.into(),
+            ..CommandOutput::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn run_command_runs_the_rewritten_command_but_previews_the_original() {
+        let shell = Arc::new(
+            ScriptedShell::new()
+                .on("rtk", ["git", "status"], ok("clean"))
+                .on("git", ["status"], ok("On branch main\nnothing to commit")),
+        );
+        let tool = Typed(
+            RunCommandTool::new(Arc::clone(&shell) as Arc<dyn ShellPort>, budget())
+                .with_rewriter(Some(Arc::new(PrefixRewriter))),
+        );
+        let input = json!({ "command": "git", "args": ["status"] });
+        assert_eq!(tool.effect(&input), ToolEffect::Read);
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "git status");
+        assert!(matches!(
+            &prepared.preview,
+            Some(ApprovalPreview::Command { command, .. }) if command == "git"
+        ));
+        let out = prepared.run.await.unwrap();
+        assert_eq!(
+            out.text_content(),
+            "exit code: 0 (output compacted by rtk; run again with raw: true for the full \
+             output)\n--- stdout ---\nclean"
+        );
+        let raw = json!({ "command": "git", "args": ["status"], "raw": true });
+        let out = tool.prepare(raw, &ctx()).await.unwrap().run.await.unwrap();
+        assert_eq!(
+            out.text_content(),
+            "exit code: 0\n--- stdout ---\nOn branch main\nnothing to commit"
+        );
+        let commands: Vec<_> = shell.calls().into_iter().map(|c| c.command).collect();
+        assert_eq!(commands, ["rtk", "git"]);
+    }
+
+    #[tokio::test]
+    async fn run_command_falls_back_when_the_rewritten_program_is_missing() {
+        let shell = Arc::new(
+            ScriptedShell::new()
+                .on_error(
+                    "rtk",
+                    ["ls"],
+                    ShellError::NotFound {
+                        command: "rtk".into(),
+                    },
+                )
+                .on("ls", Vec::<String>::new(), ok("a.txt")),
+        );
+        let tool = Typed(
+            RunCommandTool::new(Arc::clone(&shell) as Arc<dyn ShellPort>, budget())
+                .with_rewriter(Some(Arc::new(PrefixRewriter))),
+        );
+        let prepared = tool
+            .prepare(json!({ "command": "ls" }), &ctx())
+            .await
+            .unwrap();
+        let out = prepared.run.await.unwrap();
+        assert_eq!(out.text_content(), "exit code: 0\n--- stdout ---\na.txt");
+    }
+
+    #[tokio::test]
+    async fn writing_a_redaction_placeholder_is_refused() {
+        let fs = workspace();
+        let write = Typed(WriteFileTool::new(
+            Arc::clone(&fs) as Arc<dyn FileSystemPort>
+        ));
+        let input = json!({ "path": ".env", "content": "KEY=[REDACTED:secret]\n" });
+        let err = write.prepare(input, &ctx()).await.err().unwrap();
+        assert!(matches!(err, ToolError::InvalidInput { .. }), "{err}");
+
+        let edit = Typed(EditFileTool::new(fs as Arc<dyn FileSystemPort>));
+        let input = json!({
+            "path": "src/lib.rs",
+            "old": "fn main() {}",
+            "new": "const KEY: &str = \"[REDACTED:aws_key]\";",
+        });
+        let err = edit.prepare(input, &ctx()).await.err().unwrap();
+        assert!(matches!(err, ToolError::InvalidInput { .. }), "{err}");
+    }
+
     #[tokio::test]
     async fn run_command_cuts_each_stream_to_half_the_budget() {
         let stdout: String = (0..200).map(|i| format!("line {i}\n")).collect();
@@ -1177,6 +1370,7 @@ mod tests {
                 content_search: Arc::clone(&fs) as Arc<dyn ContentSearchPort>,
                 fs,
                 shell: Arc::new(ScriptedShell::new()),
+                rewriter: None,
             },
         )
         .unwrap();
@@ -1250,6 +1444,7 @@ mod tests {
                 content_search: Arc::clone(&fs) as Arc<dyn ContentSearchPort>,
                 fs,
                 shell: Arc::new(ScriptedShell::new()),
+                rewriter: None,
             },
         )
         .unwrap_err();

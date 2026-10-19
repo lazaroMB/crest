@@ -376,6 +376,7 @@ pub(crate) mod testing {
                     content_search: fs.clone(),
                     fs: fs.clone(),
                     shell,
+                    rewriter: None,
                 },
             )
             .unwrap();

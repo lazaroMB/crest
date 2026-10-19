@@ -65,6 +65,10 @@ pub struct RunCommandRequest {
     /// Seconds before the process is killed (default 120).
     #[serde(default = "default_timeout_s")]
     pub timeout_s: u64,
+    /// Set to true for the full, uncompacted output when the command
+    /// output was compacted (by rtk) and something is missing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub raw: bool,
 }
 
 impl RunCommandRequest {
@@ -78,6 +82,7 @@ impl RunCommandRequest {
             command: command.into(),
             args: args.into_iter().map(Into::into).collect(),
             timeout_s: DEFAULT_COMMAND_TIMEOUT_S,
+            raw: false,
         }
     }
 
@@ -197,6 +202,19 @@ pub trait ShellPort: Send + Sync {
     fn classify(&self, request: &RunCommandRequest) -> ToolEffect {
         classify_command(request)
     }
+}
+
+/// Turns a command into an equivalent with a shorter output, such as
+/// `git status` into `rtk git status`, to save tokens.
+#[async_trait]
+pub trait CommandRewritePort: Send + Sync {
+    /// Name shown with a rewritten result (`rtk`).
+    fn name(&self) -> &str;
+
+    /// The compact equivalent of `request`, or `None` to run it as is.
+    /// It never runs the command itself, and the approval and the
+    /// permission policy still see the original request.
+    async fn rewrite(&self, request: &RunCommandRequest) -> Option<RunCommandRequest>;
 }
 
 #[cfg(test)]
