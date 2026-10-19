@@ -11,3 +11,4 @@ pub mod shell;
 pub mod sim;
 pub mod store;
 pub mod telemetry;
+pub mod web;

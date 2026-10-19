@@ -88,6 +88,7 @@ use super::compact::{
     compactable_turns, context_tokens, estimate_tokens, replace_turns,
     summarize as summarize_history, summary_request, summary_turn, transcript,
 };
+use super::web_sources::web_sources;
 
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
@@ -491,6 +492,7 @@ impl TurnRun<'_> {
                 .collect();
             self.turn.messages.push(assembled.message);
             if tool_uses.is_empty() {
+                self.emit_web_sources();
                 return Ok(stop_reason);
             }
             let mut results = Vec::with_capacity(tool_uses.len());
@@ -519,6 +521,17 @@ impl TurnRun<'_> {
                 return Ok(StopReason::Interrupted);
             }
             self.turn.messages.push(Message::new(Role::User, results));
+        }
+    }
+
+    /// After the answer, the pages the turn read with `web_fetch`, as a
+    /// `Sources` block.
+    fn emit_web_sources(&self) {
+        let sources = web_sources(&self.turn.messages).read_refs();
+        if !sources.is_empty() {
+            self.emit(DomainEvent::BlockAdded {
+                block: Block::new(BlockKind::Sources { sources }),
+            });
         }
     }
 
@@ -1103,3 +1116,5 @@ mod cost_tests;
 mod hook_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod web_tests;
