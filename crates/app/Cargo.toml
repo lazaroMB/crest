@@ -19,7 +19,9 @@ graph-flow.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+stl_io.workspace = true
 thiserror.workspace = true
+tobj.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -225,6 +225,23 @@ impl FileSystemPort for InMemoryFs {
         Ok(FileContent::from_text(text, &request))
     }
 
+    async fn read_bytes(&self, path: &WorkspacePath, max: u64) -> Result<Vec<u8>, FsError> {
+        self.check_access(path)?;
+        let files = self.lock();
+        let Some(bytes) = files.get(path) else {
+            return Err(if is_dir(&files, path) {
+                FsError::IsDirectory { path: path.clone() }
+            } else {
+                FsError::NotFound { path: path.clone() }
+            });
+        };
+        let size = bytes.len() as u64;
+        if size > max {
+            return Err(FsError::TooLarge { size, limit: max });
+        }
+        Ok(bytes.clone())
+    }
+
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
         self.check_inside(path)?;
         let files = self.lock();

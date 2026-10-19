@@ -172,6 +172,14 @@ pub(crate) fn rich_tree() -> CustomNode {
                 text: "docs".into(),
                 url: "https://example.com/docs".into(),
             },
+            CustomNode::Model3d(domain::model3d::ModelSpec {
+                name: "tri.obj".into(),
+                mesh: domain::model3d::ModelMesh {
+                    positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                    triangles: vec![[0, 1, 2]],
+                    up: domain::model3d::UpAxis::Y,
+                },
+            }),
         ],
     }
 }

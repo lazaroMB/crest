@@ -6,13 +6,16 @@
 //! [`FileSystemPort`], so the same rules as the file tools apply: no path
 //! outside the root (`..` or a symlink that leaves it) and no sensitive
 //! path. The viewer is chosen from the extension; the contents are only
-//! shown, never run or rendered as a page.
+//! shown, never run or rendered as a page. 3D models (OBJ, STL, PLY) are
+//! parsed here ([`model3d`](super::model3d)) and drawn with an orbit camera.
 
 use domain::block::{CustomNode, ImageData, ImageFit};
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
+use domain::model3d::ModelSpec;
 use domain::workspace::{PathError, WorkspacePath};
 
-use crate::ports::fs::{FileContent, FileSystemPort, FsError, MAX_READ_BYTES, ReadFileRequest};
+use crate::ports::fs::{FileContent, FileSystemPort, FsError, ReadFileRequest};
+use crate::usecases::model3d::{self, MAX_MODEL_BYTES, MODEL_EXTENSIONS};
 
 /// Most lines shown; longer files are cut and say so in the title.
 pub const MAX_OPEN_LINES: usize = 20_000;
@@ -79,6 +82,14 @@ pub enum OpenError {
         /// The path.
         path: String,
     },
+    /// A 3D model file that cannot be shown.
+    #[error("cannot show the 3D model {path}: {reason}")]
+    Model {
+        /// The path.
+        path: String,
+        /// What is wrong with it.
+        reason: String,
+    },
     /// Any other failure while reading.
     #[error("cannot open {path}: {message}")]
     Io {
@@ -130,7 +141,8 @@ fn unquote(path: &str) -> &str {
 /// # Errors
 ///
 /// An [`OpenError`] when the path is missing, outside the workspace,
-/// denied, a directory, too large or a binary that is not a picture.
+/// denied, a directory, too large, a binary that is not a picture or a
+/// broken 3D model.
 pub async fn open_file(fs: &dyn FileSystemPort, arg: &str) -> Result<ModalSpec, OpenError> {
     let path = parse_target(fs, arg)?;
     let shown = path.as_str().to_owned();
@@ -140,6 +152,8 @@ pub async fn open_file(fs: &dyn FileSystemPort, arg: &str) -> Result<ModalSpec, 
     let ext = extension(&path);
     let (content, truncated) = if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
         (image(fs, &path).await?, false)
+    } else if MODEL_EXTENSIONS.contains(&ext.as_str()) {
+        (model(fs, &path, &ext).await?, false)
     } else {
         let file = read_text(fs, &path).await?;
         let truncated = file.truncated;
@@ -163,7 +177,7 @@ pub async fn open_file(fs: &dyn FileSystemPort, arg: &str) -> Result<ModalSpec, 
 }
 
 /// The whole text of `path` (cut at [`MAX_OPEN_LINES`]); files over
-/// [`MAX_READ_BYTES`] are refused.
+/// [`MAX_READ_BYTES`](crate::ports::fs::MAX_READ_BYTES) are refused.
 async fn read_text(
     fs: &dyn FileSystemPort,
     path: &WorkspacePath,
@@ -207,6 +221,27 @@ async fn image(fs: &dyn FileSystemPort, path: &WorkspacePath) -> Result<CustomNo
         }),
         Err(err) => Err(open_error(&root(fs), path, err)),
     }
+}
+
+/// A 3D model node for `path`, read whole through the port (up to
+/// [`MAX_MODEL_BYTES`]) and parsed as `ext`.
+async fn model(
+    fs: &dyn FileSystemPort,
+    path: &WorkspacePath,
+    ext: &str,
+) -> Result<CustomNode, OpenError> {
+    let bytes = fs
+        .read_bytes(path, MAX_MODEL_BYTES)
+        .await
+        .map_err(|err| open_error(&root(fs), path, err))?;
+    let mesh = model3d::parse(ext, &bytes).map_err(|err| OpenError::Model {
+        path: path.as_str().to_owned(),
+        reason: err.to_string(),
+    })?;
+    Ok(CustomNode::Model3d(ModelSpec {
+        name: path.file_name().unwrap_or(path.as_str()).to_owned(),
+        mesh,
+    }))
 }
 
 /// The node that shows a text file with extension `ext`.
@@ -263,10 +298,10 @@ fn open_error(root: &str, path: &WorkspacePath, err: FsError) -> OpenError {
             path: shown,
             pattern,
         },
-        FsError::TooLarge { size, .. } => OpenError::TooLarge {
+        FsError::TooLarge { size, limit } => OpenError::TooLarge {
             path: shown,
             size,
-            limit: MAX_READ_BYTES,
+            limit,
         },
         FsError::Binary { .. } => OpenError::Binary { path: shown },
         other => OpenError::Io {
@@ -411,6 +446,85 @@ mod tests {
                 "{arg}"
             );
         }
+    }
+
+    /// An ASCII STL of a tetrahedron: 4 facets.
+    const TETRA_STL: &str = "solid t
+facet normal 0 0 0
+outer loop
+vertex 0 0 0
+vertex 0 1 0
+vertex 1 0 0
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0 0 0
+vertex 1 0 0
+vertex 0 0 1
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 0 0 0
+vertex 0 0 1
+vertex 0 1 0
+endloop
+endfacet
+facet normal 0 0 0
+outer loop
+vertex 1 0 0
+vertex 0 1 0
+vertex 0 0 1
+endloop
+endfacet
+endsolid t
+";
+
+    #[tokio::test]
+    async fn models_open_in_the_3d_viewer() {
+        let fs = fs()
+            .with_file("parts/Tetra.STL", TETRA_STL)
+            .with_file("tri.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+        let spec = open(&fs, "@parts/Tetra.STL").await.unwrap();
+        assert_eq!(spec.title, "parts/Tetra.STL");
+        let CustomNode::Model3d(model) = spec.content else {
+            panic!("not a model: {:?}", spec.content);
+        };
+        assert_eq!(model.name, "Tetra.STL");
+        assert_eq!(model.mesh.triangles.len(), 4);
+        assert_eq!(model.mesh.positions.len(), 4);
+        assert!(matches!(
+            open(&fs, "@tri.obj").await.unwrap().content,
+            CustomNode::Model3d(model) if model.mesh.triangles.len() == 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn broken_and_denied_models_are_explained() {
+        let rules = SensitivePathRules::new(["secret/"]).unwrap();
+        let fs = fs()
+            .with_bytes("broken.stl", [1, 2, 3])
+            .with_file("empty.obj", "# nothing\n")
+            .with_file("secret/part.stl", TETRA_STL)
+            .with_sensitive_rules(rules);
+        for name in ["broken.stl", "empty.obj"] {
+            assert!(
+                matches!(
+                    open(&fs, &format!("@{name}")).await,
+                    Err(OpenError::Model { ref path, .. }) if path == name
+                ),
+                "{name}"
+            );
+        }
+        assert!(matches!(
+            open(&fs, "@secret/part.stl").await,
+            Err(OpenError::Sensitive { .. })
+        ));
+        assert!(matches!(
+            open(&fs, "@missing.ply").await,
+            Err(OpenError::NotFound { .. })
+        ));
     }
 
     #[tokio::test]

@@ -2,13 +2,19 @@
 //! [`Scene`] and [`Frame`]: bevelled chips (state shown as an emissive
 //! top), pins, trace ribbons, emissive packets with trails, queue markers
 //! and a selection ring. Rebuilt per rendered frame; boards are small.
+//!
+//! A 3D model's mesh ([`Mesh::from_model`]) is built once instead: flat
+//! shaded, Y up, centered and scaled to a fixed size.
 
+use domain::model3d::{ModelMesh, UpAxis};
 use domain::sysmodel::scene::{DOWN, Frame, HIGHLIGHT, PACKET_RADIUS, Rgb, Scene};
 
 use super::math::{self, V3};
 
 /// Floats per vertex: position, normal, base colour, emissive.
 pub const FLOATS_PER_VERTEX: usize = 12;
+/// Half the diagonal of a model's box once built (about a board's).
+pub const MODEL_RADIUS: f32 = 4.0;
 
 /// Vertices and indices ready to upload.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -33,6 +39,56 @@ impl Mesh {
         self.vertices.extend_from_slice(&color);
         self.vertices.extend_from_slice(&emissive);
         index
+    }
+
+    /// The triangles of `model` with `up` pointing up (+Y), centered at the
+    /// origin and scaled so its box's half diagonal is [`MODEL_RADIUS`].
+    /// Each triangle gets its own three vertices and face normal, for flat
+    /// shading. Returns the mesh and its box.
+    #[must_use]
+    pub fn from_model(model: &ModelMesh, up: UpAxis, color: Rgb) -> (Self, (V3, V3)) {
+        let world = |p: [f32; 3]| match up {
+            UpAxis::Y => p,
+            UpAxis::Z => [p[0], p[2], -p[1]],
+        };
+        let Some((min, max)) = model.bounds() else {
+            return (Self::default(), ([0.0; 3], [0.0; 3]));
+        };
+        let (min, max) = (world(min), world(max));
+        let (min, max) = (
+            [min[0].min(max[0]), min[1].min(max[1]), min[2].min(max[2])],
+            [min[0].max(max[0]), min[1].max(max[1]), min[2].max(max[2])],
+        );
+        let center = math::scale(math::add(min, max), 0.5);
+        let half = math::length(math::sub(max, min)) / 2.0;
+        let scale = if half > 0.0 { MODEL_RADIUS / half } else { 1.0 };
+        let place = |p: [f32; 3]| math::scale(math::sub(world(p), center), scale);
+        let mut mesh = Self {
+            vertices: Vec::with_capacity(model.triangles.len() * 3 * FLOATS_PER_VERTEX),
+            indices: Vec::with_capacity(model.triangles.len() * 3),
+        };
+        for t in &model.triangles {
+            let Some([a, b, c]) = t
+                .iter()
+                .map(|&i| model.positions.get(i as usize).copied().map(place))
+                .collect::<Option<Vec<_>>>()
+                .and_then(|v| <[V3; 3]>::try_from(v).ok())
+            else {
+                continue;
+            };
+            let n = math::cross(math::sub(b, a), math::sub(c, a));
+            let n = if math::length(n) > 0.0 {
+                math::normalize(n)
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            mesh.polygon(&[a, b, c], n, color, [0.0; 3]);
+        }
+        let bounds = (
+            math::scale(math::sub(min, center), scale),
+            math::scale(math::sub(max, center), scale),
+        );
+        (mesh, bounds)
     }
 
     fn polygon(&mut self, points: &[V3], n: V3, color: Rgb, emissive: Rgb) {
@@ -371,6 +427,35 @@ mod tests {
         let mut flat = Mesh::default();
         flat.bevelled_box([0.0; 3], [1.0; 3], 0.0, [1.0; 3], [0.0; 3], [0.0; 3]);
         assert_eq!(flat.vertex_count(), 24);
+    }
+
+    #[test]
+    fn a_model_is_flat_shaded_centered_and_turned_y_up() {
+        let model = ModelMesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 6.0],
+            ],
+            triangles: vec![[0, 1, 2], [0, 1, 3]],
+            up: UpAxis::Z,
+        };
+        let (mesh, (min, max)) = Mesh::from_model(&model, UpAxis::Z, [0.5; 3]);
+        assert_eq!(mesh.vertex_count(), 6, "three vertices per triangle");
+        assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
+        let half = math::length(math::sub(max, min)) / 2.0;
+        assert!((half - MODEL_RADIUS).abs() < 1e-4, "{half}");
+        // The file's Z (the tallest side) is the height now.
+        let size = math::sub(max, min);
+        assert!(size[1] > size[0] && size[1] > size[2], "{size:?}");
+        assert!(math::length(math::add(min, max)) < 1e-4, "centered");
+        // The first triangle lies in the file's XY plane: its normal is
+        // vertical in the world.
+        let n = &mesh.vertices[3..6];
+        assert!(n[1].abs() > 0.99, "{n:?}");
+        let (y_up, _) = Mesh::from_model(&model, UpAxis::Y, [0.5; 3]);
+        assert!(y_up.vertices[4].abs() < 1e-6, "Y up keeps the file's axes");
     }
 
     #[test]

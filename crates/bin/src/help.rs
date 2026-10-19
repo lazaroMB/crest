@@ -94,7 +94,7 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "open",
         usage: "/open @<path>",
-        description: "Show a workspace file in a modal (type @ to complete the path)",
+        description: "Show a workspace file in a modal, 3D models included (type @ to complete the path)",
     },
     CommandInfo {
         name: "simulate",

@@ -88,6 +88,8 @@ pub struct Gpu {
     sampler: wgpu::Sampler,
     vertex_buffer: Option<(wgpu::Buffer, u64)>,
     index_buffer: Option<(wgpu::Buffer, u64)>,
+    /// Key of the mesh in the buffers, when the caller gave one.
+    uploaded: Option<u64>,
     targets: Option<Targets>,
     error: Arc<Mutex<Option<String>>>,
 }
@@ -352,6 +354,7 @@ impl Gpu {
             sampler,
             vertex_buffer: None,
             index_buffer: None,
+            uploaded: None,
             targets: None,
             error,
         };
@@ -514,7 +517,13 @@ impl Gpu {
             .unwrap_or_else(|| unreachable!("set above"))
     }
 
-    fn upload(&mut self, mesh: &Mesh) {
+    /// Writes `mesh` to the buffers, unless they already hold the mesh of
+    /// `key` (a large model is not uploaded again for every camera move).
+    fn upload(&mut self, mesh: &Mesh, key: Option<u64>) {
+        if key.is_some() && key == self.uploaded {
+            return;
+        }
+        self.uploaded = key;
         let vbytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
         let ibytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
         let grow =
@@ -555,7 +564,8 @@ impl Gpu {
     }
 
     /// Renders `mesh` seen through `camera` at `width × height` and reads
-    /// the BGRA bytes back.
+    /// the BGRA bytes back. With a `key`, a mesh already uploaded under it
+    /// is not uploaded again.
     ///
     /// # Errors
     ///
@@ -563,13 +573,14 @@ impl Gpu {
     pub fn render(
         &mut self,
         mesh: &Mesh,
+        key: Option<u64>,
         camera: &CameraUniform,
         width: u32,
         height: u32,
     ) -> Result<(Vec<u8>, RenderStats), RenderError> {
         let started = Instant::now();
         let (width, height) = (width.clamp(1, 8192), height.clamp(1, 8192));
-        self.upload(mesh);
+        self.upload(mesh, key);
         self.queue
             .write_buffer(&self.camera_buffer, 0, &camera.bytes());
         self.targets(width, height);

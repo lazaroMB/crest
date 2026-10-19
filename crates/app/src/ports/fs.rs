@@ -321,6 +321,11 @@ pub trait FileSystemPort: Send + Sync {
     /// with [`FsError::SensitivePath`] for denied paths.
     async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError>;
 
+    /// Reads a whole file as bytes, text or not (a 3D model). Fails with
+    /// [`FsError::TooLarge`] for files over `max` bytes and with
+    /// [`FsError::SensitivePath`] for denied paths.
+    async fn read_bytes(&self, path: &WorkspacePath, max: u64) -> Result<Vec<u8>, FsError>;
+
     /// Whether `path` exists (as a file or directory) inside the workspace.
     /// Paths that resolve outside the root fail instead of returning false.
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError>;

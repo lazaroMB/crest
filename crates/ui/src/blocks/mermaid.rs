@@ -337,7 +337,7 @@ pub fn mermaid_view(
 
 /// A `#rrggbb` or `#rrggbbaa` color of the TwoCrest palette; the values are
 /// static, so a bad one only falls back to transparent.
-fn palette_color(hex: &str) -> Hsla {
+pub(crate) fn palette_color(hex: &str) -> Hsla {
     Rgba::try_from(hex).map(Hsla::from).unwrap_or_default()
 }
 

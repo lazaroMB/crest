@@ -14,6 +14,7 @@ pub mod image_view;
 pub mod json;
 pub mod markdown;
 pub mod mermaid;
+pub mod model_view;
 pub mod shell;
 pub mod sources;
 pub mod stage;

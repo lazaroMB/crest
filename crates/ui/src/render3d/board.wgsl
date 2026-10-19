@@ -45,9 +45,14 @@ struct SceneOut {
 
 @fragment
 fn fs_scene(i: VsOut) -> SceneOut {
-    let n = normalize(i.normal);
     let l = normalize(cam.light.xyz);
     let v = normalize(cam.eye.xyz - i.world);
+    // Two-sided: a face seen from behind (an open model, or one wound the
+    // other way) is lit as seen from the front.
+    var n = normalize(i.normal);
+    if dot(n, v) < 0.0 {
+        n = -n;
+    }
     let h = normalize(l + v);
     let diffuse = max(dot(n, l), 0.0);
     let specular = pow(max(dot(n, h), 0.0), 40.0) * 0.30;

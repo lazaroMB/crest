@@ -70,6 +70,9 @@ rmcp = { version = "3.5.1", default-features = false, features = ["client", "tra
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 similar = "3.2.0"
+# 3D models opened with `/open` (application). PLY is parsed in-house.
+stl_io = "0.11.0"
+tobj = { version = "4.0.5", default-features = false }
 tokio-util = "0.7.20"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 # Langfuse export (adapter-telemetry, feature `langfuse`). opentelemetry-langfuse

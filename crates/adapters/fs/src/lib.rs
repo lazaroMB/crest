@@ -57,6 +57,10 @@ impl FileSystemPort for LocalFs {
         read::read_file(&self.guard, &request).await
     }
 
+    async fn read_bytes(&self, path: &WorkspacePath, max: u64) -> Result<Vec<u8>, FsError> {
+        read::read_bytes(&self.guard, path, max).await
+    }
+
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
         match self.guard.resolve_existing(path.as_str()).await {
             Ok(_) => Ok(true),

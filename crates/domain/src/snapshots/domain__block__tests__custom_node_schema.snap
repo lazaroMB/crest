@@ -296,6 +296,20 @@ expression: "schemars::schema_for!(CustomNode)"
         "type",
         "unified"
       ]
+    },
+    {
+      "description": "A 3D model (`/open` of an OBJ, STL or PLY file), with an orbit\ncamera.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "model3d"
+        }
+      },
+      "$ref": "#/$defs/ModelSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -527,6 +541,81 @@ expression: "schemars::schema_for!(CustomNode)"
           "type": "string",
           "const": "actual"
         }
+      ]
+    },
+    "ModelMesh": {
+      "description": "A triangle mesh.",
+      "type": "object",
+      "properties": {
+        "positions": {
+          "description": "Vertex positions.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "triangles": {
+          "description": "Triangles, as indices into `positions`.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "up": {
+          "description": "The axis that points up.",
+          "$ref": "#/$defs/UpAxis",
+          "default": "y"
+        }
+      },
+      "required": [
+        "positions",
+        "triangles"
+      ]
+    },
+    "UpAxis": {
+      "description": "The axis that points up in the file's coordinates.",
+      "oneOf": [
+        {
+          "description": "`+Y` (OBJ, most real-time tools).",
+          "type": "string",
+          "const": "y"
+        },
+        {
+          "description": "`+Z` (STL, PLY, most CAD tools).",
+          "type": "string",
+          "const": "z"
+        }
+      ]
+    },
+    "ModelSpec": {
+      "description": "A model shown in a modal: the mesh and the file it came from.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "File name or title.",
+          "type": "string"
+        },
+        "mesh": {
+          "description": "The mesh.",
+          "$ref": "#/$defs/ModelMesh"
+        }
+      },
+      "required": [
+        "name",
+        "mesh"
       ]
     }
   }

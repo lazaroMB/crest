@@ -8,6 +8,7 @@ pub mod conversation;
 pub mod git;
 pub mod modal;
 pub mod model;
+pub mod model3d;
 pub mod permission;
 pub mod plan;
 pub mod research;

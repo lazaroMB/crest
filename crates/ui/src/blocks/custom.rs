@@ -3,7 +3,8 @@
 //!
 //! Tables, charts, Mermaid diagrams and markdown reuse the renderers of
 //! their own block kinds; images ([`super::image_view`]) and JSON
-//! ([`super::json`]) have views of their own. Those keep GPUI state per
+//! ([`super::json`]) and 3D models ([`super::model_view`]) have views of
+//! their own. Those keep GPUI state per
 //! block id, so each such node gets an id derived from the block's (or the
 //! modal's, see [`render_node`]) and its position in the tree. Links and
 //! links inside markdown and HTML open the browser, and only for `http`,
@@ -174,6 +175,9 @@ impl Walk<'_> {
                 super::mermaid::render(&entry, window, cx)
             }
             CustomNode::Diff { unified } => super::diff::render_unified(unified, cx),
+            CustomNode::Model3d(spec) => {
+                super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
+            }
             CustomNode::Link { text, url } => {
                 let id = element_id("custom-link", self.next_id());
                 let url = url.clone();

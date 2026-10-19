@@ -46,6 +46,30 @@ pub(crate) async fn read_file(
     Ok(FileContent::from_text(&text, request))
 }
 
+/// Reads the whole file `path` as bytes, up to `max`.
+pub(crate) async fn read_bytes(
+    guard: &WorkspaceGuard,
+    path: &WorkspacePath,
+    max: u64,
+) -> Result<Vec<u8>, FsError> {
+    let (path, real) = guard.resolve_readable(path.as_str()).await?;
+    let meta = tokio::fs::metadata(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    if meta.is_dir() {
+        return Err(FsError::IsDirectory { path });
+    }
+    if meta.len() > max {
+        return Err(FsError::TooLarge {
+            size: meta.len(),
+            limit: max,
+        });
+    }
+    tokio::fs::read(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))
+}
+
 /// Streams the lines of `real` that `request` selects, with the same
 /// result as [`FileContent::from_text`] on the whole (text) file.
 async fn read_range(
@@ -366,6 +390,30 @@ mod tests {
         assert!(matches!(
             read_file(&f.guard, &req("link.txt", None, None)).await,
             Err(FsError::Path(PathError::OutsideWorkspace { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn bytes_are_read_whole_within_the_limit_and_the_guard() {
+        let f = fixture();
+        std::fs::write(f.ws.join("cube.stl"), b"solid\0\x01\xff").unwrap();
+        std::fs::write(f.ws.join(".env"), "KEY=1\n").unwrap();
+        assert_eq!(
+            read_bytes(&f.guard, &p("cube.stl"), 8).await.unwrap(),
+            b"solid\0\x01\xff"
+        );
+        assert_eq!(
+            read_bytes(&f.guard, &p("cube.stl"), 4).await,
+            Err(FsError::TooLarge { size: 8, limit: 4 })
+        );
+        assert!(matches!(
+            read_bytes(&f.guard, &p(".env"), 64).await,
+            Err(FsError::SensitivePath { .. })
+        ));
+        std::fs::create_dir(f.ws.join("dir")).unwrap();
+        assert!(matches!(
+            read_bytes(&f.guard, &p("dir"), 64).await,
+            Err(FsError::IsDirectory { .. })
         ));
     }
 }

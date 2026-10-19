@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::model3d::{MeshError, ModelSpec};
+
 /// Stable identifier of a block in the timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -317,6 +319,9 @@ pub enum BlockError {
         /// The rejected URL.
         url: String,
     },
+    /// A 3D model that cannot be drawn.
+    #[error("3D model: {0}")]
+    Model(#[from] MeshError),
     /// A table row whose width differs from the number of columns.
     #[error("table row {row} has {actual} cells, expected {expected}")]
     TableRowWidth {
@@ -639,6 +644,9 @@ pub enum CustomNode {
         /// Unified diff text.
         unified: String,
     },
+    /// A 3D model (`/open` of an OBJ, STL or PLY file), with an orbit
+    /// camera.
+    Model3d(ModelSpec),
 }
 
 fn default_expand_depth() -> u32 {
@@ -699,6 +707,7 @@ impl CustomNode {
             Self::Link { url, .. } if !is_openable_url(url) => {
                 Err(BlockError::LinkScheme { url: url.clone() })
             }
+            Self::Model3d(spec) => Ok(spec.mesh.validate()?),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }

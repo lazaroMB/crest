@@ -1,6 +1,7 @@
 //! The board camera: an orthographic isometric preset (yaw 45°, pitch 30°)
 //! and free orbit, zoom and pan in perspective, plus projection of world
-//! points to the screen (labels) and rays from the screen (picking).
+//! points to the screen (labels) and rays from the screen (picking). A 3D
+//! model gets the same camera fitted to its box ([`OrbitCamera::fit_bounds`]).
 
 use domain::sysmodel::scene::Scene;
 
@@ -41,6 +42,22 @@ impl OrbitCamera {
         let (min, max) = (scene.board.min, scene.board.max);
         let center = [(min[0] + max[0]) / 2.0, 0.0, (min[2] + max[2]) / 2.0];
         let radius = (math::length(math::sub(max, min)) / 2.0).max(1.0);
+        Self::fitted(center, radius)
+    }
+
+    /// The isometric view of the box `min`..`max`, in perspective (a model:
+    /// keep it about the size of a board, the near plane is fixed).
+    #[must_use]
+    pub fn fit_bounds(min: V3, max: V3) -> Self {
+        let center = math::scale(math::add(min, max), 0.5);
+        let radius = (math::length(math::sub(max, min)) / 2.0).max(f32::EPSILON);
+        Self {
+            ortho: false,
+            ..Self::fitted(center, radius)
+        }
+    }
+
+    fn fitted(center: V3, radius: f32) -> Self {
         Self {
             target: center,
             yaw: ISO_YAW,
@@ -251,5 +268,23 @@ mod tests {
         cam.iso();
         assert!(cam.ortho);
         assert_eq!(cam.target, OrbitCamera::fit(&scene()).target);
+    }
+
+    #[test]
+    fn a_box_is_fitted_in_perspective_around_its_center() {
+        let cam = OrbitCamera::fit_bounds([-1.0, 0.0, -1.0], [1.0, 2.0, 1.0]);
+        assert!(!cam.ortho);
+        assert_eq!(cam.target, [0.0, 1.0, 0.0]);
+        assert!((cam.radius - 3.0_f32.sqrt()).abs() < 1e-6);
+        let size = (800.0, 600.0);
+        let (x, y) = cam.project([0.0, 1.0, 0.0], size).unwrap();
+        assert!(
+            (x - 400.0).abs() < 1.0 && (y - 300.0).abs() < 1.0,
+            "{x} {y}"
+        );
+        for corner in [[-1.0, 0.0, -1.0], [1.0, 2.0, 1.0]] {
+            let (x, y) = cam.project(corner, size).unwrap();
+            assert!((0.0..=800.0).contains(&x) && (0.0..=600.0).contains(&y));
+        }
     }
 }
