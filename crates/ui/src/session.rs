@@ -26,10 +26,12 @@
 //! # Keys, focus and commands
 //!
 //! There are no modes: the prompt is always ready to type. Shortcuts are
-//! chords or the leader chord (`<C-Space>` by default) and work wherever
+//! chords or the leader chord (`<C-g>` by default) and work wherever
 //! the focus is: keys typed while the timeline or the tree has focus go
 //! through the input's keymap too, a printable key there is typed into the
 //! prompt (focusing it), and `Esc` brings the focus back to the prompt.
+//! The exception are the vim keys of the focused timeline (`j`/`k`/`g`/`G`,
+//! `o`, `t`, `y`), which act on its blocks.
 //! `<C-Tab>` / `<leader>w` cycle the focus prompt → timeline → tree.
 //!
 //! - `<leader>p` cycles the permission mode, `<leader>m` opens the model
@@ -622,8 +624,9 @@ impl Session {
 
     /// Keys typed while the focus is outside the prompt. In an overlay
     /// (picker, dialog, menu, modal) only `Ctrl+C` is taken; elsewhere
-    /// (timeline, tree) the keys go through the input's keymap, a printable
-    /// key is typed into the prompt and the rest is left to the panel.
+    /// (timeline, tree) the keys go through the input's keymap, a vim key of
+    /// the focused timeline acts on it, any other printable key is typed
+    /// into the prompt and the rest is left to the panel.
     fn intercept_keys(cx: &mut Context<Self>) -> Subscription {
         let weak = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
@@ -650,6 +653,15 @@ impl Session {
             .input
             .update(cx, |input, cx| input.feed_key(key, window, cx));
         if consumed {
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(action) = TimelineView::vim_action(&key)
+            && self.timeline.focus_handle(cx).contains_focused(window, cx)
+        {
+            self.timeline.update(cx, |timeline, cx| {
+                timeline.handle_action(&Action::builtin(action), cx)
+            });
             cx.stop_propagation();
             return;
         }
@@ -1828,7 +1840,7 @@ mod tests {
     #[gpui::test]
     fn leader_p_cycles_the_permission_mode(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("ctrl-space p");
+        cx.simulate_keystrokes("ctrl-g p");
         h.session.read_with(cx, |s, cx| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
             assert_eq!(
@@ -1841,7 +1853,7 @@ mod tests {
     #[gpui::test]
     fn the_model_menu_sets_the_override_of_the_next_turn(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("ok")], cx);
-        cx.simulate_keystrokes("ctrl-space m");
+        cx.simulate_keystrokes("ctrl-g m");
         h.session
             .read_with(cx, |s, _| assert!(s.is_menu_open(), "the menu is open"));
         cx.simulate_keystrokes("down enter");
@@ -1954,7 +1966,7 @@ mod tests {
         send("hola", cx);
         wait_until(&h, cx, "the turn", |s, _| !s.is_running());
         assert!(!blocks(&h, cx).is_empty());
-        cx.simulate_keystrokes("ctrl-space x");
+        cx.simulate_keystrokes("ctrl-g x");
         cx.run_until_parked();
         assert!(blocks(&h, cx).is_empty(), "app.cmd(\"clear\") ran");
     }
@@ -2061,7 +2073,7 @@ mod tests {
     #[gpui::test]
     fn leader_h_opens_the_help_and_typing_filters(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("ctrl-space h");
+        cx.simulate_keystrokes("ctrl-g h");
         cx.run_until_parked();
         let view = help_view(&h, cx).expect("F1 opens the help");
         cx.simulate_keystrokes("/");
@@ -2131,10 +2143,39 @@ mod tests {
         h.session
             .read_with(cx, |s, cx| assert_eq!(s.input().read(cx).text(cx), "x"));
         // Shortcuts work from the timeline too.
-        cx.simulate_keystrokes("ctrl-tab ctrl-space p");
+        cx.simulate_keystrokes("ctrl-tab ctrl-g p");
         h.session.read_with(cx, |s, _| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
         });
+    }
+
+    #[gpui::test]
+    fn vim_keys_move_in_the_focused_timeline(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let selected = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| s.timeline().read(cx).state().selected())
+        };
+        let prompt = |cx: &mut VisualTestContext| {
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
+        };
+        cx.simulate_keystrokes("ctrl-g w");
+        let last = selected(cx);
+        assert!(last.is_some());
+        cx.simulate_keystrokes("k");
+        assert_ne!(selected(cx), last, "k moves up");
+        cx.simulate_keystrokes("shift-g");
+        assert_eq!(selected(cx), last, "G goes to the last block");
+        cx.simulate_keystrokes("g");
+        assert_eq!(selected(cx), Some(0), "g goes to the first block");
+        cx.simulate_keystrokes("j y");
+        assert!(cx.read_from_clipboard().is_some(), "y copies the block");
+        assert_eq!(prompt(cx), "", "vim keys are not typed");
+        // Any other letter is still typed into the prompt.
+        cx.simulate_keystrokes("x");
+        assert_eq!(prompt(cx), "x");
     }
 
     #[gpui::test]
@@ -2232,7 +2273,7 @@ mod tests {
     fn chat_only_images_become_blocks_without_calling_the_model(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![], cx);
         paste_png(&h, cx);
-        cx.simulate_keystrokes("alt-m");
+        cx.simulate_keystrokes("ctrl-g i");
         let input = h.session.read_with(cx, |s, _| s.input().clone());
         input.read_with(cx, |input, _| {
             assert_eq!(input.image_mode(), ImageMode::ChatOnly);

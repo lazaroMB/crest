@@ -108,24 +108,26 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
 #[test]
 fn key_rows_mark_overrides_and_name_the_plugin() {
     let mut keymap = default_keymap();
-    keymap.set("<A-Up>", Action::builtin("block.last")).unwrap();
+    keymap
+        .set("<leader>k", Action::builtin("block.last"))
+        .unwrap();
     keymap.set("<leader>x", Action::Callback(4)).unwrap();
     let rows = key_rows(&keymap, |entry| match entry.action {
         Action::Callback(4) => Some((Some("Clear".into()), "jira".into())),
         _ => None,
     });
     let find = |keys: &str| rows.iter().find(|r| r.keys == keys).unwrap();
-    let j = find("<A-Up>");
+    let j = find("<C-g>k");
     assert!(j.overridden);
     assert_eq!(j.description, "Select the last block");
     assert_eq!(j.source, "config");
-    let x = find("<C-Space>x");
+    let x = find("<C-g>x");
     assert_eq!(
         (x.action.as_str(), x.description.as_str(), x.source.as_str()),
         ("Lua function", "Clear", "jira")
     );
     assert!(!x.overridden);
-    assert!(!find("<A-Down>").overridden);
+    assert!(!find("<C-g>j").overridden);
 }
 
 #[test]

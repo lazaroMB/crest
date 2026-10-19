@@ -29,7 +29,7 @@ pub fn keymap(specs: &[KeymapSpec], options: &AppOptions) -> (Keymap<Action>, Ve
         match parse_keys(&spec.lhs, keymap.leader()) {
             Ok(keys) if is_typed(keys[0]) => warnings.push(format!(
                 "keymap `{}` ignored: it starts with a key the prompt types; use a chord \
-                 (`<C-…>`, `<A-…>`) or `<leader>`",
+                 (`<C-…>`, `<F…>`) or `<leader>`",
                 spec.lhs
             )),
             Ok(keys) => keymap.set_keys(&keys, action),
@@ -75,21 +75,21 @@ mod tests {
     fn lua_mappings_go_over_the_defaults() {
         let specs = [
             spec("<leader>x", KeyAction::Callback(CallbackId(3))),
-            spec("<A-Up>", KeyAction::Builtin("block.last".into())),
+            spec("<leader>k", KeyAction::Builtin("block.last".into())),
             spec("j", KeyAction::Builtin("block.next".into())),
             spec("<Nope>", KeyAction::Builtin("nada".into())),
         ];
         let (keymap, warnings) = keymap(&specs, &AppOptions::default());
         let x = parse_keys("<leader>x", DEFAULT_LEADER).unwrap();
         assert_eq!(lookup(&keymap, &x), Some(Action::Callback(3)));
-        let alt = |n: &str| parse_keys(n, DEFAULT_LEADER).unwrap();
+        let keys = |n: &str| parse_keys(n, DEFAULT_LEADER).unwrap();
         assert_eq!(
-            lookup(&keymap, &alt("<A-Up>")),
+            lookup(&keymap, &keys("<leader>k")),
             Some(Action::builtin("block.last"))
         );
         // The rest of the defaults stay.
         assert_eq!(
-            lookup(&keymap, &alt("<A-Down>")),
+            lookup(&keymap, &keys("<leader>j")),
             Some(Action::builtin("block.next"))
         );
         assert_eq!(lookup(&keymap, &[Key::char('j')]), None, "j is typed");

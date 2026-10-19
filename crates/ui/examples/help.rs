@@ -171,7 +171,7 @@ const DEMO_STEPS: &[(&str, u64)] = &[
     ("/ e c h o", 400),
     ("enter", 300),
     ("escape", 300),
-    ("ctrl-space h", 400),
+    ("ctrl-g h", 400),
     ("escape", 300),
 ];
 

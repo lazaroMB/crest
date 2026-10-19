@@ -1,13 +1,13 @@
 //! The main window with every panel wired to fakes: timeline, prompt input,
-//! status bar, the workspace tree (`Ctrl+Space e`), the pickers
-//! (`Ctrl+Space ff`, `Ctrl+Space fg`) and the approval dialog.
+//! status bar, the workspace tree (`Ctrl+G e`), the pickers
+//! (`Ctrl+G ff`, `Ctrl+G fg`) and the approval dialog.
 //!
 //! `cargo run -p ui --example panels`
 //!
 //! The workspace is an in-memory file system.
 //!
-//! - `Ctrl+Space e` shows or hides the tree; click a file to "open" it.
-//! - `Ctrl+Space ff` finds a file, `Ctrl+Space fg` greps; type, move with
+//! - `Ctrl+G e` shows or hides the tree; click a file to "open" it.
+//! - `Ctrl+G ff` finds a file, `Ctrl+G fg` greps; type, move with
 //!   `Up`/`Down`, `Enter` opens, `Esc` closes.
 //! - `/edit` proposes a change to `src/lib.rs` (Diff block + dialog) and
 //!   `/run` asks to run a command; answer with `y`, `a`, `n` or `Esc`.
@@ -327,11 +327,11 @@ fn wire(
 
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
-    ("ctrl-space e", 300),
-    ("ctrl-space f f", 200),
+    ("ctrl-g e", 300),
+    ("ctrl-g f f", 200),
     ("m a i n", 500),
     ("down enter", 300),
-    ("ctrl-space f g", 200),
+    ("ctrl-g f g", 200),
     ("r u n", 500),
     ("enter", 300),
     ("/ e d i t enter", 400),

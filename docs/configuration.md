@@ -90,7 +90,7 @@ The API URL is fixed (`https://api.anthropic.com`): there is no variable to chan
 
 | Option | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `leader` | string in key notation (`"<C-Space>"`, `"<C-,>"`) | `"<C-Space>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+Space` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. |
+| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the cost shows as `$?`. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
@@ -185,11 +185,11 @@ An unknown role or field produces a diagnostic. Aliases are expanded once (not r
 app.models.aliases = { rapido = "claude-haiku-5-5", opus = "claude-opus-5-5" }
 ```
 
-Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `Ctrl+Space m` menu.
+Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `Ctrl+G m` menu.
 
 ### Resolution order
 
-1. **Turn override**: `--model`, `/model <x>` or the `Ctrl+Space m` menu.
+1. **Turn override**: `--model`, `/model <x>` or the `Ctrl+G m` menu.
    - If the value is a **role name** (`plan`), that role's whole spec is used.
    - If it is an alias or an id, it only replaces the `id` and keeps the role's `max_tokens`, `thinking` and `fallbacks`.
    - Aliases are checked before role names.
@@ -315,7 +315,7 @@ A global config, checked against the current implementation (it loads without di
 local app = require("app")
 
 -- Keys -------------------------------------------------------------------
-app.opt.leader = "<C-Space>" -- <leader> for the keymaps in this file
+app.opt.leader = "<C-g>" -- <leader> for the keymaps in this file
 app.opt.timeoutlen = 600    -- ms to wait between the keys of a sequence
 
 -- Cost (USD per million tokens; an example, use current prices) ---------

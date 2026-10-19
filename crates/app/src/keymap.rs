@@ -2,7 +2,7 @@
 //! that resolves pending prefixes (`<leader>ff`) with `timeoutlen`.
 //!
 //! There are no modes: the prompt is always ready to type, so mappings use
-//! chords (`<C-c>`, `<A-Up>`) or the leader chord (`<C-Space>` by default)
+//! chords (`<C-c>`, `<C-Tab>`) or the leader chord (`<C-g>` by default)
 //! and never plain printable keys.
 //!
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
@@ -247,7 +247,9 @@ impl fmt::Display for Key {
 }
 
 /// Leader used when none is configured (`app.opt.leader`).
-pub const DEFAULT_LEADER: &str = "<C-Space>";
+/// Not `<C-Space>`: macOS takes it to switch the input source. Alt is not
+/// used either: on macOS, Option composes characters.
+pub const DEFAULT_LEADER: &str = "<C-g>";
 
 #[derive(Debug, Clone)]
 struct Node<A> {
@@ -303,7 +305,7 @@ impl<A> Keymap<A> {
         &self.leader
     }
 
-    /// Sets the leader (notation, e.g. `"<C-Space>"` or `"<C-,>"`).
+    /// Sets the leader (notation, e.g. `"<C-g>"` or `"<C-,>"`).
     /// Validated eagerly.
     pub fn set_leader(&mut self, leader: &str) -> Result<(), KeyParseError> {
         parse_inner(leader, None)?;
@@ -355,7 +357,7 @@ pub struct KeymapEntry<A> {
 }
 
 impl<A> KeymapEntry<A> {
-    /// The keys in Neovim notation (`<C-Space>ff`).
+    /// The keys in Neovim notation (`<C-g>ff`).
     pub fn notation(&self) -> String {
         self.keys.iter().map(ToString::to_string).collect()
     }
@@ -588,23 +590,23 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "Move the focus to the next panel",
     ),
     ("<C-Tab>", "focus.next", "Move the focus to the next panel"),
-    ("<A-Up>", "block.prev", "Select the previous block"),
-    ("<A-Down>", "block.next", "Select the next block"),
-    ("<A-Home>", "block.first", "Select the first block"),
-    ("<A-End>", "block.last", "Select the last block"),
+    ("<leader>k", "block.prev", "Select the previous block"),
+    ("<leader>j", "block.next", "Select the next block"),
+    ("<leader>gg", "block.first", "Select the first block"),
+    ("<leader>G", "block.last", "Select the last block"),
     (
-        "<A-CR>",
+        "<leader>o",
         "block.toggle",
         "Expand or collapse the selected block",
     ),
     (
-        "<A-t>",
+        "<leader>t",
         "block.toggle_view",
         "Switch the block between chart and table",
     ),
-    ("<A-y>", "block.yank", "Copy the selected block"),
+    ("<leader>y", "block.yank", "Copy the selected block"),
     (
-        "<A-m>",
+        "<leader>i",
         "image.mode",
         "Switch pasted images between sending them to the model and adding them to the chat only",
     ),
@@ -677,7 +679,7 @@ mod tests {
         );
         assert_eq!(
             parse_keys("<leader>e", DEFAULT_LEADER),
-            Ok(vec![ctrl(' '), Key::char('e')])
+            Ok(vec![ctrl('g'), Key::char('e')])
         );
     }
 
@@ -943,9 +945,11 @@ mod tests {
         let b = |name: &str| Some(Action::builtin(name));
         assert_eq!(get("<Esc>"), b("focus.input"));
         assert_eq!(get("<S-Enter>"), b("newline"));
-        assert_eq!(get("<C-Space>ff"), b("picker.files"));
-        assert_eq!(get("<C-Space>e"), b("panel.tree"));
-        assert_eq!(get("<A-Up>"), b("block.prev"));
+        assert_eq!(get("<C-g>ff"), b("picker.files"));
+        assert_eq!(get("<C-g>e"), b("panel.tree"));
+        assert_eq!(get("<C-g>k"), b("block.prev"));
+        assert_eq!(get("<C-g>gg"), b("block.first"));
+        assert_eq!(get("<C-g>G"), b("block.last"));
         assert_eq!(get("<C-c>"), b("turn.interrupt"));
         assert_eq!(get("<F1>"), b("help.open"));
     }
@@ -958,6 +962,31 @@ mod tests {
                 && !(first.mods.ctrl || first.mods.alt || first.mods.cmd);
             assert!(!plain_char, "{} would steal typing", entry.notation());
         }
+    }
+
+    #[test]
+    fn no_default_needs_alt() {
+        for entry in default_keymap().entries() {
+            let alt = entry.keys.iter().any(|k| k.mods.alt);
+            assert!(
+                !alt,
+                "{}: Option composes characters on macOS",
+                entry.notation()
+            );
+        }
+    }
+
+    #[test]
+    fn leader_shift_g_is_an_uppercase_g() {
+        let shift_g = Key::new(
+            KeyCode::Char('g'),
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        let keys = parse_keys("<leader>G", DEFAULT_LEADER).unwrap();
+        assert_eq!(keys[1], shift_g);
     }
 
     #[test]
@@ -981,7 +1010,7 @@ mod tests {
         let mut km = default_keymap();
         assert_eq!(km.set_leader(","), Ok(()));
         assert_eq!(km.set("<leader>x", Action::Callback(3)), Ok(()));
-        assert_eq!(km.set("<A-Up>", Action::builtin("block.last")), Ok(()));
+        assert_eq!(km.set("<C-g>k", Action::builtin("block.last")), Ok(()));
         let entries = km.entries();
         let find = |n: &str| {
             entries
@@ -990,8 +1019,8 @@ mod tests {
                 .map(|e| e.action.clone())
         };
         assert_eq!(find(",x"), Some(Action::Callback(3)));
-        assert_eq!(find("<A-Up>"), Some(Action::builtin("block.last")));
-        assert_eq!(find("<C-Space>ff"), Some(Action::builtin("picker.files")));
+        assert_eq!(find("<C-g>k"), Some(Action::builtin("block.last")));
+        assert_eq!(find("<C-g>ff"), Some(Action::builtin("picker.files")));
         assert_eq!(find("<CR>"), Some(Action::builtin("submit")));
         assert_eq!(entries.len(), DEFAULTS.len() + 1, "one new mapping");
         let notations: Vec<String> = entries.iter().map(KeymapEntry::notation).collect();
@@ -1015,7 +1044,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            feed(&mut seq, "<C-Space>ff"),
+            feed(&mut seq, "<C-g>ff"),
             vec![
                 Feed::Pending,
                 Feed::Pending,
@@ -1023,7 +1052,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            feed(&mut seq, "<C-Space>fg").last(),
+            feed(&mut seq, "<C-g>fg").last(),
             Some(&Feed::Matched(Action::builtin("picker.grep")))
         );
     }

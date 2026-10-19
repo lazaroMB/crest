@@ -7,11 +7,11 @@ What sets it apart:
 - **A timeline with rich blocks.** The agent does not just answer with text. It shows charts (with their table, one `t` keypress away), sortable tables, Mermaid diagrams with pan and zoom, markdown documents, colored diffs and blocks defined by your own plugins.
 - **Anthropic models by role.** Every call asks for a role (`main`, `plan`, `explore`, `compact`, `title`, `component`, `deep`), and the configuration decides which model serves it, with its fallbacks.
 - **Search with `rg` and `fzf`.** The agent's tools and the window's pickers use the same processes, so you see what the model sees.
-- **A prompt that is always ready to type**: `/` commands with a palette, `/!cmd` to run a shell command and hand its output to the model, shortcuts on the `Ctrl+Space` leader that work wherever the focus is, and every panel usable from the keyboard. The status bar shows the git branch and changes. TwoCrest theme (dark or light) and logo.
+- **A prompt that is always ready to type**: `/` commands with a palette, `/!cmd` to run a shell command and hand its output to the model, shortcuts on the `Ctrl+G` leader that work wherever the focus is, and every panel usable from the keyboard. The status bar shows the git branch and changes. TwoCrest theme (dark or light) and logo.
 - **Config and plugins in Lua**, with Neovim-style key notation (`<leader>ff`, `<C-p>`). From Lua you can add tools, hooks, commands, blocks and modal windows (images with zoom, tables, charts, JSON trees, Mermaid, diffs, markdown and simple HTML), all inside a sandbox with instruction and memory limits. Plugins that need to call an API or a command-line program declare `network:` and `shell:` capabilities, which stay off until you approve them (`--trust-plugin`, `/plugin trust`).
 - **Guided workflows.** The *research* workflow (X-Workflow, 14 nodes) goes from a problem to a Spec with its plan. The *implementation* workflow runs that plan task by task, with one commit per task and a final report.
 - **Simulate a solution before building it.** `/simulate <spec>` turns a Spec into an executable model (assertions derived from its test protocol first, then the model from its diagrams), runs every scenario deterministically and opens a 3D circuit-board view where messages travel between components, with a timeline, failure markers and a state inspector. The verdicts become evidence in the Spec, and `board.html` shares the replay without crest.
-- **Everything in one help.** `F1` (or `Ctrl+Space h`, or `/help`) opens a modal with every `/` command, the effective keymap, the agent's tools with their effects, the loaded plugins with their capabilities and trust, the MCP servers and their state, the models, the command-line flags and the paths in use, all searchable at once.
+- **Everything in one help.** `F1` (or `Ctrl+G h`, or `/help`) opens a modal with every `/` command, the effective keymap, the agent's tools with their effects, the loaded plugins with their capabilities and trust, the MCP servers and their state, the models, the command-line flags and the paths in use, all searchable at once.
 - **Hexagonal architecture.** The domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, and `make arch` verifies it.
 
 ## The screen
@@ -21,7 +21,7 @@ There are no screenshots yet. The window has three stacked areas and an optional
 - **Timeline.** Takes up most of the screen. Every reply, tool call, diff or chart is a block, and you move between them with `j`/`k`.
 - **Input.** Multi-line, below the timeline. It shows the current mode (`INSERT`, `NORMAL` or `COMMAND`) and the pending keys of a sequence.
 - **Status bar.** At the bottom: mode, the turn's model, permission mode (`ask`, `auto-edit`, `plan`), session cost and workspace name. Notices are shown for a few seconds.
-- **Workspace tree.** Optional panel on the left (`Ctrl+Space e`). On top of all of this appear the file and text pickers, the model menu, the modal windows that plugins open and the approval dialog with the diff or the exact command.
+- **Workspace tree.** Optional panel on the left (`Ctrl+G e`). On top of all of this appear the file and text pickers, the model menu, the modal windows that plugins open and the approval dialog with the diff or the exact command.
 
 The theme is dark and the font monospace (JetBrains Mono if installed).
 
@@ -83,11 +83,11 @@ crest                         # without a directory: choose the project in the p
    - `y` approves;
    - `a` always approves (that same file or command);
    - `n` rejects.
-3. Commands start with `/` (typing `/` opens the palette) and shortcuts with `Ctrl+Space`:
+3. Commands start with `/` (typing `/` opens the palette) and shortcuts with `Ctrl+G`:
    - `/!git status` runs a command and shows its output (the model sees it with your next prompt);
-   - `Alt+↑`/`Alt+↓` move between blocks and `Alt+Enter` expands a tool call (or `Ctrl+Tab` to focus the timeline and use the arrows);
-   - `Ctrl+Space ff` searches files, `Ctrl+Space e` shows the tree;
-   - `Ctrl+Space p` changes the permission mode;
+   - `Ctrl+G k`/`Ctrl+G j` move between blocks and `Ctrl+G o` expands a tool call (or `Ctrl+Tab` to focus the timeline and use `j`/`k`/`o`);
+   - `Ctrl+G ff` searches files, `Ctrl+G e` shows the tree;
+   - `Ctrl+G p` changes the permission mode;
    - `Esc` always brings you back to the prompt;
    - `/q` quits.
 4. When you open crest again in the same directory, the last session is resumed. `crest --new` starts a new one.
@@ -225,7 +225,7 @@ All 11 phases of the original plan are implemented and `make check` passes on Li
 **Not available yet**
 
 - The font is not configurable (JetBrains Mono when installed).
-- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use `Ctrl+Space`. Actions such as `session.resume` are not implemented.
+- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use `Ctrl+G`. Actions such as `session.resume` are not implemented.
 - There is no command to list or pick older sessions: the workspace's last one is always resumed.
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
 - `/mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run. (`/plugin trust`, by contrast, takes effect at once.)

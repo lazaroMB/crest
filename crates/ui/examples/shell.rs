@@ -5,9 +5,9 @@
 //!
 //! - Type and press Enter; the fake agent echoes the prompt with a tool call
 //!   and a streamed reply. Shift+Enter adds a line.
-//! - `Alt+Up`/`Alt+Down`/`Alt+Home`/`Alt+End` move the selection,
-//!   `Alt+Enter` expands a tool call, `Alt+y` copies a block,
-//!   `Ctrl+Space p` cycles the permission mode.
+//! - `Ctrl+G k`/`Ctrl+G j`/`Ctrl+G gg`/`Ctrl+G G` move the selection,
+//!   `Ctrl+G o` expands a tool call, `Ctrl+G y` copies a block,
+//!   `Ctrl+G p` cycles the permission mode.
 //! - Commands: `/error`, `/notice <text>`, `/retry`, `/q`.
 //!
 //! Quit with `/q` or Cmd/Ctrl+Q.
@@ -247,11 +247,11 @@ fn wire_input(
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
     ("h e l l o space c r e s t enter", 2500),
-    ("alt-up alt-up", 300),
-    ("alt-enter", 300),
-    ("alt-home", 300),
-    ("alt-end", 300),
-    ("ctrl-space p", 300),
+    ("ctrl-g k ctrl-g k", 300),
+    ("ctrl-g o", 300),
+    ("ctrl-g g g", 300),
+    ("ctrl-g shift-g", 300),
+    ("ctrl-g p", 300),
     ("/ n o t i c e space h i enter", 300),
 ];
 

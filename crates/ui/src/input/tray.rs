@@ -253,10 +253,10 @@ fn tray_hint(count: usize, mode: ImageMode) -> String {
     };
     match mode {
         ImageMode::Model => format!(
-            "Enter: send the text and {images} to the model · Alt+M: chat only · × or Backspace removes"
+            "Enter: send the text and {images} to the model · Ctrl+G i: chat only · × or Backspace removes"
         ),
         ImageMode::ChatOnly => format!(
-            "Enter: add {images} to the chat; the model is not called · Alt+M: send to the model · × or Backspace removes"
+            "Enter: add {images} to the chat; the model is not called · Ctrl+G i: send to the model · × or Backspace removes"
         ),
     }
 }

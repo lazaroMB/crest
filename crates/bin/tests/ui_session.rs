@@ -305,7 +305,7 @@ fn keymaps_and_commands_of_init_lua_run_their_actions(cx: &mut TestAppContext) {
     wait_until(&w, cx, "the first turn", |s, _| !s.is_running());
     assert!(!texts(&blocks(&w, cx)).is_empty());
 
-    cx.simulate_keystrokes("ctrl-space x");
+    cx.simulate_keystrokes("ctrl-g x");
     wait_until(&w, cx, "<leader>x to clear the session", |s, cx| {
         s.timeline().read(cx).state().is_empty()
     });

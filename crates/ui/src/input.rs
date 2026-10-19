@@ -1,7 +1,7 @@
 //! The prompt input: a multi-line editor (gpui-component `Textarea`) that
 //! is always ready to type, plus the Neovim-style [`KeySequencer`] for the
 //! shortcuts (chords such as `<C-c>` or `<A-Up>`, and the leader chord,
-//! `<C-Space>` by default, followed by a key: `<C-Space>e`).
+//! `<C-g>` by default, followed by a key: `<C-g>e`).
 //!
 //! - Keys no mapping wants go to the editor untouched; `<CR>` submits and
 //!   `<S-CR>` inserts a newline.
@@ -21,7 +21,7 @@
 //!   puts it in a tray above the prompt ([`attachments`]), with the text
 //!   kept. A chip in the tray says what `Enter` does with the images:
 //!   **→ Model** sends them with the prompt, **Chat only** adds them to the
-//!   chat without calling the model; a click or `<A-m>` switches it. `×`,
+//!   chat without calling the model; a click or `<leader>i` switches it. `×`,
 //!   or `Backspace` in an empty prompt, removes an image.
 //!
 //! It looks like a terminal prompt: a `❯`, the text in the monospace font
@@ -75,7 +75,7 @@ use crate::help::CommandRow;
 pub const QUEUE_EDIT_ACTION: &str = "queue.edit";
 /// Action of `<Esc>`: back to the prompt (and hide the palette).
 pub const FOCUS_INPUT_ACTION: &str = "focus.input";
-/// Action of `<A-m>`: switches what `Enter` does with the pasted images.
+/// Action of `<leader>i`: switches what `Enter` does with the pasted images.
 pub const IMAGE_MODE_ACTION: &str = "image.mode";
 
 /// Rows of the editor before it starts scrolling.
@@ -1053,15 +1053,15 @@ mod tests {
         cx.simulate_keystrokes("enter");
         assert_eq!(take(&events), [InputEvent::Command("mode ask".into())]);
         view.read_with(cx, |view, _| assert_eq!(view.images().len(), 2));
-        // Backspace in an empty prompt removes the last one; Alt+M switches
+        // Backspace in an empty prompt removes the last one; `<leader>i` switches
         // the mode, which the submission carries.
         cx.simulate_keystrokes("backspace");
         view.read_with(cx, |view, _| assert_eq!(view.images().len(), 1));
-        cx.simulate_keystrokes("alt-m");
+        cx.simulate_keystrokes("ctrl-g i");
         view.read_with(cx, |view, _| {
             assert_eq!(view.image_mode(), ImageMode::ChatOnly)
         });
-        cx.simulate_keystrokes("alt-m");
+        cx.simulate_keystrokes("ctrl-g i");
         cx.simulate_keystrokes("enter");
         let sent = take(&events);
         let [InputEvent::SubmitImages { text, images, mode }] = sent.as_slice() else {
@@ -1104,13 +1104,16 @@ mod tests {
     #[gpui::test]
     fn leader_and_chords_fire_actions(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
-        cx.simulate_keystrokes("ctrl-space e alt-up alt-down");
+        cx.simulate_keystrokes("ctrl-g e ctrl-g k ctrl-g j ctrl-g g g ctrl-g shift-g ctrl-c");
         assert_eq!(
             take(&events),
             [
                 action("panel.tree"),
                 action("block.prev"),
-                action("block.next")
+                action("block.next"),
+                action("block.first"),
+                action("block.last"),
+                action("turn.interrupt")
             ]
         );
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
@@ -1119,8 +1122,8 @@ mod tests {
     #[gpui::test]
     fn pending_leader_times_out(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
-        cx.simulate_keystrokes("ctrl-space");
-        view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), "<C-Space>"));
+        cx.simulate_keystrokes("ctrl-g");
+        view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), "<C-g>"));
         cx.executor().advance_clock(Duration::from_millis(1100));
         cx.run_until_parked();
         view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), ""));

@@ -87,10 +87,10 @@ app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear the ses
 
 crest has no modes: the prompt is always ready to type and a mapping works wherever the focus is. The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
 
-- **`keys`**: the sequence in Neovim notation. It must **start with a chord or `<leader>`** (`<C-x>`, `<A-r>`, `<leader>r`, `<F5>`): a mapping that starts with a plain key (`j`, `gg`, `?`) would steal typing, so it is ignored with a warning at startup.
+- **`keys`**: the sequence in Neovim notation. It must **start with a chord or `<leader>`** (`<C-x>`, `<leader>r`, `<F5>`): a mapping that starts with a plain key (`j`, `gg`, `?`) would steal typing, so it is ignored with a warning at startup.
   - single characters after the first key (`<leader>gg`);
-  - `<leader>` (`Ctrl+Space` unless `app.opt.leader` says otherwise);
-  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt), `<S-x>` (Shift), `<D-x>` (Cmd);
+  - `<leader>` (`Ctrl+G` unless `app.opt.leader` says otherwise);
+  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd);
   - key names `<CR>`/`<Enter>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, `<Space>`, `<lt>`, `<gt>`, `<Bar>`, `<Bslash>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<Home>`, `<End>`, `<PageUp>`, `<PageDown>` and `<F1>`–`<F24>`.
 
   `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
@@ -735,7 +735,7 @@ app.keymap.set("<leader>t", function()
 end)
 ```
 
-With `leader = "<C-,>"`, the mappings in this file use `Ctrl+,`, but the builtin ones (`Ctrl+Space ff`, `Ctrl+Space m`...) keep using `Ctrl+Space`. If you want to move them, map them again:
+With `leader = "<C-,>"`, the mappings in this file use `Ctrl+,`, but the builtin ones (`Ctrl+G ff`, `Ctrl+G m`...) keep using `Ctrl+G`. If you want to move them, map them again:
 
 ```lua
 app.keymap.set("<leader>ff", "picker.files")
@@ -746,6 +746,6 @@ app.keymap.set("<leader>fg", "picker.grep")
 
 1. Start headless on any directory: `crest --headless "list the files" --workspace /tmp/try`. Load diagnostics are printed to the terminal.
 2. Open the window and check that there are no `Error` blocks at the top of the timeline.
-3. For tools: ask for something that uses them, expand the ToolCall with `Alt+Enter` and check the input and the output.
+3. For tools: ask for something that uses them, expand the ToolCall with `Ctrl+G o` and check the input and the output.
 4. For hooks: use `print` and `CREST_LOG=warn,lua=info`.
 5. If you write Rust, the tests in `crates/adapters/lua/tests/` (`plugin_tools.rs`, `plugin_hooks.rs`, `plugin_ui.rs`) show how to load an `init.lua` into a real `LuaHost` and run it inside the agent loop with a scripted model (`application::testing`).

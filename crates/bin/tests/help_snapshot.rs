@@ -80,7 +80,7 @@ async fn snapshot() -> HelpSnapshot {
     std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(plugin_dir.join("init.lua"), JIRA).unwrap();
     let global = format!(
-        "app.mcp.add(\"echo\", {{ command = {:?} }})\napp.keymap.set(\"<A-Up>\", \"block.last\")\n",
+        "app.mcp.add(\"echo\", {{ command = {:?} }})\napp.keymap.set(\"<leader>k\", \"block.last\")\n",
         echo_server_path().display().to_string()
     );
     std::fs::write(config_dir.join("init.lua"), global).unwrap();
@@ -131,10 +131,10 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
         assert!(help.commands.iter().any(|c| c.name == name), "{name}");
     }
 
-    let leader_j = help.keys.iter().find(|k| k.keys == "<C-Space>j").unwrap();
+    let leader_j = help.keys.iter().find(|k| k.keys == "<C-g>j").unwrap();
     assert_eq!(leader_j.description, "Open the issue");
     assert_eq!(leader_j.source, "jira");
-    let j = help.keys.iter().find(|k| k.keys == "<A-Up>").unwrap();
+    let j = help.keys.iter().find(|k| k.keys == "<C-g>k").unwrap();
     assert!(j.overridden, "{j:?}");
     assert_eq!(
         (j.action.as_str(), j.source.as_str()),

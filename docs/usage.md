@@ -15,8 +15,8 @@ The window opens full screen. On X11 it opens as a normal window and requests fu
 ```text
 ┌──────────────┬───────────────────────────────────────────────┐
 │ tree         │ timeline: blocks (text, tools, diffs,         │
-│ (Ctrl+Space  │ charts, tables, Mermaid, markdown, shell...)  │
-│  e, hidden   │                                               │
+│ (Ctrl+G e,   │ charts, tables, Mermaid, markdown, shell...)  │
+│  hidden      │                                               │
 │  by default) │                                               │
 │              ├───────────────────────────────────────────────┤
 │              │ ❯ multi-line prompt (/ opens the palette)     │
@@ -45,19 +45,19 @@ There are no modes: the prompt is always ready to type (a multi-line editor, up 
 - `Enter` sends the prompt; `Shift+Enter` adds a line.
 - A line that starts with `/` is a **command** (`/model opus`, `/research …`). To send a prompt that starts with a slash, double it: `//etc/hosts` sends `/etc/hosts`.
 - Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it.
-- **Shortcuts** are chords (`Ctrl+C`, `Alt+↑`) or the **leader** chord, `Ctrl+Space`, followed by a key (`Ctrl+Space e`). They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
+- **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+G` is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt. They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
 
 ### Focus
 
 The prompt has the focus at start and gets it back by itself after a picker, a menu, a dialog or a modal closes.
 
-- `Ctrl+Tab` (or `Ctrl+Space w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
+- `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
 - `Esc` goes back to the prompt from anywhere.
-- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there.
+- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below.
 
 | Panel | Keys while it has the focus |
 | --- | --- |
-| Timeline | `↑` / `↓` select blocks, `Home` / `End` the first and last, `Enter` expands or collapses, `PageUp` / `PageDown` scroll. |
+| Timeline | `k` / `j` or `↑` / `↓` select blocks, `g` / `G` or `Home` / `End` the first and last, `o` or `Enter` expands or collapses, `t` switches the view, `y` copies the block, `PageUp` / `PageDown` scroll. |
 | Tree | `↑` / `↓` move, `→` / `←` open and close directories, `Enter` on a file inserts `@path`. |
 | Help | See [Help](#help). |
 | Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
@@ -66,26 +66,26 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 
 ### Default key bindings
 
-`<leader>` is `Ctrl+Space` in every builtin mapping. Changing `app.opt.leader` only affects mappings defined in Lua (see [plugins.md](plugins.md#4-keymaps)).
+`<leader>` is `Ctrl+G` in every builtin mapping. Changing `app.opt.leader` only affects mappings defined in Lua (see [plugins.md](plugins.md#4-keymaps)).
 
 | Key | Action | What it does |
 | --- | --- | --- |
 | `Enter` | `submit` | Sends the prompt (if not empty) or runs the `/` command. |
 | `Shift+Enter` | `newline` | Inserts a new line. |
 | `Esc` | `focus.input` | Back to the prompt (hides the palette when it is open). |
-| `Ctrl+Tab`, `Ctrl+Space w` | `focus.next` | Moves the focus to the next panel. |
-| `Alt+↑` / `Alt+↓` | `block.prev` / `block.next` | Previous / next block. |
-| `Alt+Home` / `Alt+End` | `block.first` / `block.last` | First / last block. |
-| `Alt+Enter` | `block.toggle` | Expands or collapses the block (ToolCall, Thinking, Shell). |
-| `Alt+t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
-| `Alt+y` | `block.yank` | Copies the block's content to the clipboard. |
-| `Alt+m` | `image.mode` | Switches [pasted images](#pasted-images) between **→ Model** and **Chat only**. |
-| `Ctrl+Space ff` | `picker.files` | File picker (fzf). |
-| `Ctrl+Space fg` | `picker.grep` | Text search (rg). |
-| `Ctrl+Space e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
-| `Ctrl+Space m` | `model.pick` | Picks the model for the **next** turn. |
-| `Ctrl+Space p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
-| `Ctrl+Space h`, `F1` | `help.open` | Opens the [help](#help). |
+| `Ctrl+Tab`, `Ctrl+G w` | `focus.next` | Moves the focus to the next panel. |
+| `Ctrl+G k` / `Ctrl+G j` | `block.prev` / `block.next` | Previous / next block. |
+| `Ctrl+G gg` / `Ctrl+G G` | `block.first` / `block.last` | First / last block. |
+| `Ctrl+G o` | `block.toggle` | Expands or collapses the block (ToolCall, Thinking, Shell). |
+| `Ctrl+G t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
+| `Ctrl+G y` | `block.yank` | Copies the block's content to the clipboard. |
+| `Ctrl+G i` | `image.mode` | Switches [pasted images](#pasted-images) between **→ Model** and **Chat only**. |
+| `Ctrl+G ff` | `picker.files` | File picker (fzf). |
+| `Ctrl+G fg` | `picker.grep` | Text search (rg). |
+| `Ctrl+G e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
+| `Ctrl+G m` | `model.pick` | Picks the model for the **next** turn. |
+| `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
+| `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
 | `Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command. Also works while a picker or a dialog is open. |
 | `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
 
@@ -120,11 +120,11 @@ An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, 
 
 `/!git status`, `/!cargo test -p ui` or `/! ls -la | head` runs the line with `sh -c` in the workspace (pipes, globs and variables work), without an approval: you typed it. It is cut after 120 s and `Ctrl+C` stops it.
 
-A **Shell** block shows the command, its exit status (`exit 0` in green, otherwise red) and its output, stderr in red; output longer than 20 lines is collapsed (`Alt+Enter`, or `Enter` with the timeline focused, expands it). The output also goes to the model with your **next** prompt, tagged as `<bash-input>`, `<bash-stdout>` and `<bash-stderr>` (each stream cut to 20 kB), so you can run a command and then ask about it.
+A **Shell** block shows the command, its exit status (`exit 0` in green, otherwise red) and its output, stderr in red; output longer than 20 lines is collapsed (`Ctrl+G o`, or `o`/`Enter` with the timeline focused, expands it). The output also goes to the model with your **next** prompt, tagged as `<bash-input>`, `<bash-stdout>` and `<bash-stderr>` (each stream cut to 20 kB), so you can run a command and then ask about it.
 
 ### Help
 
-`F1`, `Ctrl+Space h` or `/help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
+`F1`, `Ctrl+G h` or `/help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
 
 | # | Section | What it lists |
 | --- | --- | --- |
@@ -168,13 +168,13 @@ A chip in the tray says what `Enter` does with the images, and the line under it
 - **→ Model** (the default): the images go to the model with the prompt, in the same message after the text, and appear in the timeline under your prompt. If the model of the turn does not take images, nothing is sent and an error says so; an active research or implementation flow does not take them either.
 - **Chat only**: the images (and the text, if any) are added to the timeline as Image blocks and saved with the session; the model is **not** called, and the images are not sent with later prompts.
 
-A click on the chip or `Alt+m` switches it; it goes back to **→ Model** after each send. A `/` command leaves the images in the tray.
+A click on the chip or `Ctrl+G i` switches it; it goes back to **→ Model** after each send. A `/` command leaves the images in the tray.
 
 Images go out as png, jpeg, gif or webp: bmp, tiff, ico and pnm are converted to png first, and svg is refused. An image larger than 8000 px on a side or 5 MB is refused with its size. Images are kept in memory until sent (nothing is written to disk); sent ones are stored in the session database with the conversation. Clicking an Image block in the timeline opens it in a modal with zoom and pan.
 
 On Wayland, a copy that offers both text and an image may paste as text (GPUI reads the text first); screenshots paste as images. Copied files (from a file manager) are not attached.
 
-### Pickers (`Ctrl+Space ff`, `Ctrl+Space fg`)
+### Pickers (`Ctrl+G ff`, `Ctrl+G fg`)
 
 They use the same ports and the same defaults as the agent's `find_file` and `grep` tools, so you see what the model would see:
 
@@ -182,7 +182,7 @@ They use the same ports and the same defaults as the agent's `find_file` and `gr
 - they exclude `.git/`;
 - they apply the sensitive paths.
 
-Results update as you type, with a 120 ms debounce. In `Ctrl+Space fg` the text is a ripgrep regular expression.
+Results update as you type, with a 120 ms debounce. In `Ctrl+G fg` the text is a ripgrep regular expression.
 
 | Key | Action |
 | --- | --- |
@@ -190,7 +190,7 @@ Results update as you type, with a 120 ms debounce. In `Ctrl+Space fg` the text 
 | `Enter` | Insert the `@...` reference into the prompt. |
 | `Esc` | Close. |
 
-### Workspace tree (`Ctrl+Space e`)
+### Workspace tree (`Ctrl+G e`)
 
 A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` move, `→`/`←` open and close directories, `Enter` on a file inserts `@path`, typing or `Esc` goes back to the prompt). It comes from the same `tree` the agent uses: it shows up to 16 levels and leaves out ignored files and `.git/`.
 
@@ -198,7 +198,7 @@ A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` m
 - Clicking a file inserts `@path`.
 - The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
 
-### Model menu (`Ctrl+Space m`)
+### Model menu (`Ctrl+G m`)
 
 Lists `default (main role)` and every alias, both the builtin ones (`opus`, `sonnet`, `haiku`, `fable`) and those in your config, with the model each one points to.
 
@@ -220,7 +220,7 @@ Each tool declares its effect (`read`, `write`, `execute` or `network`), and the
 | `auto-edit` | yes | yes | asks |
 | `plan` | yes | no (denied) | no (denied) |
 
-To change mode: `Ctrl+Space p`, `/mode <mode>` or `--mode` at startup.
+To change mode: `Ctrl+G p`, `/mode <mode>` or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
@@ -249,16 +249,16 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | ToolCall | Any tool: one line with name, subject and status (pending, awaiting approval, running, ok, failed, denied, cancelled). | `Enter` shows the input and the output. |
 | Shell | `/!command` | `$ command`, exit status and output; long output collapsed until `Enter`. |
 | Diff | `edit_file`, `write_file` | Colored diff with its approval status. |
-| Chart | `show_chart` tool (bar, line, area, pie). | **`Alt+t` toggles a table** of the same data. |
+| Chart | `show_chart` tool (bar, line, area, pie). | **`t` toggles a table** of the same data. |
 | Table | `show_table` tool | Virtualized. Clicking a column's sort icon cycles descending → ascending → original. |
-| Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `Alt+t` shows the source. If it does not parse, the source and the error are shown. |
-| Markdown | `show_markdown` tool | Document typography; `Alt+t` shows the source. |
+| Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `t` shows the source. If it does not parse, the source and the error are shown. |
+| Markdown | `show_markdown` tool | Document typography; `t` shows the source. |
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
 | Sources, StageHeader | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
 | Image | [Pasted images](#pasted-images), research workflow | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. |
 | Error | API, tool or config failures | Message and suggested action. |
 
-In the table, `Enter` means `Alt+Enter` from the prompt or `Enter` with the timeline focused. `Alt+t` only has an effect on Chart, Markdown and Mermaid. `Alt+y` copies the content of the selected block.
+In the table, `Enter` means `Ctrl+G o` from the prompt or `o`/`Enter` with the timeline focused, and `t` means `Ctrl+G t` from the prompt or `t` with the timeline focused. `t` only has an effect on Chart, Markdown and Mermaid. `Ctrl+G y` (or `y` with the timeline focused) copies the content of the selected block.
 
 ### Plugin modals
 

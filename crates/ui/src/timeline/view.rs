@@ -12,7 +12,7 @@
 //! collapses the selected one and `PageUp`/`PageDown` scroll by a page.
 //! Empty, it shows the crest mark and the keys to start with.
 
-use application::keymap::Action;
+use application::keymap::{Action, Key, KeyCode};
 use application::ports::events::DomainEvent;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -153,6 +153,25 @@ impl TimelineView {
         cx.stop_propagation();
     }
 
+    /// The action of a plain vim key while the timeline has the focus:
+    /// `j`/`k` next/previous, `g`/`G` first/last, `o` expand, `t` view,
+    /// `y` copy. The session asks before typing the key into the prompt.
+    pub fn vim_action(key: &Key) -> Option<&'static str> {
+        if key.mods.ctrl || key.mods.alt || key.mods.cmd || key.mods.shift {
+            return None;
+        }
+        Some(match key.code {
+            KeyCode::Char('j') => "block.next",
+            KeyCode::Char('k') => "block.prev",
+            KeyCode::Char('g') => "block.first",
+            KeyCode::Char('G') => "block.last",
+            KeyCode::Char('o') => "block.toggle",
+            KeyCode::Char('t') => "block.toggle_view",
+            KeyCode::Char('y') => "block.yank",
+            _ => return None,
+        })
+    }
+
     /// Runs a timeline action (`block.next`, `block.toggle`...).
     /// Returns whether the action belongs to the timeline.
     pub fn handle_action(&mut self, action: &Action, cx: &mut Context<Self>) -> bool {
@@ -265,8 +284,8 @@ impl Focusable for TimelineView {
 const WELCOME_KEYS: &[(&str, &str)] = &[
     ("/", "commands: /research, /implement, /!cmd, /help…"),
     (
-        "Ctrl+Space",
-        "shortcuts: e tree · ff files · fg grep · m model · h help",
+        "Ctrl+G",
+        "shortcuts: e tree · ff files · fg grep · m model · j/k blocks · h help",
     ),
     ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
     ("Esc", "back to the prompt"),
