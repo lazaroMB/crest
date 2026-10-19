@@ -405,7 +405,11 @@ mod tests {
             "@\"My Docs/notes v2.md",
             "@My Docs/notes v2.md",
         ] {
-            assert_eq!(open(&fs, arg).await.unwrap().title, "notes v2.md", "{arg}");
+            assert_eq!(
+                open(&fs, arg).await.unwrap().title,
+                "My Docs/notes v2.md",
+                "{arg}"
+            );
         }
     }
 
