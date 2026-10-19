@@ -7,6 +7,7 @@ members = [
     "crates/adapters/search",
     "crates/adapters/fs",
     "crates/adapters/shell",
+    "crates/adapters/web",
     "crates/adapters/store",
     "crates/adapters/lua",
     "crates/adapters/mcp",
@@ -31,6 +32,7 @@ adapter-anthropic = { path = "crates/adapters/anthropic" }
 adapter-search = { path = "crates/adapters/search" }
 adapter-fs = { path = "crates/adapters/fs" }
 adapter-shell = { path = "crates/adapters/shell" }
+adapter-web = { path = "crates/adapters/web" }
 adapter-store = { path = "crates/adapters/store" }
 adapter-lua = { path = "crates/adapters/lua" }
 adapter-mcp = { path = "crates/adapters/mcp" }
@@ -56,6 +58,8 @@ dirs = "7.0.0"
 eventsource-stream = "0.2.3"
 # Investigative and implementation flow engine. No `postgres` feature: it would pull sqlx.
 graph-flow = { version = "0.8.0", default-features = false }
+# HTML pages to text (adapter-web).
+html2text = "0.17.4"
 ignore = "0.4.33"
 keyring = "4.2.0"
 mlua = { version = "0.12.2", features = ["lua54", "vendored", "async", "serialize", "send"] }
@@ -63,6 +67,7 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls", 
 # MCP client (adapter-mcp). Tests and the example server add the
 # server-side features in adapter-mcp's dev-dependencies.
 rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 similar = "3.2.0"
 tokio-util = "0.7.20"

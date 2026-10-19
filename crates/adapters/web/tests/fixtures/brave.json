@@ -1,0 +1,22 @@
+{
+  "type": "search",
+  "query": { "original": "rust 1.90" },
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "Announcing <strong>Rust</strong> 1.90.0",
+        "url": "https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/",
+        "description": "The <strong>Rust</strong> team is happy to announce 1.90.0.",
+        "is_source_local": false,
+        "language": "en"
+      },
+      {
+        "title": "1.90.0 | <strong>Rust</strong> Changelogs",
+        "url": "https://releases.rs/docs/1.90.0/",
+        "description": "Language changes of 1.90.0.",
+        "language": "en"
+      }
+    ]
+  }
+}

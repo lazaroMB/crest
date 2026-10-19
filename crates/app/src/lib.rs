@@ -8,3 +8,4 @@ pub mod ports;
 pub mod testing;
 pub mod tools;
 pub mod usecases;
+pub mod web;

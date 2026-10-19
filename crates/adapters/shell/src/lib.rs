@@ -37,14 +37,16 @@ pub use crate::capture::MAX_CAPTURE_BYTES;
 use crate::group::ProcessGroup;
 
 /// Environment variables removed from the inherited environment: API keys
-/// and tokens of LLM providers, starting with the one crest reads.
-pub const SCRUBBED_ENV_VARS: [&str; 6] = [
+/// and tokens of LLM providers, starting with the one crest reads, and the
+/// key of the Brave search backend.
+pub const SCRUBBED_ENV_VARS: [&str; 7] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "MISTRAL_API_KEY",
+    "BRAVE_API_KEY",
 ];
 
 /// How long the pipes may stay open after the process group was killed on

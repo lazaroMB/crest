@@ -41,14 +41,16 @@ pub(crate) const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 /// Variables removed from the inherited environment: the credentials of
-/// LLM providers, as `adapter-shell` does for `run_command`.
-pub(crate) const SCRUBBED_ENV_VARS: [&str; 6] = [
+/// LLM providers and the Brave search key, as `adapter-shell` does for
+/// `run_command`.
+pub(crate) const SCRUBBED_ENV_VARS: [&str; 7] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "MISTRAL_API_KEY",
+    "BRAVE_API_KEY",
 ];
 /// Prefix of the plugin secrets kept in the environment, also removed.
 pub(crate) const SECRET_ENV_PREFIX: &str = "CREST_PLUGIN_";

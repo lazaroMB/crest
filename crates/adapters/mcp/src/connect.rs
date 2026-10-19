@@ -17,15 +17,17 @@ use tokio::process::{ChildStderr, Command};
 pub(crate) type Client = RunningService<RoleClient, ClientConfig>;
 
 /// Environment variables removed from what a stdio server inherits: API
-/// keys and tokens of LLM providers. A server that needs one gets it
+/// keys and tokens of LLM providers and the Brave search key. A server
+/// that needs one gets it
 /// explicitly through the `env` of its spec.
-pub const SCRUBBED_ENV_VARS: [&str; 6] = [
+pub const SCRUBBED_ENV_VARS: [&str; 7] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "OPENAI_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "MISTRAL_API_KEY",
+    "BRAVE_API_KEY",
 ];
 
 /// How crest introduces itself to servers.
