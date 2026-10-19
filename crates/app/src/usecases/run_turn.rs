@@ -56,7 +56,7 @@
 //!
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -71,11 +71,12 @@ use futures::StreamExt;
 use serde_json::{Value, json};
 
 use crate::cost::CostTracker;
+use crate::decide::Decider;
 use crate::ports::approval::{ApprovalPort, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
-    SystemBlock,
+    SystemBlock, ToolDefinition,
 };
 use crate::ports::plugin::{HookEvent, HookOutcome, PluginError, PluginHostPort};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
@@ -89,6 +90,7 @@ use super::compact::{
     compactable_turns, context_tokens, estimate_tokens, replace_turns,
     summarize as summarize_history, summary_request, summary_turn, transcript,
 };
+use super::routing::{Routing, route, used_tools};
 use super::web_sources::web_sources;
 
 /// Default limit of model calls in one turn.
@@ -263,6 +265,7 @@ pub struct AgentService {
     plugins: Option<Arc<dyn PluginHostPort>>,
     compaction: Option<CompactionPolicy>,
     cost: Option<Arc<CostTracker>>,
+    decider: Decider,
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
@@ -300,6 +303,7 @@ impl AgentService {
             plugins: None,
             compaction: None,
             cost: None,
+            decider: Decider::none(),
             deps,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
@@ -335,6 +339,16 @@ impl AgentService {
     #[must_use]
     pub fn with_cost_tracker(mut self, tracker: impl Into<Arc<CostTracker>>) -> Self {
         self.cost = Some(tracker.into());
+        self
+    }
+
+    /// Routes each `main` turn with the decision model: the tool groups it
+    /// is offered and the model that answers it (see
+    /// [`routing`](super::routing)). Turns with an override or a pinned
+    /// role are not routed.
+    #[must_use]
+    pub fn with_decider(mut self, decider: Decider) -> Self {
+        self.decider = decider;
         self
     }
 
@@ -404,9 +418,13 @@ impl AgentService {
         &self,
         session: &mut Session,
         input: impl Into<UserInput>,
-        opts: TurnOptions,
+        mut opts: TurnOptions,
     ) -> Result<TurnOutcome, TurnError> {
         let input = input.into();
+        let routing = self.route(session, &input.text, &opts).await;
+        if let Some(model) = routing.as_ref().and_then(|r| r.model.clone()) {
+            opts.turn_override = Some(model);
+        }
         let model = self.models.resolve(&ResolveRequest {
             role: opts.role,
             turn_override: opts.turn_override,
@@ -441,11 +459,13 @@ impl AgentService {
             role: model.role,
             model: model.spec.id.clone(),
         });
+        let tools = routing.and_then(|r| self.record_routing(session.id, span, r));
         let mut run = TurnRun {
             service: self,
             session,
             turn: &mut turn,
             model: &model,
+            tools,
             span,
             model_calls: 0,
             context: None,
@@ -483,6 +503,63 @@ impl AgentService {
         session.push_turn(turn, (self.clock)());
         result
     }
+
+    /// The decision model's routing of a plain `main` turn, if any.
+    async fn route(&self, session: &Session, prompt: &str, opts: &TurnOptions) -> Option<Routing> {
+        let plain = opts.role == ModelRole::Main
+            && opts.turn_override.is_none()
+            && opts.pinned_role.is_none();
+        if !plain || !self.decider.is_available() {
+            return None;
+        }
+        let started = Instant::now();
+        let routing = route(
+            &self.decider,
+            prompt,
+            &self.tools.definitions(),
+            &used_tools(session),
+        )
+        .await;
+        tracing::debug!(
+            elapsed_ms = elapsed_ms(started),
+            ?routing,
+            "routed the prompt"
+        );
+        routing
+    }
+
+    /// Accounts for the routing call (telemetry, cost), tells the user what
+    /// it changed and returns the tools the turn is offered.
+    fn record_routing(
+        &self,
+        session: SessionId,
+        span: SpanId,
+        routing: Routing,
+    ) -> Option<BTreeSet<String>> {
+        let model = ModelId::new(routing.decision_model.clone());
+        let usage = Usage {
+            input_tokens: routing.input_tokens,
+            output_tokens: routing.output_tokens,
+            ..Usage::default()
+        };
+        self.deps.telemetry.llm_call(LlmCallRecord {
+            parent: span,
+            model: model.clone(),
+            usage,
+            latency_ms: 0,
+            error: None,
+        });
+        if let Some(cost) = &self.cost {
+            cost.record(session, &model, &usage);
+        }
+        if let Some(summary) = routing.summary() {
+            self.emit(DomainEvent::Notice {
+                level: NoticeLevel::Info,
+                message: summary,
+            });
+        }
+        routing.tools
+    }
 }
 
 /// State of one running turn.
@@ -491,6 +568,8 @@ struct TurnRun<'a> {
     session: &'a mut Session,
     turn: &'a mut Turn,
     model: &'a ResolvedModel,
+    /// The tools offered when the decision model chose them; all otherwise.
+    tools: Option<BTreeSet<String>>,
     span: SpanId,
     model_calls: u32,
     /// Context reported by the last model call, for compaction.
@@ -658,7 +737,7 @@ impl TurnRun<'_> {
         if !self.service.system_prompt.is_empty() {
             req.system = vec![SystemBlock::cached(self.service.system_prompt.clone())];
         }
-        req.tools = self.service.tools.definitions();
+        req.tools = self.tool_definitions();
         if let Some(last) = req.tools.pop() {
             req.tools.push(last.cached());
         }
@@ -667,6 +746,18 @@ impl TurnRun<'_> {
             turn_id: Some(self.turn.id),
         };
         req
+    }
+
+    /// The definitions of the tools this turn offers.
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
+        let all = self.service.tools.definitions();
+        match &self.tools {
+            Some(offered) => all
+                .into_iter()
+                .filter(|d| offered.contains(&d.name))
+                .collect(),
+            None => all,
+        }
     }
 
     /// One model call: streams the answer into events and assembles it.
@@ -764,7 +855,7 @@ impl TurnRun<'_> {
             return mark.tokens.saturating_add(estimate_tokens(added));
         }
         let history = estimate_tokens(self.session.history().chain(&self.turn.messages));
-        let tools = serde_json::to_string(&self.service.tools.definitions()).map_or(0, |s| s.len());
+        let tools = serde_json::to_string(&self.tool_definitions()).map_or(0, |s| s.len());
         let fixed = self.service.system_prompt.len() + tools;
         history.saturating_add(u64::try_from(fixed.div_ceil(4)).unwrap_or(u64::MAX))
     }
@@ -1218,6 +1309,8 @@ mod compact_tests;
 mod cost_tests;
 #[cfg(test)]
 mod hook_tests;
+#[cfg(test)]
+mod routing_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

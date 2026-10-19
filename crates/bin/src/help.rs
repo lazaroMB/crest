@@ -457,6 +457,14 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         name: alias,
         value: id.to_string(),
     }));
+    models.push(ModelRow {
+        kind: "setting".into(),
+        name: "decision model".into(),
+        value: match app.decider.model() {
+            Some(model) => format!("{model} (Cloudflare)"),
+            None => "off (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)".into(),
+        },
+    });
     if let Some(model) = &app.turn_options.turn_override {
         models.push(ModelRow {
             kind: "setting".into(),

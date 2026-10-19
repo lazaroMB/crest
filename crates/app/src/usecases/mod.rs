@@ -9,6 +9,7 @@ pub mod model3d;
 pub mod open_file;
 pub mod project_picker;
 pub mod resume;
+pub mod routing;
 pub mod run_turn;
 pub mod shell_command;
 pub mod simulate;

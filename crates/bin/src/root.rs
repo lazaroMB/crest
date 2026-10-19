@@ -223,6 +223,8 @@ pub struct App {
     pub config_sources: ConfigSources,
     /// Database of sessions and flows, when known.
     pub db_path: Option<PathBuf>,
+    /// The decision model (Clef), when it has credentials.
+    pub decider: application::decide::Decider,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -656,7 +658,8 @@ pub async fn build_app(
     }
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(prompt)
-        .with_compaction(CompactionPolicy::default());
+        .with_compaction(CompactionPolicy::default())
+        .with_decider(decider.clone());
     let plugins = plugins.map(|host| host as Arc<dyn PluginHostPort>);
     if let Some(host) = &plugins {
         service = service.with_plugin_host(Arc::clone(host));
@@ -721,6 +724,7 @@ pub async fn build_app(
             .db_path
             .clone()
             .or_else(adapter_store::path::default_db_path),
+        decider,
         models,
         events,
         timeline,
