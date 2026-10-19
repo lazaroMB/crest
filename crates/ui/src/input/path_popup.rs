@@ -143,8 +143,8 @@ impl PathCompletion {
             };
             this.update(cx, |input, cx| {
                 // Forgotten meanwhile (the `@` word is gone): drop it.
-                if input.paths.listings.contains_key(&dir) {
-                    input.paths.listings.insert(dir, listing);
+                if let Some(known) = input.paths.listings.get_mut(&dir) {
+                    *known = listing;
                     cx.notify();
                 }
             })

@@ -119,7 +119,7 @@ impl ProjectBrowserPort for InMemoryDirs {
             }
         }
         let mut dirs: Vec<DirEntry> = dirs.into_values().collect();
-        dirs.sort_by(|a, b| b.is_project.cmp(&a.is_project));
+        dirs.sort_by_key(|dir| !dir.is_project);
         Ok(DirListing {
             path: path.to_path_buf(),
             parent: path.parent().map(Path::to_path_buf),
