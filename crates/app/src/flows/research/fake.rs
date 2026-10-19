@@ -15,6 +15,8 @@ pub enum FakeStep {
     Outcome(NodeOutcome),
     /// Fail with [`NodeError::Failed`] and this message.
     Fail(String),
+    /// Fail with a transient error ([`NodeError::EmptyAnswer`]).
+    Transient,
 }
 
 /// A node that logs every run and answers a script, then `Done`.
@@ -50,6 +52,13 @@ impl FakeNode {
         self
     }
 
+    /// Fails with a transient error on the next unscripted run.
+    #[must_use]
+    pub fn then_fail_transient(self) -> Self {
+        self.push(FakeStep::Transient);
+        self
+    }
+
     fn push(&self, step: FakeStep) {
         if let Ok(mut script) = self.script.lock() {
             script.push_back(step);
@@ -82,6 +91,7 @@ impl ResearchNode for FakeNode {
         let step = self.script.lock().ok().and_then(|mut s| s.pop_front());
         match step {
             Some(FakeStep::Fail(message)) => Err(NodeError::Failed(message)),
+            Some(FakeStep::Transient) => Err(NodeError::EmptyAnswer),
             Some(FakeStep::Outcome(outcome)) => {
                 ctx.log(format!("{outcome:?}"));
                 Ok(outcome)

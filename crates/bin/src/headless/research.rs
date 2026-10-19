@@ -2,8 +2,9 @@
 //! terminal, from the problem to the Spec folder. Each gate is answered on
 //! stdin, one line each, on the same input as the approvals: "yes" moves on,
 //! any other text redoes the stage, and `/stage`, `/back <stage>`, `/skip`
-//! and `/abort` work as in the chat. `resume` as the problem continues the
-//! flow left halfway in the workspace.
+//! `/retry` and `/abort` work as in the chat. `resume` (or `retry`) as the
+//! problem continues the flow left halfway in the workspace, also after a
+//! failed stage.
 
 use application::flows::research::gate::FlowStatus;
 use application::ports::events::{DomainEvent, NoticeLevel};
@@ -48,22 +49,23 @@ pub async fn run_flow(
                 terminal
                     .lock()
                     .line(Some(Style::Red), &format!("error: {message}"));
-                if !session.is_active() {
-                    break Exit::TurnFailed;
-                }
             }
         }
-        let Some(flow) = session.active() else {
+        if !session.is_active() {
             break match session.last_status().await {
                 Ok(Some(FlowStatus::Completed)) => Exit::Success,
+                Ok(Some(status)) if status.is_open() => {
+                    // A failed or interrupted stage: the flow stays stored
+                    // at its last checkpoint.
+                    terminal.lock().line(
+                        Some(Style::Yellow),
+                        "the flow is saved; `crest --headless --research retry` runs the \
+                         stage again",
+                    );
+                    Exit::TurnFailed
+                }
                 _ => Exit::TurnFailed,
             };
-        };
-        if let Ok(position) = flow.position().await
-            && position.status.is_running()
-        {
-            // A node failed: the flow stays at its last checkpoint.
-            break Exit::TurnFailed;
         }
         terminal.lock().styled(Style::Bold, "› ");
         let line = match input.read_line().await {

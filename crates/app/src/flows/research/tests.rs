@@ -247,18 +247,51 @@ async fn resumes_from_storage_after_dropping_the_runner() {
 async fn a_failing_node_keeps_the_last_checkpoint() {
     let fx = Fixture::new(FakeNode::new(B).then_fail("offline"), FakeNode::new(C));
     let flow = fx.start().await;
-    let err = flow.run().await.unwrap_err();
-    assert!(err.to_string().contains("offline"), "{err}");
-    assert_eq!(
-        flow.status().await.unwrap(),
-        FlowStatus::Running { next: B }
-    );
+    let status = flow.run().await.unwrap();
+    let FlowStatus::Failed { stage, error } = &status else {
+        panic!("{status:?}");
+    };
+    assert_eq!(*stage, B);
+    assert!(error.contains("offline"), "{error}");
+    // The failure is saved: a restart sees it, and answers are refused.
+    assert_eq!(flow.status().await.unwrap(), status);
+    assert!(matches!(
+        flow.provide_input("hi").await,
+        Err(FlowError::Failed(B))
+    ));
+    // `run` does not rerun a failed node by itself.
+    assert_eq!(flow.run().await.unwrap(), status);
     assert!(fx.sink.kinds().contains(&"block_added".to_owned()));
 
     // Retrying runs B again from the checkpoint.
-    let status = flow.run().await.unwrap();
+    let status = flow.retry().await.unwrap();
     assert_eq!(waiting_at(&status), Some(B));
     assert_eq!(fx.runs(), [1, 2, 0]);
+}
+
+#[tokio::test]
+async fn transient_failures_are_retried_before_failing() {
+    let fx = Fixture::new(
+        FakeNode::new(B).then_fail_transient().then_fail_transient(),
+        FakeNode::new(C)
+            .then_fail_transient()
+            .then_fail_transient()
+            .then_fail_transient(),
+    );
+    let flow = fx.start().await;
+    // B fails twice and succeeds on its last retry.
+    let status = flow.run().await.unwrap();
+    assert_eq!(waiting_at(&status), Some(B));
+    assert_eq!(fx.runs(), [1, 3, 0]);
+    // C fails three times: past its retries the flow fails.
+    let status = flow.provide_input("yes").await.unwrap();
+    assert!(
+        matches!(status, FlowStatus::Failed { stage: C, .. }),
+        "{status:?}"
+    );
+    assert_eq!(fx.runs(), [1, 3, 3]);
+    let status = flow.handle_line("/retry").await.unwrap();
+    assert_eq!(status, FlowReply::Status(FlowStatus::Completed));
 }
 
 #[tokio::test]

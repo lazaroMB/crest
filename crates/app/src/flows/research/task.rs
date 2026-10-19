@@ -36,6 +36,14 @@ use crate::ports::events::NoticeLevel;
 /// Times a stage may send the flow back before the frame asks the user.
 pub const MAX_BACKS_PER_STAGE: u32 = 3;
 
+/// Times a node that failed with a transient error (see
+/// [`NodeError::is_transient`]) runs again before the flow fails.
+pub const MAX_NODE_RETRIES: u32 = 2;
+
+/// What the error block of a failed node suggests.
+pub const FAILED_NODE_HINT: &str = "The flow is saved at this stage. `/research retry` runs it \
+     again, `/back <stage>` redoes an earlier one and `/abort` drops the flow.";
+
 /// Reads the research state of the flow (empty if missing).
 pub(crate) fn load_state(ctx: &Context) -> ResearchState {
     ctx.get(KEY_STATE).unwrap_or_default()
@@ -265,15 +273,38 @@ impl Task for NodeTask {
     }
 
     async fn run(&self, context: Context) -> graph_flow::Result<TaskResult> {
-        self.run_node(context).await.map_err(|error| {
-            let message = format!("{}: {error}", self.stage().name());
+        // A rerun must see the gate and the answer the first attempt took.
+        let gate = context.get::<PendingGate>(KEY_GATE);
+        let reply = context.get::<GateReply>(KEY_REPLY);
+        let mut attempt = 0;
+        loop {
+            let error = match self.run_node(context.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(error) => error,
+            };
+            let stage = self.stage().name();
+            if attempt < MAX_NODE_RETRIES && error.is_transient() {
+                attempt += 1;
+                self.deps.notice(
+                    NoticeLevel::Warning,
+                    format!("{stage}: {error}; retrying ({attempt}/{MAX_NODE_RETRIES})"),
+                );
+                if let Some(gate) = &gate {
+                    context.set(KEY_GATE, gate)?;
+                }
+                if let Some(reply) = &reply {
+                    context.set(KEY_REPLY, reply)?;
+                }
+                continue;
+            }
+            let message = format!("{stage}: {error}");
             // The error block is best effort: it only fails on bad payloads.
             let _ = self.deps.emit(BlockKind::Error {
                 message: message.clone(),
-                hint: Some("Fix the problem and try again.".to_owned()),
+                hint: Some(FAILED_NODE_HINT.to_owned()),
             });
-            GraphError::TaskExecutionFailed(message)
-        })
+            return Err(GraphError::TaskExecutionFailed(message));
+        }
     }
 }
 

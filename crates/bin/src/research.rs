@@ -113,39 +113,53 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
     Ok(ResearchSession::new(graph, storage, root))
 }
 
-/// What `:research <args>` asks.
+/// What `/research <args>` asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResearchCommand {
-    /// `:research <problem>`.
+    /// `/research <problem>`.
     Start(String),
-    /// `:research resume`.
-    Resume,
-    /// `:research`.
+    /// `/research resume [n|id]` (or `retry`): continues the last flow, or
+    /// the one numbered `n` in `/research list`.
+    Resume(Option<String>),
+    /// `/research list`.
+    List,
+    /// `/research stage|back <stage>|skip|abort`: a command for the last flow.
+    Line(String),
+    /// `/research`.
     Status,
 }
 
 impl ResearchCommand {
-    /// Parses the arguments of `:research`.
+    /// Parses the arguments of `/research`.
     #[must_use]
     pub fn parse(args: &str) -> Self {
-        match args.trim() {
+        let args = args.trim();
+        let (name, rest) = args
+            .split_once(char::is_whitespace)
+            .map_or((args, ""), |(n, r)| (n, r.trim()));
+        let which = (!rest.is_empty()).then(|| rest.to_owned());
+        match name {
             "" => Self::Status,
-            "resume" | "retomar" | "reanudar" => Self::Resume,
-            problem => Self::Start(problem.to_owned()),
+            "resume" | "retomar" | "reanudar" | "continue" | "continuar" => Self::Resume(which),
+            "retry" | "reintentar" if rest.is_empty() => Self::Resume(None),
+            "list" | "ls" | "listar" if rest.is_empty() => Self::List,
+            "stage" | "skip" | "abort" | "back" => Self::Line(format!("/{args}")),
+            _ => Self::Start(args.to_owned()),
         }
     }
 }
 
-/// Usage of `:research`, shown when there is nothing to report.
-pub const USAGE: &str = "no active research flow; `:research <problem description>` \
-                         starts one";
+/// Usage of `/research`, shown when there is nothing to report.
+pub const USAGE: &str = "no active research flow; `/research <problem description>` \
+                         starts one and `/research list` shows the stored ones";
 
 /// Runs `command` (`now` in Unix epoch milliseconds for the new flow's
-/// id) and answers a line for the status bar.
+/// id) and answers a line for the status bar (a markdown list for
+/// [`ResearchCommand::List`]).
 ///
 /// # Errors
 ///
-/// The error of the flow, as text.
+/// The error of the flow, as text, also when a node failed.
 pub async fn command(
     research: &mut ResearchSession,
     command: ResearchCommand,
@@ -153,7 +167,9 @@ pub async fn command(
 ) -> Result<String, String> {
     let status = match command {
         ResearchCommand::Start(problem) => research.start(&problem, now).await,
-        ResearchCommand::Resume => research.resume().await,
+        ResearchCommand::Resume(which) => research.resume(which.as_deref()).await,
+        ResearchCommand::Line(line) => return self::line(research, &line).await,
+        ResearchCommand::List => return list(research).await,
         ResearchCommand::Status => {
             return Ok(match research.active() {
                 Some(flow) => flow
@@ -162,42 +178,84 @@ pub async fn command(
                     .map(|p| p.to_string())
                     .map_err(|e| e.to_string())?,
                 None => match research.pending().await {
-                    Ok(Some(position)) => {
-                        format!("{position}; `:research resume` to continue")
-                    }
+                    Ok(Some(position)) => format!("{position}; {}", resume_hint(&position.status)),
                     Ok(None) => USAGE.to_owned(),
                     Err(err) => return Err(err.to_string()),
                 },
             });
         }
     };
-    status.map(|s| describe_status(&s)).map_err(|e| message(&e))
+    match status {
+        Ok(status @ FlowStatus::Failed { .. }) => Err(describe_status(&status)),
+        Ok(status) => Ok(describe_status(&status)),
+        Err(err) => Err(message(&err)),
+    }
 }
 
-/// A line of the chat for the active flow.
+/// What to type to continue a flow left at `status`.
+fn resume_hint(status: &FlowStatus) -> &'static str {
+    match status {
+        FlowStatus::Failed { .. } => "`/research retry` runs it again",
+        _ => "`/research resume` to continue",
+    }
+}
+
+/// `/research list`: the stored flows of the workspace, newest first.
+async fn list(research: &ResearchSession) -> Result<String, String> {
+    let flows = research.list().await.map_err(|e| message(&e))?;
+    if flows.is_empty() {
+        return Ok(USAGE.to_owned());
+    }
+    let mut out = String::new();
+    for flow in flows {
+        let problem: String = flow
+            .problem
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(80)
+            .collect();
+        out.push_str(&format!(
+            "{}. **{problem}** — {}\n",
+            flow.number, flow.position
+        ));
+    }
+    out.push_str("\n`/research resume <n>` continues one.");
+    Ok(out)
+}
+
+/// A line of the chat for the research flow: the answer to the active
+/// gate, or a flow command (`/back`, `/retry`, …) for the last flow.
 ///
 /// # Errors
 ///
-/// The error of the flow, as text.
+/// The error of the flow, as text, also when a node failed.
 pub async fn line(research: &mut ResearchSession, text: &str) -> Result<String, String> {
-    research
-        .handle_line(text)
-        .await
-        .map(|reply| describe_reply(&reply))
-        .map_err(|e| message(&e))
+    match research.handle_line(text).await {
+        Ok(FlowReply::Status(status @ FlowStatus::Failed { .. })) => Err(describe_status(&status)),
+        Ok(reply) => Ok(describe_reply(&reply)),
+        Err(err) => Err(message(&err)),
+    }
 }
 
 /// The notice shown at start-up when a flow was left halfway.
 pub async fn pending_notice(research: &ResearchSession) -> Option<String> {
     let position = research.pending().await.ok()??;
     Some(format!(
-        "a research flow is pending ({position}); `:research resume` to continue"
+        "a research flow is pending ({position}); {}",
+        resume_hint(&position.status)
     ))
 }
 
 fn message(err: &FlowError) -> String {
     match err {
-        FlowError::SessionNotFound(_) => "no research flow to resume in this workspace".to_owned(),
+        FlowError::SessionNotFound(_) => {
+            "no such research flow in this workspace; `/research list` shows them".to_owned()
+        }
+        FlowError::Completed => "research flow already finished; `/back <stage>` reopens it, \
+                                 `/research <problem>` starts another"
+            .to_owned(),
         other => format!("research flow: {other}"),
     }
 }
@@ -218,7 +276,23 @@ mod tests {
     #[test]
     fn research_arguments() {
         assert_eq!(ResearchCommand::parse(""), ResearchCommand::Status);
-        assert_eq!(ResearchCommand::parse(" resume "), ResearchCommand::Resume);
+        assert_eq!(
+            ResearchCommand::parse(" resume "),
+            ResearchCommand::Resume(None)
+        );
+        assert_eq!(
+            ResearchCommand::parse("resume 2"),
+            ResearchCommand::Resume(Some("2".into()))
+        );
+        assert_eq!(
+            ResearchCommand::parse("retry"),
+            ResearchCommand::Resume(None)
+        );
+        assert_eq!(ResearchCommand::parse("list"), ResearchCommand::List);
+        assert_eq!(
+            ResearchCommand::parse("back 3"),
+            ResearchCommand::Line("/back 3".into())
+        );
         assert_eq!(
             ResearchCommand::parse("add suma mal"),
             ResearchCommand::Start("add suma mal".into())

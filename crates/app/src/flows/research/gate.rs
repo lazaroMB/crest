@@ -67,6 +67,14 @@ pub enum FlowStatus {
     Completed,
     /// The user aborted the flow with `/abort`.
     Aborted,
+    /// A node failed (after its retries). The session stays at the last
+    /// checkpoint; retrying runs `stage` again.
+    Failed {
+        /// Node that failed.
+        stage: Stage,
+        /// Why.
+        error: String,
+    },
 }
 
 impl FlowStatus {
@@ -74,6 +82,12 @@ impl FlowStatus {
     #[must_use]
     pub fn is_running(&self) -> bool {
         matches!(self, Self::Running { .. })
+    }
+
+    /// Whether the flow still has work: running, at a gate or failed.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        !matches!(self, Self::Completed | Self::Aborted)
     }
 }
 

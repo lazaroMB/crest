@@ -303,6 +303,17 @@ impl App {
         self.service.permissions()
     }
 
+    /// The plan of the last implementation of the workspace, if it stopped
+    /// before the end: what `/implement resume` continues.
+    pub async fn pending_implementation(&self) -> Option<String> {
+        let storage = self.flow_storage.clone()?;
+        ImplementSession::pending(storage, self.workspace.as_path())
+            .await
+            .ok()
+            .flatten()
+            .map(|(plan, _)| plan)
+    }
+
     /// Opens the implementation flow of the plan named by `target` (a Spec
     /// folder, its name or a `plan.json`; see [`plan_path`]), resuming it
     /// if it stopped before the end. Its checkpoints go to the SQLite flow
@@ -579,6 +590,16 @@ pub async fn build_app(
         Some(session) => research::pending_notice(session).await,
         None => None,
     };
+    let implement_notice = match &flow_storage {
+        Some(storage) => ImplementSession::pending(Arc::clone(storage) as _, root.as_path())
+            .await
+            .ok()
+            .flatten()
+            .map(|(plan, _)| {
+                format!("the implementation of {plan} is pending; `/implement resume` continues it")
+            }),
+        None => None,
+    };
     let mut prompt = system_prompt(&root);
     if web.is_some() {
         prompt.push_str("\n\n");
@@ -608,7 +629,11 @@ pub async fn build_app(
             message: warning.clone(),
         });
     }
-    for message in resumed_notice.into_iter().chain(research_notice) {
+    for message in resumed_notice
+        .into_iter()
+        .chain(research_notice)
+        .chain(implement_notice)
+    {
         startup_events.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
             message,

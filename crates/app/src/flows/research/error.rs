@@ -24,6 +24,9 @@ pub enum FlowError {
     /// The flow was aborted with `/abort`.
     #[error("the research flow was aborted")]
     Aborted,
+    /// Input was given while the flow is stopped by a failed node.
+    #[error("the research flow failed at {}: retry it before answering", .0.name())]
+    Failed(Stage),
     /// The flow already finished.
     #[error("the research flow already finished")]
     Completed,

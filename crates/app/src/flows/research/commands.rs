@@ -1,5 +1,5 @@
 //! The chat commands of the research flow: `/stage`, `/back <stage>`,
-//! `/skip` and `/abort`.
+//! `/skip`, `/retry` and `/abort`.
 
 use domain::research::Stage;
 
@@ -16,6 +16,8 @@ pub enum Command {
     Skip,
     /// `/abort`: stop the flow for good.
     Abort,
+    /// `/retry`: run a failed (or interrupted) stage again.
+    Retry,
 }
 
 /// Why a research command could not be parsed.
@@ -53,6 +55,7 @@ pub fn parse_command(line: &str) -> Option<Result<Command, CommandError>> {
         "stage" => no_arg("stage", Command::Stage),
         "skip" => no_arg("skip", Command::Skip),
         "abort" => no_arg("abort", Command::Abort),
+        "retry" => no_arg("retry", Command::Retry),
         "back" if arg.is_empty() => Err(CommandError::MissingStage),
         "back" => parse_stage(arg).map(Command::Back),
         _ => return None,
@@ -105,6 +108,7 @@ mod tests {
         assert_eq!(parse_command("/stage"), Some(Ok(Command::Stage)));
         assert_eq!(parse_command("  /skip "), Some(Ok(Command::Skip)));
         assert_eq!(parse_command("/abort"), Some(Ok(Command::Abort)));
+        assert_eq!(parse_command("/retry"), Some(Ok(Command::Retry)));
         assert_eq!(
             parse_command("/back 1"),
             Some(Ok(Command::Back(Stage::Intake)))

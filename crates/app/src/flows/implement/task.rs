@@ -27,6 +27,8 @@ use super::state::{
     EntryKind, FlowStatus, GateReply, ImplementState, KEY_ENTERED, KEY_GATE, KEY_REPLY, KEY_STATE,
     KEY_STATUS, PendingGate, Step,
 };
+use crate::flows::research::task::MAX_NODE_RETRIES;
+use crate::ports::events::NoticeLevel;
 
 /// Reads the state of the flow (empty if missing).
 pub(crate) fn load_state(ctx: &Context) -> ImplementState {
@@ -227,17 +229,44 @@ impl Task for StepTask {
     }
 
     async fn run(&self, context: Context) -> graph_flow::Result<TaskResult> {
-        self.run_step(context).await.map_err(|error| {
-            let message = format!("{}: {error}", self.step().name());
+        // A rerun must see the gate and the answer the first attempt took.
+        let gate = context.get::<PendingGate>(KEY_GATE);
+        let reply = context.get::<GateReply>(KEY_REPLY);
+        let mut attempt = 0;
+        loop {
+            let error = match self.run_step(context.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(error) => error,
+            };
+            let step = self.step().name();
+            if attempt < MAX_NODE_RETRIES && error.is_transient() {
+                attempt += 1;
+                self.deps.notice(
+                    NoticeLevel::Warning,
+                    format!("{step}: {error}; retrying ({attempt}/{MAX_NODE_RETRIES})"),
+                );
+                if let Some(gate) = &gate {
+                    context.set(KEY_GATE, gate)?;
+                }
+                if let Some(reply) = &reply {
+                    context.set(KEY_REPLY, reply)?;
+                }
+                continue;
+            }
+            let message = format!("{step}: {error}");
             // The error block is best effort: it only fails on bad payloads.
             let _ = self.deps.emit(BlockKind::Error {
                 message: message.clone(),
-                hint: Some("Fix the problem and try again.".to_owned()),
+                hint: Some(FAILED_STEP_HINT.to_owned()),
             });
-            GraphError::TaskExecutionFailed(message)
-        })
+            return Err(GraphError::TaskExecutionFailed(message));
+        }
     }
 }
+
+/// What the error block of a failed step suggests.
+pub const FAILED_STEP_HINT: &str = "The flow is saved at this step. `/implement resume` (or the \
+     same `/implement <spec>`) runs it again.";
 
 #[cfg(test)]
 mod tests {

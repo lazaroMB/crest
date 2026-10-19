@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use domain::research::{Phase, ResearchState, Stage};
-use graph_flow::{FlowRunner, Session, SessionStorage};
+use graph_flow::{FlowRunner, GraphError, Session, SessionStorage};
 
 use super::builder::{GRAPH_ID, ResearchGraph};
 use super::commands::{Command, parse_command};
@@ -64,6 +64,7 @@ impl fmt::Display for Position {
             FlowStatus::WaitingForInput { .. } => write!(f, " · waiting for your answer"),
             FlowStatus::Completed => write!(f, " · flow finished"),
             FlowStatus::Aborted => write!(f, " · flow aborted"),
+            FlowStatus::Failed { error, .. } => write!(f, " · failed: {error}"),
         }
     }
 }
@@ -96,7 +97,9 @@ fn log_and_clear_gate(
 ///
 /// Every finished node is saved before the next one runs, so dropping the
 /// flow (or the app) at any point and calling [`ResearchFlow::resume`]
-/// continues at the pending node. Blocks go to the event sink of the
+/// continues at the pending node. A node that fails leaves the flow
+/// [`FlowStatus::Failed`] at the last checkpoint; [`ResearchFlow::retry`]
+/// runs it again. Blocks go to the event sink of the
 /// graph's [`NodeDeps`](super::node::NodeDeps).
 #[derive(Clone)]
 pub struct ResearchFlow {
@@ -251,19 +254,63 @@ impl ResearchFlow {
     }
 
     /// Runs the pending node and saves the session (one checkpoint).
-    /// Does nothing when the flow waits for input, finished or was aborted.
+    /// Does nothing when the flow waits for input, finished, failed or was
+    /// aborted.
+    ///
+    /// When the node fails, the session stays at the last checkpoint and
+    /// the flow becomes [`FlowStatus::Failed`] (saved, so it survives a
+    /// restart).
     ///
     /// # Errors
     ///
-    /// The node's error (the session stays at the last checkpoint), or a
-    /// storage error.
+    /// A storage error.
     pub async fn step(&self) -> Result<FlowStatus, FlowError> {
         let status = self.status().await?;
         if !status.is_running() {
             return Ok(status);
         }
-        self.runner.run(&self.session_id).await?;
+        if let Err(err) = self.runner.run(&self.session_id).await {
+            return self.fail(&err).await;
+        }
         self.status().await
+    }
+
+    /// Records that the pending node failed with `err`.
+    async fn fail(&self, err: &GraphError) -> Result<FlowStatus, FlowError> {
+        let error = match err {
+            GraphError::TaskExecutionFailed(message) => message.clone(),
+            other => other.to_string(),
+        };
+        let session = self.load().await?;
+        let stage = self.current_stage(&session)?;
+        let status = FlowStatus::Failed { stage, error };
+        session.context.set(KEY_STATUS, &status)?;
+        self.save(session).await?;
+        Ok(status)
+    }
+
+    /// Runs a failed (or interrupted) node again and on to the next gate.
+    /// At a gate it returns the pending status unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`FlowError::Completed`] or [`FlowError::Aborted`], or as
+    /// [`ResearchFlow::run`].
+    pub async fn retry(&self) -> Result<FlowStatus, FlowError> {
+        let session = self.load().await?;
+        match self.status_of(&session)? {
+            FlowStatus::Failed { stage, .. } => {
+                session
+                    .context
+                    .set(KEY_STATUS, FlowStatus::Running { next: stage })?;
+                self.save(session).await?;
+                self.run().await
+            }
+            FlowStatus::Running { .. } => self.run().await,
+            waiting @ FlowStatus::WaitingForInput { .. } => Ok(waiting),
+            FlowStatus::Completed => Err(FlowError::Completed),
+            FlowStatus::Aborted => Err(FlowError::Aborted),
+        }
     }
 
     /// Runs nodes, one checkpoint each, until a gate, the end, an abort or
@@ -299,6 +346,7 @@ impl ResearchFlow {
         let stage = match self.status_of(&session)? {
             FlowStatus::WaitingForInput { stage, .. } => stage,
             FlowStatus::Running { .. } => return Err(FlowError::NotWaiting),
+            FlowStatus::Failed { stage, .. } => return Err(FlowError::Failed(stage)),
             FlowStatus::Completed => return Err(FlowError::Completed),
             FlowStatus::Aborted => return Err(FlowError::Aborted),
         };
@@ -367,7 +415,9 @@ impl ResearchFlow {
         match self.status_of(&session)? {
             FlowStatus::Completed => return Err(FlowError::Completed),
             FlowStatus::Aborted => return Err(FlowError::Aborted),
-            FlowStatus::Running { .. } | FlowStatus::WaitingForInput { .. } => {}
+            FlowStatus::Running { .. }
+            | FlowStatus::WaitingForInput { .. }
+            | FlowStatus::Failed { .. } => {}
         }
         if !is_optional(current) {
             return Err(FlowError::NotOptional(current));
@@ -414,6 +464,7 @@ impl ResearchFlow {
             Command::Back(to) => FlowReply::Status(self.back(to).await?),
             Command::Skip => FlowReply::Status(self.skip().await?),
             Command::Abort => FlowReply::Status(self.abort().await?),
+            Command::Retry => FlowReply::Status(self.retry().await?),
         })
     }
 

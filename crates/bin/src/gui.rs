@@ -260,8 +260,7 @@ fn settle(
         Err(err) => Some((
             NoticeLevel::Warning,
             format!(
-                "the implementation flow stopped: {err}; `:implement {}` resumes it",
-                session.plan_path()
+                "the implementation flow stopped: {err}; `/implement resume` runs the step again"
             ),
         )),
     }
@@ -284,6 +283,20 @@ async fn start_implementation(
             ),
         );
     }
+    let target = match target.trim() {
+        "" | "resume" | "retry" | "continue" | "retomar" | "reanudar" => {
+            match app.lock().await.pending_implementation().await {
+                Some(plan) => plan,
+                None => {
+                    return Reply::Notice(
+                        NoticeLevel::Warning,
+                        "no implementation flow to resume; `/implement <spec>` starts one".into(),
+                    );
+                }
+            }
+        }
+        target => target.to_owned(),
+    };
     let opened = app.lock().await.open_implementation(&target).await;
     let session = match opened {
         Ok(session) => session,

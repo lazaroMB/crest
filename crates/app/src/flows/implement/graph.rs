@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use graph_flow::SessionStorage;
+use graph_flow::{Session, SessionStorage};
 
 use super::builder::{ImplementGraph, ImplementGraphBuilder};
 use super::flow::{FlowError, FlowReply, ImplementFlow};
@@ -16,7 +16,7 @@ use super::nodes::implement::ImplementTask;
 use super::nodes::report::WriteReport;
 use super::nodes::test::TestTask;
 use super::nodes::verify::VerifyPlan;
-use super::state::FlowStatus;
+use super::state::{FlowStatus, KEY_STATUS};
 use crate::ports::events::NoticeLevel;
 
 /// Name of the plan inside a Spec folder.
@@ -111,12 +111,15 @@ pub fn status_notice(status: &FlowStatus) -> Option<(NoticeLevel, String)> {
             NoticeLevel::Warning,
             format!(
                 "the plan turned out to be unworkable ({reason}); go back to the Spec node \
-                 of the research flow with `:research resume` and then `/back spec` to fix \
-                 it, and run :implement again"
+                 of the research flow with `/back spec` to fix it, and run `/implement` \
+                 again"
             ),
         )),
     }
 }
+
+/// Key of the last plan path in the implement index session.
+const KEY_LAST_PLAN: &str = "last_plan";
 
 /// One implementation of a Spec: the flow of its plan, stored under an id
 /// derived from the workspace and the plan, so opening the same plan again
@@ -135,6 +138,52 @@ impl ImplementSession {
         format!("implement:{}:{plan_path}", root.display())
     }
 
+    /// Id of the index session that remembers the last plan opened in the
+    /// workspace `root`.
+    fn index_id(root: &Path) -> String {
+        format!("implement-index:{}", root.display())
+    }
+
+    /// The plan of the last implementation opened in the workspace `root`,
+    /// if its flow is still stored and has not finished, with its status:
+    /// what `/implement resume` continues.
+    ///
+    /// # Errors
+    ///
+    /// A storage error.
+    pub async fn pending(
+        storage: Arc<dyn SessionStorage>,
+        root: &Path,
+    ) -> Result<Option<(String, FlowStatus)>, FlowError> {
+        let Some(index) = storage.get(&Self::index_id(root)).await? else {
+            return Ok(None);
+        };
+        let Some(plan) = index.context.get::<String>(KEY_LAST_PLAN) else {
+            return Ok(None);
+        };
+        let Some(session) = storage.get(&Self::session_id(root, &plan)).await? else {
+            return Ok(None);
+        };
+        let status: Option<FlowStatus> = session.context.get(KEY_STATUS);
+        Ok(status
+            .filter(|status| !status.is_finished())
+            .map(|status| (plan, status)))
+    }
+
+    async fn remember(
+        storage: &Arc<dyn SessionStorage>,
+        root: &Path,
+        plan_path: &str,
+    ) -> Result<(), FlowError> {
+        let id = Self::index_id(root);
+        let index = match storage.get(&id).await? {
+            Some(index) => index,
+            None => Session::new_from_task(id, "index"),
+        };
+        index.context.set(KEY_LAST_PLAN, plan_path.to_owned())?;
+        Ok(storage.save(index).await?)
+    }
+
     /// Opens the implementation of the plan at `plan_path` (a workspace
     /// path, see [`plan_path`]): resumes its stored session if it has not
     /// finished, otherwise starts a new one. Nothing runs until
@@ -149,7 +198,9 @@ impl ImplementSession {
         plan_path: impl Into<String>,
     ) -> Result<Self, FlowError> {
         let plan_path = plan_path.into();
-        let id = Self::session_id(deps.root().as_path(), &plan_path);
+        let root = deps.root().as_path().to_path_buf();
+        let id = Self::session_id(&root, &plan_path);
+        Self::remember(&storage, &root, &plan_path).await?;
         let graph = implement_graph(deps)?;
         if storage.get(&id).await?.is_some() {
             let flow = ImplementFlow::resume(graph.clone(), Arc::clone(&storage), &id).await;
@@ -263,8 +314,8 @@ mod tests {
         assert_eq!(level, NoticeLevel::Warning);
         assert!(
             text.contains("the API is missing")
-                && text.contains(":research resume")
-                && text.contains("/back spec"),
+                && text.contains("/back spec")
+                && text.contains("/implement"),
             "{text}"
         );
         assert!(status_notice(&FlowStatus::Completed).is_some());
@@ -289,10 +340,23 @@ mod tests {
         h.fs.set_file(plan, plan_json(&[("T1", &[])]));
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
 
+        let root = h.deps().root().as_path().to_path_buf();
+        assert_eq!(
+            ImplementSession::pending(Arc::clone(&storage), &root)
+                .await
+                .unwrap(),
+            None
+        );
         let first = ImplementSession::open(h.deps(), Arc::clone(&storage), plan)
             .await
             .unwrap();
         assert!(!first.resumed());
+        // `/implement resume` finds it.
+        let (pending, _) = ImplementSession::pending(Arc::clone(&storage), &root)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending, plan);
         assert!(matches!(
             first.run().await.unwrap(),
             FlowStatus::WaitingForInput {

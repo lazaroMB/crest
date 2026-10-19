@@ -79,6 +79,26 @@ pub enum NodeError {
     Failed(String),
 }
 
+impl NodeError {
+    /// Whether running the node again may succeed: a model call that failed
+    /// for a passing reason (rate limit, overload, network, a broken
+    /// stream) or an empty answer.
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Llm(error) | Self::Turn(TurnError::Llm(error)) => {
+                error.is_retryable() || matches!(error, LlmError::Decode(_))
+            }
+            Self::EmptyAnswer => true,
+            Self::Turn(TurnError::TooManyIterations { .. })
+            | Self::Block(_)
+            | Self::Unavailable(_)
+            | Self::Context(_)
+            | Self::Failed(_) => false,
+        }
+    }
+}
+
 /// Wall clock in Unix epoch milliseconds.
 pub(crate) fn system_now_ms() -> u64 {
     SystemTime::now()
