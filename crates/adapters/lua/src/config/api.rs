@@ -271,13 +271,17 @@ mod tests {
         run(
             &lua,
             &phase,
-            "app.keymap.set('x', 'a', 'b')\n\napp.on('whenever', function() end)\napp.tools.register({ name = 't' })",
+            "app.keymap.set(3, 'b')\n\napp.on('whenever', function() end)\napp.tools.register({ name = 't' })",
         );
         let got = phase.take();
         assert!(got.keymaps.is_empty() && got.hooks.is_empty() && got.tools.is_empty());
         let lines: Vec<_> = got.diagnostics.iter().map(|d| d.line).collect();
         assert_eq!(lines, [Some(1), Some(3), Some(4)]);
-        assert!(got.diagnostics[0].message.contains("unknown mode"));
+        assert!(
+            got.diagnostics[0]
+                .message
+                .contains("key sequence must be a string")
+        );
         assert_eq!(got.diagnostics[0].source, "init.lua");
     }
 

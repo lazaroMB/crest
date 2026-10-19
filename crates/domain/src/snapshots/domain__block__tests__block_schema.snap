@@ -299,6 +299,52 @@ expression: "schemars::schema_for!(Block)"
       ]
     },
     {
+      "description": "A command the user ran with `/!` in the workspace, and what it\nprinted.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "shell"
+        },
+        "command": {
+          "description": "The command line as typed.",
+          "type": "string"
+        },
+        "exit_code": {
+          "description": "Exit code; `None` when it was killed (signal or timeout) or could\nnot start.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "stdout": {
+          "description": "Standard output.",
+          "type": "string",
+          "default": ""
+        },
+        "stderr": {
+          "description": "Standard error (or why it could not start).",
+          "type": "string",
+          "default": ""
+        },
+        "timed_out": {
+          "description": "Whether it was killed for taking too long.",
+          "type": "boolean",
+          "default": false
+        },
+        "truncated": {
+          "description": "Whether the output was cut to the size limit.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "type",
+        "command"
+      ]
+    },
+    {
       "description": "Failure of the API or a tool.",
       "type": "object",
       "properties": {

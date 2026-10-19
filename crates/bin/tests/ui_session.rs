@@ -387,8 +387,7 @@ fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContex
     let (w, cx) = open(script, cx);
     spec_repository(&w.workspace);
 
-    cx.simulate_keystrokes("escape :");
-    cx.simulate_input("implement 0001-suma");
+    cx.simulate_input("/implement 0001-suma");
     cx.simulate_keystrokes("enter");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !has_text(&w, cx, "Answer \"yes\" to create the branch") {
@@ -401,7 +400,6 @@ fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContex
     }
 
     // The answer goes to the flow, not to the model.
-    cx.simulate_keystrokes("i");
     cx.simulate_input("sí");
     cx.simulate_keystrokes("enter");
     wait_until(&w, cx, "the approval of the edit", |s, cx| {
@@ -452,8 +450,7 @@ fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
     ];
     let (w, cx) = open(script, cx);
 
-    cx.simulate_keystrokes("escape :");
-    cx.simulate_input("research add(2, 2) devuelve 0");
+    cx.simulate_input("/research add(2, 2) devuelve 0");
     cx.simulate_keystrokes("enter");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !has_text(&w, cx, "go on to Observation") {
@@ -467,11 +464,10 @@ fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
     }
     assert!(has_text(&w, cx, "`add` resta en vez de sumar."));
 
-    // While the flow is active the line goes to it, not to the model.
-    cx.simulate_keystrokes("i");
+    // /abort goes to the flow, not to the model.
     cx.simulate_input("/abort");
     cx.simulate_keystrokes("enter");
-    wait_until(&w, cx, "the abort", |s, _| !s.is_running());
+    wait_until(&w, cx, "the abort", |s, _| !s.is_busy());
     assert_eq!(w.llm.requests().len(), 1);
 
     // Once aborted, the chat answers turns again.

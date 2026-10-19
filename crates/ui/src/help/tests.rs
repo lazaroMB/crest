@@ -147,7 +147,7 @@ fn filter_keeps_matching_rows_in_every_section() {
         ("ECHO", &[(Section::Tools, 1), (Section::Mcp, 1)]),
         ("issue fetches", &[(Section::Tools, 1)]),
         ("issue nope", &[(Section::Tools, 0)]),
-        ("help", &[(Section::Commands, 1), (Section::Keys, 4)]),
+        ("help", &[(Section::Commands, 1), (Section::Keys, 2)]),
         ("model", &[(Section::Cli, 1)]),
         ("unexpected", &[(Section::Files, 1)]),
         ("pending", &[(Section::Plugins, 1)]),
