@@ -43,7 +43,9 @@
 //!   prompt. A file cited by a block (`Sources`) does the same.
 //! - `/model <alias>` (no argument clears it), `/mode <ask|auto-edit|plan>`,
 //!   `/clear` (a new, empty session; not while a turn runs), `/modal close`
-//!   (closes the front plugin modal), `/help [section|search]` and `/q`
+//!   (closes the front plugin modal), `/help [section|search]`, `/login`
+//!   and `/logout` (the API key in the system keyring, through the
+//!   [`LoginView`] dialog; the window then reopens the workspace) and `/q`
 //!   (see [`BUILTIN_COMMANDS`](crate::commands::BUILTIN_COMMANDS)).
 //! - `F1`, `<leader>h` (`help.open`) and `/help` open the help modal with
 //!   what [`SessionController::help`] reports.
@@ -80,9 +82,10 @@ use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _,
-    IntoElement, KeyDownEvent, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, div, px,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
+    InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity,
+    Window, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -98,6 +101,7 @@ use crate::input::attachments::ImageMode;
 use crate::input::{
     FOCUS_INPUT_ACTION, InputEvent, InputView, QUEUE_EDIT_ACTION, key_from_keystroke,
 };
+use crate::login::{LoginEvent, LoginView};
 use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
@@ -264,6 +268,18 @@ pub trait SessionController: Send + Sync {
         futures::future::ready(None).boxed()
     }
 
+    /// Checks and stores the API key typed in the `/login` dialog; `Ok`
+    /// says what happened, `Err` why the key was not stored.
+    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+        let _ = key;
+        futures::future::ready(Err("this session cannot store API keys".to_owned())).boxed()
+    }
+
+    /// `/logout`: deletes the stored API key.
+    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+        futures::future::ready(Err("this session cannot store API keys".to_owned())).boxed()
+    }
+
     /// What the help shows beyond what the UI knows by itself (its builtin
     /// commands, its keymap and the models of [`models`](Self::models)):
     /// the controller's commands, tools, plugins, MCP servers, flags and
@@ -326,6 +342,8 @@ pub struct SessionParts {
     pub prompt_history: Vec<String>,
     /// Color scheme (`app.opt.theme`), applied before the window opens.
     pub theme: crate::app::ThemeMode,
+    /// The agent has no API key: the `/login` dialog opens at once.
+    pub needs_login: bool,
 }
 
 impl SessionParts {
@@ -351,8 +369,19 @@ impl SessionParts {
             history: Vec::new(),
             prompt_history: Vec::new(),
             theme: crate::app::ThemeMode::default(),
+            needs_login: false,
         }
     }
+}
+
+/// What the session asks the window ([`crate::workbench::Workbench`]) to do.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionEvent {
+    /// Open the workspace again (the API key changed), then show `notice`.
+    Reopen {
+        /// What to tell once the new session shows.
+        notice: Option<(NoticeLevel, String)>,
+    },
 }
 
 /// The `<leader>m` menu.
@@ -374,6 +403,7 @@ pub struct Session {
     picker: Entity<PickerView>,
     approval: Entity<ApprovalView>,
     modal: Entity<ModalHost>,
+    login: Entity<LoginView>,
     focus_handle: FocusHandle,
     running: Option<CancelToken>,
     /// Names of the `/` commands waiting for the controller's reply.
@@ -399,6 +429,7 @@ pub fn open(
     let root = cx.new(RootView::new);
     let session = cx.new(|cx| Session::new(parts, root.downgrade(), window, cx));
     let s = session.read(cx);
+    let login = s.login.clone();
     let (timeline, input, status, activity, tree, picker, approval, modal) = (
         s.timeline.clone(),
         s.input.clone(),
@@ -420,9 +451,10 @@ pub fn open(
         // Plugin modals sit below the approval dialog, which must stay
         // reachable while one is open.
         root.push_overlay(modal, cx);
+        root.push_overlay(login, cx);
         root.push_overlay(approval, cx);
     });
-    input.update(cx, |input, cx| input.focus(window, cx));
+    session.update(cx, |session, cx| session.focus_input(window, cx));
     (root, session)
 }
 
@@ -447,6 +479,7 @@ impl Session {
             history,
             prompt_history,
             theme: _,
+            needs_login,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -479,6 +512,7 @@ impl Session {
         let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
         let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
         let modal = cx.new(|cx| ModalHost::new(window, cx));
+        let login = cx.new(|cx| LoginView::new(window, cx));
 
         let mut watch_error = None;
         if let Some(dir) = &workspace_dir {
@@ -515,6 +549,7 @@ impl Session {
                 },
             ),
             Self::intercept_keys(cx),
+            cx.subscribe_in(&login, window, Self::on_login),
         ];
         // A file cited by a block (Sources) opens like a picker choice; a
         // clicked image opens in a modal to zoom in.
@@ -546,6 +581,7 @@ impl Session {
             picker,
             approval,
             modal,
+            login,
             focus_handle: cx.focus_handle(),
             running: None,
             commands: Vec::new(),
@@ -563,6 +599,9 @@ impl Session {
         }
         this.load_commands(window, cx);
         this.refresh_git(cx);
+        if needs_login {
+            this.login.update(cx, |login, cx| login.show(window, cx));
+        }
         this
     }
 
@@ -685,10 +724,12 @@ impl Session {
         }
     }
 
-    /// Whether a picker, the approval dialog, the model menu or a modal
-    /// has the focus.
+    /// Whether a picker, the approval dialog, the model menu, a modal or
+    /// the key dialog has the focus. Keys typed there never reach the
+    /// prompt (the API key must not land in it).
     fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
         self.menu.is_some()
+            || self.login.read(cx).is_open()
             || self.picker.read(cx).is_open()
             || self.approval.focus_handle(cx).contains_focused(window, cx)
             || self.modal.read(cx).is_open()
@@ -696,8 +737,95 @@ impl Session {
 
     /// Gives the focus back to the prompt.
     pub fn focus_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.input.update(cx, |input, cx| input.focus(window, cx));
+        // The key dialog keeps the focus while it is open.
+        if self.login.read(cx).is_open() {
+            self.login.update(cx, |login, cx| login.focus(window, cx));
+        } else {
+            self.input.update(cx, |input, cx| input.focus(window, cx));
+        }
         cx.notify();
+    }
+
+    /// The `/login` dialog.
+    pub fn login_view(&self) -> &Entity<LoginView> {
+        &self.login
+    }
+
+    /// Shows `message` in the status bar.
+    pub fn show_notice(&mut self, level: NoticeLevel, message: String, cx: &mut Context<Self>) {
+        self.notice(level, message, cx);
+    }
+
+    /// `/login`: opens the key dialog, once nothing runs.
+    fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.idle_for("/login", cx) {
+            return;
+        }
+        self.login.update(cx, |login, cx| login.show(window, cx));
+    }
+
+    /// What the key dialog asks.
+    fn on_login(
+        &mut self,
+        _: &Entity<LoginView>,
+        event: &LoginEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            LoginEvent::Cancelled => self.focus_input(window, cx),
+            LoginEvent::Submit(key) => {
+                let login = self.controller.login(key.clone());
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = login.await;
+                    this.update_in(cx, |this, window, cx| match result {
+                        Ok(message) => {
+                            this.login.update(cx, |login, cx| login.close(window, cx));
+                            cx.emit(SessionEvent::Reopen {
+                                notice: Some((NoticeLevel::Info, message)),
+                            });
+                        }
+                        Err(error) => this.login.update(cx, |login, cx| login.fail(error, cx)),
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        }
+    }
+
+    /// `/logout`: deletes the stored key and reopens the workspace.
+    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.idle_for("/logout", cx) {
+            return;
+        }
+        let logout = self.controller.logout();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = logout.await;
+            this.update(cx, |this, cx| match result {
+                Ok(message) => cx.emit(SessionEvent::Reopen {
+                    notice: Some((NoticeLevel::Info, message)),
+                }),
+                Err(error) => this.notice(NoticeLevel::Warning, error, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether nothing runs; otherwise says that `command` must wait.
+    fn idle_for(&mut self, command: &str, cx: &mut Context<Self>) -> bool {
+        if self.running.is_some() {
+            let message = format!("a turn is running; Ctrl+C to interrupt it before {command}");
+            self.notice(NoticeLevel::Warning, message, cx);
+            return false;
+        }
+        if let Some(running) = self.commands.last() {
+            let message = format!("/{running} is running; {command} once it stops");
+            self.notice(NoticeLevel::Warning, message, cx);
+            return false;
+        }
+        true
     }
 
     /// `<C-Tab>`: prompt → timeline → tree (when shown) → prompt.
@@ -909,7 +1037,11 @@ impl Session {
                     DomainEvent::BlockAdded {
                         block: Block::new(BlockKind::Error {
                             message,
-                            hint: Some("fix the configuration and reopen crest".into()),
+                            hint: Some(
+                                "run /login to add your API key, or fix the configuration and \
+                                 reopen crest"
+                                    .into(),
+                            ),
                         }),
                     },
                     cx,
@@ -1010,6 +1142,8 @@ impl Session {
             },
             "clear" => self.clear(window, cx),
             "project" => self.switch_project(window, cx),
+            "login" => self.open_login(window, cx),
+            "logout" => self.logout(window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
             "modal" if arg == "close" => {
                 let closed = self
@@ -1420,6 +1554,8 @@ impl Session {
     }
 }
 
+impl EventEmitter<SessionEvent> for Session {}
+
 impl Render for Session {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu = self
@@ -1467,6 +1603,8 @@ mod tests {
         service: Arc<AgentService>,
         conversation: Arc<futures::lock::Mutex<Conversation>>,
         events: Arc<dyn EventSink>,
+        /// Keys given to `login`, in order.
+        logins: Arc<Mutex<Vec<String>>>,
     }
 
     impl SessionController for AgentController {
@@ -1551,6 +1689,21 @@ mod tests {
             futures::future::ready(reply).boxed()
         }
 
+        /// Only `sk-ant-good` is accepted.
+        fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+            self.logins.lock().unwrap().push(key.clone());
+            let result = if key == "sk-ant-good" {
+                Ok("stored".to_owned())
+            } else {
+                Err("Anthropic rejected this key".to_owned())
+            };
+            futures::future::ready(result).boxed()
+        }
+
+        fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+            futures::future::ready(Ok("deleted".to_owned())).boxed()
+        }
+
         /// `/review` sends a prompt with the plan role; `/loop` calls itself;
         /// `/slow` answers after 2 s, like a flow running to its gate.
         fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
@@ -1582,6 +1735,8 @@ mod tests {
         session: Entity<Session>,
         llm: Arc<ScriptedLlm>,
         sink: Arc<RecordingSink>,
+        logins: Arc<Mutex<Vec<String>>>,
+        reopens: Rc<RefCell<Vec<SessionEvent>>>,
     }
 
     /// Hosts the root view as the window's root.
@@ -1638,10 +1793,12 @@ mod tests {
             ModelPolicy::default(),
             Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask))),
         );
+        let logins = Arc::new(Mutex::new(Vec::new()));
         let controller = Arc::new(AgentController {
             service: Arc::new(service),
             conversation: Arc::new(futures::lock::Mutex::new(Conversation::new("/ws", 0))),
             events: sink.clone(),
+            logins: Arc::clone(&logins),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
@@ -1655,7 +1812,24 @@ mod tests {
         });
         cx.run_until_parked();
         let session = slot.borrow_mut().take().unwrap();
-        (Harness { session, llm, sink }, cx)
+        let reopens = Rc::new(RefCell::new(Vec::new()));
+        let seen = reopens.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&session, move |_, event: &SessionEvent, _| {
+                seen.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        (
+            Harness {
+                session,
+                llm,
+                sink,
+                logins,
+                reopens,
+            },
+            cx,
+        )
     }
 
     /// Runs the UI until `done` holds; the agent runs on other threads.
@@ -1709,6 +1883,86 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn login_view(h: &Harness, cx: &mut VisualTestContext) -> Entity<LoginView> {
+        h.session.read_with(cx, |s, _| s.login_view().clone())
+    }
+
+    fn submit_key(h: &Harness, key: &str, cx: &mut VisualTestContext) {
+        let login = login_view(h, cx);
+        cx.update(|window, cx| {
+            login.update(cx, |login, cx| {
+                login.set_key(key, window, cx);
+                login.submit(cx);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn login_checks_the_key_out_of_the_prompt_and_reopens(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/login", cx);
+        cx.run_until_parked();
+        let login = login_view(&h, cx);
+        assert!(login.read_with(cx, |l, _| l.is_open()));
+
+        submit_key(&h, "sk-ant-bad", cx);
+        wait_until(&h, cx, "the rejection", |s, cx| {
+            s.login_view().read(cx).error().is_some()
+        });
+        assert!(
+            login.read_with(cx, |l, _| l.is_open()),
+            "an error keeps it open"
+        );
+        assert!(h.reopens.borrow().is_empty());
+
+        submit_key(&h, "sk-ant-good", cx);
+        wait_until(&h, cx, "the dialog to close", |s, cx| {
+            !s.login_view().read(cx).is_open()
+        });
+        assert_eq!(*h.logins.lock().unwrap(), ["sk-ant-bad", "sk-ant-good"]);
+        assert_eq!(
+            *h.reopens.borrow(),
+            [SessionEvent::Reopen {
+                notice: Some((NoticeLevel::Info, "stored".into()))
+            }]
+        );
+        let history = h
+            .session
+            .read_with(cx, |s, cx| s.input().read(cx).history().to_vec());
+        assert!(
+            history.iter().all(|line| !line.contains("sk-ant")),
+            "{history:?}"
+        );
+        assert!(h.llm.requests().is_empty(), "no turn ran");
+    }
+
+    #[gpui::test]
+    fn logout_reopens_and_esc_closes_the_dialog(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/logout", cx);
+        cx.run_until_parked();
+        assert_eq!(
+            *h.reopens.borrow(),
+            [SessionEvent::Reopen {
+                notice: Some((NoticeLevel::Info, "deleted".into()))
+            }]
+        );
+        let login = login_view(&h, cx);
+        assert!(!login.read_with(cx, |l, _| l.is_open()));
+        cx.update(|window, cx| login.update(cx, |login, cx| login.show(window, cx)));
+        cx.run_until_parked();
+        cx.simulate_input("sk-ant-typed");
+        cx.run_until_parked();
+        let prompt = h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx));
+        assert!(
+            !prompt.contains("sk-ant"),
+            "the key reached the prompt: {prompt}"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!login.read_with(cx, |l, _| l.is_open()), "Esc closes it");
     }
 
     #[gpui::test]

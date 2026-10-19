@@ -9,6 +9,7 @@ pub mod commands;
 pub mod help;
 pub mod input;
 pub mod keyscroll;
+pub mod login;
 pub mod modal;
 pub mod picker;
 pub mod project_picker;

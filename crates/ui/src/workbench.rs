@@ -6,11 +6,14 @@
 //! works the window says so; when it fails the picker comes back with the
 //! reason. `/project` dispatches [`SwitchProject`], which drops the open
 //! session (and with it everything the binary started for it) and shows
-//! the picker again.
+//! the picker again. [`SessionEvent::Reopen`] (after `/login` or
+//! `/logout`) builds the session of the same directory again, so the agent
+//! starts with the new API key.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use application::ports::events::NoticeLevel;
 use application::ports::projects::{ProjectBrowserPort, RecentWorkspace};
 use futures::future::BoxFuture;
 use gpui::{
@@ -22,7 +25,7 @@ use gpui_component::ActiveTheme as _;
 
 use crate::app::{RootView, set_theme_mode, window_title};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
-use crate::session::{Session, SessionParts};
+use crate::session::{Session, SessionEvent, SessionParts};
 
 actions!(crest, [SwitchProject]);
 
@@ -175,13 +178,29 @@ impl Workbench {
 
     /// Opens the project at `dir`; on failure the picker comes back.
     pub fn open(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_with_notice(dir, None, window, cx);
+    }
+
+    /// [`Self::open`], showing `notice` in the new session.
+    fn open_with_notice(
+        &mut self,
+        dir: PathBuf,
+        notice: Option<(NoticeLevel, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let opening = self.opener.open(dir.clone());
         self.content = Content::Opening(dir.clone());
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = opening.await;
             this.update_in(cx, |this, window, cx| match result {
-                Ok(parts) => this.show_session(parts, dir, window, cx),
+                Ok(parts) => {
+                    this.show_session(parts, dir, window, cx);
+                    if let (Some((level, message)), Some(session)) = (notice, this.session()) {
+                        session.update(cx, |session, cx| session.show_notice(level, message, cx));
+                    }
+                }
                 Err(err) => {
                     let notice = format!("cannot open {}: {err}", dir.display());
                     this.show_picker(Some(&dir), Some(notice), window, cx);
@@ -203,6 +222,19 @@ impl Workbench {
         set_theme_mode(parts.theme, cx);
         let (root, session) = crate::session::open(parts, window, cx);
         session.update(cx, |session, cx| session.focus_input(window, cx));
+        cx.subscribe_in(
+            &session,
+            window,
+            |this, _, event: &SessionEvent, window, cx| {
+                let SessionEvent::Reopen { notice } = event;
+                let Content::Session { dir, .. } = &this.content else {
+                    return;
+                };
+                // Dropping the session drops its controller and what it started.
+                this.open_with_notice(dir.clone(), notice.clone(), window, cx);
+            },
+        )
+        .detach();
         self.content = Content::Session { root, session, dir };
         cx.notify();
     }
