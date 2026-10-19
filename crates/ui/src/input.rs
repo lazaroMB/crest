@@ -1032,9 +1032,9 @@ mod tests {
         let (view, cx, events) = input(cx);
         cx.simulate_input("describe");
         clipboard_png(3, cx);
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes("secondary-v");
         clipboard_png(5, cx);
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes("secondary-v");
         view.read_with(cx, |view, cx| {
             // The typed text stays; the images are in the tray.
             assert_eq!(view.text(cx), "describe");
@@ -1044,7 +1044,7 @@ mod tests {
         });
         // Text still pastes as text.
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(" it".into()));
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes("secondary-v");
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "describe it"));
         // A command leaves the images for the next prompt.
         view.update_in(cx, |view, window, cx| {
@@ -1073,7 +1073,7 @@ mod tests {
         view.read_with(cx, |view, _| assert!(view.images().is_empty()));
         // An image that cannot be attached is reported.
         clipboard_png(domain::conversation::MAX_IMAGE_SIDE + 1, cx);
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes("secondary-v");
         assert!(matches!(take(&events).as_slice(), [InputEvent::Notice(m)] if m.contains("px")));
         view.read_with(cx, |view, _| assert!(view.images().is_empty()));
     }
@@ -1082,7 +1082,7 @@ mod tests {
     fn the_tray_buttons_remove_images_and_switch_the_mode(cx: &mut TestAppContext) {
         let (view, cx, _events) = input(cx);
         clipboard_png(4, cx);
-        cx.simulate_keystrokes("ctrl-v");
+        cx.simulate_keystrokes("secondary-v");
         cx.draw(
             gpui::point(gpui::px(0.), gpui::px(0.)),
             gpui::size(gpui::px(800.), gpui::px(400.)),
