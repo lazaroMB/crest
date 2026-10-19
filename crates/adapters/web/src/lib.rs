@@ -17,6 +17,33 @@ use application::ports::web::{SearchHit, WebError, WebPage, WebPort};
 use application::web::{SearchBackend, WebOptions};
 use async_trait::async_trait;
 
+/// Environment variable and keyring entry (service `crest`) of the Brave
+/// Search API key.
+pub const BRAVE_KEY_NAME: &str = "BRAVE_API_KEY";
+/// Keyring service of the key.
+const KEYRING_SERVICE: &str = "crest";
+
+/// The Brave key from `BRAVE_API_KEY`, else from the keyring (service
+/// `crest`, entry `BRAVE_API_KEY`). The keyring call may block (D-Bus,
+/// Keychain): call this through `spawn_blocking`.
+#[must_use]
+pub fn brave_key_from_env_or_keyring() -> Option<String> {
+    if let Ok(key) = std::env::var(BRAVE_KEY_NAME)
+        && !key.trim().is_empty()
+    {
+        return Some(key.trim().to_owned());
+    }
+    let entry = keyring::Entry::new(KEYRING_SERVICE, BRAVE_KEY_NAME)
+        .inspect_err(|err| tracing::debug!(error = %err, "keyring unavailable"))
+        .ok()?;
+    entry
+        .get_password()
+        .inspect_err(|err| tracing::debug!(error = %err, "no Brave key in the keyring"))
+        .ok()
+        .map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty())
+}
+
 /// [`WebPort`] over the `curl` on `PATH`.
 #[derive(Clone)]
 pub struct CurlWeb {

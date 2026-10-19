@@ -6,7 +6,8 @@
 //! or run commands, by construction and by policy:
 //!
 //! - its registry holds only the read tools (`list_files`, `find_file`,
-//!   `grep`, `tree`, `read_file`); `edit_file`, `write_file`,
+//!   `grep`, `tree`, `read_file`, and `web_search` / `web_fetch` when the
+//!   web is configured); `edit_file`, `write_file`,
 //!   `run_command` and `task` itself (no recursion) are not there, and
 //!   [`TaskPorts`] has no shell to build them from;
 //! - its permissions are [`PermissionPolicy::read_only`], which denies any
@@ -37,6 +38,7 @@ use super::files::{FindFileTool, GrepTool, ListFilesTool, ReadFileTool, TreeTool
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
 };
+use super::web::WebTools;
 use crate::ports::approval::{ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink};
 use crate::ports::fs::FileSystemPort;
@@ -51,9 +53,12 @@ pub const DEFAULT_SUBAGENT_MAX_ITERATIONS: u32 = 25;
 /// System prompt of the explore subagent.
 pub const SUBAGENT_SYSTEM_PROMPT: &str = "\
 You are an explore subagent of crest, a coding assistant. Another agent gave you a search or \
-reading task in the workspace. You can only read: list_files, find_file, grep, tree and \
-read_file. You cannot edit, write or run commands, and you cannot ask the user anything.
+reading task, in the workspace or on the web. You can only read: list_files, find_file, grep, \
+tree and read_file, plus web_search and web_fetch when they are offered. You cannot edit, \
+write or run commands, and you cannot ask the user anything.
 - Search broadly first (grep, find_file, tree), then read only the parts that matter.
+- For the web: search, read the 2-3 best results with web_fetch, search again with other words \
+if they fall short, and give the URL of every source.
 - Stop as soon as you can answer.
 - Answer with a concise report for the other agent: the findings, each with its workspace path \
 and line numbers (e.g. `src/lib.rs:42`), and short code excerpts only when the exact text \
@@ -62,9 +67,12 @@ matters. Say what you did not find. Do not repeat the task.";
 const TASK_DESCRIPTION: &str = "\
 Launches a read-only subagent to explore the workspace and returns its report.
 - Use it for broad searches that would take many list/grep/read calls (\"where is X handled\", \
-\"how does Y work across modules\"), to keep their output out of this conversation.
-- The subagent only has list_files, find_file, grep, tree and read_file: it cannot edit, write \
-or run commands. Do the changes yourself after reading its report.
+\"how does Y work across modules\"), or for a piece of web research (\"compare the options \
+for Z\"), to keep their output out of this conversation. Several tasks can research \
+different questions in parallel.
+- The subagent only has list_files, find_file, grep, tree and read_file, plus web_search and \
+web_fetch when the web is configured: it cannot edit, write or run commands. Do the changes \
+yourself after reading its report.
 - It does not see this conversation: put everything it needs in `prompt` (what to find, where \
 to look, what to report).
 - Its report lists paths and line numbers; read the files yourself before editing them.";
@@ -95,6 +103,8 @@ pub struct TaskPorts {
     pub content_search: Arc<dyn ContentSearchPort>,
     /// Reading files (the subagent's tools never call its write methods).
     pub fs: Arc<dyn FileSystemPort>,
+    /// The web tools, when the web is configured.
+    pub web: Option<WebTools>,
 }
 
 /// `task`: runs a read-only `explore` subagent and returns its report.
@@ -164,7 +174,7 @@ impl TaskTool {
     }
 }
 
-/// The subagent's registry: the five read tools and nothing else.
+/// The subagent's registry: the five read tools and the web tools.
 fn read_only_tools(ports: &TaskPorts, budget: ResultBudget) -> Result<ToolRegistry, RegisterError> {
     let mut tools = ToolRegistry::new().with_budget(budget);
     let search = &ports.file_search;
@@ -173,6 +183,9 @@ fn read_only_tools(ports: &TaskPorts, budget: ResultBudget) -> Result<ToolRegist
     tools.register_typed(TreeTool::new(Arc::clone(search), budget))?;
     tools.register_typed(GrepTool::new(Arc::clone(&ports.content_search), budget))?;
     tools.register_typed(ReadFileTool::new(Arc::clone(&ports.fs), budget))?;
+    if let Some(web) = &ports.web {
+        web.register(&mut tools)?;
+    }
     Ok(tools)
 }
 
@@ -349,6 +362,7 @@ mod tests {
                     file_search: fs.clone(),
                     content_search: fs.clone(),
                     fs: fs.clone(),
+                    web: None,
                 },
                 budget,
             )

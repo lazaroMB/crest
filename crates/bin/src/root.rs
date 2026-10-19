@@ -37,12 +37,14 @@ use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
+use application::ports::web::WebPort;
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::simulate::SimulateTool;
 use application::tools::task::{TaskPorts, TaskTool};
+use application::tools::web::WEB_TOOLS_PROMPT;
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
 use application::usecases::resume::{restore_permission_rules, resume_latest};
@@ -133,6 +135,8 @@ pub struct Overrides {
     pub mcp_trust_path: Option<PathBuf>,
     /// Store of approved plugin capabilities instead of the default one.
     pub plugin_trust_path: Option<PathBuf>,
+    /// The web instead of curl (still subject to `app.opt.web.enabled`).
+    pub web: Option<Arc<dyn WebPort>>,
 }
 
 /// Records the timeline of the session while forwarding every event.
@@ -418,6 +422,8 @@ pub async fn build_app(
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
     let shell: Arc<dyn ShellPort> = Arc::new(LocalShell::new(root.clone()));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
+    let (web, web_warnings) = startup::web_tools(&loaded.options, overrides.web.clone()).await;
+    warnings.extend(web_warnings);
     let mut tools = ToolRegistry::new();
     register_file_tools(
         &mut tools,
@@ -430,6 +436,9 @@ pub async fn build_app(
     )
     .context("tool registration")?;
     register_component_tools(&mut tools).context("tool registration")?;
+    if let Some(web) = &web {
+        web.register(&mut tools).context("tool registration")?;
+    }
     let task = TaskTool::new(
         TaskPorts {
             llm: Arc::clone(&llm),
@@ -438,6 +447,7 @@ pub async fn build_app(
             file_search: search.clone(),
             content_search: search,
             fs: Arc::clone(&fs),
+            web: web.clone(),
         },
         tools.budget(),
     )
@@ -568,8 +578,13 @@ pub async fn build_app(
         Some(session) => research::pending_notice(session).await,
         None => None,
     };
+    let mut prompt = system_prompt(&root);
+    if web.is_some() {
+        prompt.push_str("\n\n");
+        prompt.push_str(WEB_TOOLS_PROMPT);
+    }
     let mut service = AgentService::new(deps, tools, policy, permissions)
-        .with_system_prompt(system_prompt(&root))
+        .with_system_prompt(prompt)
         .with_compaction(CompactionPolicy::default());
     let plugins = plugins.map(|host| host as Arc<dyn PluginHostPort>);
     if let Some(host) = &plugins {

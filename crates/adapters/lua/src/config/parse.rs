@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use application::cost;
 use application::ports::plugin::{AppOptions, McpServerSpec, PluginDiagnostic};
+use application::web::{WEB_OPTION, WebOptions};
 use domain::model::{ModelId, ModelRole, ModelSpecPatch, RoleConfig, ThinkingConfig};
 use mlua::{Lua, Table};
 use serde_json::{Map, Value};
@@ -175,6 +176,13 @@ fn options(value: Value, report: &mut Report<'_>) -> AppOptions {
                     Err(e) => report.push(e.to_string()),
                 }
             }
+            // Kept in `extra` for `WebOptions::from_options`, once valid.
+            WEB_OPTION => match WebOptions::from_json(v) {
+                Ok(_) => {
+                    out.extra.insert(key.clone(), v.clone());
+                }
+                Err(e) => report.push(e.to_string()),
+            },
             _ => {
                 out.extra.insert(key.clone(), v.clone());
             }
@@ -359,6 +367,27 @@ mod tests {
                 "app.opt.pricing[\"m\"]: `output` must be a number (USD per million tokens)",
             ]
         );
+    }
+
+    #[test]
+    fn checks_the_web_options() {
+        let (declared, diags) = read_code(
+            r#"app.opt.web = { backend = "searxng", searxng_url = "https://searx.example",
+                               blocked_domains = { "pinterest.com" } }"#,
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(declared.options.extra["web"]["backend"], json!("searxng"));
+
+        let (declared, diags) = read_code(r#"app.opt.web = { backend = "google" }"#);
+        assert!(declared.options.extra.is_empty());
+        let messages: Vec<_> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["app.opt.web.backend must be \"duckduckgo\", \"searxng\" or \"brave\", not `google`"]
+        );
+        let (declared, diags) = read_code("app.opt.web = {}");
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(declared.options.extra.contains_key("web"));
     }
 
     #[test]

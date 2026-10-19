@@ -26,6 +26,7 @@ adapter-anthropic.workspace = true
 adapter-search.workspace = true
 adapter-fs.workspace = true
 adapter-shell.workspace = true
+adapter-web.workspace = true
 adapter-store.workspace = true
 adapter-lua.workspace = true
 adapter-mcp.workspace = true

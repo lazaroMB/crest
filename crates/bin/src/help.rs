@@ -85,6 +85,7 @@ fn builtin_effect(name: &str) -> &'static str {
         "edit_file" | "write_file" | "simulate_solution" => "write",
         "list_files" | "find_file" | "grep" | "tree" | "read_file" | "task" | "show_chart"
         | "show_table" | "show_mermaid" | "show_markdown" => "read",
+        "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }
 }
@@ -486,6 +487,7 @@ mod tests {
         assert_eq!(builtin_effect("run_command"), "depends on input");
         assert_eq!(builtin_effect("edit_file"), "write");
         assert_eq!(builtin_effect("grep"), "read");
+        assert_eq!(builtin_effect("web_fetch"), "network (no approval)");
         assert_eq!(builtin_effect("nope"), "");
     }
 

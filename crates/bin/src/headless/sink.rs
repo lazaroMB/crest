@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use domain::block::{Block, BlockId, BlockKind, Cell, TableSpec, ToolStatus};
+use domain::block::{Block, BlockId, BlockKind, Cell, SourceRef, TableSpec, ToolStatus};
 use domain::conversation::{StopReason, Usage};
 
 use super::terminal::{Style, Terminal, Writer};
@@ -172,7 +172,30 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 &format!("== {stage} ({index}/{total}) =="),
             );
         }
-        BlockKind::Custom { .. } | BlockKind::Sources { .. } | BlockKind::Image { .. } => {}
+        BlockKind::Sources { sources } => print_web_sources(w, sources),
+        BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
+    }
+}
+
+/// The web pages among `sources`, numbered; other sources (files,
+/// commits) are already visible in the tool calls.
+fn print_web_sources(w: &mut Writer<'_>, sources: &[SourceRef]) {
+    let pages: Vec<String> = sources
+        .iter()
+        .filter_map(|source| match source {
+            SourceRef::Url { url, title } => Some(match title {
+                Some(title) => format!("{title} — {url}"),
+                None => url.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    if pages.is_empty() {
+        return;
+    }
+    w.line(Some(Style::Dim), "sources:");
+    for (ix, page) in pages.iter().enumerate() {
+        w.line(Some(Style::Dim), &format!("  [{}] {page}", ix + 1));
     }
 }
 

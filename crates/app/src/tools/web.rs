@@ -58,6 +58,18 @@ and styles removed), with its final URL and title.
 - Long pages are cut; PDFs and other binary files cannot be read.
 - Cite the URL of the page when you use what it says.";
 
+/// What the system prompt says about the web tools, when they are there.
+pub const WEB_TOOLS_PROMPT: &str = "\
+# Web
+- You can search the web (`web_search`) and read pages (`web_fetch`) for anything outside the \
+workspace: documentation, releases, error messages, libraries, comparisons, news.
+- When asked to research or investigate something, do it yourself: search, read the 2-3 most \
+relevant pages, search again with other words where the answer is incomplete or sources \
+disagree, and only then answer. Split a broad investigation into `task` subagents that \
+research one question each.
+- Base the answer on what the pages say, not on the snippets, and cite the URL of every source \
+you use. Say what you could not confirm.";
+
 /// The search results as the model reads them.
 #[must_use]
 pub fn render_hits(hits: &[SearchHit]) -> Vec<String> {
@@ -213,6 +225,36 @@ impl TypedTool for WebFetchTool {
             Ok(ToolOutput::text(format!("{head}{text}")))
         };
         Ok(PreparedCall::new(subject, run.boxed()))
+    }
+}
+
+/// What the web tools are built from: the port and the results of a
+/// search that does not say how many it wants (`app.opt.web.max_results`).
+#[derive(Clone)]
+pub struct WebTools {
+    /// The web.
+    pub web: Arc<dyn WebPort>,
+    /// Default number of results.
+    pub default_results: usize,
+}
+
+impl std::fmt::Debug for WebTools {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebTools")
+            .field("backend", &self.web.backend())
+            .field("default_results", &self.default_results)
+            .finish()
+    }
+}
+
+impl WebTools {
+    /// Registers `web_search` and `web_fetch` in `registry`.
+    ///
+    /// # Errors
+    ///
+    /// As [`register_web_tools`].
+    pub fn register(&self, registry: &mut ToolRegistry) -> Result<(), RegisterError> {
+        register_web_tools(registry, Arc::clone(&self.web), self.default_results)
     }
 }
 

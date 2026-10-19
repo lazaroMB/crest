@@ -3,10 +3,17 @@
 //! catalog. Each one degrades to defaults and returns warnings instead of
 //! failing, so a broken `init.lua` or an unreachable API never stops crest.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use adapter_web::{CurlWeb, brave_key_from_env_or_keyring};
 use application::ports::llm::ModelCatalogPort;
-use application::ports::plugin::{ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort};
+use application::ports::plugin::{
+    AppOptions, ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort,
+};
+use application::ports::web::WebPort;
+use application::tools::web::WebTools;
+use application::web::{SearchBackend, WebOptions};
 use domain::block::{Block, BlockKind};
 use domain::model::{ModelId, ModelPolicy};
 use domain::workspace::SensitivePathRules;
@@ -109,6 +116,62 @@ pub async fn validate_models(
     }
 }
 
+/// The web tools of `app.opt.web`: `web` when given (tests), else curl.
+/// `None`, with a warning saying why, when the web is disabled, curl is
+/// missing or the config is broken (then the defaults are used). A Brave
+/// backend without a key falls back to DuckDuckGo.
+pub async fn web_tools(
+    options: &AppOptions,
+    web: Option<Arc<dyn WebPort>>,
+) -> (Option<WebTools>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut options = WebOptions::from_options(options).unwrap_or_else(|err| {
+        warnings.push(format!("{err}; web search uses the defaults"));
+        WebOptions::default()
+    });
+    if !options.enabled {
+        return (None, warnings);
+    }
+    let default_results = options.max_results;
+    if let Some(web) = web {
+        return (
+            Some(WebTools {
+                web,
+                default_results,
+            }),
+            warnings,
+        );
+    }
+    let mut key = None;
+    if options.backend == SearchBackend::Brave {
+        // The keyring may block (D-Bus, Keychain).
+        key = tokio::task::spawn_blocking(brave_key_from_env_or_keyring)
+            .await
+            .ok()
+            .flatten();
+        if key.is_none() {
+            warnings.push(
+                "app.opt.web.backend is \"brave\" but there is no key (BRAVE_API_KEY or the \
+                 keyring entry crest / BRAVE_API_KEY); searching with DuckDuckGo"
+                    .to_owned(),
+            );
+            options.backend = SearchBackend::DuckDuckGo;
+        }
+    }
+    let curl = CurlWeb::new(options, key);
+    if !curl.curl_available().await {
+        warnings.push("web search unavailable: install curl".to_owned());
+        return (None, warnings);
+    }
+    (
+        Some(WebTools {
+            web: Arc::new(curl),
+            default_results,
+        }),
+        warnings,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use application::ports::llm::LlmError;
@@ -116,6 +179,31 @@ mod tests {
     use domain::model::{ModelRole, ResolveRequest, default_spec};
 
     use super::*;
+
+    #[tokio::test]
+    async fn web_tools_follow_the_options() {
+        use application::testing::web::ScriptedWeb;
+        use serde_json::json;
+
+        let scripted = || Some(Arc::new(ScriptedWeb::new()) as Arc<dyn WebPort>);
+        let (web, warnings) = web_tools(&AppOptions::default(), scripted()).await;
+        assert_eq!(web.map(|w| w.default_results), Some(8));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let mut options = AppOptions::default();
+        options
+            .extra
+            .insert("web".into(), json!({ "enabled": false }));
+        let (web, warnings) = web_tools(&options, scripted()).await;
+        assert!(web.is_none() && warnings.is_empty());
+
+        options
+            .extra
+            .insert("web".into(), json!({ "max_results": 99 }));
+        let (web, warnings) = web_tools(&options, scripted()).await;
+        assert!(web.is_some());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
 
     #[tokio::test]
     async fn without_a_host_the_defaults_are_used() {
