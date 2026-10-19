@@ -160,7 +160,7 @@ async fn an_unapproved_plugin_is_announced_and_its_calls_fail() {
     let mut fx = fixture(&server, &[]).await;
     let notice = format!(
         "plugin `jira` requests network: http://127.0.0.1:{} — approve with `crest \
-         --trust-plugin jira` or `:plugin trust jira`",
+         --trust-plugin jira` or `/plugin trust jira`",
         server.address().port()
     );
     assert_eq!(fx.app.warnings, [notice]);

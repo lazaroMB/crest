@@ -1,16 +1,18 @@
 //! `app.keymap.set` and `app.commands.register`.
 //!
 //! ```lua
-//! app.keymap.set("n", "<leader>r", "session.resume")
-//! app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end, { desc = "Clear" })
+//! app.keymap.set("<leader>r", "picker.files")
+//! app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear" })
 //! app.commands.register("review", function(args) ... end, { desc = "Review the changes" })
 //! ```
 //!
 //! The optional last table (Neovim style) takes `desc`, the description the
-//! help shows next to the mapping or the command.
+//! help shows next to the mapping or the command. The app has no modes; the
+//! Neovim form with a mode first (`app.keymap.set("n", lhs, action)`) is
+//! still accepted and the mode is ignored.
 //!
 //! A keymap's action is a built-in action by name or a Lua function; a
-//! command (`:review args`) is a function receiving the arguments as a
+//! command (`/review args`) is a function receiving the arguments as a
 //! string. The functions stay in the VM as callbacks; bad arguments become
 //! diagnostics with the caller's line.
 //!
@@ -23,7 +25,7 @@
 
 use std::sync::Arc;
 
-use application::ports::plugin::{CommandSpec, KeyAction, KeyMode, KeymapSpec, PluginAction};
+use application::ports::plugin::{CommandSpec, KeyAction, KeymapSpec, PluginAction};
 use domain::model::ModelRole;
 use mlua::{Function, Lua, Table, Value};
 
@@ -102,35 +104,22 @@ fn send(lua: &Lua, (text, opts): (Value, Option<Table>)) -> mlua::Result<()> {
     Ok(())
 }
 
-fn key_mode(name: &str) -> Option<KeyMode> {
-    match name {
-        "i" | "insert" => Some(KeyMode::Insert),
-        "n" | "normal" => Some(KeyMode::Normal),
-        "c" | "command" => Some(KeyMode::Command),
-        _ => None,
-    }
-}
-
-fn key_modes(value: &Value) -> Result<Vec<KeyMode>, String> {
-    let names: Vec<String> = match value {
-        Value::String(s) => vec![s.to_str().map_err(|e| e.to_string())?.to_owned()],
+/// Whether `value` is a mode of the old Neovim form: `"n"`, `"i"`, `"c"`
+/// (or their long names), or a list of them.
+fn is_mode(value: &Value) -> bool {
+    let named = |name: &str| {
+        matches!(
+            name,
+            "n" | "i" | "c" | "v" | "normal" | "insert" | "command"
+        )
+    };
+    match value {
+        Value::String(s) => s.to_str().is_ok_and(|s| named(&s)),
         Value::Table(t) => t
             .sequence_values::<String>()
-            .collect::<mlua::Result<_>>()
-            .map_err(|e| e.to_string())?,
-        other => {
-            return Err(format!(
-                "mode must be a string or a list, got {}",
-                other.type_name()
-            ));
-        }
-    };
-    names
-        .iter()
-        .map(|n| {
-            key_mode(n).ok_or_else(|| format!("unknown mode `{n}` (use \"n\", \"i\" or \"c\")"))
-        })
-        .collect()
+            .all(|name| name.is_ok_and(|name| named(&name))),
+        _ => false,
+    }
 }
 
 /// The `desc` of an optional options table (`{ desc = "..." }`).
@@ -160,47 +149,52 @@ fn description(what: &str, opts: &Value) -> Result<Option<String>, String> {
 
 fn keymap_set(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
     let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
-    lua.create_function(
-        move |lua, (mode, lhs, action, opts): (Value, Value, Value, Value)| {
-            let parsed = (|| {
-                let modes = key_modes(&mode)?;
-                let description = description("keymap.set", &opts)?;
-                let Value::String(lhs) = lhs else {
-                    return Err("keymap.set: the key sequence must be a string".to_owned());
-                };
-                let lhs = lhs.to_str().map_err(|e| e.to_string())?.to_owned();
-                let action = match action {
-                    Value::String(s) => {
-                        KeyAction::Builtin(s.to_str().map_err(|e| e.to_string())?.to_owned())
-                    }
-                    Value::Function(f) => {
-                        KeyAction::Callback(callbacks::register(lua, f).map_err(|e| e.to_string())?)
-                    }
-                    other => {
-                        return Err(format!(
-                            "keymap.set: the action must be a string or a function, got {}",
-                            other.type_name()
-                        ));
-                    }
-                };
-                Ok(modes
-                    .into_iter()
-                    .map(|mode| KeymapSpec {
-                        mode,
-                        lhs: lhs.clone(),
-                        action: action.clone(),
-                        description: description.clone(),
-                        plugin: origin.plugin.clone(),
-                    })
-                    .collect::<Vec<_>>())
-            })();
-            match parsed {
-                Ok(specs) => lock(&sink).keymaps.extend(specs),
-                Err(message) => report(lua, &sink, &origin, message),
-            }
-            Ok(())
-        },
-    )
+    lua.create_function(move |lua, args: mlua::Variadic<Value>| {
+        let mut args: Vec<Value> = args.into_iter().collect();
+        // `set(mode, lhs, action, opts)`: the mode is ignored.
+        let action_at_third = matches!(args.get(2), Some(Value::String(_) | Value::Function(_)));
+        if args.len() >= 3 && action_at_third && args.first().is_some_and(is_mode) {
+            args.remove(0);
+        }
+        let mut args = args.into_iter();
+        let (lhs, action, opts) = (
+            args.next().unwrap_or(Value::Nil),
+            args.next().unwrap_or(Value::Nil),
+            args.next().unwrap_or(Value::Nil),
+        );
+        let parsed = (|| {
+            let description = description("keymap.set", &opts)?;
+            let Value::String(lhs) = lhs else {
+                return Err("keymap.set: the key sequence must be a string".to_owned());
+            };
+            let lhs = lhs.to_str().map_err(|e| e.to_string())?.to_owned();
+            let action = match action {
+                Value::String(s) => {
+                    KeyAction::Builtin(s.to_str().map_err(|e| e.to_string())?.to_owned())
+                }
+                Value::Function(f) => {
+                    KeyAction::Callback(callbacks::register(lua, f).map_err(|e| e.to_string())?)
+                }
+                other => {
+                    return Err(format!(
+                        "keymap.set: the action must be a string or a function, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            Ok(KeymapSpec {
+                lhs,
+                action,
+                description,
+                plugin: origin.plugin.clone(),
+            })
+        })();
+        match parsed {
+            Ok(spec) => lock(&sink).keymaps.push(spec),
+            Err(message) => report(lua, &sink, &origin, message),
+        }
+        Ok(())
+    })
 }
 
 fn commands_register(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {

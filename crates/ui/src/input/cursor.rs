@@ -67,9 +67,9 @@ impl Blink {
 /// How the cursor is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorShape {
-    /// A filled block with the character under it inverted (insert mode).
+    /// A filled block with the character under it inverted.
     Block,
-    /// A block outline (normal mode: the prompt is not being edited).
+    /// A block outline.
     Hollow,
 }
 

@@ -12,14 +12,19 @@
 //! - The domain events go back through [`ChannelSink`], a futures channel
 //!   that the session consumes on GPUI's executor.
 //!
-//! `:implement <ruta>` opens the implementation flow of a Spec on the
+//! `/implement <ruta>` opens the implementation flow of a Spec on the
 //! runtime ([`UiController::run_command`]); while it waits at a gate,
 //! every line sent from the input answers it instead of starting a turn,
 //! until the flow stops.
 //!
-//! `:research <problema>` starts the research flow of the workspace the
-//! same way (see [`crate::research`]): while it is active, the lines sent
-//! from the input go to it.
+//! `/research <problema>` starts the research flow of the workspace the
+//! same way (see [`crate::research`]): while it waits at a gate, the lines
+//! sent from the input go to it. `/stage`, `/back`, `/skip`, `/retry` and
+//! `/abort` go to the active implementation flow, or else to the research
+//! flow. `Ctrl+C` aborts the running commands
+//! ([`UiController::interrupt_commands`](SessionController::interrupt_commands));
+//! a stopped flow stays saved at its last checkpoint and `/research resume`
+//! or `/implement resume` continue it.
 //!
 //! When the agent cannot start (no API key) the window still opens: the
 //! error is the first block of the timeline and every prompt answers with
@@ -49,6 +54,7 @@ use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulat
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind};
 use domain::conversation::StopReason;
+use domain::git::GitStatus;
 use domain::model::{ModelId, ModelPolicy, ResolveRequest};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspaceRoot;
@@ -56,6 +62,7 @@ use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
 use tokio::runtime::Handle;
+use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
 use ui::help::HelpSnapshot;
 use ui::session::{
@@ -163,13 +170,16 @@ pub struct UiController {
     flow: ActiveFlow,
     research: SharedResearch,
     simulator: Simulator,
+    shell: Arc<dyn application::ports::shell::ShellPort>,
+    /// Commands running on the runtime, aborted by `Ctrl+C`.
+    running: Arc<Mutex<Vec<AbortHandle>>>,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
 /// line does not wait for (or block) the chat's turns.
 type SharedResearch = Arc<tokio::sync::Mutex<Option<ResearchSession>>>;
 
-/// `:research <args>`: starts, resumes or reports the research flow and
+/// `/research <args>`: starts, resumes or reports the research flow and
 /// saves the chat session (its timeline holds the flow's blocks).
 async fn research_command(
     app: Arc<tokio::sync::Mutex<App>>,
@@ -180,7 +190,7 @@ async fn research_command(
     let Some(session) = guard.as_mut() else {
         return Reply::Notice(
             NoticeLevel::Warning,
-            ":research is unavailable: the crest database did not open".into(),
+            "/research is unavailable: the crest database did not open".into(),
         );
     };
     let result = crate::research::command(
@@ -197,7 +207,7 @@ async fn research_command(
     }
 }
 
-/// `:simulate <spec>`: simulates the Spec's solution; the use case opens
+/// `/simulate <spec>`: simulates the Spec's solution; the use case opens
 /// the board (`SimulationReady`) and the timeline gets the verdicts.
 async fn simulate_command(simulator: Simulator, spec: String) -> Reply {
     let request = SimulateRequest {
@@ -210,7 +220,7 @@ async fn simulate_command(simulator: Simulator, spec: String) -> Reply {
             title: Some(format!("Simulation of {}", report.folder)),
             source: simulation_markdown(&report),
         })),
-        Err(err) => Reply::Notice(NoticeLevel::Warning, format!(":simulate: {err}")),
+        Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/simulate: {err}")),
     }
 }
 
@@ -266,7 +276,7 @@ fn settle(
     }
 }
 
-/// `:implement <target>`: opens the flow of `target` and runs it to its
+/// `/implement <target>`: opens the flow of `target` and runs it to its
 /// first gate.
 async fn start_implementation(
     app: Arc<tokio::sync::Mutex<App>>,
@@ -300,7 +310,7 @@ async fn start_implementation(
     let opened = app.lock().await.open_implementation(&target).await;
     let session = match opened {
         Ok(session) => session,
-        Err(err) => return Reply::Notice(NoticeLevel::Warning, format!(":implement: {err:#}")),
+        Err(err) => return Reply::Notice(NoticeLevel::Warning, format!("/implement: {err:#}")),
     };
     let resumed = session
         .resumed()
@@ -334,7 +344,7 @@ async fn answer_gate(active: &mut Option<ImplementSession>, line: &str, events: 
     }
 }
 
-/// What `:mcp trust <name>` needs.
+/// What `/mcp trust <name>` needs.
 struct McpTrust {
     specs: Vec<McpServerSpec>,
     workspace: PathBuf,
@@ -342,21 +352,21 @@ struct McpTrust {
 }
 
 impl McpTrust {
-    /// `:mcp <args>`.
+    /// `/mcp <args>`.
     fn run(&self, args: &str) -> Reply {
         let mut words = args.split_whitespace();
         let (Some("trust"), Some(name), None) = (words.next(), words.next(), words.next()) else {
-            return Reply::Notice(NoticeLevel::Warning, "usage: :mcp trust <name>".into());
+            return Reply::Notice(NoticeLevel::Warning, "usage: /mcp trust <name>".into());
         };
         match crate::mcp::trust_declared(&self.specs, &self.workspace, self.store.as_deref(), name)
         {
             Ok(message) => Reply::Notice(NoticeLevel::Info, message),
-            Err(message) => Reply::Notice(NoticeLevel::Warning, format!(":mcp trust: {message}")),
+            Err(message) => Reply::Notice(NoticeLevel::Warning, format!("/mcp trust: {message}")),
         }
     }
 }
 
-/// `:plugin <args>`: `trust <name>` or `list`.
+/// `/plugin <args>`: `trust <name>` or `list`.
 async fn plugin_command(trust: Arc<PluginTrust>, args: String) -> Reply {
     let words: Vec<&str> = args.split_whitespace().collect();
     match words.as_slice() {
@@ -364,12 +374,12 @@ async fn plugin_command(trust: Arc<PluginTrust>, args: String) -> Reply {
         ["trust", name] => match trust.trust(name).await {
             Ok(message) => Reply::Notice(NoticeLevel::Info, message),
             Err(message) => {
-                Reply::Notice(NoticeLevel::Warning, format!(":plugin trust: {message}"))
+                Reply::Notice(NoticeLevel::Warning, format!("/plugin trust: {message}"))
             }
         },
         _ => Reply::Notice(
             NoticeLevel::Warning,
-            "usage: :plugin list | :plugin trust <name>".into(),
+            "usage: /plugin list | /plugin trust <name>".into(),
         ),
     }
 }
@@ -395,6 +405,7 @@ impl UiController {
         });
         let events = app.events();
         let simulator = app.simulator.clone();
+        let shell = Arc::clone(&app.shell);
         let commands = app
             .commands
             .iter()
@@ -413,6 +424,8 @@ impl UiController {
             flow: Arc::new(tokio::sync::Mutex::new(None)),
             research,
             simulator,
+            shell,
+            running: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -456,6 +469,82 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
     }
 }
 
+impl UiController {
+    /// Runs the command `name` on the runtime; `Ctrl+C` aborts it
+    /// ([`SessionController::interrupt_commands`]).
+    fn spawn_command(
+        &self,
+        name: &'static str,
+        work: impl Future<Output = Reply> + Send + 'static,
+    ) -> BoxFuture<'static, Reply> {
+        let task = self.handle.spawn(work);
+        let abort = task.abort_handle();
+        let id = abort.id();
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(abort);
+        let running = Arc::clone(&self.running);
+        task.map(move |joined| {
+            running
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|handle| handle.id() != id);
+            match joined {
+                Ok(reply) => reply,
+                Err(err) if err.is_cancelled() => {
+                    Reply::Notice(NoticeLevel::Info, interrupted(name))
+                }
+                Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/{name}: {err}")),
+            }
+        })
+        .boxed()
+    }
+}
+
+/// What the status bar says when `Ctrl+C` stopped the command `name`.
+fn interrupted(name: &str) -> String {
+    match name {
+        "research" => crate::research::INTERRUPTED.to_owned(),
+        "implement" => "implementation interrupted; it is saved at its last step and \
+                        `/implement resume` continues it"
+            .to_owned(),
+        "!" => "command interrupted".to_owned(),
+        other => format!("/{other} interrupted"),
+    }
+}
+
+/// `/stage`, `/back`, `/skip`, `/retry` or `/abort`: for the active
+/// implementation flow, else for the research flow of the workspace.
+async fn flow_line(
+    app: Arc<tokio::sync::Mutex<App>>,
+    flow: ActiveFlow,
+    research: SharedResearch,
+    events: Arc<dyn EventSink>,
+    line: String,
+) -> Reply {
+    let mut active = flow.lock().await;
+    if active.is_some() {
+        answer_gate(&mut active, &line, events.as_ref()).await;
+        return Reply::Done;
+    }
+    drop(active);
+    let mut guard = research.lock().await;
+    let Some(session) = guard.as_mut() else {
+        return Reply::Notice(
+            NoticeLevel::Warning,
+            "the research flow is unavailable: the crest database did not open".into(),
+        );
+    };
+    let result = crate::research::line(session, &line).await;
+    drop(guard);
+    save(&app).await;
+    match result {
+        Ok(message) => Reply::Notice(NoticeLevel::Info, message),
+        Err(message) => Reply::Notice(NoticeLevel::Warning, message),
+    }
+}
+
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let (tx, rx) = oneshot::channel();
@@ -481,9 +570,11 @@ impl SessionController for UiController {
                 events.emit(DomainEvent::BlockAdded {
                     block: prompt_block(&request.prompt),
                 });
-                let (level, message) = match crate::research::line(session, &request.prompt).await {
-                    Ok(message) => (NoticeLevel::Info, message),
-                    Err(message) => (NoticeLevel::Warning, message),
+                let line = crate::research::line(session, &request.prompt);
+                let (level, message) = match request.cancel.run(line).await {
+                    Ok(Ok(message)) => (NoticeLevel::Info, message),
+                    Ok(Err(message)) => (NoticeLevel::Warning, message),
+                    Err(_) => (NoticeLevel::Info, crate::research::INTERRUPTED.to_owned()),
                 };
                 events.emit(DomainEvent::Notice { level, message });
                 drop(research);
@@ -542,90 +633,82 @@ impl SessionController for UiController {
     }
 
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
-        if name == "implement" {
-            let start = start_implementation(
-                Arc::clone(&self.app),
-                Arc::clone(&self.flow),
-                args.to_owned(),
-            );
-            let task = self.handle.spawn(start);
-            return Some(
-                task.map(|joined| {
-                    joined.unwrap_or_else(|err| {
-                        Reply::Notice(NoticeLevel::Warning, format!(":implement: {err}"))
-                    })
-                })
-                .boxed(),
-            );
-        }
-        if name == "research" {
-            let start = research_command(
-                Arc::clone(&self.app),
-                Arc::clone(&self.research),
-                args.to_owned(),
-            );
-            let task = self.handle.spawn(start);
-            return Some(
-                task.map(|joined| {
-                    joined.unwrap_or_else(|err| {
-                        Reply::Notice(NoticeLevel::Warning, format!(":research: {err}"))
-                    })
-                })
-                .boxed(),
-            );
-        }
-        if name == "simulate" {
-            let spec = args.trim().to_owned();
-            if spec.is_empty() {
-                return Some(
-                    futures::future::ready(Reply::Notice(
-                        NoticeLevel::Warning,
-                        "usage: :simulate <spec> (a folder of .crest/specs/ or its number)".into(),
-                    ))
-                    .boxed(),
-                );
+        let args = args.to_owned();
+        match name {
+            "implement" => {
+                let start =
+                    start_implementation(Arc::clone(&self.app), Arc::clone(&self.flow), args);
+                Some(self.spawn_command("implement", start))
             }
-            let task = self
-                .handle
-                .spawn(simulate_command(self.simulator.clone(), spec));
-            return Some(
-                task.map(|joined| {
-                    joined.unwrap_or_else(|err| {
-                        Reply::Notice(NoticeLevel::Warning, format!(":simulate: {err}"))
+            "research" => {
+                let start =
+                    research_command(Arc::clone(&self.app), Arc::clone(&self.research), args);
+                Some(self.spawn_command("research", start))
+            }
+            "stage" | "back" | "skip" | "abort" | "retry" => {
+                let line = format!("/{name} {args}").trim_end().to_owned();
+                let task = flow_line(
+                    Arc::clone(&self.app),
+                    Arc::clone(&self.flow),
+                    Arc::clone(&self.research),
+                    Arc::clone(&self.events),
+                    line,
+                );
+                Some(self.spawn_command("research", task))
+            }
+            "simulate" => {
+                let spec = args.trim().to_owned();
+                if spec.is_empty() {
+                    return Some(
+                        futures::future::ready(Reply::Notice(
+                            NoticeLevel::Warning,
+                            "usage: /simulate <spec> (a folder of .crest/specs/ or its number)"
+                                .into(),
+                        ))
+                        .boxed(),
+                    );
+                }
+                Some(self.spawn_command("simulate", simulate_command(self.simulator.clone(), spec)))
+            }
+            "mcp" => {
+                // Reads and writes the store file: off GPUI's thread.
+                let mcp = Arc::clone(&self.mcp);
+                let task = self.handle.spawn_blocking(move || mcp.run(&args));
+                Some(
+                    task.map(|joined| {
+                        joined.unwrap_or_else(|err| {
+                            Reply::Notice(NoticeLevel::Warning, format!("/mcp: {err}"))
+                        })
                     })
-                })
-                .boxed(),
-            );
+                    .boxed(),
+                )
+            }
+            "plugin" => {
+                let task = plugin_command(Arc::clone(&self.plugin_trust), args);
+                Some(self.spawn_command("plugin", task))
+            }
+            _ => {
+                let id = self.commands.get(name)?;
+                Some(self.run_callback(id.0, serde_json::Value::String(args)))
+            }
         }
-        if name == "mcp" {
-            // Reads and writes the store file: off GPUI's thread.
-            let (mcp, args) = (Arc::clone(&self.mcp), args.to_owned());
-            let task = self.handle.spawn_blocking(move || mcp.run(&args));
-            return Some(
-                task.map(|joined| {
-                    joined.unwrap_or_else(|err| {
-                        Reply::Notice(NoticeLevel::Warning, format!(":mcp: {err}"))
-                    })
-                })
-                .boxed(),
-            );
+    }
+
+    fn interrupt_commands(&self) -> bool {
+        let running =
+            std::mem::take(&mut *self.running.lock().unwrap_or_else(PoisonError::into_inner));
+        for handle in &running {
+            handle.abort();
         }
-        if name == "plugin" {
-            let task = self.handle.spawn(plugin_command(
-                Arc::clone(&self.plugin_trust),
-                args.to_owned(),
-            ));
-            return Some(
-                task.map(|joined| {
-                    joined.unwrap_or_else(|err| {
-                        Reply::Notice(NoticeLevel::Warning, format!(":plugin: {err}"))
-                    })
-                })
-                .boxed(),
-            );
-        }
-        let id = self.commands.get(name)?;
-        Some(self.run_callback(id.0, serde_json::Value::String(args.to_owned())))
+        !running.is_empty()
+    }
+
+    fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
+        let shell = Arc::clone(&self.shell);
+        let task = self.handle.spawn(async move {
+            application::usecases::git_status::git_status(shell.as_ref()).await
+        });
+        task.map(|joined| joined.ok().flatten()).boxed()
     }
 
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
@@ -908,7 +991,7 @@ mod tests {
         else {
             panic!("a bad subcommand warns");
         };
-        assert!(usage.contains(":plugin trust <name>"), "{usage}");
+        assert!(usage.contains("/plugin trust <name>"), "{usage}");
         let Reply::Notice(NoticeLevel::Warning, missing) =
             plugin_command(trust, "trust x".into()).await
         else {
@@ -945,7 +1028,7 @@ mod tests {
         let Reply::Notice(NoticeLevel::Warning, usage) = trust.run("list") else {
             panic!("a usage warning");
         };
-        assert!(usage.contains(":mcp trust"), "{usage}");
+        assert!(usage.contains("/mcp trust"), "{usage}");
     }
 
     #[test]

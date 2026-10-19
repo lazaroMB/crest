@@ -3,16 +3,16 @@
 //!
 //! # Commands
 //!
-//! - `:research <problem description>` starts a flow (the 14 nodes of
+//! - `/research <problem description>` starts a flow (the 14 nodes of
 //!   the X-Workflow) that runs to its first gate.
-//! - `:research resume` continues the flow left halfway in this workspace
+//! - `/research resume` continues the flow left halfway in this workspace
 //!   (crest says so when it opens).
-//! - `:research` alone says where the flow is.
+//! - `/research` alone says where the flow is.
 //!
 //! While a flow is active every line typed in the chat goes to it: the
 //! answer to its gate ("yes" to go on, anything else to redo the stage) or
 //! `/stage`, `/back <stage>`, `/skip` and `/abort`. The `:` commands of the
-//! UI (`:model`, `:mode`…) are handled by the UI first. When the flow ends
+//! UI (`/model`, `/mode`…) are handled by the UI first. When the flow ends
 //! the chat answers turns again.
 //!
 //! Headless: `crest --headless --research "<problem>"` runs the flow in the
@@ -148,6 +148,10 @@ impl ResearchCommand {
         }
     }
 }
+
+/// What the status bar says when `Ctrl+C` stopped the research flow.
+pub const INTERRUPTED: &str = "research flow interrupted; it is saved at its last stage and \
+                               `/research resume` continues it";
 
 /// Usage of `/research`, shown when there is nothing to report.
 pub const USAGE: &str = "no active research flow; `/research <problem description>` \

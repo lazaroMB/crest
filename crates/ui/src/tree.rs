@@ -1,6 +1,10 @@
 //! The side panel with the workspace tree (`<leader>e`, action
 //! `panel.tree`).
 //!
+//! Opening it gives it the focus: `Up`/`Down` move, `Right`/`Left` open and
+//! close directories and `Enter` on a file references it in the prompt.
+//! Typing (or `Esc`) goes back to the prompt.
+//!
 //! The tree comes from [`FileSearchPort::tree`], the same port the agent's
 //! `tree` tool uses, so it lists what the agent sees (`.gitignore`d files
 //! and `.git/` excluded). [`DirWatcher`] is the only piece that touches the
@@ -20,8 +24,9 @@ use domain::workspace::WorkspacePath;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Task, Window, div, px,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::list::ListItem;
 use gpui_component::tree::{TreeEvent, TreeItem, TreeState, tree};
@@ -138,7 +143,7 @@ impl DirWatcher {
 /// What the panel asks the rest of the UI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreePanelEvent {
-    /// A file was clicked.
+    /// A file was clicked or chosen with `Enter`.
     Open(WorkspacePath),
 }
 
@@ -147,6 +152,7 @@ pub enum TreePanelEvent {
 pub struct TreePanel {
     search: Arc<dyn FileSearchPort>,
     state: Entity<TreeState>,
+    focus_handle: FocusHandle,
     root: Option<TreeNode>,
     expanded: HashSet<SharedString>,
     error: Option<String>,
@@ -173,6 +179,7 @@ impl TreePanel {
         let mut panel = Self {
             search,
             state,
+            focus_handle: cx.focus_handle(),
             root: None,
             expanded: HashSet::new(),
             error: None,
@@ -197,14 +204,51 @@ impl TreePanel {
         cx.notify();
     }
 
-    /// Runs `panel.tree`. Returns whether the action belongs to the panel.
-    pub fn handle_action(&mut self, action: &Action, cx: &mut Context<Self>) -> bool {
+    /// Gives the keyboard focus to the tree, selecting its first row when
+    /// none is.
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            if state.selected_index().is_none() && state.entry(0).is_some() {
+                state.set_selected_index(Some(0), cx);
+            }
+            state.focus(window, cx);
+        });
+    }
+
+    /// Runs `panel.tree`: shown, the tree takes the focus. Returns whether
+    /// the action belongs to the panel.
+    pub fn handle_action(
+        &mut self,
+        action: &Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         match action {
             Action::Builtin(name) if name == TOGGLE_ACTION => {
                 self.toggle(cx);
+                if self.visible {
+                    self.focus(window, cx);
+                }
                 true
             }
             _ => false,
+        }
+    }
+
+    /// `Enter` on a file opens it like a click.
+    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "enter" {
+            return;
+        }
+        let file = self
+            .state
+            .read(cx)
+            .selected_entry()
+            .filter(|entry| !entry.is_folder() && !entry.is_disabled())
+            .map(|entry| entry.item().id.clone());
+        if let Some(path) = file.and_then(|id| WorkspacePath::parse(&id).ok()) {
+            cx.emit(TreePanelEvent::Open(path));
+            cx.stop_propagation();
         }
     }
 
@@ -317,22 +361,32 @@ impl TreePanel {
     }
 }
 
+impl Focusable for TreePanel {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for TreePanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.visible {
             return div().into_any_element();
         }
+        let focused = self.focus_handle.contains_focused(window, cx);
         let theme = cx.theme();
         let title = self
             .root
             .as_ref()
             .map_or_else(|| "workspace".to_owned(), |root| root.name.clone());
         let mut panel = v_flex()
+            .id("tree-panel")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key))
             .w(px(PANEL_WIDTH))
             .h_full()
             .flex_none()
             .border_r_1()
-            .border_color(theme.border)
+            .border_color(if focused { theme.primary } else { theme.border })
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
             .child(
@@ -528,12 +582,12 @@ mod tests {
     #[gpui::test]
     fn panel_tree_action_toggles_it(cx: &mut TestAppContext) {
         let (panel, cx) = panel(fake_fs(), cx);
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             assert!(!panel.is_visible(), "hidden by default");
-            assert!(panel.handle_action(&Action::builtin("panel.tree"), cx));
+            assert!(panel.handle_action(&Action::builtin("panel.tree"), window, cx));
             assert!(panel.is_visible());
-            assert!(!panel.handle_action(&Action::builtin("block.next"), cx));
-            panel.handle_action(&Action::builtin("panel.tree"), cx);
+            assert!(!panel.handle_action(&Action::builtin("block.next"), window, cx));
+            panel.handle_action(&Action::builtin("panel.tree"), window, cx);
             assert!(!panel.is_visible());
         });
     }

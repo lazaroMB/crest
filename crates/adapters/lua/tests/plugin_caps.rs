@@ -136,7 +136,7 @@ async fn the_declaration_is_reported_and_inactive_until_granted() {
     let denied = err_text(call(&host, "shell", json!(["echo", ["hi"]])).await);
     assert!(denied.contains("are not approved"), "{denied}");
     assert!(denied.contains("crest --trust-plugin jira"), "{denied}");
-    assert!(denied.contains(":plugin trust jira"), "{denied}");
+    assert!(denied.contains("/plugin trust jira"), "{denied}");
 
     host.grant_capabilities(config.plugin_capabilities.clone())
         .await

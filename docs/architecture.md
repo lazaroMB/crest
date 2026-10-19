@@ -177,7 +177,7 @@ The use cases draw nothing: they emit `DomainEvent` (`ports/events.rs`) through 
 | `TurnFinished { stop_reason }` / `TurnFailed { error }` | End of the turn. |
 | `Notice { level, message }` | Notice for the status bar. |
 | `ModalOpened { spec }` / `ModalUpdated { id, content }` / `ModalClosed { id }` | A plugin modal (`app.modal.*`), pushed by the Lua host. |
-| `SimulationReady { board }` | A simulated Spec (`:simulate`, `simulate_solution`): the window opens its board in a full-size modal. Like the modal events, it is not saved with the timeline. |
+| `SimulationReady { board }` | A simulated Spec (`/simulate`, `simulate_solution`): the window opens its board in a full-size modal. Like the modal events, it is not saved with the timeline. |
 
 ```mermaid
 flowchart LR
@@ -201,7 +201,7 @@ flowchart LR
     end
     subgraph tokio["multi-threaded tokio runtime"]
         turns["turns, workflows, adapters<br/>(reqwest, rg/fzf, MCP)"]
-        blocking["spawn_blocking:<br/>SQLite, keyring, :mcp"]
+        blocking["spawn_blocking:<br/>SQLite, keyring, /mcp"]
     end
     lua["crest-lua thread<br/>(Lua VM)"]
     gpui -- "UiController: handle.spawn + oneshot" --> turns
@@ -213,7 +213,7 @@ flowchart LR
 
 - `main.rs` creates a multi-threaded tokio runtime. GPUI runs its own executor on the main thread (`gui::run`).
 - `build_app` runs with `handle.block_on` before the window opens.
-- Each turn, each workflow line and each command (`:implement`, `:research`, Lua commands) is launched on tokio with `handle.spawn`. GPUI awaits a `oneshot` and never runs tokio futures.
+- Each turn, each workflow line and each command (`/implement`, `/research`, Lua commands) is launched on tokio with `handle.spawn`. GPUI awaits a `oneshot` and never runs tokio futures.
 - Tree and picker searches go through `TokioPort`, which runs them on the runtime.
 - Approvals travel through a channel to the dialog, and each request carries its own response `oneshot`. If the turn stops waiting (for example, because you cancelled it), the dialog closes.
 - The Lua VM lives on its own `std::thread` (`crest-lua`) and serves requests one at a time. `LuaHandle` sends closures and awaits the result without blocking the runtime.
@@ -243,7 +243,7 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 3. Sensitive paths, `RipgrepSearch` and the `rg` and `fzf` checks.
 4. API key, `AnthropicLlm` and catalog validation (5 s at most).
 5. `SqliteSessionStore`.
-6. `ToolRegistry`: file tools, component tools, `task`, `simulate_solution` (over the `Simulator`, which `:simulate` and `--simulate` share), plugin tools and MCP tools (with trust-based admission).
+6. `ToolRegistry`: file tools, component tools, `task`, `simulate_solution` (over the `Simulator`, which `/simulate` and `--simulate` share), plugin tools and MCP tools (with trust-based admission).
 7. Session resume, `AgentService` with compaction, hooks and `CostTracker`.
 8. `SqliteFlowStorage`, `ResearchSession` and `ImplementDeps`.
 

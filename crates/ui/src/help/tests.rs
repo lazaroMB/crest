@@ -1,4 +1,4 @@
-use application::keymap::{Action, Mode, default_keymap};
+use application::keymap::{Action, default_keymap};
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 
@@ -8,7 +8,7 @@ fn snapshot() -> HelpSnapshot {
     HelpSnapshot {
         commands: vec![CommandRow {
             name: "review".into(),
-            usage: ":review [args]".into(),
+            usage: "/review [args]".into(),
             description: "Review the changes".into(),
             source: "jira".into(),
         }],
@@ -41,7 +41,7 @@ fn snapshot() -> HelpSnapshot {
             adds: vec!["tool jira_issue".into()],
             capabilities: vec!["network:jira.example.com".into()],
             trust: "pending".into(),
-            approve: Some(":plugin trust jira".into()),
+            approve: Some("/plugin trust jira".into()),
             ..PluginRow::default()
         }],
         mcp: vec![McpRow {
@@ -85,11 +85,7 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
     assert_eq!(names.first(), Some(&"help"));
     assert_eq!(names.last(), Some(&"review"), "plugin commands after");
     assert!(names.contains(&"model") && names.contains(&"q"));
-    let help = full
-        .keys
-        .iter()
-        .find(|k| k.mode == Mode::Normal && k.keys == "?")
-        .unwrap();
+    let help = full.keys.iter().find(|k| k.keys == "<F1>").unwrap();
     assert_eq!(help.action, HELP_ACTION);
     assert_eq!(help.description, "Open the help");
     assert_eq!(help.source, BUILTIN_SOURCE);
@@ -112,28 +108,24 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
 #[test]
 fn key_rows_mark_overrides_and_name_the_plugin() {
     let mut keymap = default_keymap();
-    keymap
-        .set(Mode::Normal, "j", Action::builtin("block.last"))
-        .unwrap();
-    keymap
-        .set(Mode::Normal, "<leader>x", Action::Callback(4))
-        .unwrap();
+    keymap.set("<A-Up>", Action::builtin("block.last")).unwrap();
+    keymap.set("<leader>x", Action::Callback(4)).unwrap();
     let rows = key_rows(&keymap, |entry| match entry.action {
         Action::Callback(4) => Some((Some("Clear".into()), "jira".into())),
         _ => None,
     });
     let find = |keys: &str| rows.iter().find(|r| r.keys == keys).unwrap();
-    let j = find("j");
+    let j = find("<A-Up>");
     assert!(j.overridden);
     assert_eq!(j.description, "Select the last block");
     assert_eq!(j.source, "config");
-    let x = find("<Space>x");
+    let x = find("<C-Space>x");
     assert_eq!(
         (x.action.as_str(), x.description.as_str(), x.source.as_str()),
         ("Lua function", "Clear", "jira")
     );
     assert!(!x.overridden);
-    assert!(!find("k").overridden);
+    assert!(!find("<A-Down>").overridden);
 }
 
 #[test]
@@ -196,9 +188,9 @@ fn rows_group_and_copy_what_is_useful() {
     assert_eq!(tools[1].copy, "jira_issue");
     assert!(tools[1].details.iter().any(|d| d.contains("\"type\"")));
     let plugins = section_rows(&full, Section::Plugins);
-    assert_eq!(plugins[0].copy, ":plugin trust jira");
+    assert_eq!(plugins[0].copy, "/plugin trust jira");
     let commands = section_rows(&full, Section::Commands);
-    assert_eq!(commands[0].copy, ":help");
+    assert_eq!(commands[0].copy, "/help");
     assert_eq!(
         commands.last().map(|r| r.tags.clone()),
         Some(vec!["jira".into()])
@@ -206,7 +198,12 @@ fn rows_group_and_copy_what_is_useful() {
     let cli = section_rows(&full, Section::Cli);
     assert_eq!(cli[0].copy, "--model");
     let keys = section_rows(&full, Section::Keys);
-    assert_eq!(keys[0].group.as_deref(), Some("insert mode"));
+    assert!(
+        keys[0]
+            .group
+            .as_deref()
+            .is_some_and(|g| g.starts_with("Shortcuts"))
+    );
     let files = section_rows(&full, Section::Files);
     assert_eq!(files.len(), 2);
     assert_eq!(files[1].group.as_deref(), Some("Problems at startup"));

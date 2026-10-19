@@ -8,7 +8,7 @@
 //! - options key by key (`extra` too);
 //! - model roles field by field, kept per layer (plugins fold into the
 //!   global layer) so the policy can tell where a spec came from;
-//! - keymaps by `(mode, lhs)`, commands, tools and MCP servers by name;
+//! - keymaps by `lhs`, commands, tools and MCP servers by name;
 //!   each server records whether the workspace declared it, so the app can
 //!   hold back servers that come with a cloned repository;
 //! - hooks are all kept, in the order the files ran (global, plugins,
@@ -116,7 +116,7 @@ pub(crate) fn merge(
             }
         }
         for km in collected.keymaps {
-            upsert(&mut config.keymaps, km, |k| (k.mode, k.lhs.clone()));
+            upsert(&mut config.keymaps, km, |k| k.lhs.clone());
         }
         for cmd in collected.commands {
             upsert(&mut config.commands, cmd, |c| c.name.clone());
@@ -166,8 +166,7 @@ pub(crate) fn merge(
 #[cfg(test)]
 mod tests {
     use application::ports::plugin::{
-        CommandSpec, HookKind, KeyAction, KeyMode, KeymapSpec, McpServerSpec, McpTransport,
-        PluginToolSpec,
+        CommandSpec, HookKind, KeyAction, KeymapSpec, McpServerSpec, McpTransport, PluginToolSpec,
     };
     use domain::model::{ModelId, ModelRole, ModelSpecPatch};
     use serde_json::json;
@@ -177,7 +176,6 @@ mod tests {
 
     fn keymap(lhs: &str, action: &str) -> KeymapSpec {
         KeymapSpec {
-            mode: KeyMode::Normal,
             lhs: lhs.into(),
             action: KeyAction::Builtin(action.into()),
             description: None,

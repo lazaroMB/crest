@@ -1,5 +1,6 @@
-//! Status bar: input mode, active model, permission mode, session cost and
-//! workspace, plus transient notices (warnings, model fallback, retries).
+//! Status bar: the crest mark, active model, permission mode, session
+//! cost, git branch and changes, and workspace, plus transient notices
+//! (warnings, model fallback, retries).
 //!
 //! [`StatusState`] is the pure model, updated from [`DomainEvent`]s with an
 //! explicit `now` so notice expiry is tested without sleeping;
@@ -7,9 +8,9 @@
 
 use std::time::{Duration, Instant};
 
-use application::keymap::Mode;
 use application::ports::events::{DomainEvent, NoticeLevel};
 use domain::conversation::Usage;
+use domain::git::GitStatus;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 use gpui::{
@@ -17,8 +18,6 @@ use gpui::{
     Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
-
-use crate::input::mode_label;
 
 /// How long a transient notice stays in the status bar.
 pub const NOTICE_TTL: Duration = Duration::from_secs(6);
@@ -55,7 +54,7 @@ pub struct StatusState {
     workspace: String,
     model: Option<ModelId>,
     permission_mode: PermissionMode,
-    input_mode: Mode,
+    git: Option<GitStatus>,
     cost_usd: Option<f64>,
     session_usage: Option<Usage>,
     busy: bool,
@@ -64,13 +63,13 @@ pub struct StatusState {
 
 impl StatusState {
     /// Status for `workspace` before any turn: no model yet, default
-    /// permission mode, insert mode, no cost.
+    /// permission mode, no git state yet, no cost.
     pub fn new(workspace: impl Into<String>) -> Self {
         Self {
             workspace: workspace.into(),
             model: None,
             permission_mode: PermissionMode::default(),
-            input_mode: Mode::Insert,
+            git: None,
             cost_usd: None,
             session_usage: None,
             busy: false,
@@ -103,14 +102,16 @@ impl StatusState {
         self.permission_mode = mode;
     }
 
-    /// Mode of the prompt input.
-    pub fn input_mode(&self) -> Mode {
-        self.input_mode
+    /// Git state of the workspace, when it is a repository.
+    pub fn git(&self) -> Option<&GitStatus> {
+        self.git.as_ref()
     }
 
-    /// Updates the input mode (the input emits it, not the domain).
-    pub fn set_input_mode(&mut self, mode: Mode) {
-        self.input_mode = mode;
+    /// Updates the git state; returns whether it changed.
+    pub fn set_git(&mut self, git: Option<GitStatus>) -> bool {
+        let changed = self.git != git;
+        self.git = git;
+        changed
     }
 
     /// Cost of the session in USD, when pricing is known.
@@ -201,16 +202,18 @@ impl StatusState {
         }
     }
 
-    /// The fixed segments, left to right: input mode, model, permission
-    /// mode, cost and workspace.
+    /// The fixed segments, left to right: model, permission mode, cost,
+    /// git (empty outside a repository) and workspace.
     pub fn segments(&self) -> [String; 5] {
         [
-            mode_label(self.input_mode).to_owned(),
             self.model
                 .as_ref()
                 .map_or_else(|| "no model".to_owned(), ToString::to_string),
             self.permission_mode.as_str().to_owned(),
             self.cost_label(),
+            self.git
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
             self.workspace.clone(),
         ]
     }
@@ -242,10 +245,9 @@ impl StatusView {
         &mut self.state
     }
 
-    /// Shows the input mode.
-    pub fn set_input_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
-        if self.state.input_mode() != mode {
-            self.state.set_input_mode(mode);
+    /// Shows the git state of the workspace.
+    pub fn set_git(&mut self, git: Option<GitStatus>, cx: &mut Context<Self>) {
+        if self.state.set_git(git) {
             cx.notify();
         }
     }
@@ -286,12 +288,12 @@ impl Render for StatusView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let now = cx.background_executor().now();
-        let [mode, model, permission, cost, workspace] = self.state.segments();
+        let [model, permission, cost, git, workspace] = self.state.segments();
         let muted = theme.muted_foreground;
         let sep = || div().text_color(muted).child("│");
         let mut left = h_flex()
             .gap_2()
-            .child(div().font_weight(gpui::FontWeight::BOLD).child(mode))
+            .child(crate::brand::mark(14.0))
             .child(sep())
             .child(SharedString::from(model));
         if self.state.is_busy() {
@@ -309,6 +311,18 @@ impl Render for StatusView {
                     .text_color(notice_color(notice.level, cx))
                     .child(SharedString::from(notice.message.clone())),
             );
+        }
+        if let Some(status) = self.state.git() {
+            let color = if status.conflicted > 0 {
+                theme.danger
+            } else if status.is_clean() {
+                theme.success
+            } else {
+                theme.warning
+            };
+            right = right
+                .child(div().text_color(color).child(SharedString::from(git)))
+                .child(sep());
         }
         right = right.child(div().text_color(muted).child(SharedString::from(workspace)));
         h_flex()
@@ -361,7 +375,7 @@ mod tests {
         let mut state = StatusState::new("proyecto-ide");
         assert_eq!(
             state.segments(),
-            ["INSERT", "no model", "ask", "$0.00", "proyecto-ide"].map(String::from)
+            ["no model", "ask", "$0.00", "", "proyecto-ide"].map(String::from)
         );
         state.apply(&started("claude-sonnet-5-5"), now);
         state.apply(
@@ -371,14 +385,15 @@ mod tests {
             now,
         );
         state.apply(&usage(Some(0.0421)), now);
-        state.set_input_mode(Mode::Normal);
+        assert!(state.set_git(Some(GitStatus::parse("# branch.head main\n? a\n"))));
+        assert!(!state.set_git(state.git().cloned()), "unchanged");
         assert_eq!(
             state.segments(),
             [
-                "NORMAL",
                 "claude-sonnet-5-5",
                 "plan",
                 "$0.0421",
+                "main ?1",
                 "proyecto-ide"
             ]
             .map(String::from)

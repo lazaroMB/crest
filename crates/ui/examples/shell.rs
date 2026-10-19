@@ -1,17 +1,16 @@
 //! The main window with its three views wired to a fake agent: the timeline,
-//! the modal input and the status bar, all fed by one `RecordingSink`.
+//! the prompt input and the status bar, all fed by one `RecordingSink`.
 //!
 //! `cargo run -p ui --example shell [workspace-label]`
 //!
-//! - insert: type and press Enter; the fake agent echoes the prompt with a
-//!   tool call and a streamed reply. Shift+Enter adds a line, Esc goes to
-//!   normal mode.
-//! - normal: `j`/`k`/`gg`/`G` move the selection, Enter expands a tool
-//!   call, `y` copies a block, `<Space>p` cycles the permission mode, `i`
-//!   returns to insert, `:` opens the command line.
-//! - command: `:error`, `:notice <text>`, `:retry`, `:q`.
+//! - Type and press Enter; the fake agent echoes the prompt with a tool call
+//!   and a streamed reply. Shift+Enter adds a line.
+//! - `Alt+Up`/`Alt+Down`/`Alt+Home`/`Alt+End` move the selection,
+//!   `Alt+Enter` expands a tool call, `Alt+y` copies a block,
+//!   `Ctrl+Space p` cycles the permission mode.
+//! - Commands: `/error`, `/notice <text>`, `/retry`, `/q`.
 //!
-//! Quit with `:q` or Cmd/Ctrl+Q.
+//! Quit with `/q` or Cmd/Ctrl+Q.
 //!
 //! With `--demo` the example types into its own window (through
 //! `Window::dispatch_keystroke`, the same path as real keys), logs what the
@@ -197,7 +196,7 @@ fn main() {
         })
         .detach();
 
-        wire_input(&input, &timeline, &status, agent, cx);
+        wire_input(&input, &timeline, agent, cx);
 
         let root = cx.new(|cx| {
             let mut root = RootView::new(cx);
@@ -217,17 +216,13 @@ fn main() {
 fn wire_input(
     input: &Entity<InputView>,
     timeline: &Entity<TimelineView>,
-    status: &Entity<StatusView>,
     agent: FakeAgent,
     cx: &mut App,
 ) {
-    let (timeline, status) = (timeline.clone(), status.clone());
+    let timeline = timeline.clone();
     cx.subscribe(input, move |_, event: &InputEvent, cx| match event {
         InputEvent::Submit(prompt) => agent.turn(prompt.clone()),
         InputEvent::Command(command) => agent.command(command, cx),
-        InputEvent::ModeChanged(mode) => {
-            status.update(cx, |status, cx| status.set_input_mode(*mode, cx));
-        }
         InputEvent::Action(action) => {
             if timeline.update(cx, |view, cx| view.handle_action(action, cx)) {
                 return;
@@ -247,13 +242,12 @@ fn wire_input(
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
     ("h e l l o space c r e s t enter", 2500),
-    ("escape k k", 300),
-    ("enter", 300),
-    ("g g", 300),
-    ("shift-g", 300),
-    ("space p", 300),
-    (": n o t i c e space h i enter", 300),
-    ("i", 300),
+    ("alt-up alt-up", 300),
+    ("alt-enter", 300),
+    ("alt-home", 300),
+    ("alt-end", 300),
+    ("ctrl-space p", 300),
+    ("/ n o t i c e space h i enter", 300),
 ];
 
 fn run_demo(
@@ -289,9 +283,8 @@ fn run_demo(
                     .map(|n| n.message.clone());
                 eprintln!(
                     "demo [{keys}]: blocks={} selected={selected:?} expanded={expanded:?} \
-                     input={:?} text={:?} status={:?} notice={notice:?}",
+                     text={:?} status={:?} notice={notice:?}",
                     timeline.len(),
-                    input.read(cx).mode(),
                     input.read(cx).text(cx),
                     status.segments(),
                 );

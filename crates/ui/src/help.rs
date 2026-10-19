@@ -1,12 +1,12 @@
 //! The help modal: everything the user can use, in one place.
 //!
-//! [`HelpSnapshot`] is plain data: the `:` commands, the effective keymap,
+//! [`HelpSnapshot`] is plain data: the `/` commands, the effective keymap,
 //! the agent's tools, the plugins, the MCP servers, the models, the
 //! command-line flags and the paths in use. The session asks its
 //! controller for one ([`SessionController::help`]), completes it with
 //! what the UI knows by itself ([`HelpSnapshot::complete`]) and shows it in
-//! a [`HelpView`] inside a modal (`?` in normal mode, `F1` in any mode,
-//! `:help [section|search]`, the builtin action `help.open`).
+//! a [`HelpView`] inside a modal (`F1`, `<leader>h`,
+//! `/help [section|search]`, the builtin action `help.open`).
 //!
 //! [`filter`] is the search box: a pure function over the snapshot.
 //!
@@ -14,7 +14,7 @@
 
 use std::fmt;
 
-use application::keymap::{Action, Keymap, KeymapEntry, Mode, action_description, default_keymap};
+use application::keymap::{Action, Keymap, KeymapEntry, action_description, default_keymap};
 use domain::modal::ModalId;
 use domain::permission::PermissionMode;
 
@@ -36,10 +36,10 @@ pub fn help_modal_id() -> ModalId {
 /// Who provides a command, a mapping or a tool when it is not crest itself.
 pub const BUILTIN_SOURCE: &str = "crest";
 
-/// A `:` command.
+/// A `/` command.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CommandRow {
-    /// Name after the colon.
+    /// Name after the slash.
     pub name: String,
     /// How to type it.
     pub usage: String,
@@ -52,8 +52,6 @@ pub struct CommandRow {
 /// One mapping of the effective keymap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRow {
-    /// Mode it applies to.
-    pub mode: Mode,
     /// Keys in Neovim notation, with the leader resolved (`<Space>ff`).
     pub keys: String,
     /// The builtin action, or `Lua function`.
@@ -112,14 +110,14 @@ pub struct PluginRow {
     pub path: String,
     /// `global` or `workspace`.
     pub layer: String,
-    /// What it adds (`tool todo_list`, `command :review`, `keymap <Space>x`,
+    /// What it adds (`tool todo_list`, `command /review`, `keymap <Space>x`,
     /// `hook before_tool`).
     pub adds: Vec<String>,
     /// Capabilities it declares (`network:jira.example.com`).
     pub capabilities: Vec<String>,
     /// `approved`, `pending` or `no capabilities`.
     pub trust: String,
-    /// How to approve it, while pending (`:plugin trust jira`).
+    /// How to approve it, while pending (`/plugin trust jira`).
     pub approve: Option<String>,
     /// Problems found while loading it.
     pub diagnostics: Vec<String>,
@@ -136,7 +134,7 @@ pub struct McpRow {
     pub origin: String,
     /// `ready (3 tools)`, `failed: ...`, `starting`, `untrusted`...
     pub state: String,
-    /// How to trust it, while held back (`:mcp trust git`).
+    /// How to trust it, while held back (`/mcp trust git`).
     pub trust_command: Option<String>,
 }
 
@@ -172,7 +170,7 @@ pub struct PathRow {
 /// Everything the help shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HelpSnapshot {
-    /// `:` commands: builtin first, then the plugins'.
+    /// `/` commands: builtin first, then the plugins'.
     pub commands: Vec<CommandRow>,
     /// The effective keymap.
     pub keys: Vec<KeyRow>,
@@ -261,7 +259,7 @@ impl HelpSnapshot {
     }
 }
 
-/// The builtin `:` commands as rows.
+/// The builtin `/` commands as rows.
 pub fn builtin_command_rows() -> Vec<CommandRow> {
     BUILTIN_COMMANDS
         .iter()
@@ -272,15 +270,6 @@ pub fn builtin_command_rows() -> Vec<CommandRow> {
             source: BUILTIN_SOURCE.into(),
         })
         .collect()
-}
-
-/// The name of `mode` in the help.
-pub fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Insert => "insert",
-        Mode::Normal => "normal",
-        Mode::Command => "command",
-    }
 }
 
 /// The rows of `keymap`. `describe` gives the description and the plugin of
@@ -296,7 +285,7 @@ pub fn key_rows(
         .entries()
         .into_iter()
         .map(|entry| {
-            let default = defaults.lookup(entry.mode, &entry.keys).exact;
+            let default = defaults.lookup(&entry.keys).exact;
             let overridden = default.is_some_and(|action| *action != entry.action);
             let (action, builtin) = match &entry.action {
                 Action::Builtin(name) => (name.clone(), action_description(name)),
@@ -316,7 +305,6 @@ pub fn key_rows(
                     Action::Callback(_) => String::new(),
                 });
             KeyRow {
-                mode: entry.mode,
                 keys: entry.notation(),
                 action,
                 description,
@@ -330,7 +318,7 @@ pub fn key_rows(
 /// A tab of the help.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
-    /// `:` commands.
+    /// `/` commands.
     Commands,
     /// The keymap.
     Keys,
@@ -380,7 +368,7 @@ impl Section {
         Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
     }
 
-    /// The section a `:help` argument names: its title or a short name
+    /// The section a `/help` argument names: its title or a short name
     /// (`keys`, `mcp`, `cli`, `files`...), in any case, or its number.
     pub fn parse(name: &str) -> Option<Self> {
         let name = name.trim().to_ascii_lowercase();
@@ -402,7 +390,7 @@ impl Section {
     }
 }
 
-/// What `:help <arg>` opens: a section, or the first section with a match
+/// What `/help <arg>` opens: a section, or the first section with a match
 /// for a search.
 pub fn parse_help_arg(arg: &str) -> (Option<Section>, String) {
     let arg = arg.trim();
@@ -440,15 +428,7 @@ pub fn filter(snapshot: &HelpSnapshot, query: &str) -> HelpSnapshot {
         keys: snapshot
             .keys
             .iter()
-            .filter(|r| {
-                keep(&[
-                    mode_name(r.mode),
-                    &r.keys,
-                    &r.action,
-                    &r.description,
-                    &r.source,
-                ])
-            })
+            .filter(|r| keep(&[&r.keys, &r.action, &r.description, &r.source]))
             .cloned()
             .collect(),
         tools: snapshot
@@ -556,7 +536,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                             .into_iter()
                             .collect(),
                         details: Vec::new(),
-                        copy: format!(":{}", r.name),
+                        copy: format!("/{}", r.name),
                     }
                 })
                 .collect()
@@ -574,7 +554,9 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                         tags.push("overrides default".into());
                     }
                     RowView {
-                        group: group_of(rows, ix, |r| format!("{} mode", mode_name(r.mode))),
+                        group: group_of(rows, ix, |_| {
+                            "Shortcuts (they work wherever the focus is)".to_owned()
+                        }),
                         primary: r.keys.clone(),
                         secondary: r.description.clone(),
                         tags,

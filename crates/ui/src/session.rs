@@ -10,56 +10,66 @@
 //!
 //! # Turns
 //!
-//! One turn runs at a time, and a `:` command answered by the controller
-//! (`:research`, `:implement`...) keeps the session busy too until it
-//! replies. A prompt submitted while the session is busy is **queued**: the
-//! input stays usable, the [`ActivityView`] above it lists what waits, and
-//! the prompts are sent one by one once the session is free. `Up` in an
+//! One turn runs at a time, and a `/` command answered by the controller
+//! (`/research`, `/implement`, `/!cmd`...) keeps the session busy too until
+//! it replies. A prompt submitted while the session is busy is **queued**:
+//! the input stays usable, the [`ActivityView`] above it lists what waits,
+//! and the prompts are sent one by one once the session is free. `Up` in an
 //! empty prompt takes the last queued one back to edit it. `Ctrl+C`
-//! (`turn.interrupt`, in any mode and also while a picker or the approval
-//! dialog has focus) cancels the [`CancelToken`] of the running turn and
-//! drops the queue; the turn ends as `Interrupted` and the next prompt
-//! starts a new one. A running command cannot be cancelled; `Ctrl+C` only
-//! drops the queue.
+//! (`turn.interrupt`, wherever the focus is) cancels the [`CancelToken`] of
+//! the running turn, or asks the controller to stop the running commands
+//! ([`SessionController::interrupt_commands`]), and drops the queue.
 //!
 //! While busy, the activity line says what goes on (spinner, stage, tool,
 //! elapsed time) from the events of the work.
 //!
-//! # Keys and commands
+//! # Keys, focus and commands
+//!
+//! There are no modes: the prompt is always ready to type. Shortcuts are
+//! chords or the leader chord (`<C-Space>` by default) and work wherever
+//! the focus is: keys typed while the timeline or the tree has focus go
+//! through the input's keymap too, a printable key there is typed into the
+//! prompt (focusing it), and `Esc` brings the focus back to the prompt.
+//! `<C-Tab>` / `<leader>w` cycle the focus prompt → timeline → tree.
 //!
 //! - `<leader>p` cycles the permission mode, `<leader>m` opens the model
 //!   menu: the policy's aliases plus "default"; the choice is the override
 //!   of the **next** turn only.
 //! - `<leader>e` shows the tree, `<leader>ff` / `<leader>fg` the pickers.
 //!   Choosing a file inserts `@path ` (or `@path:line ` for a text match)
-//!   at the cursor of the prompt, in insert mode, so it can be referenced
-//!   in the next prompt. A file cited by a block (`Sources`) does the same.
-//! - `:model <alias>` (no argument clears it), `:mode <ask|auto-edit|plan>`,
-//!   `:clear` (a new, empty session; not while a turn runs), `:modal close`
-//!   (closes the front plugin modal), `:help [section|search]` and `:q`
+//!   at the cursor of the prompt, so it can be referenced in the next
+//!   prompt. A file cited by a block (`Sources`) does the same.
+//! - `/model <alias>` (no argument clears it), `/mode <ask|auto-edit|plan>`,
+//!   `/clear` (a new, empty session; not while a turn runs), `/modal close`
+//!   (closes the front plugin modal), `/help [section|search]` and `/q`
 //!   (see [`BUILTIN_COMMANDS`](crate::commands::BUILTIN_COMMANDS)).
-//! - `?` in normal mode, `F1` in any mode (`help.open`) and `:help` open
-//!   the help modal with what [`SessionController::help`] reports.
-//! - Any other `:name args` goes to [`SessionController::run_command`]
-//!   (commands of `init.lua`, `:mcp`, `:plugin`, `:implement`, `:research`,
-//!   `:simulate`); a name
-//!   with a dot runs that builtin action (`:picker.files`).
+//! - `F1`, `<leader>h` (`help.open`) and `/help` open the help modal with
+//!   what [`SessionController::help`] reports.
+//! - Any other `/name args` goes to [`SessionController::run_command`]
+//!   (commands of `init.lua`, `/mcp`, `/plugin`, `/implement`, `/research`,
+//!   `/simulate`, `/!cmd`); a name with a dot runs that builtin action
+//!   (`/picker.files`).
 //! - A mapping to a Lua function runs [`SessionController::run_callback`].
 //!   What it answers ([`Reply`]) is shown or run here: `app.cmd(name)` as a
-//!   `:` command and `app.send(text, { role })` as a prompt with that role.
+//!   `/` command and `app.send(text, { role })` as a prompt with that role.
+//!
+//! The status bar shows the git branch and changes of the workspace
+//! ([`SessionController::git_status`]), refreshed at start, after every
+//! turn or command and every few seconds.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::keymap::{Action, Keymap, Mode, default_keymap};
+use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap};
 use application::ports::events::{DomainEvent, NoticeLevel};
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
 use domain::block::{Block, BlockKind, CustomNode};
 use domain::conversation::StopReason;
+use domain::git::GitStatus;
 use domain::modal::{ModalPosition, ModalSpec, Percent};
 use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
@@ -82,7 +92,9 @@ use crate::commands::unknown_command_hint;
 use crate::help::{
     HELP_ACTION, HelpSnapshot, HelpView, LocalHelp, Section, help_modal_id, parse_help_arg,
 };
-use crate::input::{InputEvent, InputView, QUEUE_EDIT_ACTION};
+use crate::input::{
+    FOCUS_INPUT_ACTION, InputEvent, InputView, QUEUE_EDIT_ACTION, key_from_keystroke,
+};
 use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
@@ -95,13 +107,18 @@ pub const INTERRUPT_ACTION: &str = "turn.interrupt";
 pub const PERMISSION_ACTION: &str = "permission.cycle";
 /// Action of `<leader>m`.
 pub const MODEL_ACTION: &str = "model.pick";
+/// Action of `<C-Tab>` and `<leader>w`.
+pub const FOCUS_NEXT_ACTION: &str = "focus.next";
+
+/// How often the git state of the status bar is refreshed while idle.
+const GIT_REFRESH: Duration = Duration::from_secs(5);
 
 /// One turn asked by the UI.
 #[derive(Debug, Clone)]
 pub struct TurnRequest {
     /// What the user typed.
     pub prompt: String,
-    /// Alias, role or id for this turn only (`<leader>m`, `:model`).
+    /// Alias, role or id for this turn only (`<leader>m`, `/model`).
     pub model_override: Option<String>,
     /// Role of the turn instead of `main` (`app.send(text, { role })`).
     pub role: Option<ModelRole>,
@@ -180,11 +197,23 @@ pub trait SessionController: Send + Sync {
         .boxed()
     }
 
-    /// Runs the `:name args` command, if the controller has one by that
+    /// Runs the `/name args` command, if the controller has one by that
     /// name; `None` means there is none.
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
         let _ = (name, args);
         None
+    }
+
+    /// Stops the commands it is running (`Ctrl+C`); returns whether there
+    /// was one. A stopped flow stays saved and can be resumed.
+    fn interrupt_commands(&self) -> bool {
+        false
+    }
+
+    /// The git state of the workspace for the status bar; `None` outside a
+    /// repository.
+    fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
+        futures::future::ready(None).boxed()
     }
 
     /// What the help shows beyond what the UI knows by itself (its builtin
@@ -193,6 +222,18 @@ pub trait SessionController: Send + Sync {
     /// paths. Rows it leaves empty are filled in by the session.
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
         futures::future::ready(HelpSnapshot::default()).boxed()
+    }
+}
+
+/// Text a key typed outside the prompt puts in it: a printable character
+/// without Ctrl, Alt or Cmd.
+fn typed_text(key: &Key) -> Option<String> {
+    if key.mods.ctrl || key.mods.alt || key.mods.cmd {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(c) => Some(c.to_string()),
+        _ => None,
     }
 }
 
@@ -282,12 +323,14 @@ pub struct Session {
     modal: Entity<ModalHost>,
     focus_handle: FocusHandle,
     running: Option<CancelToken>,
-    /// Names of the `:` commands waiting for the controller's reply.
+    /// Names of the `/` commands waiting for the controller's reply.
     commands: Vec<String>,
     turn: Option<Task<()>>,
     queue: VecDeque<(String, Option<ModelRole>)>,
     model_override: Option<String>,
     menu: Option<ModelMenu>,
+    git: Option<Task<()>>,
+    _git_timer: Task<()>,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -407,15 +450,14 @@ impl Session {
                         PickerEvent::Open { path, line } => {
                             this.insert_reference(&file_reference(path, *line), window, cx);
                         }
-                        // The picker gave focus back; keep the input's mode in
-                        // sync with it.
+                        // The picker closed: back to the prompt.
                         PickerEvent::Dismissed => {
                             this.input.update(cx, |input, cx| input.focus(window, cx));
                         }
                     }
                 },
             ),
-            Self::intercept_interrupt(cx),
+            Self::intercept_keys(cx),
         ];
         // A file cited by a block (Sources) opens like a picker choice.
         let block_events = block_events(cx);
@@ -447,13 +489,68 @@ impl Session {
             queue: VecDeque::new(),
             model_override: None,
             menu: None,
+            git: None,
+            _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _subscriptions: subscriptions,
         };
         if let Some(message) = watch_error {
             this.notice(NoticeLevel::Warning, message, cx);
         }
+        this.load_commands(window, cx);
+        this.refresh_git(cx);
         this
+    }
+
+    /// Gives the `/` palette every command the help knows.
+    fn load_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.controller.help();
+        cx.spawn_in(window, async move |this, cx| {
+            let snapshot = snapshot.await;
+            this.update(cx, |this, cx| {
+                let keymap = this.input.read(cx).keymap().clone();
+                let models = this.controller.models();
+                let full = snapshot.complete(&LocalHelp {
+                    keymap: &keymap,
+                    models: &models,
+                    permission_mode: this.controller.permission_mode(),
+                    turn_override: None,
+                });
+                this.input
+                    .update(cx, |input, cx| input.set_commands(full.commands, cx));
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Asks the controller for the git state and shows it, unless a
+    /// refresh is already on its way.
+    fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        if self.git.is_some() {
+            return;
+        }
+        let status = self.controller.git_status();
+        self.git = Some(cx.spawn(async move |this, cx| {
+            let status = status.await;
+            this.update(cx, |this, cx| {
+                this.git = None;
+                this.status.update(cx, |view, cx| view.set_git(status, cx));
+            })
+            .ok();
+        }));
+    }
+
+    /// Refreshes the git state every [`GIT_REFRESH`].
+    fn git_timer(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(GIT_REFRESH).await;
+                if this.update(cx, |this, cx| this.refresh_git(cx)).is_err() {
+                    break;
+                }
+            }
+        })
     }
 
     /// The single consumer of the controller's events.
@@ -474,27 +571,78 @@ impl Session {
         })
     }
 
-    /// `Ctrl+C` while focus is outside the input (picker, dialog, menu):
-    /// the input maps it to `turn.interrupt` itself.
-    fn intercept_interrupt(cx: &mut Context<Self>) -> Subscription {
+    /// Keys typed while the focus is outside the prompt. In an overlay
+    /// (picker, dialog, menu, modal) only `Ctrl+C` is taken; elsewhere
+    /// (timeline, tree) the keys go through the input's keymap, a printable
+    /// key is typed into the prompt and the rest is left to the panel.
+    fn intercept_keys(cx: &mut Context<Self>) -> Subscription {
         let weak = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
-            let keys = &event.keystroke;
-            let m = &keys.modifiers;
-            if keys.key != "c" || !m.control || m.alt || m.platform || m.shift {
-                return;
-            }
-            weak.update(cx, |this, cx| {
-                let in_input = this.input.focus_handle(cx).contains_focused(window, cx);
-                if !in_input {
-                    this.interrupt(cx);
-                }
-            })
-            .ok();
+            weak.update(cx, |this, cx| this.outside_key(event, window, cx))
+                .ok();
         })
     }
 
-    /// The timeline view (replaced by `:clear`).
+    fn outside_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input.read(cx).owns_focus(window, cx) {
+            return;
+        }
+        let Some(key) = key_from_keystroke(&event.keystroke) else {
+            return;
+        };
+        if self.overlay_focused(window, cx) {
+            let m = key.mods;
+            if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
+                self.interrupt(cx);
+            }
+            return;
+        }
+        let consumed = self
+            .input
+            .update(cx, |input, cx| input.feed_key(key, window, cx));
+        if consumed {
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(text) = typed_text(&key) {
+            self.input
+                .update(cx, |input, cx| input.insert_text(&text, window, cx));
+            cx.stop_propagation();
+        }
+    }
+
+    /// Whether a picker, the approval dialog, the model menu or a modal
+    /// has the focus.
+    fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
+        self.menu.is_some()
+            || self.picker.read(cx).is_open()
+            || self.approval.focus_handle(cx).contains_focused(window, cx)
+            || self.modal.read(cx).is_open()
+    }
+
+    /// Gives the focus back to the prompt.
+    pub fn focus_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// `<C-Tab>`: prompt → timeline → tree (when shown) → prompt.
+    pub fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let timeline = self.timeline.focus_handle(cx);
+        let tree_shown = self.tree.read(cx).is_visible();
+        if self.input.read(cx).owns_focus(window, cx) {
+            window.focus(&timeline, cx);
+            self.timeline
+                .update(cx, |view, cx| view.select_last_if_none(cx));
+        } else if timeline.contains_focused(window, cx) && tree_shown {
+            self.tree.update(cx, |tree, cx| tree.focus(window, cx));
+        } else {
+            self.focus_input(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The timeline view (replaced by `/clear`).
     pub fn timeline(&self) -> &Entity<TimelineView> {
         &self.timeline
     }
@@ -529,7 +677,7 @@ impl Session {
         self.running.is_some()
     }
 
-    /// Whether a turn or a `:` command is running; prompts are queued.
+    /// Whether a turn or a `/` command is running; prompts are queued.
     pub fn is_busy(&self) -> bool {
         self.running.is_some() || !self.commands.is_empty()
     }
@@ -679,23 +827,30 @@ impl Session {
                 );
             }
         }
+        self.refresh_git(cx);
         self.drain_queue(cx);
         cx.notify();
     }
 
-    /// `Ctrl+C`: cancels the running turn and drops the queue. Returns
-    /// whether a turn was running.
+    /// `Ctrl+C`: cancels the running turn (or asks the controller to stop
+    /// its commands) and drops the queue. Returns whether something was
+    /// running.
     pub fn interrupt(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(cancel) = &self.running else {
             let Some(command) = self.commands.last().cloned() else {
                 return false;
             };
+            let stopped = self.controller.interrupt_commands();
             let dropped = std::mem::take(&mut self.queue).len();
             self.sync_activity(cx);
-            let message = match dropped {
-                0 => format!(":{command} cannot be interrupted; it stops at its next question"),
-                n => format!(":{command} cannot be interrupted; {n} queued messages discarded"),
+            let mut message = if stopped {
+                format!("interrupting /{command}")
+            } else {
+                format!("/{command} cannot be interrupted; it stops at its next question")
             };
+            if dropped > 0 {
+                message.push_str(&format!("; {dropped} queued messages discarded"));
+            }
             self.notice(NoticeLevel::Info, message, cx);
             return true;
         };
@@ -736,7 +891,7 @@ impl Session {
         self.notice(NoticeLevel::Info, message, cx);
     }
 
-    /// Runs a `:` command.
+    /// Runs a `/` command (without the slash).
     pub fn command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.command_at(command, 0, window, cx);
     }
@@ -758,7 +913,7 @@ impl Session {
             }
             "mode" => match arg.parse::<PermissionMode>() {
                 Ok(mode) => self.set_permission_mode(mode, cx),
-                Err(err) => self.notice(NoticeLevel::Warning, format!(":mode: {err}"), cx),
+                Err(err) => self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx),
             },
             "clear" => self.clear(window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
@@ -772,7 +927,7 @@ impl Session {
             }
             "modal" => self.notice(
                 NoticeLevel::Warning,
-                format!(":modal {arg}: use :modal close"),
+                format!("/modal {arg}: use /modal close"),
                 cx,
             ),
             _ => {
@@ -801,7 +956,7 @@ impl Session {
         self.await_reply_then(reply, depth, None, window, cx);
     }
 
-    /// [`Self::await_reply`] for the `:` command `command`, which keeps the
+    /// [`Self::await_reply`] for the `/` command `command`, which keeps the
     /// session busy until it replies.
     fn await_reply_then(
         &mut self,
@@ -821,6 +976,7 @@ impl Session {
                 }
                 this.reply(reply, depth, window, cx);
                 if command.is_some() {
+                    this.refresh_git(cx);
                     this.drain_queue(cx);
                 }
             })
@@ -859,18 +1015,18 @@ impl Session {
         }
     }
 
-    /// `:clear`: a new session and an empty timeline.
+    /// `/clear`: a new session and an empty timeline.
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.running.is_some() {
             self.notice(
                 NoticeLevel::Warning,
-                "a turn is running; Ctrl+C to interrupt it before :clear",
+                "a turn is running; Ctrl+C to interrupt it before /clear",
                 cx,
             );
             return;
         }
         if let Some(command) = self.commands.last() {
-            let message = format!(":{command} is running; :clear once it stops");
+            let message = format!("/{command} is running; /clear once it stops");
             self.notice(NoticeLevel::Warning, message, cx);
             return;
         }
@@ -900,11 +1056,6 @@ impl Session {
         match event {
             InputEvent::Submit(prompt) => self.submit(prompt.clone(), cx),
             InputEvent::Command(command) => self.command(command, window, cx),
-            InputEvent::ModeChanged(mode) => {
-                let mode: Mode = *mode;
-                self.status
-                    .update(cx, |status, cx| status.set_input_mode(mode, cx));
-            }
             InputEvent::Action(action) => self.action(action, window, cx),
         }
     }
@@ -915,7 +1066,7 @@ impl Session {
             .update(cx, |view, cx| view.handle_action(action, cx))
             || self
                 .tree
-                .update(cx, |tree, cx| tree.handle_action(action, cx))
+                .update(cx, |tree, cx| tree.handle_action(action, window, cx))
             || self
                 .picker
                 .update(cx, |picker, cx| picker.handle_action(action, window, cx))
@@ -938,6 +1089,8 @@ impl Session {
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
             QUEUE_EDIT_ACTION => self.edit_queued(window, cx),
+            FOCUS_INPUT_ACTION => self.focus_input(window, cx),
+            FOCUS_NEXT_ACTION => self.focus_next(window, cx),
             MODEL_ACTION => self.open_menu(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
             _ => self.notice(
@@ -948,8 +1101,8 @@ impl Session {
         }
     }
 
-    /// Opens the help modal: `arg` names a section or is a search (`:help
-    /// tools`, `:help jira`). The controller's part arrives first.
+    /// Opens the help modal: `arg` names a section or is a search (`/help
+    /// tools`, `/help jira`). The controller's part arrives first.
     pub fn open_help(&mut self, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
         let (section, query) = parse_help_arg(arg);
         let snapshot = self.controller.help();
@@ -1083,7 +1236,7 @@ impl Session {
                     .child(
                         h_flex()
                             .text_color(theme.muted_foreground)
-                            .child("Model for the next turn  (j/k, Enter, Esc)"),
+                            .child("Model for the next turn  (↑/↓, Enter, Esc)"),
                     )
                     .children(rows),
             )
@@ -1210,8 +1363,8 @@ mod tests {
             futures::future::ready(reply).boxed()
         }
 
-        /// `:review` sends a prompt with the plan role; `:loop` calls itself;
-        /// `:slow` answers after 300 ms, like a flow running to its gate.
+        /// `/review` sends a prompt with the plan role; `/loop` calls itself;
+        /// `/slow` answers after 300 ms, like a flow running to its gate.
         fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
             let reply = match name {
                 "slow" => {
@@ -1301,10 +1454,7 @@ mod tests {
             events: sink.clone(),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
-        parts
-            .keymap
-            .set(Mode::Normal, "<leader>x", Action::Callback(7))
-            .unwrap();
+        parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
@@ -1451,9 +1601,8 @@ mod tests {
     #[gpui::test]
     fn a_running_command_keeps_the_session_busy_and_queues_prompts(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("hecho")], cx);
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("slow");
-        cx.simulate_keystrokes("enter i");
+        cx.simulate_input("/slow");
+        cx.simulate_keystrokes("enter");
         h.session.read_with(cx, |s, cx| {
             assert!(s.is_busy() && !s.is_running());
             assert!(s.activity().read(cx).state().is_working());
@@ -1519,7 +1668,7 @@ mod tests {
     #[gpui::test]
     fn leader_p_cycles_the_permission_mode(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("escape space p");
+        cx.simulate_keystrokes("ctrl-space p");
         h.session.read_with(cx, |s, cx| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
             assert_eq!(
@@ -1532,10 +1681,10 @@ mod tests {
     #[gpui::test]
     fn the_model_menu_sets_the_override_of_the_next_turn(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("ok")], cx);
-        cx.simulate_keystrokes("escape space m");
+        cx.simulate_keystrokes("ctrl-space m");
         h.session
             .read_with(cx, |s, _| assert!(s.is_menu_open(), "the menu is open"));
-        cx.simulate_keystrokes("j enter");
+        cx.simulate_keystrokes("down enter");
         let alias = h.session.read_with(cx, |s, _| {
             assert!(!s.is_menu_open());
             s.model_override().map(str::to_owned)
@@ -1543,7 +1692,6 @@ mod tests {
         let first = ModelPolicy::default().aliases().into_keys().next();
         assert_eq!(alias, first);
 
-        cx.simulate_keystrokes("i");
         send("hola", cx);
         wait_until(&h, cx, "the turn", |s, _| !s.is_running());
         h.session.read_with(cx, |s, _| {
@@ -1608,19 +1756,15 @@ mod tests {
         wait_until(&h, cx, "the turn", |s, _| !s.is_running());
         assert!(!blocks(&h, cx).is_empty());
 
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("mode plan");
-        cx.simulate_keystrokes("enter :");
-        cx.simulate_input("model opus");
-        cx.simulate_keystrokes("enter :");
-        cx.simulate_input("clear");
-        cx.simulate_keystrokes("enter");
+        send("/mode plan", cx);
+        send("/model opus", cx);
+        send("/clear", cx);
         cx.run_until_parked();
         h.session.read_with(cx, |s, _| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Plan);
             assert_eq!(s.model_override(), Some("opus"));
         });
-        assert!(blocks(&h, cx).is_empty(), ":clear empties the timeline");
+        assert!(blocks(&h, cx).is_empty(), "/clear empties the timeline");
     }
 
     #[gpui::test]
@@ -1650,7 +1794,7 @@ mod tests {
         send("hola", cx);
         wait_until(&h, cx, "the turn", |s, _| !s.is_running());
         assert!(!blocks(&h, cx).is_empty());
-        cx.simulate_keystrokes("escape space x");
+        cx.simulate_keystrokes("ctrl-space x");
         cx.run_until_parked();
         assert!(blocks(&h, cx).is_empty(), "app.cmd(\"clear\") ran");
     }
@@ -1658,8 +1802,7 @@ mod tests {
     #[gpui::test]
     fn a_controller_command_sends_a_prompt_with_its_role(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("sin riesgos")], cx);
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("review todo");
+        cx.simulate_input("/review todo");
         cx.simulate_keystrokes("enter");
         wait_until(&h, cx, "the turn", |s, _| {
             !s.is_running() && h.llm.remaining() == 0
@@ -1676,8 +1819,7 @@ mod tests {
     #[gpui::test]
     fn a_command_calling_itself_stops(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("loop");
+        cx.simulate_input("/loop");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         h.session.read_with(cx, |s, _| assert!(!s.is_running()));
@@ -1709,9 +1851,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn question_mark_opens_the_help_and_esc_closes_it(cx: &mut TestAppContext) {
+    fn f1_opens_the_help_and_esc_closes_it(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("escape ?");
+        cx.simulate_keystrokes("f1");
         cx.run_until_parked();
         let view = help_view(&h, cx).expect("the help is open");
         view.read_with(cx, |v, _| {
@@ -1723,7 +1865,7 @@ mod tests {
                 .map(|c| c.name.clone())
                 .collect();
             assert!(names.contains(&"help".to_owned()), "{names:?}");
-            assert!(v.snapshot().keys.iter().any(|k| k.keys == "?"));
+            assert!(v.snapshot().keys.iter().any(|k| k.keys == "<F1>"));
             assert!(
                 v.snapshot()
                     .models
@@ -1746,7 +1888,7 @@ mod tests {
         view.read_with(cx, |v, _| assert_eq!(v.selected(), 2));
         cx.simulate_keystrokes("k y");
         let copied = cx.read_from_clipboard().and_then(|item| item.text());
-        assert_eq!(copied.as_deref(), Some(":model"));
+        assert_eq!(copied.as_deref(), Some("/model"));
 
         cx.simulate_keystrokes("escape");
         assert!(help_view(&h, cx).is_none(), "Esc closes it");
@@ -1757,9 +1899,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn f1_opens_the_help_from_insert_mode_and_typing_filters(cx: &mut TestAppContext) {
+    fn leader_h_opens_the_help_and_typing_filters(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("f1");
+        cx.simulate_keystrokes("ctrl-space h");
         cx.run_until_parked();
         let view = help_view(&h, cx).expect("F1 opens the help");
         cx.simulate_keystrokes("/");
@@ -1783,24 +1925,76 @@ mod tests {
         });
         cx.simulate_keystrokes("escape");
         assert!(help_view(&h, cx).is_none());
+        h.session
+            .read_with(cx, |s, cx| assert!(!s.modal().read(cx).is_open()));
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "back in the prompt");
+        });
+    }
+
+    #[gpui::test]
+    fn the_focus_cycles_and_typing_or_esc_brings_it_back(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        let in_timeline = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let timeline = h.session.read(cx).timeline().focus_handle(cx);
+                timeline.contains_focused(window, cx)
+            })
+        };
+        cx.simulate_keystrokes("ctrl-tab");
+        assert!(in_timeline(cx), "Ctrl+Tab moves to the timeline");
+        let selected = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| s.timeline().read(cx).state().selected())
+        };
+        let last = selected(cx);
+        assert!(last.is_some(), "a block is selected on entering");
+        cx.simulate_keystrokes("up");
+        assert_ne!(selected(cx), last, "arrows move the selection");
+        // Esc goes back to the prompt.
+        cx.simulate_keystrokes("escape");
+        assert!(in_input(cx));
+        // Typing in the timeline types into the prompt.
+        cx.simulate_keystrokes("ctrl-tab");
+        assert!(in_timeline(cx));
+        cx.simulate_input("x");
+        assert!(in_input(cx));
+        h.session
+            .read_with(cx, |s, cx| assert_eq!(s.input().read(cx).text(cx), "x"));
+        // Shortcuts work from the timeline too.
+        cx.simulate_keystrokes("ctrl-tab ctrl-space p");
+        h.session.read_with(cx, |s, _| {
+            assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
+        });
+    }
+
+    #[gpui::test]
+    fn the_palette_lists_the_commands(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_input("/mo");
         h.session.read_with(cx, |s, cx| {
-            assert_eq!(
-                s.input().read(cx).mode(),
-                Mode::Insert,
-                "still in insert mode"
-            );
-            assert!(!s.modal().read(cx).is_open());
+            let input = s.input().read(cx);
+            let names: Vec<_> = input.palette(cx).iter().map(|r| r.name.clone()).collect();
+            assert_eq!(names, ["model", "mode", "modal"]);
         });
     }
 
     #[gpui::test]
     fn help_command_opens_a_section_or_a_search(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("help models");
+        cx.simulate_input("/help models");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
-        let view = help_view(&h, cx).expect(":help opens the help");
+        let view = help_view(&h, cx).expect("/help opens the help");
         view.read_with(cx, |v, _| assert_eq!(v.section(), Section::Models));
         cx.simulate_keystrokes("escape");
         h.session
@@ -1811,15 +2005,14 @@ mod tests {
             assert_eq!(v.query(cx), "clear");
             assert_eq!(v.section(), Section::Commands);
             let rows = v.rows();
-            assert!(rows.iter().any(|r| r.copy == ":clear"), "{rows:?}");
+            assert!(rows.iter().any(|r| r.copy == "/clear"), "{rows:?}");
         });
     }
 
     #[gpui::test]
     fn an_unknown_command_points_to_the_help(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
-        cx.simulate_keystrokes("escape :");
-        cx.simulate_input("frobnicate");
+        cx.simulate_input("/frobnicate");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         h.session.read_with(cx, |s, cx| {

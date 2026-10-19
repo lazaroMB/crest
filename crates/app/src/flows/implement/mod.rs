@@ -43,7 +43,7 @@
 //!
 //! [`implement_graph`](graph::implement_graph) chains exactly these six
 //! steps, and [`ImplementSession`](graph::ImplementSession) opens (or
-//! resumes) the flow of one plan, as `:implement` does.
+//! resumes) the flow of one plan, as `/implement` does.
 //!
 //! # Modules
 //!

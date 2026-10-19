@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use application::keymap::Mode;
 use application::ports::plugin::ConfigSources;
 use application::testing::llm::ScriptedLlm;
 use crest::gui::UiController;
@@ -69,7 +68,7 @@ app.tools.register({
   handler = function(input) return input.key end,
 })
 app.commands.register("issue", function(args) end, { desc = "Show a Jira issue" })
-app.keymap.set("n", "<leader>j", function() app.cmd("issue") end, { desc = "Open the issue" })
+app.keymap.set("<leader>j", function() app.cmd("issue") end, { desc = "Open the issue" })
 "#;
 
 async fn snapshot() -> HelpSnapshot {
@@ -81,7 +80,7 @@ async fn snapshot() -> HelpSnapshot {
     std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(plugin_dir.join("init.lua"), JIRA).unwrap();
     let global = format!(
-        "app.mcp.add(\"echo\", {{ command = {:?} }})\napp.keymap.set(\"n\", \"j\", \"block.last\")\n",
+        "app.mcp.add(\"echo\", {{ command = {:?} }})\napp.keymap.set(\"<A-Up>\", \"block.last\")\n",
         echo_server_path().display().to_string()
     );
     std::fs::write(config_dir.join("init.lua"), global).unwrap();
@@ -132,18 +131,10 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
         assert!(help.commands.iter().any(|c| c.name == name), "{name}");
     }
 
-    let leader_j = help
-        .keys
-        .iter()
-        .find(|k| k.mode == Mode::Normal && k.keys == "<Space>j")
-        .unwrap();
+    let leader_j = help.keys.iter().find(|k| k.keys == "<C-Space>j").unwrap();
     assert_eq!(leader_j.description, "Open the issue");
     assert_eq!(leader_j.source, "jira");
-    let j = help
-        .keys
-        .iter()
-        .find(|k| k.mode == Mode::Normal && k.keys == "j")
-        .unwrap();
+    let j = help.keys.iter().find(|k| k.keys == "<A-Up>").unwrap();
     assert!(j.overridden, "{j:?}");
     assert_eq!(
         (j.action.as_str(), j.source.as_str()),
@@ -176,7 +167,7 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
 
     let plugin = help.plugins.iter().find(|p| p.name == "jira").unwrap();
     assert_eq!(plugin.trust, "pending");
-    assert_eq!(plugin.approve.as_deref(), Some(":plugin trust jira"));
+    assert_eq!(plugin.approve.as_deref(), Some("/plugin trust jira"));
     assert_eq!(plugin.capabilities, ["network:jira.example.com"]);
     assert_eq!(plugin.layer, "global");
     assert!(plugin.path.ends_with("init.lua"), "{plugin:?}");
@@ -195,7 +186,7 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
     assert!(echo.transport.starts_with("stdio: "), "{echo:?}");
     let wsgit = server("wsgit");
     assert_eq!(wsgit.origin, "workspace");
-    assert_eq!(wsgit.trust_command.as_deref(), Some(":mcp trust wsgit"));
+    assert_eq!(wsgit.trust_command.as_deref(), Some("/mcp trust wsgit"));
     assert!(wsgit.state.contains("held back"), "{wsgit:?}");
 
     assert!(

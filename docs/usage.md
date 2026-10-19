@@ -35,7 +35,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `:research` or `:implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn and clears the queue; a running command cannot be interrupted, so there it only clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `:q` quits crest.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn and clears the queue; a running command cannot be interrupted, so there it only clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
 
 ### Modes
 
@@ -80,34 +80,34 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 
 | Command | What it does |
 | --- | --- |
-| `:q`, `:quit`, `:qa` | Quits crest. |
-| `:help [section\|search]`, `:h` | Opens the [help](#help), on a section (`commands`, `keys`, `tools`, `plugins`, `mcp`, `models`, `cli`, `files`, or its number) or with that search already typed. |
-| `:model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. With no argument it goes back to the default model. |
-| `:mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
-| `:clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
-| `:modal close` | Closes the front [plugin modal](#plugin-modals). |
-| `:mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
-| `:plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
-| `:plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
-| `:implement <spec>` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
-| `:research <problem>`, `:research resume`, `:research` | Starts, resumes or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
-| `:simulate <spec>` | Simulates the solution of a Spec (its folder, its number or its path) and opens its board in a full-size modal ([workflows.md](workflows.md#simulating-a-solution)). The verdicts land in the timeline. |
+| `/q`, `/quit`, `/qa` | Quits crest. |
+| `/help [section\|search]`, `/h` | Opens the [help](#help), on a section (`commands`, `keys`, `tools`, `plugins`, `mcp`, `models`, `cli`, `files`, or its number) or with that search already typed. |
+| `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. With no argument it goes back to the default model. |
+| `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
+| `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
+| `/modal close` | Closes the front [plugin modal](#plugin-modals). |
+| `/mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
+| `/plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
+| `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
+| `/implement <spec>` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
+| `/research <problem>`, `/research resume`, `/research` | Starts, resumes or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
+| `/simulate <spec>` | Simulates the solution of a Spec (its folder, its number or its path) and opens its board in a full-size modal ([workflows.md](workflows.md#simulating-a-solution)). The verdicts land in the timeline. |
 | `:<name> <args>` | A command registered with `app.commands.register`. |
-| `:<dotted.action>` | Runs a builtin action, for example `:picker.files` or `:panel.tree`. |
+| `:<dotted.action>` | Runs a builtin action, for example `/picker.files` or `:panel.tree`. |
 
-An unknown command shows `unknown command :x (use :help, :model, :mode, :clear, :modal, :q; :help lists every command)`.
+An unknown command shows `unknown command :x (use /help, /model, /mode, /clear, /modal, /q; /help lists every command)`.
 
 ### Help
 
-`?` in normal mode, `F1` in any mode or `:help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
+`?` in normal mode, `F1` in any mode or `/help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
 
 | # | Section | What it lists |
 | --- | --- | --- |
 | 1 | Commands | The builtin `:` commands with their usage, then the commands of your plugins (with the plugin and its `desc`). |
 | 2 | Keys | The effective keymap per mode: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
-| 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `:plugin trust` command, or `no capabilities`) and its load problems. |
-| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, or held back because the workspace config is not trusted (with the `:mcp trust` command). |
+| 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
+| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, or held back because the workspace config is not trusted (with the `/mcp trust` command). |
 | 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn and the permission mode. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
 | 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
@@ -117,7 +117,7 @@ An unknown command shows `unknown command :x (use :help, :model, :mode, :clear, 
 | `1`–`8`, `Tab` / `Shift+Tab`, click | Switches section. |
 | `j` / `k`, arrows, `PageUp` / `PageDown`, `Home` / `End` | Moves the selection. |
 | `Enter` | Expands the selected row (a tool's input schema). |
-| `y` | Copies the selected row's command or name (`:plugin trust jira` for a pending plugin). |
+| `y` | Copies the selected row's command or name (`/plugin trust jira` for a pending plugin). |
 | `/` | Goes to the search box: what you type filters every section at once (each word must appear in the row, ignoring case). The arrows still move; `Enter` goes back to the list. |
 | `Esc`, `✕` | Closes the help; the focus goes back where it was. |
 
@@ -171,7 +171,7 @@ Each tool declares its effect (`read`, `write`, `execute` or `network`), and the
 | `auto-edit` | yes | yes | asks |
 | `plan` | yes | no (denied) | no (denied) |
 
-To change mode: `<Space>p`, `:mode <mode>` or `--mode` at startup.
+To change mode: `<Space>p`, `/mode <mode>` or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
@@ -186,7 +186,7 @@ When approval is needed, a dialog opens with the colored diff (for edits) or wit
 
 There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
-"Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `:clear` keeps those of the current run.
+"Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `/clear` keeps those of the current run.
 
 The same dialog appears when the session reaches its spending cap (`app.opt.max_session_cost`). See [configuration.md](configuration.md#cost-and-spending-cap).
 
@@ -216,7 +216,7 @@ Plugins can open modal windows over the session ([plugins.md](plugins.md#appmoda
 | --- | --- |
 | `Esc` | Closes the front modal (the one opened last). |
 | Click on the dimmed area, or the `✕` button | Same. |
-| `:modal close` | Same, from the command line. |
+| `/modal close` | Same, from the command line. |
 | Wheel, or the scrollbars | Scrolls the content. |
 | Images: `fit`, `1:1`, `−`, `+` | Fit to the width, natural size, zoom. When zoomed, drag pans and `Ctrl`/`Cmd` + wheel zooms; with the image focused (click), `+`/`-`, `1` and `0` do the same. |
 | JSON: click a row | Opens or closes that branch. |
@@ -226,7 +226,7 @@ The focus goes back to where it was when the last modal closes. An approval dial
 
 ### Simulation board
 
-`:simulate <spec>` (or the agent's `simulate_solution` tool) opens the board of a simulated Spec in a modal at 100%. The board is drawn in real 3D by an offscreen GPU renderer; on a machine without a usable GPU adapter it falls back, automatically, to a 2.5D vector drawing (the header says which one: `3D · <adapter>` or `2.5D · <reason>`; `CREST_RENDER3D=off` forces the fallback).
+`/simulate <spec>` (or the agent's `simulate_solution` tool) opens the board of a simulated Spec in a modal at 100%. The board is drawn in real 3D by an offscreen GPU renderer; on a machine without a usable GPU adapter it falls back, automatically, to a 2.5D vector drawing (the header says which one: `3D · <adapter>` or `2.5D · <reason>`; `CREST_RENDER3D=off` forces the fallback).
 
 | Key or action | Effect |
 | --- | --- |
@@ -267,7 +267,7 @@ crest [OPTIONS] [DIR]
 | `--implement <RUTA>` | Spec or `plan.json` | In headless mode, runs the implementation workflow. Requires `--headless` and cannot be combined with `--research`. |
 | `--research <PROBLEMA>` | text or `resume` | In headless mode, runs the research workflow. Requires `--headless`. |
 | `--simulate <SPEC>` | Spec folder, number or path | In headless mode, simulates the Spec's solution: prints every scenario's verdict and the path of its `board.html`. Requires `--headless`; cannot be combined with `--implement` or `--research`. |
-| `--model <ALIAS\|ID>` | alias, role or id | Model override for **every** turn of this run (like `:model`, but permanent). |
+| `--model <ALIAS\|ID>` | alias, role or id | Model override for **every** turn of this run (like `/model`, but permanent). |
 | `--mode <MODE>` | `ask`, `auto-edit`, `plan` | Initial permission mode. Defaults to `ask`. |
 | `--yes` | — | In headless mode, approves every action without asking. Does not answer workflow gates. Requires `--headless`. |
 | `--new` | — | The window opens with a new session instead of resuming the last one. Cannot be combined with `--headless`. |
@@ -352,7 +352,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 ## Sessions and resuming
 
 - Each session (the history sent to the model, the timeline and the "always" rules) is saved in SQLite (`~/.local/share/crest/sessions.db`) **after every turn**.
-- **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows "previous session resumed (N turns); `crest --new` starts a new one". With `--new` it starts blank, and `:clear` does the same without closing.
+- **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows "previous session resumed (N turns); `crest --new` starts a new one". With `--new` it starts blank, and `/clear` does the same without closing.
 - **Headless**: each run is a new session unless you pass `--continue`, which picks up the workspace's last session (the same one the window would open).
 - Old sessions are never deleted, and there is no command to list them or to pick one other than the last.
 - The accumulated cost is not saved: a resumed session starts at `$0.00`.
@@ -398,7 +398,7 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 
   To trust one:
   - `crest --trust-mcp tickets` approves it and starts it in this same run;
-  - `:mcp trust tickets`, from the window, approves it and it starts the next time you open crest.
+  - `/mcp trust tickets`, from the window, approves it and it starts the next time you open crest.
 
   The approval is stored in `~/.local/share/crest/mcp-trust.json`, per workspace and with the exact transport (command, arguments, environment, URL, headers). If the repository changes the declaration, it becomes pending again. To revoke it, delete the entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. One that fails or is slow is reported as a notice, and crest carries on without it.
@@ -408,11 +408,11 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 A plugin can ask to make HTTP requests to some hosts or to run some programs by declaring capabilities with `app.plugin` ([plugins.md](plugins.md#capabilities)). Nothing is active until you approve it. On startup each pending declaration shows a notice:
 
 ```text
-plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `:plugin trust jira`
+plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `/plugin trust jira`
 ```
 
 - `crest --trust-plugin jira` approves it for this run and remembers it.
-- `:plugin trust jira`, from the window, approves it and activates it immediately.
-- `:plugin list` shows every declaration and its state.
+- `/plugin trust jira`, from the window, approves it and activates it immediately.
+- `/plugin list` shows every declaration and its state.
 
 This applies to plugins of the global config too, not only to the workspace's. The approval is stored in `~/.local/share/crest/plugin-trust.json` with the plugin's name, its file and the exact list: if the plugin asks for something else, it becomes pending again. Until then, its calls to `app.http`, `app.shell.run` or `app.secret` fail with an error that says how to approve it, and the model sees that error. The tools of the plugin keep going through the normal approvals.

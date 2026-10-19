@@ -148,7 +148,7 @@ pub(crate) fn report(lua: &Lua, sink: &Sink, origin: &Origin, message: String) {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::plugin::{HookKind, KeyAction, KeyMode};
+    use application::ports::plugin::{HookKind, KeyAction};
     use serde_json::json;
 
     use super::*;
@@ -196,32 +196,34 @@ mod tests {
     }
 
     #[test]
-    fn keymaps_take_builtins_functions_and_mode_lists() {
+    fn keymaps_take_builtins_functions_and_the_old_mode_form() {
         let lua = lua();
         let phase = Phase::new(&lua, "init.lua", "config").unwrap();
         run(
             &lua,
             &phase,
-            r#"app.keymap.set("n", "<leader>r", "session.resume", { desc = "Resume" })
-               app.keymap.set({ "n", "i" }, "<C-x>", function() end)"#,
+            r#"app.keymap.set("<leader>r", "picker.files", { desc = "Files" })
+               app.keymap.set("<C-x>", function() end)
+               app.keymap.set({ "n", "i" }, "<C-y>", "help.open")
+               app.keymap.set("n", "<C-z>", function() end, { desc = "Old" })"#,
         );
         let got = phase.take();
-        assert_eq!(got.keymaps.len(), 3);
+        assert!(got.diagnostics.is_empty(), "{:?}", got.diagnostics);
+        assert_eq!(got.keymaps.len(), 4);
         assert_eq!(
             got.keymaps[0],
             KeymapSpec {
-                mode: KeyMode::Normal,
                 lhs: "<leader>r".into(),
-                action: KeyAction::Builtin("session.resume".into()),
-                description: Some("Resume".into()),
+                action: KeyAction::Builtin("picker.files".into()),
+                description: Some("Files".into()),
                 plugin: "config".into(),
             }
         );
         assert_eq!(got.keymaps[1].description, None);
-        assert_eq!(got.keymaps[1].mode, KeyMode::Normal);
-        assert_eq!(got.keymaps[2].mode, KeyMode::Insert);
         assert!(matches!(got.keymaps[1].action, KeyAction::Callback(_)));
-        assert_eq!(got.keymaps[1].action, got.keymaps[2].action);
+        assert_eq!(got.keymaps[2].lhs, "<C-y>");
+        assert_eq!(got.keymaps[3].lhs, "<C-z>");
+        assert_eq!(got.keymaps[3].description.as_deref(), Some("Old"));
     }
 
     #[test]
@@ -234,7 +236,7 @@ mod tests {
             r#"app.commands.register("review", function() end, { desc = "Review the changes" })
                app.commands.register("plain", function() end)
                app.commands.register("bad", function() end, { desc = 3 })
-               app.keymap.set("n", "x", "help.open", "oops")"#,
+               app.keymap.set("<C-x>", "help.open", "oops")"#,
         );
         let got = phase.take();
         let commands: Vec<_> = got

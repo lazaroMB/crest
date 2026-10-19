@@ -154,7 +154,7 @@ Every model call asks for a **role**, and the configuration decides which model 
 | `compact` | Summarizing the history | `claude-haiku-5-5` | 4000 | no | — |
 | `title` | Titles and short names (reserved: no component uses it on its own today) | `claude-haiku-5-5` | 1024 | no | — |
 | `component` | Structured data for blocks (reserved: the `show_*` tools are called by the turn's model) | `claude-sonnet-5-5` | 16000 | no | `claude-haiku-5-5` |
-| `deep` | Very hard tasks, on demand (`--model deep`, `:model deep`, `app.send(…, { role = "deep" })` or the `role` of a `plan.json` task) | `claude-fable-5-1` | 32000 | budget 16000 | `claude-opus-5-5`, `claude-sonnet-5-5` |
+| `deep` | Very hard tasks, on demand (`--model deep`, `/model deep`, `app.send(…, { role = "deep" })` or the `role` of a `plan.json` task) | `claude-fable-5-1` | 32000 | budget 16000 | `claude-opus-5-5`, `claude-sonnet-5-5` |
 
 Builtin aliases: `opus` → `claude-opus-5-5`, `sonnet` → `claude-sonnet-5-5`, `haiku` → `claude-haiku-5-5` and `fable` → `claude-fable-5-1`.
 
@@ -189,7 +189,7 @@ Aliases are merged with the builtin ones (the workspace wins) and appear in the 
 
 ### Resolution order
 
-1. **Turn override**: `--model`, `:model <x>` or the `<leader>m` menu.
+1. **Turn override**: `--model`, `/model <x>` or the `<leader>m` menu.
    - If the value is a **role name** (`plan`), that role's whole spec is used.
    - If it is an alias or an id, it only replaces the `id` and keeps the role's `max_tokens`, `thinking` and `fallbacks`.
    - Aliases are checked before role names.
@@ -238,7 +238,7 @@ app.mcp = { tickets = { url = "https://tickets.example.com/mcp", headers = { Aut
 ```
 
 - Servers from the **global config** (and its plugins) start when crest opens.
-- Those from the **workspace** stay pending, with a notice like "workspace MCP server `x` not started: it would run `…`. If you trust it, start crest with `crest --trust-mcp x` (remembered for this workspace)". They start once you approve them with `crest --trust-mcp <name>` or with `:mcp trust <name>` (the latter takes effect the next time you open crest).
+- Those from the **workspace** stay pending, with a notice like "workspace MCP server `x` not started: it would run `…`. If you trust it, start crest with `crest --trust-mcp x` (remembered for this workspace)". They start once you approve them with `crest --trust-mcp <name>` or with `/mcp trust <name>` (the latter takes effect the next time you open crest).
 - The approval is stored per workspace in `mcp-trust.json`, together with the exact transport: if the command, arguments, environment, URL or headers change, crest asks again. To revoke an approval, delete its entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. The per-call limit for a tool is `timeout` if you declare it, or 120 s otherwise.
 
@@ -246,7 +246,7 @@ app.mcp = { tickets = { url = "https://tickets.example.com/mcp", headers = { Aut
 
 Plugins declare network and shell capabilities with `app.plugin{ capabilities = ... }` ([plugins.md](plugins.md#capabilities)). They stay inactive until you approve them:
 
-- `crest --trust-plugin <name>` (repeatable) or `:plugin trust <name>` in the window, which activates them at once. `:plugin list` shows each declaration and whether it is approved.
+- `crest --trust-plugin <name>` (repeatable) or `/plugin trust <name>` in the window, which activates them at once. `/plugin list` shows each declaration and whether it is approved.
 - Approvals are stored in `plugin-trust.json` (path in [Files and paths](#files-and-paths)), written with `0600` permissions. Each entry holds the plugin name, the `init.lua` that declared it, its layer (`global` or `workspace`) and the exact capability list:
 
   ```json

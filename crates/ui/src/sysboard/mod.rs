@@ -1,5 +1,5 @@
 //! The simulation board of a Spec, opened in a full-size modal by
-//! `:simulate` and the `simulate_solution` tool.
+//! `/simulate` and the `simulate_solution` tool.
 //!
 //! - Centre: the board, drawn by the offscreen [`crate::render3d`] renderer
 //!   (isometric preset, drag to orbit, right-drag or shift-drag to pan,

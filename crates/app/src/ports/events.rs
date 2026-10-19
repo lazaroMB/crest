@@ -156,7 +156,7 @@ pub enum DomainEvent {
         /// The modal.
         id: ModalId,
     },
-    /// A solution was simulated (`:simulate`, `simulate_solution`): the
+    /// A solution was simulated (`/simulate`, `simulate_solution`): the
     /// window opens its board in a full-size modal.
     SimulationReady {
         /// The model and the run of every scenario.

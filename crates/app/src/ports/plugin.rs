@@ -55,18 +55,6 @@ pub struct AppOptions {
     pub extra: Map<String, Value>,
 }
 
-/// Mode a keymap applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyMode {
-    /// Typing the prompt (`"i"` in Lua).
-    Insert,
-    /// Navigating the timeline (`"n"` in Lua).
-    Normal,
-    /// The `:` command line (`"c"` in Lua).
-    Command,
-}
-
 /// What a keymap does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
@@ -77,12 +65,10 @@ pub enum KeyAction {
     Callback(CallbackId),
 }
 
-/// A keymap from `app.keymap.set(mode, lhs, action, { desc = "..." })`.
+/// A keymap from `app.keymap.set(lhs, action, { desc = "..." })`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeymapSpec {
-    /// Mode it applies to.
-    pub mode: KeyMode,
-    /// Key sequence in Neovim notation (e.g. `<leader>ff`, `gg`).
+    /// Key sequence in Neovim notation (e.g. `<leader>ff`, `<C-k>`).
     pub lhs: String,
     /// Action to run.
     pub action: KeyAction,
@@ -95,10 +81,10 @@ pub struct KeymapSpec {
 }
 
 /// A command from `app.commands.register(name, fn, { desc = "..." })`, run
-/// as `:name`.
+/// as `/name`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandSpec {
-    /// Command name, without the colon.
+    /// Command name, without the slash.
     pub name: String,
     /// Lua function receiving the arguments.
     pub callback: CallbackId,
@@ -508,14 +494,12 @@ mod tests {
             },
             keymaps: vec![
                 KeymapSpec {
-                    mode: KeyMode::Normal,
                     lhs: "<leader>r".into(),
                     action: KeyAction::Builtin("session.resume".into()),
                     description: Some("Resume".into()),
                     plugin: "config".into(),
                 },
                 KeymapSpec {
-                    mode: KeyMode::Normal,
                     lhs: "<leader>x".into(),
                     action: KeyAction::Callback(CallbackId(3)),
                     description: None,

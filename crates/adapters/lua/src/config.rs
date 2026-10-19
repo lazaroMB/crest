@@ -287,8 +287,7 @@ fn plugin_files(
 mod tests {
     use application::cost::CostTracker;
     use application::ports::plugin::{
-        HookEvent, HookKind, HookOutcome, KeyAction, KeyMode, KeymapSpec, PluginAction,
-        PluginOutput,
+        HookEvent, HookKind, HookOutcome, KeyAction, KeymapSpec, PluginAction, PluginOutput,
     };
     use domain::conversation::Usage;
     use domain::model::{ModelId, ModelRole, ResolveRequest, ThinkingConfig};
@@ -393,7 +392,6 @@ end)
         assert_eq!(
             config.keymaps[0],
             KeymapSpec {
-                mode: KeyMode::Normal,
                 lhs: "<leader>r".into(),
                 action: KeyAction::Builtin("session.resume".into()),
                 description: None,

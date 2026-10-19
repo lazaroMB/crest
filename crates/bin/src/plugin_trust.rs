@@ -4,7 +4,7 @@
 //! beyond the Lua sandbox with `app.plugin{ capabilities = ... }`: HTTP to
 //! some hosts, running some programs, reading its secrets. Nothing is
 //! active until the user approves the declaration once, with
-//! `crest --trust-plugin <name>` or `:plugin trust <name>`.
+//! `crest --trust-plugin <name>` or `/plugin trust <name>`.
 //!
 //! An approval covers one exact declaration: the plugin's name, the file
 //! that declared it (for the workspace config that path holds the
@@ -139,7 +139,7 @@ fn label(decl: &PluginCapabilities) -> String {
 #[must_use]
 pub fn pending_notice(decl: &PluginCapabilities) -> String {
     format!(
-        "{} requests {} — approve with `crest --trust-plugin {name}` or `:plugin trust {name}`",
+        "{} requests {} — approve with `crest --trust-plugin {name}` or `/plugin trust {name}`",
         label(decl),
         decl.summary(),
         name = decl.plugin
@@ -206,7 +206,7 @@ pub async fn start(
     (admission.granted, warnings)
 }
 
-/// `:plugin trust` and `:plugin list` over the declarations of a session.
+/// `/plugin trust` and `/plugin list` over the declarations of a session.
 pub struct PluginTrust {
     /// Every declaration of the loaded config.
     pub decls: Vec<PluginCapabilities>,
@@ -232,7 +232,7 @@ impl PluginTrust {
         self.granted().contains(decl)
     }
 
-    /// `:plugin list`: every declaration and whether it is active.
+    /// `/plugin list`: every declaration and whether it is active.
     #[must_use]
     pub fn list(&self) -> String {
         if self.decls.is_empty() {
@@ -259,7 +259,7 @@ impl PluginTrust {
         lines.join("\n")
     }
 
-    /// `:plugin trust <name>`: approves, saves and activates every pending
+    /// `/plugin trust <name>`: approves, saves and activates every pending
     /// declaration of `name`. Returns what to tell the user.
     ///
     /// # Errors
@@ -416,7 +416,7 @@ mod tests {
         assert_eq!(
             msg,
             "plugin `jira` requests network: jira.example.com; shell: jq — approve with \
-             `crest --trust-plugin jira` or `:plugin trust jira`"
+             `crest --trust-plugin jira` or `/plugin trust jira`"
         );
         let ws = pending_notice(&decl("repo", &["shell:make"], ConfigOrigin::Workspace));
         assert!(ws.starts_with("workspace plugin `repo`"), "{ws}");

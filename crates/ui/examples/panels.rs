@@ -1,19 +1,19 @@
-//! The main window with every panel wired to fakes: timeline, modal input,
-//! status bar, the workspace tree (`<Space>e`), the pickers (`<Space>ff`,
-//! `<Space>fg`) and the approval dialog.
+//! The main window with every panel wired to fakes: timeline, prompt input,
+//! status bar, the workspace tree (`Ctrl+Space e`), the pickers
+//! (`Ctrl+Space ff`, `Ctrl+Space fg`) and the approval dialog.
 //!
 //! `cargo run -p ui --example panels`
 //!
-//! The workspace is an in-memory file system. In normal mode (`Esc`):
+//! The workspace is an in-memory file system.
 //!
-//! - `<Space>e` shows or hides the tree; click a file to "open" it.
-//! - `<Space>ff` finds a file, `<Space>fg` greps; type, move with
+//! - `Ctrl+Space e` shows or hides the tree; click a file to "open" it.
+//! - `Ctrl+Space ff` finds a file, `Ctrl+Space fg` greps; type, move with
 //!   `Up`/`Down`, `Enter` opens, `Esc` closes.
-//! - `:edit` proposes a change to `src/lib.rs` (Diff block + dialog) and
-//!   `:run` asks to run a command; answer with `y`, `a`, `n` or `Esc`.
-//! - `:touch <path>` adds a file to the workspace and reloads the tree.
+//! - `/edit` proposes a change to `src/lib.rs` (Diff block + dialog) and
+//!   `/run` asks to run a command; answer with `y`, `a`, `n` or `Esc`.
+//! - `/touch <path>` adds a file to the workspace and reloads the tree.
 //!
-//! Quit with `:q` or Cmd/Ctrl+Q. With `--demo` the example types into its
+//! Quit with `/q` or Cmd/Ctrl+Q. With `--demo` the example types into its
 //! own window, logs what the views show after each step and quits.
 
 #[path = "support/mod.rs"]
@@ -22,7 +22,7 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::keymap::{Action, Mode, default_keymap};
+use application::keymap::default_keymap;
 use application::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
@@ -44,7 +44,7 @@ use ui::input::{InputEvent, InputView};
 use ui::picker::{PickerEvent, PickerView};
 use ui::status::StatusView;
 use ui::timeline::TimelineView;
-use ui::tree::{TOGGLE_ACTION, TreePanel, TreePanelEvent};
+use ui::tree::{TreePanel, TreePanelEvent};
 
 const LIB_RS: &str = "pub fn run() {\n    println!(\"hello\");\n}\n";
 
@@ -209,11 +209,7 @@ fn main() {
         let fs = fakes.fs.clone();
         let timeline = cx.new(TimelineView::new);
         let status = cx.new(|_| StatusView::new("panels"));
-        // `<leader>e` is not in the default keymap yet.
-        let mut keymap = default_keymap();
-        keymap
-            .set(Mode::Normal, "<leader>e", Action::builtin(TOGGLE_ACTION))
-            .unwrap_or_else(|err| panic!("{err}"));
+        let keymap = default_keymap();
         let input = cx.new(|cx| InputView::with_keymap(keymap, window, cx));
         let tree = cx.new(|cx| TreePanel::new(fs.clone(), cx));
         let picker = cx.new(|cx| PickerView::new(fs.clone(), fs.clone(), window, cx));
@@ -228,9 +224,7 @@ fn main() {
         })
         .detach();
 
-        wire(
-            &input, &timeline, &status, &tree, &picker, fakes, window, cx,
-        );
+        wire(&input, &timeline, &tree, &picker, fakes, window, cx);
 
         let panels = cx.new(|_| Panels {
             tree: tree.clone(),
@@ -252,7 +246,6 @@ fn main() {
 fn wire(
     input: &Entity<InputView>,
     timeline: &Entity<TimelineView>,
-    status: &Entity<StatusView>,
     tree: &Entity<TreePanel>,
     picker: &Entity<PickerView>,
     fakes: Fakes,
@@ -287,19 +280,11 @@ fn wire(
     })
     .detach();
 
-    let (timeline, status, tree, picker) = (
-        timeline.clone(),
-        status.clone(),
-        tree.clone(),
-        picker.clone(),
-    );
+    let (timeline, tree, picker) = (timeline.clone(), tree.clone(), picker.clone());
     let mut next_id = 0;
     cx.subscribe(input, move |_, event: &InputEvent, cx| {
         match event {
             InputEvent::Submit(prompt) => fakes.notice(format!("no agent here: {prompt}")),
-            InputEvent::ModeChanged(mode) => {
-                status.update(cx, |status, cx| status.set_input_mode(*mode, cx));
-            }
             InputEvent::Command(command) => {
                 next_id += 1;
                 let (name, arg) = command.split_once(' ').unwrap_or((command, ""));
@@ -312,12 +297,16 @@ fn wire(
                         // The in-memory workspace has no directory to watch.
                         tree.update(cx, |tree, cx| tree.reload(cx));
                     }
-                    _ => fakes.notice(format!("unknown command :{command}")),
+                    _ => fakes.notice(format!("unknown command /{command}")),
                 }
             }
             InputEvent::Action(action) => {
                 if timeline.update(cx, |view, cx| view.handle_action(action, cx))
-                    || tree.update(cx, |tree, cx| tree.handle_action(action, cx))
+                    || window_handle
+                        .update(cx, |_, window, cx| {
+                            tree.update(cx, |tree, cx| tree.handle_action(action, window, cx))
+                        })
+                        .unwrap_or(false)
                     || window_handle
                         .update(cx, |_, window, cx| {
                             picker.update(cx, |picker, cx| picker.handle_action(action, window, cx))
@@ -335,16 +324,16 @@ fn wire(
 
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
-    ("escape space e", 300),
-    ("space f f", 200),
+    ("ctrl-space e", 300),
+    ("ctrl-space f f", 200),
     ("m a i n", 500),
     ("down enter", 300),
-    ("space f g", 200),
+    ("ctrl-space f g", 200),
     ("r u n", 500),
     ("enter", 300),
-    (": e d i t enter", 400),
+    ("/ e d i t enter", 400),
     ("y", 400),
-    (": r u n enter", 400),
+    ("/ r u n enter", 400),
     ("n n o space t h a n k s enter", 400),
 ];
 

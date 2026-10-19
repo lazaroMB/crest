@@ -16,7 +16,7 @@
 //! - [`graph`]: [`research_graph`](graph::research_graph), the 14 nodes
 //!   wired to the workspace.
 //! - [`session`]: [`ResearchSession`](session::ResearchSession), the flow
-//!   of a workspace as the chat drives it (`:research`, gates, resume).
+//!   of a workspace as the chat drives it (`/research`, gates, resume).
 //! - [`agents`]: the read-only agent of the exploring stages and the
 //!   filtered agent of the stages that act.
 //!

@@ -1,36 +1,37 @@
-//! Modal prompt input: a multi-line editor (gpui-component `Textarea`)
-//! driven by the Neovim-style [`KeySequencer`].
+//! The prompt input: a multi-line editor (gpui-component `Textarea`) that
+//! is always ready to type, plus the Neovim-style [`KeySequencer`] for the
+//! shortcuts (chords such as `<C-c>` or `<A-Up>`, and the leader chord,
+//! `<C-Space>` by default, followed by a key: `<C-Space>e`).
 //!
-//! - **insert**: the editor has focus. Keys the keymap does not map go to
-//!   the editor untouched; `<CR>` submits ([`InputEvent::Submit`]),
-//!   `<S-CR>` inserts a newline and `<Esc>` switches to normal.
-//! - **normal**: the view's own focus handle has focus, so no text reaches
-//!   the editor. Mapped keys (`j`, `k`, `gg`, `G`, `<CR>`, `t`, `y`...)
-//!   are emitted as [`InputEvent::Action`] for the timeline; `i` goes back
-//!   to insert and `:` opens the command line.
-//! - **command**: a one-line buffer below the editor. `<CR>` emits
-//!   [`InputEvent::Command`], `<Esc>` (or backspace on an empty line) goes
-//!   back to normal.
+//! - Keys no mapping wants go to the editor untouched; `<CR>` submits and
+//!   `<S-CR>` inserts a newline.
+//! - A line starting with `/` is a command ([`InputEvent::Command`], without
+//!   the slash): `/model opus`, `/research …`, `/!ls -la`. `//text` sends
+//!   `/text` as a prompt.
+//! - While the line is `/` plus a partial command name, a palette above the
+//!   prompt lists the matching commands: `Up`/`Down` choose, `Tab`
+//!   completes and `Enter` runs the chosen one (or completes it up to the
+//!   argument it needs); `Esc` hides it.
 //!
-//! It looks like a terminal prompt: a `❯` colored by mode, the text in the
-//! monospace font with no field around it, and a blinking block cursor
-//! ([`cursor`]); in normal mode the block is an outline, and in command mode
-//! it blinks at the end of the `:` line.
+//! It looks like a terminal prompt: a `❯`, the text in the monospace font
+//! with no field around it, and a blinking block cursor ([`cursor`]).
 //!
 //! Keys are read with a keystroke interceptor, which runs before GPUI's own
-//! key bindings and the editor, while this view or its editor has focus.
-//! A pending prefix (`g` of `gg`) is settled by a GPUI timer at the
-//! sequencer's deadline (`timeoutlen`).
+//! key bindings and the editor, while the editor has focus. The session
+//! also feeds keys typed while another panel has focus through
+//! [`InputView::feed_key`], so the shortcuts work everywhere. A pending
+//! prefix (the leader) is settled by a GPUI timer at the sequencer's
+//! deadline (`timeoutlen`).
 //!
-//! Limitation: keys of a multi-key insert-mode mapping that ends up not
-//! matching are replayed into the editor as text (`Enter` as a newline);
-//! other non-character keys of such a failed prefix are dropped. Text that
-//! an IME commits directly, without key events, bypasses the sequencer.
+//! Limitation: keys of a multi-key mapping that ends up not matching are
+//! replayed into the editor as text (`Enter` as a newline); other
+//! non-character keys of such a failed prefix are dropped. Text that an IME
+//! commits directly, without key events, bypasses the sequencer.
 
 pub mod cursor;
 
 use application::keymap::{
-    Action, Feed, Key, KeyCode, KeySequencer, Keymap, Mode, Modifiers, default_keymap,
+    Action, Feed, Key, KeyCode, KeySequencer, Keymap, Modifiers, default_keymap,
 };
 use gpui::canvas;
 use gpui::{
@@ -43,34 +44,109 @@ use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
 use cursor::{BLINK_INTERVAL, Blink, CursorShape, HiddenCaret, paint_cursor};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use crate::help::CommandRow;
+
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
 /// last one back into the prompt.
 pub const QUEUE_EDIT_ACTION: &str = "queue.edit";
+/// Action of `<Esc>`: back to the prompt (and hide the palette).
+pub const FOCUS_INPUT_ACTION: &str = "focus.input";
 
 /// Rows of the editor before it starts scrolling.
 const MAX_ROWS: usize = 8;
+/// Rows of the command palette.
+const PALETTE_ROWS: usize = 8;
 
 /// What the input asks the rest of the UI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputEvent {
-    /// The prompt was sent with `<CR>` in insert mode (never empty).
+    /// The prompt was sent with `<CR>` (never empty).
     Submit(String),
-    /// A `:` command was run, without the colon.
+    /// A `/` command was run, without the slash.
     Command(String),
     /// A mapped action the input does not handle itself (timeline
     /// navigation, pickers, interrupt...).
     Action(Action),
-    /// The mode changed.
-    ModeChanged(Mode),
 }
 
-/// Short name of a mode for the mode indicator.
-pub fn mode_label(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Insert => "INSERT",
-        Mode::Normal => "NORMAL",
-        Mode::Command => "COMMAND",
+/// What a submitted line is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Line {
+    /// A prompt for the agent.
+    Prompt(String),
+    /// A command, without the slash.
+    Command(String),
+}
+
+/// Splits a submitted line into a prompt or a `/command`; `//text` is the
+/// prompt `/text`. `None` for an empty line or a bare `/`.
+pub fn classify_line(text: &str) -> Option<Line> {
+    if text.trim().is_empty() {
+        return None;
     }
+    let trimmed = text.trim_start();
+    if let Some(literal) = trimmed.strip_prefix("//") {
+        return Some(Line::Prompt(format!("/{literal}")));
+    }
+    match trimmed.strip_prefix('/') {
+        Some(command) if command.trim().is_empty() => None,
+        Some(command) => Some(Line::Command(command.trim().to_owned())),
+        None => Some(Line::Prompt(text.to_owned())),
+    }
+}
+
+/// The commands the palette offers for `text`, best first: names starting
+/// with what follows the `/`, then names containing it. Empty unless
+/// `text` is a `/` and a partial name (no arguments yet).
+pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a CommandRow> {
+    let Some(typed) = text.strip_prefix('/') else {
+        return Vec::new();
+    };
+    if typed.starts_with('/') || typed.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let typed = typed.to_lowercase();
+    let mut starts: Vec<&CommandRow> = Vec::new();
+    let mut contains: Vec<&CommandRow> = Vec::new();
+    for row in commands {
+        let name = row.name.to_lowercase();
+        if name.starts_with(&typed) {
+            starts.push(row);
+        } else if name.contains(&typed) {
+            contains.push(row);
+        }
+    }
+    starts.append(&mut contains);
+    starts
+}
+
+/// What choosing a row of the palette does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Choice {
+    /// Runs the command (`plugin list`).
+    Run(String),
+    /// Puts `/name … ` in the prompt for the arguments it needs.
+    Complete(String),
+}
+
+/// What `Enter` on `row` does: the fixed words of its usage run as they
+/// are (`/plugin list`, `/clear`, `/help [section]`), and a usage that
+/// needs an argument (`/implement <spec>`) is completed up to it.
+fn choice(row: &CommandRow) -> Choice {
+    let mut fixed = Vec::new();
+    for word in row.usage.trim_start_matches('/').split_whitespace() {
+        if word.starts_with('<') {
+            return Choice::Complete(format!("/{} ", fixed.join(" ")));
+        }
+        if word.starts_with('[') {
+            break;
+        }
+        fixed.push(word);
+    }
+    if fixed.is_empty() {
+        fixed.push(row.name.as_str());
+    }
+    Choice::Run(fixed.join(" "))
 }
 
 /// Converts a GPUI keystroke to a keymap [`Key`]. Returns `None` for a bare
@@ -147,14 +223,16 @@ fn key_text(key: &Key) -> Option<char> {
     }
 }
 
-/// The prompt input with its modes.
+/// The prompt input.
 pub struct InputView {
     sequencer: KeySequencer<Action>,
     editor: Entity<TextareaState>,
     focus_handle: FocusHandle,
-    command: String,
     timeout: Option<Task<()>>,
     queued: bool,
+    commands: Vec<CommandRow>,
+    palette_selected: usize,
+    palette_hidden: bool,
     blink: Blink,
     _blink: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -163,12 +241,12 @@ pub struct InputView {
 impl EventEmitter<InputEvent> for InputView {}
 
 impl InputView {
-    /// An input with the builtin keymap, starting in insert mode.
+    /// An input with the builtin keymap.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::with_keymap(default_keymap(), window, cx)
     }
 
-    /// An input with a custom keymap, starting in insert mode.
+    /// An input with a custom keymap.
     pub fn with_keymap(
         keymap: Keymap<Action>,
         window: &mut Window,
@@ -177,29 +255,32 @@ impl InputView {
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, MAX_ROWS)
-                .placeholder("Ask crest…")
+                .placeholder("Ask crest…  (/ for commands)")
         });
         let weak = cx.entity().downgrade();
         let intercept = cx.intercept_keystrokes(move |event, window, cx| {
             weak.update(cx, |this, cx| this.intercept(event, window, cx))
                 .ok();
         });
-        let focus = cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
-            // Clicking the editor in normal mode means "type here".
-            if matches!(event, EditorEvent::Focus) && this.mode() != Mode::Insert {
-                this.set_mode(Mode::Insert, window, cx);
+        let changes = cx.subscribe(&editor, |this, _, event, cx| {
+            if matches!(event, EditorEvent::Change) {
+                this.palette_selected = 0;
+                this.palette_hidden = false;
+                cx.notify();
             }
         });
         Self {
-            sequencer: KeySequencer::new(keymap, Mode::Insert),
+            sequencer: KeySequencer::new(keymap),
             editor,
             focus_handle: cx.focus_handle(),
-            command: String::new(),
             timeout: None,
             queued: false,
+            commands: Vec::new(),
+            palette_selected: 0,
+            palette_hidden: false,
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
-            _subscriptions: vec![intercept, focus],
+            _subscriptions: vec![intercept, changes],
         }
     }
 
@@ -230,19 +311,9 @@ impl InputView {
         self.blink.visible()
     }
 
-    /// Current mode.
-    pub fn mode(&self) -> Mode {
-        self.sequencer.mode()
-    }
-
     /// Text of the prompt editor.
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).value().to_string()
-    }
-
-    /// Text of the command line (without the colon).
-    pub fn command_line(&self) -> &str {
-        &self.command
     }
 
     /// The keymap in use.
@@ -255,29 +326,40 @@ impl InputView {
         &mut self.sequencer
     }
 
-    /// Gives keyboard focus to the part that matches the current mode.
-    pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        if self.mode() == Mode::Insert {
-            let handle = self.editor.read(cx).focus_handle(cx);
-            window.focus(&handle, cx);
-        } else {
-            window.focus(&self.focus_handle, cx);
-        }
+    /// The commands the `/` palette offers.
+    pub fn set_commands(&mut self, commands: Vec<CommandRow>, cx: &mut Context<Self>) {
+        self.commands = commands;
+        cx.notify();
     }
 
-    /// Inserts `text` at the cursor of the prompt editor, switching to
-    /// insert mode (e.g. a `@path` reference chosen in a picker).
+    /// The commands the palette shows for the current text.
+    pub fn palette(&self, cx: &App) -> Vec<&CommandRow> {
+        if self.palette_hidden {
+            return Vec::new();
+        }
+        palette_matches(&self.commands, &self.text(cx))
+    }
+
+    /// Gives keyboard focus to the editor.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        let handle = self.editor.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
+
+    /// Inserts `text` at the cursor of the prompt editor and focuses it
+    /// (e.g. a `@path` reference chosen in a picker, or a key typed while
+    /// another panel had focus).
     pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_mode(Mode::Insert, window, cx);
+        self.focus(window, cx);
         let text = text.to_owned();
         self.editor
             .update(cx, |editor, cx| editor.insert(text, window, cx));
     }
 
-    /// Replaces the prompt with `text`, cursor at the end, in insert mode
-    /// (a queued prompt taken back with `Up`).
+    /// Replaces the prompt with `text`, cursor at the end (a queued prompt
+    /// taken back with `Up`).
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_mode(Mode::Insert, window, cx);
+        self.focus(window, cx);
         let text = text.to_owned();
         self.editor.update(cx, |editor, cx| {
             editor.set_value("", window, cx);
@@ -291,23 +373,9 @@ impl InputView {
         self.queued = queued;
     }
 
-    /// Switches mode, moving focus and notifying listeners.
-    pub fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        if mode == Mode::Command {
-            self.command.clear();
-        }
-        let changed = mode != self.mode();
-        self.sequencer.set_mode(mode);
-        self.timeout = None;
-        self.focus(window, cx);
-        if changed {
-            cx.emit(InputEvent::ModeChanged(mode));
-        }
-        cx.notify();
-    }
-
-    fn owns_focus(&self, window: &Window, cx: &App) -> bool {
-        self.focus_handle.is_focused(window)
+    /// Whether the editor has focus.
+    pub fn owns_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus_handle.contains_focused(window, cx)
             || self.editor.read(cx).focus_handle(cx).is_focused(window)
     }
 
@@ -320,22 +388,70 @@ impl InputView {
         };
         let now = cx.background_executor().now();
         self.blink.keyed(now);
-        let feeds = self.sequencer.feed(key, now);
-        if self.process(feeds, true, window, cx) {
+        if self.palette_key(&key, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.feed(key, true, window, cx) {
             cx.stop_propagation();
         }
-        self.schedule_timeout(window, cx);
-        cx.notify();
     }
 
-    /// Runs the sequencer's output. With `live_key`, the last key of a
-    /// trailing no-match is the keystroke being dispatched: it is left to
-    /// propagate (to the editor or GPUI bindings) when nothing here wants
-    /// it. Returns whether the live keystroke was consumed.
+    /// Feeds a key typed while another panel has focus, so the shortcuts
+    /// work everywhere. Returns whether a mapping took it (or it is part
+    /// of a pending prefix); an unmatched key is left to the caller.
+    pub fn feed_key(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.feed(key, false, window, cx)
+    }
+
+    fn feed(&mut self, key: Key, own: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let now = cx.background_executor().now();
+        let feeds = self.sequencer.feed(key, now);
+        let consumed = self.process(feeds, Some(own), window, cx);
+        self.schedule_timeout(window, cx);
+        cx.notify();
+        consumed
+    }
+
+    /// The palette's keys; returns whether the key was one.
+    fn palette_key(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.sequencer.pending().is_empty() || key.mods != Modifiers::default() {
+            return false;
+        }
+        let choices: Vec<Choice> = self.palette(cx).into_iter().map(choice).collect();
+        if choices.is_empty() {
+            return false;
+        }
+        let len = choices.len().min(PALETTE_ROWS);
+        let selected = self.palette_selected.min(len - 1);
+        match (key.code, &choices[selected]) {
+            (KeyCode::Down, _) => self.palette_selected = (selected + 1) % len,
+            (KeyCode::Up, _) => self.palette_selected = (selected + len - 1) % len,
+            (KeyCode::Esc, _) => self.palette_hidden = true,
+            (KeyCode::Tab, Choice::Run(line)) => self.set_text(&format!("/{line} "), window, cx),
+            (KeyCode::Tab | KeyCode::Enter, Choice::Complete(line)) => {
+                self.set_text(line, window, cx);
+            }
+            (KeyCode::Enter, Choice::Run(line)) => {
+                let line = line.clone();
+                self.editor
+                    .update(cx, |editor, cx| editor.set_value("", window, cx));
+                cx.emit(InputEvent::Command(line));
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Runs the sequencer's output. `live` is `Some(own)` when the last key
+    /// of a trailing no-match is the keystroke being dispatched (`own` when
+    /// it reached the editor): it is left to propagate when nothing here
+    /// wants it. Returns whether the live keystroke was consumed.
     fn process(
         &mut self,
         feeds: Vec<Feed<Action>>,
-        live_key: bool,
+        live: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -346,12 +462,13 @@ impl InputView {
                 Feed::Matched(action) => self.run(action, window, cx),
                 Feed::Pending => {}
                 Feed::NoMatch(mut keys) => {
-                    let live = (live_key && i + 1 == count).then(|| keys.pop()).flatten();
+                    let last = live.filter(|_| i + 1 == count);
+                    let key = last.and_then(|_| keys.pop());
                     for key in &keys {
                         self.replay(key, window, cx);
                     }
-                    if let Some(key) = live {
-                        consumed = self.unmapped(&key, window, cx);
+                    if let (Some(key), Some(own)) = (key, last) {
+                        consumed = own && self.unmapped(&key, cx);
                     }
                 }
             }
@@ -360,58 +477,20 @@ impl InputView {
     }
 
     /// Handles a live key no mapping wants; returns whether it was consumed.
-    fn unmapped(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match self.mode() {
-            Mode::Insert
-                if self.queued
-                    && *key == Key::new(KeyCode::Up, Modifiers::default())
-                    && self.text(cx).is_empty() =>
-            {
-                cx.emit(InputEvent::Action(Action::builtin(QUEUE_EDIT_ACTION)));
-                true
-            }
-            // The editor (insert) or the app bindings (normal) take it.
-            Mode::Insert | Mode::Normal => false,
-            Mode::Command => {
-                self.command_key(key, window, cx);
-                true
-            }
+    fn unmapped(&mut self, key: &Key, cx: &mut Context<Self>) -> bool {
+        if self.queued && *key == Key::plain(KeyCode::Up) && self.text(cx).is_empty() {
+            cx.emit(InputEvent::Action(Action::builtin(QUEUE_EDIT_ACTION)));
+            return true;
         }
+        // The editor takes it.
+        false
     }
 
     /// Re-delivers a key of a prefix that did not match.
     fn replay(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) {
-        match self.mode() {
-            Mode::Insert => {
-                if let Some(c) = key_text(key) {
-                    self.editor
-                        .update(cx, |editor, cx| editor.insert(c.to_string(), window, cx));
-                }
-            }
-            Mode::Command => self.command_key(key, window, cx),
-            Mode::Normal => {}
-        }
-    }
-
-    fn command_key(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) {
-        match key.code {
-            KeyCode::Enter => {
-                let command = std::mem::take(&mut self.command).trim().to_owned();
-                self.set_mode(Mode::Normal, window, cx);
-                if !command.is_empty() {
-                    cx.emit(InputEvent::Command(command));
-                }
-            }
-            KeyCode::Backspace => {
-                if self.command.pop().is_none() {
-                    self.set_mode(Mode::Normal, window, cx);
-                }
-            }
-            _ => {
-                if let Some(c) = key_text(key).filter(|c| *c != '\n') {
-                    self.command.push(c);
-                }
-            }
+        if let Some(c) = key_text(key) {
+            self.editor
+                .update(cx, |editor, cx| editor.insert(c.to_string(), window, cx));
         }
     }
 
@@ -421,25 +500,25 @@ impl InputView {
             Action::Callback(_) => "",
         };
         match name {
-            "mode.normal" => self.set_mode(Mode::Normal, window, cx),
-            "mode.insert" => self.set_mode(Mode::Insert, window, cx),
-            "mode.command" => self.set_mode(Mode::Command, window, cx),
             "submit" => self.submit(window, cx),
             "newline" => self
                 .editor
                 .update(cx, |editor, cx| editor.insert("\n", window, cx)),
+            FOCUS_INPUT_ACTION if self.owns_focus(window, cx) => self.palette_hidden = true,
             _ => cx.emit(InputEvent::Action(action)),
         }
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.text(cx);
-        if text.trim().is_empty() {
+        let Some(line) = classify_line(&self.text(cx)) else {
             return;
-        }
+        };
         self.editor
             .update(cx, |editor, cx| editor.set_value("", window, cx));
-        cx.emit(InputEvent::Submit(text));
+        cx.emit(match line {
+            Line::Prompt(text) => InputEvent::Submit(text),
+            Line::Command(command) => InputEvent::Command(command),
+        });
     }
 
     fn schedule_timeout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -453,7 +532,7 @@ impl InputView {
             this.update_in(cx, |this, window, cx| {
                 let now = cx.background_executor().now();
                 let feeds = this.sequencer.tick(now);
-                this.process(feeds, false, window, cx);
+                this.process(feeds, None, window, cx);
                 this.schedule_timeout(window, cx);
                 cx.notify();
             })
@@ -468,6 +547,58 @@ impl InputView {
             .map(ToString::to_string)
             .collect()
     }
+
+    fn render_palette(&self, cx: &App) -> Option<impl IntoElement> {
+        let rows = self.palette(cx);
+        if rows.is_empty() {
+            return None;
+        }
+        let theme = cx.theme();
+        let selected = self.palette_selected.min(rows.len().min(PALETTE_ROWS) - 1);
+        let items = rows.iter().take(PALETTE_ROWS).enumerate().map(|(ix, row)| {
+            let mut item = h_flex()
+                .id(("palette", ix))
+                .gap_3()
+                .px_2()
+                .child(
+                    div()
+                        .text_color(theme.primary)
+                        .child(SharedString::from(row.usage.clone())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(row.description.clone())),
+                );
+            if ix == selected {
+                item = item.bg(theme.list_active).rounded_sm();
+            }
+            item
+        });
+        Some(
+            v_flex()
+                .id("command-palette")
+                .mb_1()
+                .py_1()
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .bg(theme.popover)
+                .text_sm()
+                .children(items)
+                .child(
+                    div()
+                        .px_2()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("↑↓ choose · Tab complete · Enter run · Esc hide"),
+                ),
+        )
+    }
 }
 
 impl Focusable for InputView {
@@ -477,28 +608,20 @@ impl Focusable for InputView {
 }
 
 impl Render for InputView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = self.render_palette(cx);
+        let focused = self.owns_focus(window, cx);
         let theme = cx.theme();
-        let mode = self.mode();
-        let mode_color = match mode {
-            Mode::Insert => theme.success,
-            Mode::Normal => theme.primary,
-            Mode::Command => theme.warning,
-        };
         let (block, inverted, muted) = (theme.foreground, theme.background, theme.muted_foreground);
-        let blink_on = self.blink.visible();
-        let shape = match mode {
-            Mode::Insert => blink_on.then_some(CursorShape::Block),
-            Mode::Normal => Some(CursorShape::Hollow),
-            Mode::Command => None,
-        };
+        let prompt_color = if focused { theme.primary } else { muted };
+        let shape = self.blink.visible().then_some(CursorShape::Block);
         let editor = self.editor.clone();
         // Painted after the textarea, from the caret it laid out this frame.
         let cursor = canvas(
             |_, _, _| {},
             move |_, (), window, cx| {
                 let focused = editor.read(cx).focus_handle(cx).is_focused(window);
-                if let Some(shape) = shape.filter(|s| *s == CursorShape::Hollow || focused) {
+                if let Some(shape) = shape.filter(|_| focused) {
                     paint_cursor(&editor, shape, block, inverted, window, cx);
                 }
             },
@@ -512,7 +635,7 @@ impl Render for InputView {
             .child(
                 div()
                     .pt_2()
-                    .text_color(mode_color)
+                    .text_color(prompt_color)
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("❯"),
             )
@@ -527,39 +650,22 @@ impl Render for InputView {
                     ))
                     .child(cursor),
             );
-        let command_line = (mode == Mode::Command).then(|| {
-            let mut caret = div().child(" ");
-            if blink_on {
-                caret = caret.bg(block).text_color(inverted);
-            }
+        let pending = self.pending_keys();
+        let status = (!pending.is_empty()).then(|| {
             h_flex()
-                .flex_1()
-                .child(SharedString::from(format!(":{}", self.command)))
-                .child(caret)
+                .gap_2()
+                .text_xs()
+                .text_color(muted)
+                .child(SharedString::from(pending))
         });
-        let status = h_flex()
-            .gap_2()
-            .text_xs()
-            .text_color(muted)
-            .children(command_line)
-            .child(
-                div()
-                    .flex_1()
-                    .child(SharedString::from(self.pending_keys())),
-            )
-            .child(
-                div()
-                    .id("input-mode")
-                    .text_color(mode_color)
-                    .child(SharedString::from(format!("-- {} --", mode_label(mode)))),
-            );
         v_flex()
             .id("crest-input")
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
             .font_family(theme.mono_font_family.clone())
+            .children(palette)
             .child(prompt)
-            .child(status)
+            .children(status)
     }
 }
 
@@ -589,21 +695,25 @@ mod tests {
         (view, cx, events)
     }
 
-    /// Recorded events other than mode changes, draining them.
     fn take(events: &Events) -> Vec<InputEvent> {
-        events
-            .borrow_mut()
-            .drain(..)
-            .filter(|event| !matches!(event, InputEvent::ModeChanged(_)))
-            .collect()
+        events.borrow_mut().drain(..).collect()
     }
 
     fn action(name: &str) -> InputEvent {
         InputEvent::Action(Action::builtin(name))
     }
 
+    fn row(name: &str, usage: &str) -> CommandRow {
+        CommandRow {
+            name: name.into(),
+            usage: usage.into(),
+            description: format!("does {name}"),
+            source: "crest".into(),
+        }
+    }
+
     #[gpui::test]
-    fn insert_mode_types_and_submits(cx: &mut TestAppContext) {
+    fn types_and_submits(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
         cx.simulate_input("hola");
         cx.simulate_keystrokes("shift-enter");
@@ -611,10 +721,15 @@ mod tests {
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "hola\nmundo"));
         cx.simulate_keystrokes("enter");
         assert_eq!(take(&events), [InputEvent::Submit("hola\nmundo".into())]);
-        view.read_with(cx, |view, cx| {
-            assert_eq!(view.text(cx), "");
-            assert_eq!(view.mode(), Mode::Insert);
-        });
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
+    }
+
+    #[gpui::test]
+    fn plain_keys_are_always_typed(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_input("jk:?Gi");
+        assert!(take(&events).is_empty());
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "jk:?Gi"));
     }
 
     #[gpui::test]
@@ -625,50 +740,78 @@ mod tests {
     }
 
     #[gpui::test]
-    fn normal_mode_dispatches_timeline_actions(cx: &mut TestAppContext) {
+    fn a_slash_line_is_a_command(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
+        cx.simulate_input("/model opus");
+        cx.simulate_keystrokes("enter");
+        assert_eq!(take(&events), [InputEvent::Command("model opus".into())]);
+        cx.simulate_input("//etc/hosts");
+        cx.simulate_keystrokes("enter");
+        assert_eq!(take(&events), [InputEvent::Submit("/etc/hosts".into())]);
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
+    }
+
+    #[gpui::test]
+    fn the_palette_completes_and_runs_commands(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        view.update(cx, |view, cx| {
+            view.set_commands(
+                vec![
+                    row("clear", "/clear"),
+                    row("implement", "/implement <spec>"),
+                    row("help", "/help [section]"),
+                ],
+                cx,
+            );
+        });
+        cx.simulate_input("/cl");
+        view.read_with(cx, |view, cx| assert_eq!(view.palette(cx).len(), 1));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(take(&events), [InputEvent::Command("clear".into())]);
+        // A command that needs an argument is completed, not run.
+        cx.simulate_input("/imp");
+        cx.simulate_keystrokes("enter");
+        assert!(take(&events).is_empty());
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/implement "));
+        view.update_in(cx, |view, window, cx| view.set_text("", window, cx));
+        // Up/Down choose; Tab completes.
+        cx.simulate_input("/");
+        cx.simulate_keystrokes("down tab");
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/implement "));
+        // Esc hides it until the text changes.
+        view.update_in(cx, |view, window, cx| view.set_text("/h", window, cx));
         cx.simulate_keystrokes("escape");
-        assert_eq!(
-            events.borrow_mut().drain(..).collect::<Vec<_>>(),
-            [InputEvent::ModeChanged(Mode::Normal)]
-        );
-        cx.simulate_keystrokes("j k shift-g enter t y");
+        view.read_with(cx, |view, cx| assert!(view.palette(cx).is_empty()));
+    }
+
+    #[gpui::test]
+    fn leader_and_chords_fire_actions(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_keystrokes("ctrl-space e alt-up alt-down");
         assert_eq!(
             take(&events),
             [
-                action("block.next"),
+                action("panel.tree"),
                 action("block.prev"),
-                action("block.last"),
-                action("block.toggle"),
-                action("block.toggle_view"),
-                action("block.yank"),
+                action("block.next")
             ]
         );
-        view.read_with(cx, |view, cx| {
-            assert_eq!(view.mode(), Mode::Normal);
-            assert_eq!(view.text(cx), "", "normal-mode keys never reach the editor");
-        });
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
     }
 
     #[gpui::test]
-    fn gg_waits_for_the_second_key(cx: &mut TestAppContext) {
-        let (_view, cx, events) = input(cx);
-        cx.simulate_keystrokes("escape g");
-        assert!(take(&events).is_empty(), "g alone is a pending prefix");
-        cx.simulate_keystrokes("g");
-        assert_eq!(take(&events), [action("block.first")]);
-    }
-
-    #[gpui::test]
-    fn pending_prefix_times_out(cx: &mut TestAppContext) {
+    fn pending_leader_times_out(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
-        cx.simulate_keystrokes("escape g");
-        view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), "g"));
+        cx.simulate_keystrokes("ctrl-space");
+        view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), "<C-Space>"));
         cx.executor().advance_clock(Duration::from_millis(1100));
         cx.run_until_parked();
         view.read_with(cx, |view, _| assert_eq!(view.pending_keys(), ""));
-        cx.simulate_keystrokes("g");
-        assert!(take(&events).is_empty(), "the timed-out g does not pair up");
+        cx.simulate_keystrokes("e");
+        assert!(
+            take(&events).is_empty(),
+            "the timed-out leader does not pair up"
+        );
     }
 
     #[gpui::test]
@@ -708,57 +851,62 @@ mod tests {
         assert!(!visible(cx), "blinks again a whole interval after the key");
     }
 
-    #[gpui::test]
-    fn i_returns_to_insert(cx: &mut TestAppContext) {
-        let (view, cx, _events) = input(cx);
-        cx.simulate_keystrokes("escape i");
-        cx.simulate_input("x");
-        view.read_with(cx, |view, cx| {
-            assert_eq!(view.mode(), Mode::Insert);
-            assert_eq!(view.text(cx), "x");
-        });
-    }
-
-    #[gpui::test]
-    fn command_mode_runs_the_typed_command(cx: &mut TestAppContext) {
-        let (view, cx, events) = input(cx);
-        cx.simulate_keystrokes("escape :");
-        view.read_with(cx, |view, _| assert_eq!(view.mode(), Mode::Command));
-        cx.simulate_input("model opus");
-        cx.simulate_keystrokes("backspace s");
-        view.read_with(cx, |view, _| assert_eq!(view.command_line(), "model opus"));
-        cx.simulate_keystrokes("enter");
-        assert_eq!(take(&events), [InputEvent::Command("model opus".into())]);
-        view.read_with(cx, |view, cx| {
-            assert_eq!(view.mode(), Mode::Normal);
-            assert_eq!(view.text(cx), "", "command text never reaches the editor");
-        });
-    }
-
-    #[gpui::test]
-    fn escape_cancels_command_mode(cx: &mut TestAppContext) {
-        let (view, cx, events) = input(cx);
-        cx.simulate_keystrokes("escape : q escape");
-        assert!(take(&events).is_empty());
-        view.read_with(cx, |view, _| assert_eq!(view.mode(), Mode::Normal));
-    }
-
-    #[gpui::test]
-    fn mode_changes_are_emitted(cx: &mut TestAppContext) {
-        let (_view, cx, events) = input(cx);
-        cx.simulate_keystrokes("escape : escape i");
-        let modes: Vec<_> = events
-            .borrow()
-            .iter()
-            .filter_map(|event| match event {
-                InputEvent::ModeChanged(mode) => Some(*mode),
-                _ => None,
-            })
-            .collect();
+    #[test]
+    fn lines_are_prompts_or_commands() {
+        assert_eq!(classify_line("  "), None);
+        assert_eq!(classify_line("/"), None);
+        assert_eq!(classify_line("hola"), Some(Line::Prompt("hola".into())));
         assert_eq!(
-            modes,
-            [Mode::Normal, Mode::Command, Mode::Normal, Mode::Insert]
+            classify_line(" /mode plan "),
+            Some(Line::Command("mode plan".into()))
         );
+        assert_eq!(classify_line("//x"), Some(Line::Prompt("/x".into())));
+        assert_eq!(
+            classify_line("/!ls -la"),
+            Some(Line::Command("!ls -la".into()))
+        );
+    }
+
+    #[test]
+    fn palette_choices_run_fixed_words_and_complete_arguments() {
+        assert_eq!(choice(&row("clear", "/clear")), Choice::Run("clear".into()));
+        assert_eq!(
+            choice(&row("help", "/help [section|search]")),
+            Choice::Run("help".into())
+        );
+        assert_eq!(
+            choice(&row("plugin", "/plugin list")),
+            Choice::Run("plugin list".into())
+        );
+        assert_eq!(
+            choice(&row("plugin", "/plugin trust <name>")),
+            Choice::Complete("/plugin trust ".into())
+        );
+        assert_eq!(
+            choice(&row("!", "/! <command>")),
+            Choice::Complete("/! ".into())
+        );
+    }
+
+    #[test]
+    fn the_palette_prefers_prefixes() {
+        let rows = [
+            row("research", "/research"),
+            row("clear", "/clear"),
+            row("mcp", "/mcp"),
+        ];
+        let names = |text| -> Vec<&str> {
+            palette_matches(&rows, text)
+                .iter()
+                .map(|r| r.name.as_str())
+                .collect()
+        };
+        assert_eq!(names("/"), ["research", "clear", "mcp"]);
+        assert_eq!(names("/c"), ["clear", "research", "mcp"]);
+        assert_eq!(names("/re"), ["research"]);
+        assert!(names("/research x").is_empty());
+        assert!(names("hola").is_empty());
+        assert!(names("//").is_empty());
     }
 
     fn key(notation: &str) -> Option<Key> {

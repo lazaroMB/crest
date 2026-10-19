@@ -25,8 +25,8 @@ What exists, by layer:
   On an RTX 4070 (Vulkan) a 900×670 frame costs about 1.3 ms of GPU time and 0.3 ms of readback.
 - `adapter-export`: `board.html` with three.js r160 inlined, replaying the recorded traces with the
   same geometry; deep links (`#scenario=…&t=…&chip=…`).
-- `crest`: `:simulate <spec>`, `crest --headless --simulate <spec>` (exit 0 only if every scenario
-  passes) and the tool's registration; the research flow's closing message suggests `:simulate`.
+- `crest`: `/simulate <spec>`, `crest --headless --simulate <spec>` (exit 0 only if every scenario
+  passes) and the tool's registration; the research flow's closing message suggests `/simulate`.
 
 Left for later:
 
@@ -46,7 +46,7 @@ The original research follows.
 - **Real 3D**, not a 2.5D vector drawing: lit chips, edge outlines, glow, orbit/zoom/pan, an
   isometric camera preset — the pgrun look.
 - **Optional, on demand.** It is not a stage of the research flow. The engineer asks for it on a
-  finished (or in-progress) Spec: `:simulate <spec>` in the window, `crest --headless --simulate
+  finished (or in-progress) Spec: `/simulate <spec>` in the window, `crest --headless --simulate
   <spec>`, or by asking the agent in the chat (a `simulate_solution` tool). The research flow only
   offers it in its closing message.
 
@@ -203,7 +203,7 @@ re-runs the simulation.
 | Layer | New pieces |
 | --- | --- |
 | `crates/domain` | `sysmodel/`: model types + schema, expression parser, lint, deterministic simulator, trace with checkpoints for fast seeking, assertion checker, grid auto-layout and trace routing, renderer-agnostic isometric scene |
-| `crates/app` | Use case **simulate_solution** (not a flow stage): read a Spec folder, generate the model from its diagrams and test protocol (assertions first, frozen), validate, run every scenario, repair loop (max 2 rounds), record Evidence back into the Spec's `sources.json`/journal; exposed as the `simulate_solution` agent tool, the `:simulate <spec>` command and `--simulate`; `SimExport` port; re-run with new inputs or seeds |
+| `crates/app` | Use case **simulate_solution** (not a flow stage): read a Spec folder, generate the model from its diagrams and test protocol (assertions first, frozen), validate, run every scenario, repair loop (max 2 rounds), record Evidence back into the Spec's `sources.json`/journal; exposed as the `simulate_solution` agent tool, the `/simulate <spec>` command and `--simulate`; `SimExport` port; re-run with new inputs or seeds |
 | `crates/adapters` | HTML exporter (three.js inlined), GIF exporter, persistence in `.crest/specs/NNNN-slug/simulation/` (`sysmodel.json`, `traces/*.json`, `board.html`) |
 | `crates/ui` | `render3d/` (wgpu offscreen renderer shared with the 3D model viewer) and `sysboard/`: 3D board, timeline, state inspector, scenario picker, opened as a 100% modal; a compact preview block in the timeline |
 
@@ -227,7 +227,7 @@ MVP, in order:
 1. Domain: model + schema + lint, expression language, deterministic simulator with `always`,
    `eventually … within`, `count` and `path`, traces with checkpoints, grid auto-layout, scene
    description. Golden tests for determinism.
-2. App: the `simulate_solution` use case + agent tool + `:simulate` / `--simulate`, with Evidence and
+2. App: the `simulate_solution` use case + agent tool + `/simulate` / `--simulate`, with Evidence and
    files in the Spec folder.
 3. UI: the wgpu offscreen renderer (lit boxes, ribbons, emissive packets, outlines, bloom, iso preset
    and orbit) and the board view in a modal: play/pause/scrub, click-to-inspect, scenario picker,

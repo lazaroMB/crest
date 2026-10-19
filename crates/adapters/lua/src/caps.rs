@@ -262,7 +262,7 @@ pub(crate) fn authorize(
         };
         return Err(mlua::Error::runtime(format!(
             "{api}: the capabilities of plugin `{name}` ({what}) are not approved; approve \
-             them with `crest --trust-plugin {name}` or `:plugin trust {name}`"
+             them with `crest --trust-plugin {name}` or `/plugin trust {name}`"
         )));
     }
     Ok(identity)

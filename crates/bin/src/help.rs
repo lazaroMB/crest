@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use application::keymap::{Action, KeymapEntry, Mode, parse_keys};
+use application::keymap::{Action, KeymapEntry, parse_keys};
 use application::ports::mcp::{McpServerState, McpServerStatus, parse_qualified_name};
 use application::ports::plugin::{
-    ConfigOrigin, HookKind, KeyAction, KeyMode, KeymapSpec, McpServerSpec, McpTransport,
+    ConfigOrigin, HookKind, KeyAction, KeymapSpec, McpServerSpec, McpTransport,
 };
 use clap::CommandFactory as _;
 use domain::model::{ModelRole, ResolveRequest};
@@ -29,36 +29,87 @@ use crate::root::App;
 /// [`UiController::run_command`]: crate::gui::UiController
 pub const BIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
+        name: "!",
+        usage: "/! <command>",
+        description: "Run a shell command in the workspace; its output is shown and goes to \
+                      the model with the next prompt (also /!cmd)",
+    },
+    CommandInfo {
         name: "implement",
-        usage: ":implement <spec>",
+        usage: "/implement <spec>",
         description: "Run the plan of a Spec task by task, one commit per task, with gates you \
                       answer from the input",
     },
     CommandInfo {
+        name: "implement",
+        usage: "/implement resume",
+        description: "Continue the last implementation where it stopped (also after an error)",
+    },
+    CommandInfo {
         name: "research",
-        usage: ":research [problem|resume]",
-        description: "Start the research flow on a problem (it ends in a Spec), resume it, or \
-                      report it without arguments",
+        usage: "/research <problem>",
+        description: "Start the research flow on a problem; it ends in a Spec",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research",
+        description: "Where the research flow is",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research resume [n]",
+        description: "Continue the last research flow (or number n of /research list), \
+                      running a failed or interrupted stage again",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research list",
+        description: "The research flows of this workspace, newest first",
+    },
+    CommandInfo {
+        name: "retry",
+        usage: "/retry",
+        description: "Run the failed stage of the research flow again",
+    },
+    CommandInfo {
+        name: "stage",
+        usage: "/stage",
+        description: "Where the active flow is (research or implementation)",
+    },
+    CommandInfo {
+        name: "back",
+        usage: "/back <stage>",
+        description: "Take the research flow back to a stage, by number or name",
+    },
+    CommandInfo {
+        name: "skip",
+        usage: "/skip",
+        description: "Skip an optional stage of the research flow",
+    },
+    CommandInfo {
+        name: "abort",
+        usage: "/abort",
+        description: "Stop the active flow for good (its journal is kept)",
     },
     CommandInfo {
         name: "simulate",
-        usage: ":simulate <spec>",
+        usage: "/simulate <spec>",
         description: "Simulate the solution of a Spec and open the 3D board with every scenario",
     },
     CommandInfo {
         name: "mcp",
-        usage: ":mcp trust <name>",
+        usage: "/mcp trust <name>",
         description: "Approve an MCP server of the workspace config (remembered for this \
                       workspace)",
     },
     CommandInfo {
         name: "plugin",
-        usage: ":plugin list",
+        usage: "/plugin list",
         description: "List the plugins that declare capabilities and whether they are approved",
     },
     CommandInfo {
         name: "plugin",
-        usage: ":plugin trust <name>",
+        usage: "/plugin trust <name>",
         description: "Approve the capabilities (network, shell) a plugin declares",
     },
 ];
@@ -111,14 +162,6 @@ fn transport_text(transport: &McpTransport) -> String {
     }
 }
 
-fn key_mode(mode: KeyMode) -> Mode {
-    match mode {
-        KeyMode::Insert => Mode::Insert,
-        KeyMode::Normal => Mode::Normal,
-        KeyMode::Command => Mode::Command,
-    }
-}
-
 fn path_text(path: Option<&Path>) -> String {
     path.map_or_else(|| "none".to_owned(), |p| p.display().to_string())
 }
@@ -135,9 +178,7 @@ fn mapping_of<'a>(
             (KeyAction::Callback(a), Action::Callback(b)) => a.0 == *b,
             _ => false,
         };
-        same_action
-            && key_mode(spec.mode) == entry.mode
-            && parse_keys(&spec.lhs, leader).is_ok_and(|keys| keys == entry.keys)
+        same_action && parse_keys(&spec.lhs, leader).is_ok_and(|keys| keys == entry.keys)
     })
 }
 
@@ -235,7 +276,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             r.trust = "approved".into();
         } else {
             r.trust = "pending".into();
-            r.approve = Some(format!(":plugin trust {}", decl.plugin));
+            r.approve = Some(format!("/plugin trust {}", decl.plugin));
         }
     }
     let sources = &app.config_sources;
@@ -305,7 +346,7 @@ fn mcp_rows(specs: &[McpServerSpec], statuses: &[McpServerStatus]) -> Vec<McpRow
                 Some(McpServerState::Stopped) => ("stopped".to_owned(), None),
                 None if spec.origin == ConfigOrigin::Workspace => (
                     "held back: the workspace config is not trusted".to_owned(),
-                    Some(format!(":mcp trust {}", spec.name)),
+                    Some(format!("/mcp trust {}", spec.name)),
                 ),
                 None => ("not started".to_owned(), None),
             };
@@ -335,7 +376,7 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         .collect();
     commands.extend(app.commands.iter().map(|c| CommandRow {
         name: c.name.clone(),
-        usage: format!(":{} [args]", c.name),
+        usage: format!("/{} [args]", c.name),
         description: c.description.clone().unwrap_or_default(),
         source: if c.plugin.is_empty() {
             GLOBAL_CONFIG.to_owned()
@@ -514,7 +555,7 @@ mod tests {
             state: McpServerState::Ready { tool_count: 2 },
         }];
         let rows = mcp_rows(&[ws, ready], &statuses);
-        assert_eq!(rows[0].trust_command.as_deref(), Some(":mcp trust git"));
+        assert_eq!(rows[0].trust_command.as_deref(), Some("/mcp trust git"));
         assert_eq!(rows[0].transport, "stdio: mcp-git --x");
         assert_eq!(rows[0].origin, "workspace");
         assert_eq!(rows[1].state, "ready (2 tools)");

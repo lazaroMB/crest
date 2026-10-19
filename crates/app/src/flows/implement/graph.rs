@@ -43,7 +43,7 @@ pub fn implement_graph(deps: ImplementDeps) -> Result<ImplementGraph, FlowError>
         .build()
 }
 
-/// Why the target of `:implement` names no plan.
+/// Why the target of `/implement` names no plan.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TargetError {
     /// Nothing was given.
@@ -55,7 +55,7 @@ pub enum TargetError {
 }
 
 /// The workspace path of the plan named by `target`, as typed after
-/// `:implement` or `--implement`:
+/// `/implement` or `--implement`:
 ///
 /// - a path ending in `.json` is the plan itself;
 /// - a path with a `/` is the Spec folder, and the plan its `plan.json`;

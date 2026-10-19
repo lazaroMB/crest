@@ -4,7 +4,7 @@
 //!
 //! `cargo run -p ui --example help [--demo]`
 //!
-//! Press `Esc` then `?` (or `F1` in any mode, or `:help tools`) to open it;
+//! Press `Esc` then `?` (or `F1` in any mode, or `/help tools`) to open it;
 //! `1`–`8` switch sections, `j`/`k` move, `Enter` expands, `y` copies, `/`
 //! searches and `Esc` closes.
 //!
@@ -82,7 +82,7 @@ fn snapshot() -> HelpSnapshot {
     HelpSnapshot {
         commands: vec![CommandRow {
             name: "issue".into(),
-            usage: ":issue [args]".into(),
+            usage: "/issue [args]".into(),
             description: "Show a Jira issue".into(),
             source: "jira".into(),
         }],
@@ -119,7 +119,7 @@ fn snapshot() -> HelpSnapshot {
             adds: vec!["tool jira_issue".into(), "command :issue".into()],
             capabilities: vec!["network:jira.example.com".into()],
             trust: "pending".into(),
-            approve: Some(":plugin trust jira".into()),
+            approve: Some("/plugin trust jira".into()),
             diagnostics: Vec::new(),
         }],
         mcp: vec![McpRow {
@@ -163,7 +163,7 @@ fn main() {
 
 /// Keys typed by `--demo`, each followed by a pause and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
-    ("escape ?", 400),
+    ("f1", 400),
     ("3", 300),
     ("j j enter", 300),
     ("y", 300),
@@ -171,7 +171,7 @@ const DEMO_STEPS: &[(&str, u64)] = &[
     ("/ e c h o", 400),
     ("enter", 300),
     ("escape", 300),
-    ("i f1", 400),
+    ("ctrl-space h", 400),
     ("escape", 300),
 ];
 
@@ -215,8 +215,8 @@ fn run_demo(window: gpui::AnyWindowHandle, session: Entity<Session>, cx: &mut Ap
                         );
                     }
                     None => eprintln!(
-                        "demo [{keys}]: help closed; input mode={:?}",
-                        session.read(cx).input().read(cx).mode()
+                        "demo [{keys}]: help closed; prompt={:?}",
+                        session.read(cx).input().read(cx).text(cx)
                     ),
                 }
             });

@@ -182,7 +182,7 @@ pub fn pending_warning(spec: &McpServerSpec) -> String {
     )
 }
 
-/// Approves the workspace server `name` of `specs` (`:mcp trust <name>`)
+/// Approves the workspace server `name` of `specs` (`/mcp trust <name>`)
 /// and saves it to the store at `path`, as `--trust-mcp` does. The server
 /// starts the next time crest opens the workspace. Returns what to tell
 /// the user.

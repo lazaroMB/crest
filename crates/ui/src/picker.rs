@@ -222,6 +222,11 @@ impl PickerView {
         }
     }
 
+    /// Whether the picker is shown.
+    pub fn is_open(&self) -> bool {
+        self.mode.is_some()
+    }
+
     /// Opens the picker in `mode` with an empty query and focuses its input.
     pub fn open(&mut self, mode: PickerMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode.is_none() {

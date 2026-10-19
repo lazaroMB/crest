@@ -94,7 +94,7 @@ app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end, { desc = 
 
   `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
 - **`action`**: the name of a builtin action or a Lua function. The function is called with no arguments (`nil`) and can use `app.cmd` and `app.send`. If it returns `app.ui.block(...)`, that block is added to the timeline.
-- **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`?`, `F1`, `:help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
+- **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`?`, `F1`, `/help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
 
 A keymap replaces any other with the same keys in the same mode, builtin ones included. These are the builtin actions valid as a string:
 
@@ -123,7 +123,7 @@ app.commands.register("review", function(args)
 end, { desc = "Review the uncommitted changes" })
 ```
 
-- The command is used as `:review only src/`, and `fn` receives the rest of the line as a string (`"only src/"`, or `""` if there is nothing).
+- The command is used as `/review only src/`, and `fn` receives the rest of the line as a string (`"only src/"`, or `""` if there is nothing).
 - If the name starts with `/`, that slash is ignored.
 - The builtin commands `q`, `quit`, `qa`, `model`, `mode`, `clear`, `modal`, `help`, `h`, `implement`, `research`, `simulate`, `mcp` and `plugin` are evaluated first, so a command with one of those names never runs.
 - **`opts`** (optional): `{ desc = "..." }` describes the command in the help's Commands section, with the plugin that registered it. A bad `opts` is a diagnostic and the command is not registered.
@@ -267,7 +267,7 @@ Ids belong to the plugin: two plugins can both use `"report"` without touching e
 └────────────────────────────────────────────────────────────────┘
 ```
 
-In the window, the modal has a header with its title and the plugin, and a close button. `Esc` closes the front modal, as do a click on the dimmed area around it and `:modal close`. In headless mode there is no window: crest prints ``modal `<title>` opened (only visible in the window)`` and ignores updates.
+In the window, the modal has a header with its title and the plugin, and a close button. `Esc` closes the front modal, as do a click on the dimmed area around it and `/modal close`. In headless mode there is no window: crest prints ``modal `<title>` opened (only visible in the window)`` and ignores updates.
 
 <a id="modal-security"></a>**Security.** An image `path` (in a modal or a `Custom` block) is checked before the window reads it, with the same rules as the file tools: it must resolve, following symlinks, inside the workspace, and must not match `app.permissions.sensitive_paths` (`.env`, `.git/`, keys...). A rejected image is replaced with a text node such as `[image unavailable: .env: ...]`. Images inside HTML or markdown cannot read local files. Links only open `http`, `https` and `mailto` URLs. Web pages cannot be embedded: link to them instead (see [research/rich-content-modals.md](research/rich-content-modals.md)).
 
@@ -369,7 +369,7 @@ app.mcp.add("git", { command = "mcp-git", effect = "read", timeout = 30 })
 **Security**:
 
 - Servers from the global config and from plugins start when crest opens.
-- Workspace servers do not start until the user approves them with `crest --trust-mcp <name>` or `:mcp trust <name>` (see [usage.md](usage.md#mcp-servers-and-trust)). The approval is required again if the declaration changes.
+- Workspace servers do not start until the user approves them with `crest --trust-mcp <name>` or `/mcp trust <name>` (see [usage.md](usage.md#mcp-servers-and-trust)). The approval is required again if the declaration changes.
 
 ## Capabilities
 
@@ -410,21 +410,21 @@ Write it at the top of the plugin's `init.lua`. It is also allowed in the global
 On startup, each declaration that has not been approved yet shows a notice:
 
 ```text
-plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `:plugin trust jira`
+plugin `jira` requests network: jira.example.com; shell: jq — approve with `crest --trust-plugin jira` or `/plugin trust jira`
 ```
 
 (A declaration of the workspace config starts with ``workspace plugin `x` ``.)
 
 - `crest --trust-plugin jira` (repeatable) approves it for this run and saves it.
-- `:plugin trust jira`, in the window, saves it and activates it **immediately**, without restarting.
-- `:plugin list` shows every declaration, the file it comes from, its capabilities and whether it is `approved` or `pending`.
+- `/plugin trust jira`, in the window, saves it and activates it **immediately**, without restarting.
+- `/plugin list` shows every declaration, the file it comes from, its capabilities and whether it is `approved` or `pending`.
 
 An approval covers one exact declaration: the plugin name, the file that declared it (for the workspace config that path includes the workspace root), its layer and the exact capability list. If any of them changes (a new host, one more program), the plugin asks again. Approvals are stored in `plugin-trust.json` in crest's data directory (see [configuration.md](configuration.md#plugin-capabilities-and-secrets)); deleting an entry revokes it on the next start.
 
 A call without approval fails with a Lua error such as:
 
 ```text
-app.http: the capabilities of plugin `jira` (network: jira.example.com) are not approved; approve them with `crest --trust-plugin jira` or `:plugin trust jira`
+app.http: the capabilities of plugin `jira` (network: jira.example.com) are not approved; approve them with `crest --trust-plugin jira` or `/plugin trust jira`
 ```
 
 Capabilities are **independent of tool approvals**: a tool registered by the plugin keeps its `effect`, and the permission policy asks for it as usual. Declare `effect = "network"` (or `"execute"`) for tools that call out, so that the user sees each call.
@@ -548,7 +548,7 @@ app.tools.register({
 ```
 
 1. Store the token: `secret-tool store --label=crest service crest username plugin:jira:token`, or export `CREST_PLUGIN_JIRA_TOKEN`.
-2. Start once with `crest --trust-plugin jira` (or open crest and type `:plugin trust jira`).
+2. Start once with `crest --trust-plugin jira` (or open crest and type `/plugin trust jira`).
 3. Ask "what is the status of CR-7?". Because of `effect = "network"`, the call asks for approval in `ask` mode; the model gets the table as JSON.
 
 For GitHub, declare `"network:api.github.com"`, read `app.secret("token")` and send `Authorization = "Bearer " .. token` plus `Accept = "application/vnd.github+json"`.
@@ -598,7 +598,7 @@ Approve it with `crest --trust-plugin jsonq` and ask "list the dependencies in p
 | Error in a hook | Notice in the status bar. The tool continues. |
 | Error in a keymap or command callback | `Error` block with `Lua: <message>`. |
 | Malformed `app.plugin` entry | Diagnostic with the line of the call. Only that entry is ignored. |
-| Capability API without approval | Lua error saying how to approve it (`crest --trust-plugin <name>` or `:plugin trust <name>`). |
+| Capability API without approval | Lua error saying how to approve it (`crest --trust-plugin <name>` or `/plugin trust <name>`). |
 | Keymap with invalid notation | Notice ``keymap `x` ignored: …`` when the window opens. |
 
 In headless mode the diagnostics go to the terminal. Run `crest --headless "hello"` to check that your config loads cleanly.
@@ -712,7 +712,7 @@ app.commands.register("review", function(args)
 end)
 ```
 
-To use it, press `Esc`, type `:review only src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. only src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
+To use it, press `Esc`, type `/review only src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. only src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
 
 ### 4. Keymaps
 

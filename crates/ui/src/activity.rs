@@ -1,6 +1,6 @@
 //! Activity line and prompt queue, between the timeline and the prompt.
 //!
-//! While the session works (a turn, or a `:` command such as `:research`
+//! While the session works (a turn, or a `/` command such as `/research`
 //! that runs a flow up to its next gate) one line says so and keeps moving:
 //!
 //! ```text
@@ -42,7 +42,7 @@ const MAX_CHARS: usize = 120;
 pub enum WorkKind {
     /// A turn of the agent (or an answer to a flow's gate).
     Turn,
-    /// A `:` command, by name (`research`, `implement`...).
+    /// A `/` command, by name (`research`, `implement`...).
     Command(String),
 }
 

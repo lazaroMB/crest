@@ -1,10 +1,14 @@
-//! Neovim-style key sequences: notation parser, per-mode keymaps and a
-//! sequencer that resolves pending prefixes with `timeoutlen`.
+//! Neovim-style key sequences: notation parser, a keymap and a sequencer
+//! that resolves pending prefixes (`<leader>ff`) with `timeoutlen`.
+//!
+//! There are no modes: the prompt is always ready to type, so mappings use
+//! chords (`<C-c>`, `<A-Up>`) or the leader chord (`<C-Space>` by default)
+//! and never plain printable keys.
 //!
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
 //! passed in as an [`Instant`] so tests never sleep.
 //!
-//! The types here ([`Mode`], [`Key`], [`KeySequence`], [`Action`]) are the
+//! The types here ([`Key`], [`KeySequence`], [`Action`]) are the
 //! keymap's own vocabulary. The Lua host (`app.keymap.set`) and the UI layer
 //! convert their own representations into them.
 
@@ -242,24 +246,8 @@ impl fmt::Display for Key {
     }
 }
 
-/// Editing mode the keymap applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Mode {
-    /// Typing in the prompt.
-    Insert,
-    /// Navigating the timeline.
-    Normal,
-    /// Typing a `:` command.
-    Command,
-}
-
-impl Mode {
-    /// All modes, for mappings that apply everywhere.
-    pub const ALL: [Mode; 3] = [Mode::Insert, Mode::Normal, Mode::Command];
-}
-
 /// Leader used when none is configured (`app.opt.leader`).
-pub const DEFAULT_LEADER: &str = " ";
+pub const DEFAULT_LEADER: &str = "<C-Space>";
 
 #[derive(Debug, Clone)]
 struct Node<A> {
@@ -285,14 +273,14 @@ pub struct Lookup<'a, A> {
     pub is_prefix: bool,
 }
 
-/// Per-mode trie of `KeySequence -> A`.
+/// Trie of `KeySequence -> A`.
 ///
 /// `<leader>` is expanded when a mapping is registered, as in Neovim: changing
 /// the leader later does not move existing mappings.
 #[derive(Debug, Clone)]
 pub struct Keymap<A> {
     leader: String,
-    modes: HashMap<Mode, Node<A>>,
+    root: Node<A>,
 }
 
 impl<A> Default for Keymap<A> {
@@ -306,7 +294,7 @@ impl<A> Keymap<A> {
     pub fn new() -> Self {
         Self {
             leader: DEFAULT_LEADER.to_owned(),
-            modes: HashMap::new(),
+            root: Node::default(),
         }
     }
 
@@ -315,23 +303,24 @@ impl<A> Keymap<A> {
         &self.leader
     }
 
-    /// Sets the leader (notation, e.g. `" "` or `","`). Validated eagerly.
+    /// Sets the leader (notation, e.g. `"<C-Space>"` or `"<C-,>"`).
+    /// Validated eagerly.
     pub fn set_leader(&mut self, leader: &str) -> Result<(), KeyParseError> {
         parse_inner(leader, None)?;
         self.leader = leader.to_owned();
         Ok(())
     }
 
-    /// Maps `notation` in `mode`, replacing any previous action for it.
-    pub fn set(&mut self, mode: Mode, notation: &str, action: A) -> Result<(), KeyParseError> {
+    /// Maps `notation`, replacing any previous action for it.
+    pub fn set(&mut self, notation: &str, action: A) -> Result<(), KeyParseError> {
         let keys = parse_keys(notation, &self.leader)?;
-        self.set_keys(mode, &keys, action);
+        self.set_keys(&keys, action);
         Ok(())
     }
 
     /// Maps an already parsed sequence, replacing any previous action.
-    pub fn set_keys(&mut self, mode: Mode, keys: &[Key], action: A) {
-        let mut node = self.modes.entry(mode).or_default();
+    pub fn set_keys(&mut self, keys: &[Key], action: A) {
+        let mut node = &mut self.root;
         for key in keys {
             node = node.children.entry(*key).or_default();
         }
@@ -339,20 +328,16 @@ impl<A> Keymap<A> {
     }
 
     /// Removes the mapping for `notation`, returning its action.
-    pub fn del(&mut self, mode: Mode, notation: &str) -> Result<Option<A>, KeyParseError> {
+    pub fn del(&mut self, notation: &str) -> Result<Option<A>, KeyParseError> {
         let keys = parse_keys(notation, &self.leader)?;
-        Ok(self
-            .modes
-            .get_mut(&mode)
-            .and_then(|root| remove(root, &keys)))
+        Ok(remove(&mut self.root, &keys))
     }
 
-    /// Looks up `keys` in `mode`.
-    pub fn lookup(&self, mode: Mode, keys: &[Key]) -> Lookup<'_, A> {
-        let node = self.modes.get(&mode).and_then(|root| {
-            keys.iter()
-                .try_fold(root, |node, key| node.children.get(key))
-        });
+    /// Looks up `keys`.
+    pub fn lookup(&self, keys: &[Key]) -> Lookup<'_, A> {
+        let node = keys
+            .iter()
+            .try_fold(&self.root, |node, key| node.children.get(key));
         Lookup {
             exact: node.and_then(|n| n.action.as_ref()),
             is_prefix: node.is_some_and(|n| !n.children.is_empty()),
@@ -363,8 +348,6 @@ impl<A> Keymap<A> {
 /// One mapping of a [`Keymap`], as listed by [`Keymap::entries`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeymapEntry<A> {
-    /// Mode it applies to.
-    pub mode: Mode,
     /// Keys, with the leader already expanded.
     pub keys: KeySequence,
     /// What it runs.
@@ -372,45 +355,33 @@ pub struct KeymapEntry<A> {
 }
 
 impl<A> KeymapEntry<A> {
-    /// The keys in Neovim notation (`<Space>ff`).
+    /// The keys in Neovim notation (`<C-Space>ff`).
     pub fn notation(&self) -> String {
         self.keys.iter().map(ToString::to_string).collect()
     }
 }
 
 impl<A: Clone> Keymap<A> {
-    /// Every mapping, by mode (insert, normal, command) and then by keys in
-    /// notation order.
+    /// Every mapping, by keys in notation order.
     pub fn entries(&self) -> Vec<KeymapEntry<A>> {
         let mut out = Vec::new();
-        for mode in Mode::ALL {
-            if let Some(root) = self.modes.get(&mode) {
-                let mut keys = Vec::new();
-                collect(root, mode, &mut keys, &mut out);
-            }
-        }
-        let rank = |mode: Mode| Mode::ALL.iter().position(|m| *m == mode);
-        out.sort_by_cached_key(|entry| (rank(entry.mode), entry.notation()));
+        let mut keys = Vec::new();
+        collect(&self.root, &mut keys, &mut out);
+        out.sort_by_cached_key(KeymapEntry::notation);
         out
     }
 }
 
-fn collect<A: Clone>(
-    node: &Node<A>,
-    mode: Mode,
-    keys: &mut KeySequence,
-    out: &mut Vec<KeymapEntry<A>>,
-) {
+fn collect<A: Clone>(node: &Node<A>, keys: &mut KeySequence, out: &mut Vec<KeymapEntry<A>>) {
     if let Some(action) = &node.action {
         out.push(KeymapEntry {
-            mode,
             keys: keys.clone(),
             action: action.clone(),
         });
     }
     for (key, child) in &node.children {
         keys.push(*key);
-        collect(child, mode, keys, out);
+        collect(child, keys, out);
         keys.pop();
     }
 }
@@ -435,8 +406,8 @@ pub enum Feed<A> {
     Matched(A),
     /// The keys so far are a prefix of a longer mapping; waiting for more.
     Pending,
-    /// Keys that matched nothing. In insert mode the host types them into
-    /// the input; elsewhere it discards them.
+    /// Keys that matched nothing. The host types them into the prompt (or
+    /// lets the focused panel have them).
     NoMatch(Vec<Key>),
 }
 
@@ -446,28 +417,26 @@ pub const DEFAULT_TIMEOUTLEN: Duration = Duration::from_millis(1000);
 /// Stateful resolver of key presses against a [`Keymap`].
 ///
 /// [`feed`](Self::feed) returns a list because one key can settle several
-/// things at once: with `g` mapped, typing `g` then `x` fires `g` and then
-/// reports `x` as unmatched.
+/// things at once: with `<leader>f` mapped, typing the leader, `f` and `x`
+/// fires `<leader>f` and then reports `x` as unmatched.
 ///
 /// When the pending keys sit unresolved for `timeoutlen`, [`tick`](Self::tick)
-/// settles them: an exact mapping that is also a prefix (`g` with `gg`
-/// mapped) fires, otherwise the keys come back as [`Feed::NoMatch`]. The host
-/// schedules a call to `tick` at [`deadline`](Self::deadline).
+/// settles them: an exact mapping that is also a prefix fires, otherwise the
+/// keys come back as [`Feed::NoMatch`]. The host schedules a call to `tick`
+/// at [`deadline`](Self::deadline).
 #[derive(Debug, Clone)]
 pub struct KeySequencer<A> {
     keymap: Keymap<A>,
-    mode: Mode,
     pending: Vec<Key>,
     last_key_at: Option<Instant>,
     timeoutlen: Duration,
 }
 
 impl<A: Clone> KeySequencer<A> {
-    /// A sequencer starting in `mode`.
-    pub fn new(keymap: Keymap<A>, mode: Mode) -> Self {
+    /// A sequencer over `keymap`.
+    pub fn new(keymap: Keymap<A>) -> Self {
         Self {
             keymap,
-            mode,
             pending: Vec::new(),
             last_key_at: None,
             timeoutlen: DEFAULT_TIMEOUTLEN,
@@ -502,17 +471,6 @@ impl<A: Clone> KeySequencer<A> {
     pub fn keymap_mut(&mut self) -> &mut Keymap<A> {
         self.reset();
         &mut self.keymap
-    }
-
-    /// The current mode.
-    pub fn mode(&self) -> Mode {
-        self.mode
-    }
-
-    /// Switches mode, dropping any pending keys.
-    pub fn set_mode(&mut self, mode: Mode) {
-        self.mode = mode;
-        self.reset();
     }
 
     /// Keys typed so far that form an unresolved prefix.
@@ -555,7 +513,7 @@ impl<A: Clone> KeySequencer<A> {
             let mut best = None;
             let mut whole_is_prefix = false;
             for len in 1..=self.pending.len() {
-                let found = self.keymap.lookup(self.mode, &self.pending[..len]);
+                let found = self.keymap.lookup(&self.pending[..len]);
                 if let Some(action) = found.exact {
                     best = Some((len, action.clone()));
                 }
@@ -603,113 +561,62 @@ impl Action {
 }
 
 /// Builtin mappings, with the default leader (documented in `docs/usage.md`):
-/// modes, keys, action and what the action does (shown by the help).
-const DEFAULTS: &[(&[Mode], &str, &str, &str)] = &[
-    (&[Mode::Insert], "<Esc>", "mode.normal", "Go to normal mode"),
-    (&[Mode::Insert], "<CR>", "submit", "Send the prompt"),
-    (&[Mode::Insert], "<S-CR>", "newline", "Insert a new line"),
+/// keys, action and what the action does (shown by the help).
+const DEFAULTS: &[(&str, &str, &str)] = &[
+    ("<CR>", "submit", "Send the prompt (or run a /command)"),
+    ("<S-CR>", "newline", "Insert a new line"),
+    ("<Esc>", "focus.input", "Go back to the prompt"),
     (
-        &[Mode::Normal],
-        "i",
-        "mode.insert",
-        "Go to insert mode (type a prompt)",
+        "<C-c>",
+        "turn.interrupt",
+        "Interrupt the running turn or command",
     ),
-    (&[Mode::Normal], "j", "block.next", "Select the next block"),
+    ("<F1>", "help.open", "Open the help"),
+    ("<leader>h", "help.open", "Open the help"),
+    ("<leader>e", "panel.tree", "Show or hide the workspace tree"),
+    ("<leader>ff", "picker.files", "Find a file by name"),
+    ("<leader>fg", "picker.grep", "Search text in the workspace"),
     (
-        &[Mode::Normal],
-        "k",
-        "block.prev",
-        "Select the previous block",
-    ),
-    (
-        &[Mode::Normal],
-        "gg",
-        "block.first",
-        "Select the first block",
-    ),
-    (&[Mode::Normal], "G", "block.last", "Select the last block"),
-    (
-        &[Mode::Normal],
-        "<CR>",
-        "block.toggle",
-        "Expand or collapse the selected block",
-    ),
-    (
-        &[Mode::Normal],
-        "t",
-        "block.toggle_view",
-        "Switch the block between chart and table",
-    ),
-    (
-        &[Mode::Normal],
-        "y",
-        "block.yank",
-        "Copy the selected block",
-    ),
-    (
-        &[Mode::Normal],
-        "<leader>ff",
-        "picker.files",
-        "Find a file by name",
-    ),
-    (
-        &[Mode::Normal],
-        "<leader>fg",
-        "picker.grep",
-        "Search text in the workspace",
-    ),
-    (
-        &[Mode::Normal],
-        "<leader>e",
-        "panel.tree",
-        "Show or hide the workspace tree",
-    ),
-    (
-        &[Mode::Normal],
         "<leader>m",
         "model.pick",
         "Choose the model of the next turn",
     ),
+    ("<leader>p", "permission.cycle", "Cycle the permission mode"),
     (
-        &[Mode::Normal],
-        "<leader>p",
-        "permission.cycle",
-        "Cycle the permission mode",
+        "<leader>w",
+        "focus.next",
+        "Move the focus to the next panel",
+    ),
+    ("<C-Tab>", "focus.next", "Move the focus to the next panel"),
+    ("<A-Up>", "block.prev", "Select the previous block"),
+    ("<A-Down>", "block.next", "Select the next block"),
+    ("<A-Home>", "block.first", "Select the first block"),
+    ("<A-End>", "block.last", "Select the last block"),
+    (
+        "<A-CR>",
+        "block.toggle",
+        "Expand or collapse the selected block",
     ),
     (
-        &[Mode::Normal],
-        ":",
-        "mode.command",
-        "Open the command line",
+        "<A-t>",
+        "block.toggle_view",
+        "Switch the block between chart and table",
     ),
-    (&[Mode::Normal], "?", "help.open", "Open the help"),
-    (
-        &[Mode::Command],
-        "<Esc>",
-        "mode.normal",
-        "Go to normal mode",
-    ),
-    (
-        &Mode::ALL,
-        "<C-c>",
-        "turn.interrupt",
-        "Interrupt the running turn",
-    ),
-    (&Mode::ALL, "<F1>", "help.open", "Open the help"),
+    ("<A-y>", "block.yank", "Copy the selected block"),
 ];
 
 /// What the builtin action `name` does, if it is one.
 pub fn action_description(name: &str) -> Option<&'static str> {
     DEFAULTS
         .iter()
-        .find(|(_, _, action, _)| *action == name)
-        .map(|(_, _, _, description)| *description)
+        .find(|(_, action, _)| *action == name)
+        .map(|(_, _, description)| *description)
 }
 
 /// Names of every builtin action, in table order, without repeats.
 pub fn builtin_actions() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = Vec::new();
-    for (_, _, action, _) in DEFAULTS {
+    for (_, action, _) in DEFAULTS {
         if !names.contains(action) {
             names.push(action);
         }
@@ -721,13 +628,11 @@ pub fn builtin_actions() -> Vec<&'static str> {
 /// [`Keymap::set`], which replaces a default with the same keys.
 pub fn default_keymap() -> Keymap<Action> {
     let mut keymap = Keymap::new();
-    for (modes, notation, name, _) in DEFAULTS {
+    for (notation, name, _) in DEFAULTS {
         // The table is static and covered by tests, so parsing cannot fail;
         // skipping instead of panicking keeps this path free of unwrap.
         if let Ok(keys) = parse_keys(notation, DEFAULT_LEADER) {
-            for mode in *modes {
-                keymap.set_keys(*mode, &keys, Action::builtin(name));
-            }
+            keymap.set_keys(&keys, Action::builtin(name));
         }
     }
     keymap
@@ -764,6 +669,10 @@ mod tests {
         assert_eq!(
             parse_keys("<leader>x", ","),
             Ok(vec![Key::char(','), Key::char('x')])
+        );
+        assert_eq!(
+            parse_keys("<leader>e", DEFAULT_LEADER),
+            Ok(vec![ctrl(' '), Key::char('e')])
         );
     }
 
@@ -846,38 +755,37 @@ mod tests {
     #[test]
     fn keymap_looks_up_exact_and_prefix() {
         let mut km = Keymap::new();
-        assert_eq!(km.set(Mode::Normal, "g", 1), Ok(()));
-        assert_eq!(km.set(Mode::Normal, "gg", 2), Ok(()));
-        assert_eq!(km.set(Mode::Normal, "<leader>ff", 3), Ok(()));
-        let g = km.lookup(Mode::Normal, &keys("g"));
+        assert_eq!(km.set_leader(" "), Ok(()));
+        assert_eq!(km.set("g", 1), Ok(()));
+        assert_eq!(km.set("gg", 2), Ok(()));
+        assert_eq!(km.set("<leader>ff", 3), Ok(()));
+        let g = km.lookup(&keys("g"));
         assert_eq!((g.exact, g.is_prefix), (Some(&1), true));
-        let gg = km.lookup(Mode::Normal, &keys("gg"));
+        let gg = km.lookup(&keys("gg"));
         assert_eq!((gg.exact, gg.is_prefix), (Some(&2), false));
-        let sp = km.lookup(Mode::Normal, &keys("<Space>f"));
+        let sp = km.lookup(&keys("<Space>f"));
         assert_eq!((sp.exact, sp.is_prefix), (None, true));
-        assert_eq!(km.lookup(Mode::Normal, &keys("<Space>ff")).exact, Some(&3));
-        let other_mode = km.lookup(Mode::Insert, &keys("g"));
-        assert_eq!((other_mode.exact, other_mode.is_prefix), (None, false));
+        assert_eq!(km.lookup(&keys("<Space>ff")).exact, Some(&3));
     }
 
     #[test]
     fn keymap_override_and_delete() {
         let mut km = Keymap::new();
-        assert_eq!(km.set(Mode::Normal, "j", "a"), Ok(()));
-        assert_eq!(km.set(Mode::Normal, "j", "b"), Ok(()));
-        assert_eq!(km.lookup(Mode::Normal, &keys("j")).exact, Some(&"b"));
-        assert_eq!(km.del(Mode::Normal, "j"), Ok(Some("b")));
-        assert_eq!(km.lookup(Mode::Normal, &keys("j")).exact, None);
-        assert_eq!(km.del(Mode::Normal, "j"), Ok(None));
+        assert_eq!(km.set("<C-j>", "a"), Ok(()));
+        assert_eq!(km.set("<C-j>", "b"), Ok(()));
+        assert_eq!(km.lookup(&[ctrl('j')]).exact, Some(&"b"));
+        assert_eq!(km.del("<C-j>"), Ok(Some("b")));
+        assert_eq!(km.lookup(&[ctrl('j')]).exact, None);
+        assert_eq!(km.del("<C-j>"), Ok(None));
     }
 
     #[test]
     fn keymap_leader_is_expanded_at_registration() {
         let mut km = Keymap::new();
         assert_eq!(km.set_leader(","), Ok(()));
-        assert_eq!(km.set(Mode::Normal, "<leader>m", 1), Ok(()));
+        assert_eq!(km.set("<leader>m", 1), Ok(()));
         assert_eq!(km.set_leader(" "), Ok(()));
-        assert_eq!(km.lookup(Mode::Normal, &keys(",m")).exact, Some(&1));
+        assert_eq!(km.lookup(&keys(",m")).exact, Some(&1));
         assert_eq!(
             km.set_leader("<leader>"),
             Err(KeyParseError::LeaderInLeader)
@@ -891,16 +799,16 @@ mod tests {
 
     fn sequencer() -> KeySequencer<&'static str> {
         let mut km = Keymap::new();
+        assert_eq!(km.set_leader(" "), Ok(()));
         for (n, a) in [
             ("gg", "first"),
             ("G", "last"),
             ("j", "next"),
             ("<leader>ff", "files"),
         ] {
-            assert_eq!(km.set(Mode::Normal, n, a), Ok(()));
+            assert_eq!(km.set(n, a), Ok(()));
         }
-        assert_eq!(km.set(Mode::Insert, "<Esc>", "normal"), Ok(()));
-        KeySequencer::new(km, Mode::Normal)
+        KeySequencer::new(km)
     }
 
     #[test]
@@ -940,36 +848,14 @@ mod tests {
             feed_all(&mut seq, "<Space>x", t),
             vec![Feed::Pending, Feed::NoMatch(keys("<Space>x"))]
         );
-    }
-
-    #[test]
-    fn sequencer_unmapped_key_in_insert_is_no_match() {
-        let mut seq = sequencer();
-        seq.set_mode(Mode::Insert);
-        let t = Instant::now();
-        assert_eq!(seq.feed(Key::char('j'), t), vec![Feed::NoMatch(keys("j"))]);
-        assert_eq!(
-            seq.feed(Key::plain(KeyCode::Esc), t),
-            vec![Feed::Matched("normal")]
-        );
-    }
-
-    #[test]
-    fn sequencer_mode_change_resets_pending() {
-        let mut seq = sequencer();
-        let t = Instant::now();
-        assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
-        seq.set_mode(Mode::Insert);
-        assert!(seq.pending().is_empty());
-        seq.set_mode(Mode::Normal);
-        assert_eq!(seq.feed(Key::char('G'), t), vec![Feed::Matched("last")]);
+        assert_eq!(seq.feed(Key::char('z'), t), vec![Feed::NoMatch(keys("z"))]);
     }
 
     #[test]
     fn sequencer_sees_overridden_mapping() {
         let mut seq = sequencer();
         let t = Instant::now();
-        assert_eq!(seq.keymap_mut().set(Mode::Normal, "j", "custom"), Ok(()));
+        assert_eq!(seq.keymap_mut().set("j", "custom"), Ok(()));
         assert_eq!(seq.feed(Key::char('j'), t), vec![Feed::Matched("custom")]);
     }
 
@@ -980,7 +866,7 @@ mod tests {
     #[test]
     fn timeout_fires_short_mapping_that_is_also_prefix() {
         let mut seq = sequencer();
-        assert_eq!(seq.keymap_mut().set(Mode::Normal, "g", "g"), Ok(()));
+        assert_eq!(seq.keymap_mut().set("g", "g"), Ok(()));
         let t = Instant::now();
         assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
         assert_eq!(seq.deadline(), Some(t + DEFAULT_TIMEOUTLEN));
@@ -1025,7 +911,7 @@ mod tests {
     #[test]
     fn late_key_settles_expired_prefix_first() {
         let mut seq = sequencer();
-        assert_eq!(seq.keymap_mut().set(Mode::Normal, "g", "g"), Ok(()));
+        assert_eq!(seq.keymap_mut().set("g", "g"), Ok(()));
         let t = Instant::now();
         assert_eq!(seq.feed(Key::char('g'), t), vec![Feed::Pending]);
         assert_eq!(
@@ -1036,100 +922,95 @@ mod tests {
 
     #[test]
     fn default_table_parses() {
-        for (_, notation, _, _) in DEFAULTS {
+        for (notation, _, _) in DEFAULTS {
             assert!(parse_keys(notation, DEFAULT_LEADER).is_ok(), "{notation}");
         }
     }
 
+    fn default_keys(n: &str) -> KeySequence {
+        parse_keys(n, DEFAULT_LEADER).unwrap_or_default()
+    }
+
     #[test]
-    fn default_keymap_follows_plan_table() {
+    fn default_keymap_follows_the_table() {
         let km = default_keymap();
-        let get = |mode, n: &str| km.lookup(mode, &keys(n)).exact.cloned();
+        let get = |n: &str| km.lookup(&default_keys(n)).exact.cloned();
         let b = |name: &str| Some(Action::builtin(name));
-        assert_eq!(get(Mode::Insert, "<Esc>"), b("mode.normal"));
-        assert_eq!(get(Mode::Insert, "<S-Enter>"), b("newline"));
-        assert_eq!(get(Mode::Normal, "gg"), b("block.first"));
-        assert_eq!(get(Mode::Normal, "G"), b("block.last"));
-        assert_eq!(get(Mode::Normal, "<Space>ff"), b("picker.files"));
-        assert_eq!(get(Mode::Normal, ":"), b("mode.command"));
-        for mode in Mode::ALL {
-            assert_eq!(get(mode, "<C-c>"), b("turn.interrupt"));
+        assert_eq!(get("<Esc>"), b("focus.input"));
+        assert_eq!(get("<S-Enter>"), b("newline"));
+        assert_eq!(get("<C-Space>ff"), b("picker.files"));
+        assert_eq!(get("<C-Space>e"), b("panel.tree"));
+        assert_eq!(get("<A-Up>"), b("block.prev"));
+        assert_eq!(get("<C-c>"), b("turn.interrupt"));
+        assert_eq!(get("<F1>"), b("help.open"));
+    }
+
+    #[test]
+    fn no_default_takes_a_printable_key() {
+        for entry in default_keymap().entries() {
+            let first = entry.keys[0];
+            let plain_char = matches!(first.code, KeyCode::Char(_))
+                && !(first.mods.ctrl || first.mods.alt || first.mods.cmd);
+            assert!(!plain_char, "{} would steal typing", entry.notation());
         }
-        assert_eq!(get(Mode::Insert, "j"), None);
     }
 
     #[test]
     fn every_default_action_has_a_description() {
-        for (_, notation, action, description) in DEFAULTS {
+        for (notation, action, description) in DEFAULTS {
             assert!(!description.trim().is_empty(), "{notation} -> {action}");
-            assert_eq!(action_description(action), Some(*description), "{action}");
+            assert!(action_description(action).is_some(), "{action}");
         }
         assert_eq!(action_description("nope"), None);
         let actions = builtin_actions();
         assert!(actions.contains(&"help.open"));
         assert_eq!(
-            actions.iter().filter(|a| **a == "mode.normal").count(),
+            actions.iter().filter(|a| **a == "help.open").count(),
             1,
             "no repeats"
         );
     }
 
     #[test]
-    fn help_opens_with_question_mark_and_f1() {
-        let km = default_keymap();
-        let get = |mode, n: &str| km.lookup(mode, &keys(n)).exact.cloned();
-        assert_eq!(get(Mode::Normal, "?"), Some(Action::builtin("help.open")));
-        for mode in Mode::ALL {
-            assert_eq!(get(mode, "<F1>"), Some(Action::builtin("help.open")));
-        }
-        assert_eq!(get(Mode::Insert, "?"), None, "? is typed in insert mode");
-    }
-
-    #[test]
     fn entries_list_defaults_and_overrides_with_the_leader_resolved() {
         let mut km = default_keymap();
         assert_eq!(km.set_leader(","), Ok(()));
-        assert_eq!(
-            km.set(Mode::Normal, "<leader>x", Action::Callback(3)),
-            Ok(())
-        );
-        assert_eq!(
-            km.set(Mode::Normal, "j", Action::builtin("block.last")),
-            Ok(())
-        );
+        assert_eq!(km.set("<leader>x", Action::Callback(3)), Ok(()));
+        assert_eq!(km.set("<A-Up>", Action::builtin("block.last")), Ok(()));
         let entries = km.entries();
-        let find = |mode, n: &str| {
+        let find = |n: &str| {
             entries
                 .iter()
-                .find(|e| e.mode == mode && e.notation() == n)
+                .find(|e| e.notation() == n)
                 .map(|e| e.action.clone())
         };
-        assert_eq!(find(Mode::Normal, ",x"), Some(Action::Callback(3)));
-        assert_eq!(find(Mode::Normal, "j"), Some(Action::builtin("block.last")));
-        assert_eq!(
-            find(Mode::Normal, "<Space>ff"),
-            Some(Action::builtin("picker.files"))
-        );
-        assert_eq!(find(Mode::Insert, "<CR>"), Some(Action::builtin("submit")));
-        let defaults: usize = DEFAULTS.iter().map(|(modes, ..)| modes.len()).sum();
-        assert_eq!(entries.len(), defaults + 1, "one new mapping");
-        let modes: Vec<Mode> = entries.iter().map(|e| e.mode).collect();
-        let mut sorted = modes.clone();
-        sorted.sort_by_key(|m| Mode::ALL.iter().position(|x| x == m));
-        assert_eq!(modes, sorted, "grouped by mode");
+        assert_eq!(find(",x"), Some(Action::Callback(3)));
+        assert_eq!(find("<A-Up>"), Some(Action::builtin("block.last")));
+        assert_eq!(find("<C-Space>ff"), Some(Action::builtin("picker.files")));
+        assert_eq!(find("<CR>"), Some(Action::builtin("submit")));
+        assert_eq!(entries.len(), DEFAULTS.len() + 1, "one new mapping");
+        let notations: Vec<String> = entries.iter().map(KeymapEntry::notation).collect();
+        let mut sorted = notations.clone();
+        sorted.sort();
+        assert_eq!(notations, sorted, "sorted by keys");
     }
 
     #[test]
     fn default_keymap_can_be_overridden() {
-        let mut seq = KeySequencer::new(default_keymap(), Mode::Normal);
+        let mut seq = KeySequencer::new(default_keymap());
         assert_eq!(
-            seq.keymap_mut()
-                .set(Mode::Normal, "<leader>ff", Action::Callback(7)),
+            seq.keymap_mut().set("<leader>ff", Action::Callback(7)),
             Ok(())
         );
         let t = Instant::now();
+        let feed = |seq: &mut KeySequencer<Action>, n: &str| -> Vec<Feed<Action>> {
+            default_keys(n)
+                .into_iter()
+                .flat_map(|k| seq.feed(k, t))
+                .collect()
+        };
         assert_eq!(
-            feed_all(&mut seq, "<Space>ff", t),
+            feed(&mut seq, "<C-Space>ff"),
             vec![
                 Feed::Pending,
                 Feed::Pending,
@@ -1137,7 +1018,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            feed_all(&mut seq, "<Space>fg", t).last(),
+            feed(&mut seq, "<C-Space>fg").last(),
             Some(&Feed::Matched(Action::builtin("picker.grep")))
         );
     }

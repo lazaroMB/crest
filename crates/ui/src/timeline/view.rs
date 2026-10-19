@@ -6,6 +6,11 @@
 //! the visible rows (plus overdraw) are laid out each frame. The list follows
 //! the tail while new blocks arrive and stops following when the user moves
 //! the selection up.
+//!
+//! With the focus (`<C-Tab>` from the prompt, or a click), `Up`/`Down`
+//! select blocks, `Home`/`End` the first and last, `Enter` expands or
+//! collapses the selected one and `PageUp`/`PageDown` scroll by a page.
+//! Empty, it shows the crest mark and the keys to start with.
 
 use application::keymap::Action;
 use application::ports::events::DomainEvent;
@@ -13,11 +18,12 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
-    InteractiveElement as _, IntoElement, ListAlignment, ListState, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, list, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
+    WeakEntity, Window, div, list, px,
 };
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::{TimelineChange, TimelineState, copy_text, render_block};
 
@@ -113,7 +119,41 @@ impl TimelineView {
         }
     }
 
-    /// Runs a normal-mode timeline action (`block.next`, `block.toggle`...).
+    /// Selects the last block when none is selected (on taking the focus).
+    pub fn select_last_if_none(&mut self, cx: &mut Context<Self>) {
+        if self.state.selected().is_none() {
+            self.select_with(TimelineState::select_last, cx);
+        }
+    }
+
+    /// Keys while the timeline has the focus.
+    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let m = &event.keystroke.modifiers;
+        if m.control || m.alt || m.platform {
+            return;
+        }
+        let action = match event.keystroke.key.as_str() {
+            "up" => "block.prev",
+            "down" => "block.next",
+            "home" => "block.first",
+            "end" => "block.last",
+            "enter" => "block.toggle",
+            "pageup" | "pagedown" => {
+                let page = self.list.viewport_bounds().size.height * 0.9;
+                let up = event.keystroke.key == "pageup";
+                self.list.pause_following_tail();
+                self.list.scroll_by(if up { -page } else { page });
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            _ => return,
+        };
+        self.handle_action(&Action::builtin(action), cx);
+        cx.stop_propagation();
+    }
+
+    /// Runs a timeline action (`block.next`, `block.toggle`...).
     /// Returns whether the action belongs to the timeline.
     pub fn handle_action(&mut self, action: &Action, cx: &mut Context<Self>) -> bool {
         let Action::Builtin(name) = action else {
@@ -196,8 +236,12 @@ impl TimelineView {
             .px_2()
             .py_1()
             .border_l_2()
-            .on_click(move |_, _, cx| {
-                view.update(cx, |this, cx| this.click(ix, cx)).ok();
+            .on_click(move |_, window, cx| {
+                view.update(cx, |this, cx| {
+                    window.focus(&this.focus_handle, cx);
+                    this.click(ix, cx);
+                })
+                .ok();
             })
             .child(content);
         if selected {
@@ -217,22 +261,84 @@ impl Focusable for TimelineView {
     }
 }
 
+/// The keys the welcome screen suggests.
+const WELCOME_KEYS: &[(&str, &str)] = &[
+    ("/", "commands: /research, /implement, /!cmd, /help…"),
+    (
+        "Ctrl+Space",
+        "shortcuts: e tree · ff files · fg grep · m model · h help",
+    ),
+    ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
+    ("Esc", "back to the prompt"),
+    ("Ctrl+C", "interrupt the running turn or command"),
+];
+
+/// The empty timeline: the crest mark and the keys to start with.
+fn welcome(cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let rows = WELCOME_KEYS.iter().map(|(keys, what)| {
+        h_flex()
+            .gap_3()
+            .child(
+                div()
+                    .w(px(110.))
+                    .text_color(theme.primary)
+                    .child(SharedString::from(*keys)),
+            )
+            .child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(SharedString::from(*what)),
+            )
+    });
+    v_flex()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_4()
+        .child(
+            h_flex()
+                .gap_3()
+                .items_end()
+                .child(crate::brand::mark(48.0))
+                .child(
+                    div()
+                        .text_3xl()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme.foreground)
+                        .child("crest"),
+                ),
+        )
+        .child(v_flex().gap_1().text_sm().children(rows))
+}
+
 impl Render for TimelineView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self.focus_handle.is_focused(window);
+        let edge = if focused {
+            cx.theme().primary
+        } else {
+            gpui::transparent_black()
+        };
         if self.state.is_empty() {
-            return h_flex()
+            return div()
+                .id("timeline-empty")
+                .track_focus(&self.focus_handle)
                 .size_full()
-                .justify_center()
-                .text_color(cx.theme().muted_foreground)
-                .child("No messages yet")
+                .border_t_1()
+                .border_color(edge)
+                .child(welcome(cx))
                 .into_any_element();
         }
         let view = cx.entity().downgrade();
         div()
             .id("timeline-list")
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key))
             .relative()
             .size_full()
+            .border_t_1()
+            .border_color(edge)
             .child(
                 list(self.list.clone(), move |ix, window, cx| {
                     let Some(entity) = view.upgrade() else {

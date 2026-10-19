@@ -276,11 +276,11 @@ fn a_broken_init_lua_opens_with_an_error_block(cx: &mut TestAppContext) {
     );
 }
 
-/// The example of the plan: `<leader>x` clears the session and `:review`
+/// The example of the plan: `<leader>x` clears the session and `/review`
 /// asks the `plan` role.
 const KEYMAPS_INIT: &str = r#"
 local app = require("app")
-app.keymap.set("n", "<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<leader>x", function() app.cmd("clear") end)
 app.commands.register("review", function(args)
   app.send("Revisa los cambios sin commitear y lista riesgos", { role = "plan" })
 end)
@@ -305,13 +305,12 @@ fn keymaps_and_commands_of_init_lua_run_their_actions(cx: &mut TestAppContext) {
     wait_until(&w, cx, "the first turn", |s, _| !s.is_running());
     assert!(!texts(&blocks(&w, cx)).is_empty());
 
-    cx.simulate_keystrokes("escape space x");
+    cx.simulate_keystrokes("ctrl-space x");
     wait_until(&w, cx, "<leader>x to clear the session", |s, cx| {
         s.timeline().read(cx).state().is_empty()
     });
 
-    cx.simulate_keystrokes(":");
-    cx.simulate_input("review");
+    cx.simulate_input("/review");
     cx.simulate_keystrokes("enter");
     wait_until(&w, cx, "the review turn", |s, _| {
         !s.is_running() && w.llm.remaining() == 0

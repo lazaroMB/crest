@@ -1,11 +1,11 @@
 //! The activity line, the prompt queue and the terminal-style prompt over
-//! the real session, with a fake controller: `:research` runs four stages
+//! the real session, with a fake controller: `/research` runs four stages
 //! for about eight seconds (stage headers, activity lines, tool calls and
 //! a flowchart with long labels) and each prompt streams a short answer.
 //!
 //! `cargo run -p ui --example activity [--demo]`
 //!
-//! Run `:research`, then type prompts while it works: they are listed under
+//! Run `/research`, then type prompts while it works: they are listed under
 //! the activity line and sent one by one when it ends; `Up` in an empty
 //! prompt takes the last one back.
 //!
@@ -45,7 +45,7 @@ const FLOWCHART: &str = "flowchart LR
     C --> D
 ";
 
-/// A controller whose turns and `:research` only emit scripted events.
+/// A controller whose turns and `/research` only emit scripted events.
 struct Fake {
     sink: Arc<RecordingSink>,
     mode: Mutex<PermissionMode>,
@@ -194,7 +194,7 @@ fn main() {
 
 /// What `--demo` types, each followed by a pause (ms) and a log line.
 const DEMO_STEPS: &[(&str, u64)] = &[
-    ("escape : r e s e a r c h enter i", 1500),
+    ("/ r e s e a r c h enter", 1500),
     (
         "t h e n space l o o k space a t space t h e space t e s t s enter",
         400,

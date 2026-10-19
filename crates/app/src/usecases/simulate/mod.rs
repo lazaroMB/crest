@@ -1,6 +1,6 @@
 //! `simulate_solution`: turns a Spec into an executable model, runs every
 //! scenario and records the results in the Spec folder. On demand, not a
-//! stage of the research flow: `:simulate <spec>`, `crest --headless
+//! stage of the research flow: `/simulate <spec>`, `crest --headless
 //! --simulate <spec>` and the `simulate_solution` tool all land here.
 //!
 //! 1. Reads `.crest/specs/NNNN-slug/spec.md` (title, black-box, sequence

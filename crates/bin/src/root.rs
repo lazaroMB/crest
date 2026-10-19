@@ -177,6 +177,9 @@ pub struct App {
     pub file_search: Arc<dyn FileSearchPort>,
     /// Text search of the workspace (rg), for the `<leader>fg` picker.
     pub content_search: Arc<dyn ContentSearchPort>,
+    /// Runs programs in the workspace: `/!cmd` and the git state of the
+    /// status bar.
+    pub shell: Arc<dyn ShellPort>,
     /// The Lua host that runs the callbacks of keymaps and commands, if Lua
     /// started.
     pub plugins: Option<Arc<dyn PluginHostPort>>,
@@ -192,7 +195,7 @@ pub struct App {
     pub mcp_trust_path: Option<PathBuf>,
     /// Capability declarations of the config and plugins.
     pub plugin_capabilities: Vec<PluginCapabilities>,
-    /// The declarations granted now (`:plugin trust` adds to them).
+    /// The declarations granted now (`/plugin trust` adds to them).
     pub plugin_grants: Arc<Mutex<Vec<PluginCapabilities>>>,
     /// Store of approved plugin capabilities, if there is one.
     pub plugin_trust_path: Option<PathBuf>,
@@ -210,10 +213,10 @@ pub struct App {
     store: Option<Arc<dyn SessionStorePort>>,
     implement: ImplementDeps,
     flow_storage: Option<Arc<SqliteFlowStorage>>,
-    /// The research flow of the workspace (`:research`), when the flow
+    /// The research flow of the workspace (`/research`), when the flow
     /// store opened.
     pub research: Option<ResearchSession>,
-    /// Simulates the solution of a Spec (`:simulate`, `--simulate`, the
+    /// Simulates the solution of a Spec (`/simulate`, `--simulate`, the
     /// `simulate_solution` tool).
     pub simulator: Simulator,
 }
@@ -254,7 +257,7 @@ impl App {
         &self.models
     }
 
-    /// Replaces the session with a new, empty one (`:clear`). The old one
+    /// Replaces the session with a new, empty one (`/clear`). The old one
     /// stays in the store.
     pub fn new_session(&mut self) {
         self.session = Session::new(self.workspace.as_path().display().to_string(), now_ms());
@@ -563,7 +566,7 @@ pub async fn build_app(
                     file_search: Arc::clone(&file_search),
                     content_search: Arc::clone(&content_search),
                     fs: Arc::clone(&fs),
-                    shell: Some(shell),
+                    shell: Some(Arc::clone(&shell)),
                     extra_tools: Vec::new(),
                     activity: Arc::clone(&events),
                     web: web.clone(),
@@ -652,6 +655,7 @@ pub async fn build_app(
         config_errors: loaded.errors.iter().map(startup::diagnostic).collect(),
         mcp,
         file_search,
+        shell: Arc::clone(&shell),
         content_search,
         plugins,
         keymaps: loaded.keymaps,

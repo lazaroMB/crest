@@ -9,7 +9,7 @@ Between the two, on demand, you can **simulate a solution** ([below](#simulating
 
 Both are built with [graph-flow](https://crates.io/crates/graph-flow). Every step is a checkpoint in SQLite, in `~/.local/share/crest/sessions.db`. At **gates**, the workflow stops and waits for your answer in the same chat input (in the window) or on stdin (in headless mode).
 
-While a workflow is active, **every line you send goes to the workflow** and does not start a normal turn. The window's `:` commands (`:model`, `:mode`, `:clear`, `:q`...) keep working. If an implementation workflow and a research workflow are both active, lines go to the implementation workflow first.
+While a workflow is active, **every line you send goes to the workflow** and does not start a normal turn. The window's `:` commands (`/model`, `/mode`, `/clear`, `/q`...) keep working. If an implementation workflow and a research workflow are both active, lines go to the implementation workflow first.
 
 > Limitation: `Ctrl+C` does not stop a running step of either workflow. In the window, the cancellation token does not reach the workflow. In headless mode it kills the process, and on resume the interrupted step runs again. To stop a workflow in an orderly way, answer `/abort` at a gate.
 
@@ -19,13 +19,13 @@ While a workflow is active, **every line you send goes to the workflow** and doe
 
 | Where | Command | What it does |
 | --- | --- | --- |
-| Window | `:research <problem description>` | Starts a new workflow and runs it up to the first gate. If there was another one, it **replaces** it without asking: the old one stays saved but can no longer be resumed. |
-| Window | `:research resume` (also `retomar` or `reanudar`) | Resumes the workspace's last workflow. |
-| Window | `:research` | Tells you which stage the workflow is at. |
+| Window | `/research <problem description>` | Starts a new workflow and runs it up to the first gate. If there was another one, it **replaces** it without asking: the old one stays saved but can no longer be resumed. |
+| Window | `/research resume` (also `retomar` or `reanudar`) | Resumes the workspace's last workflow. |
+| Window | `/research` | Tells you which stage the workflow is at. |
 | Headless | `crest --headless --research "<problem>"` | Runs the workflow in the terminal and reads the answers from stdin. |
 | Headless | `crest --headless --research resume` | Resumes the pending workflow. |
 
-When you open crest with a workflow halfway through, the notice "a research flow is pending (…); `:research resume` to continue" appears. The workflow does **not** activate on its own: until you type `:research resume`, your lines go to the normal chat.
+When you open crest with a workflow halfway through, the notice "a research flow is pending (…); `/research resume` to continue" appears. The workflow does **not** activate on its own: until you type `/research resume`, your lines go to the normal chat.
 
 On resume:
 
@@ -97,7 +97,7 @@ There are also **question** gates: any text you type, including "yes", is taken 
 
 An unknown `/` command (for example `/model`) does **not** produce an error: it is taken as the answer to the gate. A malformed command does produce an error, for example `usage: /back <stage>, by number (1-14) or name, e.g. /back 5 or /back hypotheses`.
 
-**If a node fails**, the timeline shows an `Error` block "<Stage>: <error>" and the workflow stays at its last checkpoint. Free text is no longer accepted (it returns "the research flow is not waiting for input"). To retry, use `/back <current stage>` or `:research resume`.
+**If a node fails**, the timeline shows an `Error` block "<Stage>: <error>" and the workflow stays at its last checkpoint. Free text is no longer accepted (it returns "the research flow is not waiting for input"). To retry, use `/back <current stage>` or `/research resume`.
 
 ### Automatic go-backs
 
@@ -132,7 +132,7 @@ One folder is created per problem definition. The files are written without aski
 ```text
 .crest/specs/0007-session-cache/
   spec.md        Spec for people (10 sections)
-  simulation/    written by :simulate (see Simulating a solution)
+  simulation/    written by /simulate (see Simulating a solution)
   plan.md        readable plan, generated from plan.json (do not edit by hand)
   plan.json      plan consumed by the implementation workflow
   journal.md     research journal (rewritten by the Plan node)
@@ -206,7 +206,7 @@ Unknown fields are not allowed. A plan with no tasks, duplicate ids, unknown dep
 
 | Where | Command |
 | --- | --- |
-| Window | `:implement <target>` |
+| Window | `/implement <target>` |
 | Headless | `crest --headless --implement <target>` |
 
 `<target>` can be:
@@ -321,21 +321,21 @@ It is written next to `plan.json` and shown in the timeline. It contains:
 
 If the plan turns out not to be viable, because you answered "back to spec" or because `plan.json` is invalid, the workflow **does not improvise**:
 
-1. It records the deviation and stops with the message "the plan turned out to be unworkable (…); go back to the Spec node of the research flow with `:research resume` and then `/back spec` to fix it, and run :implement again".
+1. It records the deviation and stops with the message "the plan turned out to be unworkable (…); go back to the Spec node of the research flow with `/research resume` and then `/back spec` to fix it, and run /implement again".
 2. It does **not** switch workflows automatically. To fix the plan:
-   1. `:research resume` reopens the workspace's last research workflow (it stays active even if it has finished).
+   1. `/research resume` reopens the workspace's last research workflow (it stays active even if it has finished).
    2. `/back spec` goes back to the Spec node, which regenerates the Spec and then the plan.
-   3. `:implement <spec>` starts the implementation again.
+   3. `/implement <spec>` starts the implementation again.
 
 In headless mode, leaving through "back to spec" or "abort" exits with code 1.
 
 ## Simulating a solution
 
-A simulation validates the solution of a Spec **before** implementing it, and gives a picture of it that is easy to share. It is optional and on demand, not a stage of the research workflow: when the research workflow finishes, its last message suggests `:simulate <spec>`.
+A simulation validates the solution of a Spec **before** implementing it, and gives a picture of it that is easy to share. It is optional and on demand, not a stage of the research workflow: when the research workflow finishes, its last message suggests `/simulate <spec>`.
 
 | Where | Command |
 | --- | --- |
-| Window | `:simulate <spec>`: the board opens in a full-size modal and the verdicts land in the timeline ([usage.md](usage.md#simulation-board) lists the keys). |
+| Window | `/simulate <spec>`: the board opens in a full-size modal and the verdicts land in the timeline ([usage.md](usage.md#simulation-board) lists the keys). |
 | Terminal | `crest --headless --simulate <spec>`: prints the verdicts and the path of `board.html`; exits with 0 only when every scenario passes. |
 | Chat | Ask the agent ("simulate the session-cache Spec"); it calls the `simulate_solution` tool, which writes into the Spec folder (a `write` action: in `ask` mode it asks first). |
 
