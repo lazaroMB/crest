@@ -275,6 +275,8 @@ pub struct SessionParts {
     pub timeoutlen: Option<Duration>,
     /// Timeline of a resumed session, shown before any event.
     pub history: Vec<Block>,
+    /// Color scheme (`app.opt.theme`), applied before the window opens.
+    pub theme: crate::app::ThemeMode,
 }
 
 impl SessionParts {
@@ -298,6 +300,7 @@ impl SessionParts {
             keymap: default_keymap(),
             timeoutlen: None,
             history: Vec::new(),
+            theme: crate::app::ThemeMode::default(),
         }
     }
 }
@@ -392,6 +395,7 @@ impl Session {
             keymap,
             timeoutlen,
             history,
+            theme: _,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);

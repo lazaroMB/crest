@@ -840,6 +840,19 @@ pub fn session_parts(
                 app.warn(warning);
             }
             let timeoutlen = crate::keys::timeoutlen(&app.options);
+            let theme = match app
+                .options
+                .theme
+                .as_deref()
+                .map(ui::app::ThemeMode::from_name)
+            {
+                Some(Ok(theme)) => theme,
+                Some(Err(warning)) => {
+                    app.warn(warning);
+                    ui::app::ThemeMode::default()
+                }
+                None => ui::app::ThemeMode::default(),
+            };
             let history = app.timeline_blocks();
             let controller = Arc::new(UiController::new(app, handle.clone()));
             let mut parts = SessionParts::new(
@@ -853,6 +866,7 @@ pub fn session_parts(
             parts.keymap = keymap;
             parts.timeoutlen = timeoutlen;
             parts.history = history;
+            parts.theme = theme;
             (parts, workspace)
         }
         Err(err) => {
@@ -915,6 +929,7 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
     };
     let opts = ui::app::UiOptions {
         workspace_label: parts.workspace_label.clone(),
+        theme: parts.theme,
         ..ui::app::UiOptions::default()
     };
     match ui::app::run_with(opts, move |window, cx| {

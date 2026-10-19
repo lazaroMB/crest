@@ -15,5 +15,6 @@ pub mod render3d;
 pub mod session;
 pub mod status;
 pub mod sysboard;
+pub mod theme;
 pub mod timeline;
 pub mod tree;

@@ -54,7 +54,7 @@ pub struct UiOptions {
     pub font_family: String,
     /// Base font size in pixels.
     pub font_size: f32,
-    /// Color scheme.
+    /// Color scheme (`app.opt.theme`), in the TwoCrest palette.
     pub theme: ThemeMode,
 }
 
@@ -145,6 +145,7 @@ fn apply_theme(opts: &UiOptions, cx: &mut App) {
     // `change` loads the mode's theme and resolves its default monospace
     // family to one that is installed, which becomes our fallback.
     Theme::change(opts.theme, None, cx);
+    crate::theme::apply(opts.theme, cx);
     let installed = cx.text_system().all_font_names();
     let fallback = Theme::global(cx).mono_font_family.clone();
     let family = SharedString::from(resolve_font_family(
