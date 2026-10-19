@@ -903,7 +903,11 @@ impl Session {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (name, arg) = command.split_once(' ').unwrap_or((command, ""));
+        // `/!cmd args` and `/! cmd args` are the shell command `!`.
+        let (name, arg) = match command.strip_prefix('!') {
+            Some(line) => ("!", line),
+            None => command.split_once(' ').unwrap_or((command, "")),
+        };
         let arg = arg.trim();
         match name {
             "q" | "quit" | "qa" => cx.quit(),
@@ -1383,6 +1387,7 @@ mod tests {
                 "loop" => Reply::Actions(vec![PluginAction::Cmd {
                     command: "loop".into(),
                 }]),
+                "!" => Reply::Notice(NoticeLevel::Info, format!("ran [{args}]")),
                 _ => return None,
             };
             Some(futures::future::ready(reply).boxed())
@@ -1975,6 +1980,27 @@ mod tests {
         h.session.read_with(cx, |s, _| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
         });
+    }
+
+    #[gpui::test]
+    fn a_bang_line_is_the_shell_command(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let notice = |cx: &mut VisualTestContext| {
+            h.session.read_with(cx, |s, cx| {
+                let now = cx.background_executor().now();
+                s.status()
+                    .read(cx)
+                    .state()
+                    .notice(now)
+                    .map(|n| n.message.clone())
+            })
+        };
+        send("/!git status -s", cx);
+        cx.run_until_parked();
+        assert_eq!(notice(cx).as_deref(), Some("ran [git status -s]"));
+        send("/! ls", cx);
+        cx.run_until_parked();
+        assert_eq!(notice(cx).as_deref(), Some("ran [ls]"));
     }
 
     #[gpui::test]

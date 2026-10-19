@@ -30,6 +30,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Sources { .. } => "sources",
         BlockKind::Image { .. } => "image",
         BlockKind::StageHeader { .. } => "stage_header",
+        BlockKind::Shell { .. } => "shell",
         BlockKind::Error { .. } => "error",
     }
 }
@@ -83,6 +84,12 @@ pub fn copy_text(kind: &BlockKind) -> String {
             None => message.clone(),
         },
         BlockKind::Markdown { source, .. } => source.clone(),
+        BlockKind::Shell {
+            command,
+            stdout,
+            stderr,
+            ..
+        } => format!("$ {command}\n{stdout}{stderr}"),
         other => serde_json::to_string_pretty(other).unwrap_or_default(),
     }
 }

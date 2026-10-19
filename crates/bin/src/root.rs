@@ -180,6 +180,9 @@ pub struct App {
     /// Runs programs in the workspace: `/!cmd` and the git state of the
     /// status bar.
     pub shell: Arc<dyn ShellPort>,
+    /// Output of the `/!` commands run since the last prompt; it goes to
+    /// the model with the next one.
+    pub shell_context: Vec<String>,
     /// The Lua host that runs the callbacks of keymaps and commands, if Lua
     /// started.
     pub plugins: Option<Arc<dyn PluginHostPort>>,
@@ -656,6 +659,7 @@ pub async fn build_app(
         mcp,
         file_search,
         shell: Arc::clone(&shell),
+        shell_context: Vec::new(),
         content_search,
         plugins,
         keymaps: loaded.keymaps,

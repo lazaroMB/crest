@@ -445,10 +445,19 @@ pub fn plugin_reply(result: Result<PluginOutput, PluginError>) -> Reply {
 }
 
 /// Runs one turn of `app` and saves the session, as the headless mode does.
+/// The output of the `/!` commands run since the last turn goes before the
+/// prompt the model gets (the timeline shows the prompt alone).
 pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
     app.emit(DomainEvent::BlockAdded {
         block: prompt_block(&request.prompt),
     });
+    let mut prompt = request.prompt;
+    if !app.shell_context.is_empty() {
+        let mut context = std::mem::take(&mut app.shell_context).join("\n\n");
+        context.push_str("\n\n");
+        context.push_str(&prompt);
+        prompt = context;
+    }
     let mut opts = app.turn_options.clone().with_cancel(request.cancel);
     if let Some(role) = request.role {
         opts.role = role;
@@ -456,10 +465,7 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
     if let Some(model) = request.model_override {
         opts = opts.with_override(model);
     }
-    let result = app
-        .service
-        .run_turn(&mut app.session, request.prompt, opts)
-        .await;
+    let result = app.service.run_turn(&mut app.session, prompt, opts).await;
     if let Err(err) = app.save().await {
         app.warn(format!("could not save the session: {err}"));
     }
@@ -512,6 +518,22 @@ fn interrupted(name: &str) -> String {
         "!" => "command interrupted".to_owned(),
         other => format!("/{other} interrupted"),
     }
+}
+
+/// `/!command`: runs it in the workspace, shows its output and keeps it for
+/// the model's next prompt.
+async fn shell_command(app: Arc<tokio::sync::Mutex<App>>, line: String) -> Reply {
+    let shell = Arc::clone(&app.lock().await.shell);
+    let run = application::usecases::shell_command::run_user_command(shell.as_ref(), &line).await;
+    let mut app = app.lock().await;
+    app.shell_context.push(run.context);
+    app.emit(DomainEvent::BlockAdded {
+        block: Block::new(run.block),
+    });
+    if let Err(err) = app.save().await {
+        app.warn(format!("could not save the session: {err}"));
+    }
+    Reply::Done
 }
 
 /// `/stage`, `/back`, `/skip`, `/retry` or `/abort`: for the active
@@ -645,6 +667,14 @@ impl SessionController for UiController {
                     research_command(Arc::clone(&self.app), Arc::clone(&self.research), args);
                 Some(self.spawn_command("research", start))
             }
+            "!" if args.trim().is_empty() => Some(
+                futures::future::ready(Reply::Notice(
+                    NoticeLevel::Warning,
+                    "usage: /!<command> [args], e.g. /!git status".into(),
+                ))
+                .boxed(),
+            ),
+            "!" => Some(self.spawn_command("!", shell_command(Arc::clone(&self.app), args))),
             "stage" | "back" | "skip" | "abort" | "retry" => {
                 let line = format!("/{name} {args}").trim_end().to_owned();
                 let task = flow_line(

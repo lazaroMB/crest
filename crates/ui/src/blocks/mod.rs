@@ -14,6 +14,7 @@ pub mod image_view;
 pub mod json;
 pub mod markdown;
 pub mod mermaid;
+pub mod shell;
 pub mod sources;
 pub mod stage;
 pub mod table;
@@ -41,6 +42,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Image { .. } => image::render(entry, window, cx),
         BlockKind::Markdown { .. } => markdown::render(entry, window, cx),
         BlockKind::Mermaid(_) => mermaid::render(entry, window, cx),
+        BlockKind::Shell { .. } => shell::render(entry, window, cx),
         BlockKind::Sources { .. } => sources::render(entry, window, cx),
         BlockKind::StageHeader { .. } => stage::render(entry, window, cx),
         BlockKind::Table(_) => table::render(entry, window, cx),

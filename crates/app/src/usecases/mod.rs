@@ -7,5 +7,6 @@ pub mod evidence;
 pub mod git_status;
 pub mod resume;
 pub mod run_turn;
+pub mod shell_command;
 pub mod simulate;
 pub mod web_sources;

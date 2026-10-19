@@ -159,6 +159,21 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             w.line(None, source);
         }
         BlockKind::Error { message, .. } => w.line(Some(Style::Red), &format!("error: {message}")),
+        BlockKind::Shell {
+            command,
+            exit_code,
+            stdout,
+            stderr,
+            timed_out,
+            ..
+        } => {
+            let status = ui::blocks::shell::status_label(*exit_code, *timed_out);
+            w.line(Some(Style::Cyan), &format!("$ {command} ({status})"));
+            w.line(None, stdout.trim_end());
+            if !stderr.trim().is_empty() {
+                w.line(Some(Style::Red), stderr.trim_end());
+            }
+        }
         BlockKind::Chart(chart) => w.line(Some(Style::Dim), &format!("[chart: {}]", chart.title)),
         BlockKind::Table(table) => print_table(w, table),
         BlockKind::Mermaid(_) => w.line(Some(Style::Dim), "[mermaid diagram]"),

@@ -104,6 +104,7 @@ impl Block {
             | BlockKind::Diff(_)
             | BlockKind::Mermaid(_)
             | BlockKind::Markdown { .. }
+            | BlockKind::Shell { .. }
             | BlockKind::Error { .. } => Ok(()),
         }
     }
@@ -191,6 +192,28 @@ pub enum BlockKind {
         index: u32,
         /// Number of stages.
         total: u32,
+    },
+    /// A command the user ran with `/!` in the workspace, and what it
+    /// printed.
+    Shell {
+        /// The command line as typed.
+        command: String,
+        /// Exit code; `None` when it was killed (signal or timeout) or could
+        /// not start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        /// Standard output.
+        #[serde(default)]
+        stdout: String,
+        /// Standard error (or why it could not start).
+        #[serde(default)]
+        stderr: String,
+        /// Whether it was killed for taking too long.
+        #[serde(default)]
+        timed_out: bool,
+        /// Whether the output was cut to the size limit.
+        #[serde(default)]
+        truncated: bool,
     },
     /// Failure of the API or a tool.
     Error {
