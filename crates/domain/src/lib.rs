@@ -5,6 +5,7 @@
 
 pub mod block;
 pub mod conversation;
+pub mod decision;
 pub mod git;
 pub mod modal;
 pub mod model;

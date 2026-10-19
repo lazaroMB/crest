@@ -23,6 +23,7 @@ path = "src/main.rs"
 domain.workspace = true
 application.workspace = true
 adapter-anthropic.workspace = true
+adapter-cloudflare.workspace = true
 adapter-search.workspace = true
 adapter-fs.workspace = true
 adapter-shell.workspace = true

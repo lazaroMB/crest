@@ -1,6 +1,7 @@
 //! The contract of a research node: [`ResearchNode`], what it gets
 //! ([`NodeContext`]) and what it answers ([`NodeOutcome`]).
 
+use crate::decide::Decider;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -122,6 +123,7 @@ pub struct NodeDeps {
     agent: Option<Arc<AgentService>>,
     explore_agent: Option<Arc<AgentService>>,
     workspace_root: String,
+    decider: Decider,
     clock: fn() -> u64,
 }
 
@@ -146,8 +148,17 @@ impl NodeDeps {
             agent: None,
             explore_agent: None,
             workspace_root: ".".to_owned(),
+            decider: Decider::none(),
             clock: system_now_ms,
         }
+    }
+
+    /// The decision model the nodes judge and classify with (none by
+    /// default: they fall back to the model and fixed rules).
+    #[must_use]
+    pub fn with_decider(mut self, decider: Decider) -> Self {
+        self.decider = decider;
+        self
     }
 
     /// Lets nodes run full agent turns (with tools) through `agent`.
@@ -631,6 +642,12 @@ impl NodeContext {
     #[must_use]
     pub fn turn_options(&self) -> TurnOptions {
         TurnOptions::new(self.role())
+    }
+
+    /// The decision model (maybe none).
+    #[must_use]
+    pub fn decider(&self) -> &Decider {
+        &self.deps.decider
     }
 
     /// Data a node stored with [`NodeContext::set_data`], from any node.

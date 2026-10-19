@@ -104,6 +104,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-cloudflare"
+version = "0.5.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "domain",
+ "keyring",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "adapter-export"
 version = "0.5.0"
 dependencies = [
@@ -1555,6 +1570,7 @@ name = "crest"
 version = "0.5.0"
 dependencies = [
  "adapter-anthropic",
+ "adapter-cloudflare",
  "adapter-export",
  "adapter-fs",
  "adapter-lua",

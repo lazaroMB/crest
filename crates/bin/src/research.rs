@@ -19,6 +19,7 @@
 //! terminal and reads each gate's answer from stdin (`resume` as the problem
 //! continues the pending flow).
 
+use application::decide::Decider;
 use std::sync::Arc;
 
 use adapter_store::SqliteFlowStorage;
@@ -58,6 +59,8 @@ pub struct ResearchParts {
     pub root: WorkspaceRoot,
     /// The flow checkpoints (the chat's database).
     pub storage: Arc<SqliteFlowStorage>,
+    /// The decision model of the judges and gates (maybe none).
+    pub decider: Decider,
 }
 
 /// The MCP tools of `tools` that only read (servers declared with a read
@@ -88,6 +91,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         system_prompt,
         root,
         storage,
+        decider,
     } = parts;
     let llm: Arc<dyn LlmPort> = Arc::clone(&agent.llm);
     explore.llm = Arc::clone(&llm);
@@ -108,7 +112,8 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
     let deps = NodeDeps::new(llm, models, events)
         .with_agent(Arc::new(acting))
         .with_explore_agent(Arc::new(explorer))
-        .with_workspace_root(root.clone());
+        .with_workspace_root(root.clone())
+        .with_decider(decider);
     let graph = research_graph(deps, Some(workspace))?;
     Ok(ResearchSession::new(graph, storage, root))
 }

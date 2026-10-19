@@ -144,6 +144,9 @@ pub struct Overrides {
     pub plugin_trust_path: Option<PathBuf>,
     /// The web instead of curl (still subject to `app.opt.web.enabled`).
     pub web: Option<Arc<dyn WebPort>>,
+    /// The decision model instead of Clef (still subject to
+    /// `app.opt.decision.enabled`).
+    pub decision: Option<Arc<dyn application::ports::decision::DecisionPort>>,
 }
 
 /// Records the timeline of the session while forwarding every event.
@@ -474,6 +477,9 @@ pub async fn build_app(
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     let (web, web_warnings) = startup::web_tools(&loaded.options, overrides.web.clone()).await;
     warnings.extend(web_warnings);
+    let (decider, decider_warnings) =
+        startup::decider(&loaded.options, overrides.decision.clone()).await;
+    warnings.extend(decider_warnings);
     let mut tools = ToolRegistry::new();
     register_file_tools(
         &mut tools,
@@ -616,6 +622,7 @@ pub async fn build_app(
                 system_prompt: system_prompt(&root),
                 root: root.clone(),
                 storage: Arc::clone(storage),
+                decider: decider.clone(),
             };
             match research::build(parts) {
                 Ok(session) => Some(session),

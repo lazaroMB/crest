@@ -6,7 +6,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use adapter_cloudflare::{ACCOUNT_NAME, ClefClient, TOKEN_NAME, secret_from_env_or_keyring};
 use adapter_web::{CurlWeb, brave_key_from_env_or_keyring};
+use application::decide::{DECISION_OPTION, Decider, DecisionOptions};
+use application::ports::decision::DecisionPort;
 use application::ports::llm::ModelCatalogPort;
 use application::ports::plugin::{
     AppOptions, ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort,
@@ -113,6 +116,56 @@ pub async fn validate_models(
                 timeout.as_secs()
             )],
         ),
+    }
+}
+
+/// The decision model of `app.opt.decision`: `port` when given (tests),
+/// else Clef on Cloudflare when its token and account are set (env or
+/// keyring). Without them crest works as before; a warning says so only
+/// when `app.opt.decision` asks for it.
+pub async fn decider(
+    options: &AppOptions,
+    port: Option<Arc<dyn DecisionPort>>,
+) -> (Decider, Vec<String>) {
+    let mut warnings = Vec::new();
+    let configured = options.extra.contains_key(DECISION_OPTION);
+    let options = DecisionOptions::from_options(options).unwrap_or_else(|err| {
+        warnings.push(format!("{err}; the decision model is off"));
+        DecisionOptions {
+            enabled: false,
+            ..DecisionOptions::default()
+        }
+    });
+    if !options.enabled {
+        return (Decider::none(), warnings);
+    }
+    if let Some(port) = port {
+        return (Decider::new(port, options), warnings);
+    }
+    // The keyring may block (D-Bus, Keychain).
+    let account = options.account_id.clone();
+    let secrets = tokio::task::spawn_blocking(move || {
+        let token = secret_from_env_or_keyring(TOKEN_NAME);
+        let account = account.or_else(|| secret_from_env_or_keyring(ACCOUNT_NAME));
+        (token, account)
+    })
+    .await
+    .unwrap_or_default();
+    let (Some(token), Some(account)) = secrets else {
+        if configured {
+            warnings.push(format!(
+                "app.opt.{DECISION_OPTION} is set but {TOKEN_NAME} or {ACCOUNT_NAME} is missing \
+                 (environment or keyring entry crest / …); the decision model is off"
+            ));
+        }
+        return (Decider::none(), warnings);
+    };
+    match ClefClient::new(&options, &account, token) {
+        Ok(client) => (Decider::new(Arc::new(client), options), warnings),
+        Err(err) => {
+            warnings.push(format!("{err}; the decision model is off"));
+            (Decider::none(), warnings)
+        }
     }
 }
 
