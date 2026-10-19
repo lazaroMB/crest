@@ -31,7 +31,7 @@ When the layers are combined, precedence from lowest to highest is: plugins, glo
 | `app.opt.*` | Key by key. |
 | `app.models.roles` | Role by role and field by field. For example, if the workspace only sets `max_tokens`, it keeps the `id` and `thinking` of the global layer. `fallbacks` is replaced as a whole. |
 | `app.models.aliases` | Key by key. |
-| Keymaps | By `(mode, keys)`: the last definition wins. |
+| Keymaps | By keys: the last definition wins. |
 | Commands, tools and MCP servers | By name: the highest-precedence layer wins. |
 | Hooks | All are kept, in the order the files ran (global, plugins, workspace). |
 | `app.permissions.sensitive_paths` | The global config (or a plugin) can **replace** the default list. The workspace can only **add** patterns, so a cloned repository cannot remove the protection. |
@@ -52,7 +52,7 @@ A mistyped field (for example `app.opt.timeoutlen = "500"`) is dropped on its ow
 /home/yo/.config/crest/init.lua:3: syntax error: unexpected symbol near '='
 /home/yo/.config/crest/init.lua: app.opt.timeoutlen must be a whole number of milliseconds
 /home/yo/.config/crest/init.lua: app.models.roles: unknown role `mian`
-/home/yo/.config/crest/init.lua:12: unknown mode `x` (use "n", "i" or "c")
+/home/yo/.config/crest/init.lua:12: keymap.set: the key sequence must be a string
 /home/yo/.config/crest/plugins/hang/init.lua: instruction limit exceeded
 ```
 
@@ -90,12 +90,12 @@ The API URL is fixed (`https://api.anthropic.com`): there is no variable to chan
 
 | Option | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `leader` | string in key notation (`" "`, `","`, `"<Space>"`) | `" "` (space) | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use space (see [usage.md](usage.md#default-key-bindings)). |
-| `timeoutlen` | integer, ms | `1000` | How long a prefix (`g` of `gg`, `<leader>`) waits for the next key. |
+| `leader` | string in key notation (`"<C-Space>"`, `"<C-,>"`) | `"<C-Space>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+Space` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. |
+| `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the cost shows as `$?`. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
 | `web` | table, see [Web search](#web-search) | DuckDuckGo, 8 results, 20 s, any domain | The `web_search` and `web_fetch` tools: on or off, search backend, limits and domains. |
-| `theme` | string | — | Read and merged across layers, but it **has no effect yet**: the window always uses the dark theme. |
+| `theme` | `"dark"` or `"light"` | `"dark"` | The TwoCrest theme of the window ([usage.md](usage.md#the-window)). `"twocrest"` and `"twocrest-light"` are accepted too; any other value is a startup warning and the dark theme is used. |
 
 Any other `app.opt` key is accepted without error and stored, but crest does not use it. There are no font options: the window uses JetBrains Mono at 14 px if installed, otherwise the system monospace font.
 
@@ -185,11 +185,11 @@ An unknown role or field produces a diagnostic. Aliases are expanded once (not r
 app.models.aliases = { rapido = "claude-haiku-5-5", opus = "claude-opus-5-5" }
 ```
 
-Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `<leader>m` menu.
+Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `Ctrl+Space m` menu.
 
 ### Resolution order
 
-1. **Turn override**: `--model`, `/model <x>` or the `<leader>m` menu.
+1. **Turn override**: `--model`, `/model <x>` or the `Ctrl+Space m` menu.
    - If the value is a **role name** (`plan`), that role's whole spec is used.
    - If it is an alias or an id, it only replaces the `id` and keeps the role's `max_tokens`, `thinking` and `fallbacks`.
    - Aliases are checked before role names.
@@ -315,7 +315,7 @@ A global config, checked against the current implementation (it loads without di
 local app = require("app")
 
 -- Keys -------------------------------------------------------------------
-app.opt.leader = " "        -- <leader> for the keymaps in this file
+app.opt.leader = "<C-Space>" -- <leader> for the keymaps in this file
 app.opt.timeoutlen = 600    -- ms to wait between the keys of a sequence
 
 -- Cost (USD per million tokens; an example, use current prices) ---------
@@ -355,8 +355,8 @@ app.mcp.add("docs", {
 app.plugins = { "~/src/mis-plugins/revisor" }
 
 -- Mappings and commands --------------------------------------------------
-app.keymap.set("n", "<leader>x", function() app.cmd("clear") end)
-app.keymap.set({ "n", "i" }, "<C-p>", "picker.files")
+app.keymap.set("<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<C-p>", "picker.files")
 
 app.commands.register("review", function(args)
   app.send("Review the uncommitted changes and list the risks. " .. args, { role = "plan" })

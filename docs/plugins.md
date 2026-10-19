@@ -62,7 +62,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.models.roles`, `app.models.aliases` | tables | Models by role. |
 | `app.permissions.sensitive_paths` | list of strings | Paths the tools cannot read. |
 | `app.plugins` | list of strings | Extra plugins (global config only). |
-| `app.keymap.set(mode, keys, action [, { desc }])` | see below | At load time. |
+| `app.keymap.set(keys, action [, { desc }])` | see below | At load time. |
 | `app.commands.register(name, fn [, { desc }])` | see below | At load time. |
 | `app.tools.register(def)` | see below | At load time. |
 | `app.on(event, fn)` | see below | At load time. |
@@ -78,30 +78,31 @@ Each file has its own environment: its global variables are not visible from oth
 
 A malformed argument to `keymap.set`, `commands.register`, `tools.register`, `app.on` or `mcp.add` does **not** stop the file: it produces a diagnostic with the line of the call, and only that call is ignored (see [Errors and diagnostics](#errors-and-diagnostics)).
 
-### `app.keymap.set(mode, keys, action, opts)`
+### `app.keymap.set(keys, action, opts)`
 
 ```lua
-app.keymap.set("n", "<leader>r", "picker.grep")               -- builtin action
-app.keymap.set({ "n", "i" }, "<C-x>", function() app.cmd("clear") end, { desc = "Clear the session" })
+app.keymap.set("<leader>r", "picker.grep")               -- builtin action
+app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear the session" })
 ```
 
-- **`mode`**: a mode or a list of modes. Each mode can be `"n"`/`"normal"`, `"i"`/`"insert"` or `"c"`/`"command"`.
-- **`keys`**: the sequence in Neovim notation:
-  - single characters (`gg`);
-  - `<leader>`;
+crest has no modes: the prompt is always ready to type and a mapping works wherever the focus is. The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
+
+- **`keys`**: the sequence in Neovim notation. It must **start with a chord or `<leader>`** (`<C-x>`, `<A-r>`, `<leader>r`, `<F5>`): a mapping that starts with a plain key (`j`, `gg`, `?`) would steal typing, so it is ignored with a warning at startup.
+  - single characters after the first key (`<leader>gg`);
+  - `<leader>` (`Ctrl+Space` unless `app.opt.leader` says otherwise);
   - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt), `<S-x>` (Shift), `<D-x>` (Cmd);
   - key names `<CR>`/`<Enter>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, `<Space>`, `<lt>`, `<gt>`, `<Bar>`, `<Bslash>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<Home>`, `<End>`, `<PageUp>`, `<PageDown>` and `<F1>`–`<F24>`.
 
   `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
 - **`action`**: the name of a builtin action or a Lua function. The function is called with no arguments (`nil`) and can use `app.cmd` and `app.send`. If it returns `app.ui.block(...)`, that block is added to the timeline.
-- **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`?`, `F1`, `/help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
+- **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`F1`, `/help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
 
-A keymap replaces any other with the same keys in the same mode, builtin ones included. These are the builtin actions valid as a string:
+A keymap replaces any other with the same keys, builtin ones included. These are the builtin actions valid as a string:
 
 | Action | What it does |
 | --- | --- |
-| `mode.normal`, `mode.insert`, `mode.command` | Changes mode. |
-| `submit`, `newline` | Sends the prompt / inserts a new line (insert). |
+| `submit`, `newline` | Sends the prompt (or runs the `/` command) / inserts a new line. |
+| `focus.input`, `focus.next` | Back to the prompt / the focus to the next panel. |
 | `block.next`, `block.prev`, `block.first`, `block.last` | Moves the timeline selection. |
 | `block.toggle` | Expands or collapses the selected block. |
 | `block.toggle_view` | Alternate view (chart ↔ table, document ↔ source). |
@@ -110,7 +111,7 @@ A keymap replaces any other with the same keys in the same mode, builtin ones in
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |
 | `permission.cycle` | Cycles the permission mode. |
-| `turn.interrupt` | Interrupts the turn. |
+| `turn.interrupt` | Interrupts the turn or the running command. |
 | `help.open` | Opens the help modal. |
 
 Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
@@ -712,38 +713,38 @@ app.commands.register("review", function(args)
 end)
 ```
 
-To use it, press `Esc`, type `/review only src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. only src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
+To use it, type `/review only src/` and press `Enter`. This sends the prompt "Review the uncommitted changes and list the risks. only src/", which is served by the `plan` role's model (`claude-opus-5-5` by default). The status bar shows the turn's model.
 
 ### 4. Keymaps
 
 ```lua
 local app = require("app")
 
-app.opt.leader = ","
+app.opt.leader = "<C-,>"
 
--- ,x in normal: new session
-app.keymap.set("n", "<leader>x", function() app.cmd("clear") end)
+-- Ctrl+, x: new session
+app.keymap.set("<leader>x", function() app.cmd("clear") end)
 
--- Ctrl+P in normal and insert: file picker
-app.keymap.set({ "n", "i" }, "<C-p>", "picker.files")
+-- Ctrl+P: file picker
+app.keymap.set("<C-p>", "picker.files")
 
--- ,t in normal: ask the agent to run the tests
-app.keymap.set("n", "<leader>t", function()
+-- Ctrl+, t: ask the agent to run the tests
+app.keymap.set("<leader>t", function()
   app.send("Run the workspace tests and summarize the failures in a table")
 end)
 ```
 
-With `leader = ","`, the mappings in this file use the comma, but the builtin ones (`<Space>ff`, `<Space>m`...) keep using space. If you want to move them, map them again:
+With `leader = "<C-,>"`, the mappings in this file use `Ctrl+,`, but the builtin ones (`Ctrl+Space ff`, `Ctrl+Space m`...) keep using `Ctrl+Space`. If you want to move them, map them again:
 
 ```lua
-app.keymap.set("n", "<leader>ff", "picker.files")
-app.keymap.set("n", "<leader>fg", "picker.grep")
+app.keymap.set("<leader>ff", "picker.files")
+app.keymap.set("<leader>fg", "picker.grep")
 ```
 
 ### Testing a plugin
 
 1. Start headless on any directory: `crest --headless "list the files" --workspace /tmp/try`. Load diagnostics are printed to the terminal.
 2. Open the window and check that there are no `Error` blocks at the top of the timeline.
-3. For tools: ask for something that uses them, expand the ToolCall with `Enter` (in normal mode) and check the input and the output.
+3. For tools: ask for something that uses them, expand the ToolCall with `Alt+Enter` and check the input and the output.
 4. For hooks: use `print` and `CREST_LOG=warn,lua=info`.
 5. If you write Rust, the tests in `crates/adapters/lua/tests/` (`plugin_tools.rs`, `plugin_hooks.rs`, `plugin_ui.rs`) show how to load an `init.lua` into a real `LuaHost` and run it inside the agent loop with a scripted model (`application::testing`).

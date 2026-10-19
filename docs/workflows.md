@@ -9,9 +9,11 @@ Between the two, on demand, you can **simulate a solution** ([below](#simulating
 
 Both are built with [graph-flow](https://crates.io/crates/graph-flow). Every step is a checkpoint in SQLite, in `~/.local/share/crest/sessions.db`. At **gates**, the workflow stops and waits for your answer in the same chat input (in the window) or on stdin (in headless mode).
 
-While a workflow is active, **every line you send goes to the workflow** and does not start a normal turn. The window's `:` commands (`/model`, `/mode`, `/clear`, `/q`...) keep working. If an implementation workflow and a research workflow are both active, lines go to the implementation workflow first.
+While a workflow waits at a gate, **every plain line you send answers it** and does not start a normal turn. The window's `/` commands (`/model`, `/mode`, `/clear`, `/q`...) keep working, and `/stage`, `/back`, `/skip`, `/retry` and `/abort` go to the workflow (the implementation workflow first, if both are active).
 
-> Limitation: `Ctrl+C` does not stop a running step of either workflow. In the window, the cancellation token does not reach the workflow. In headless mode it kills the process, and on resume the interrupted step runs again. To stop a workflow in an orderly way, answer `/abort` at a gate.
+**Failures never trap the chat.** A step whose model call fails for a passing reason (rate limit, overload, a dropped connection, an empty or unparsable answer) is retried twice by itself. If it still fails, the workflow is saved as **failed** at its last checkpoint, the timeline shows an `Error` block with what to do, and the chat goes back to normal. `/research retry` (or `/retry`, or `/research resume`) runs the failed step again; `/implement resume` does the same for an implementation. The same holds after a restart: the pending or failed workflow is announced when crest opens.
+
+`Ctrl+C` stops a running step in the window: the workflow stays at its last checkpoint and resumes the same way. In headless mode it kills the process, and on resume the interrupted step runs again.
 
 ## Research workflow
 
@@ -19,22 +21,22 @@ While a workflow is active, **every line you send goes to the workflow** and doe
 
 | Where | Command | What it does |
 | --- | --- | --- |
-| Window | `/research <problem description>` | Starts a new workflow and runs it up to the first gate. If there was another one, it **replaces** it without asking: the old one stays saved but can no longer be resumed. |
-| Window | `/research resume` (also `retomar` or `reanudar`) | Resumes the workspace's last workflow. |
+| Window | `/research <problem description>` | Starts a new workflow and runs it up to the first gate. The previous one stays saved and listed. |
+| Window | `/research resume [n]` (also `continue`, `retomar` or `reanudar`) | Resumes the workspace's last workflow, or number `n` of `/research list`. A failed or interrupted step runs again. |
+| Window | `/research retry`, `/retry` | Runs the failed step of the last workflow again. |
+| Window | `/research list` | The workflows of the workspace, newest first, with their problem and where each one is. |
 | Window | `/research` | Tells you which stage the workflow is at. |
 | Headless | `crest --headless --research "<problem>"` | Runs the workflow in the terminal and reads the answers from stdin. |
-| Headless | `crest --headless --research resume` | Resumes the pending workflow. |
+| Headless | `crest --headless --research resume` (or `retry`) | Resumes the pending or failed workflow. |
 
-When you open crest with a workflow halfway through, the notice "a research flow is pending (…); `/research resume` to continue" appears. The workflow does **not** activate on its own: until you type `/research resume`, your lines go to the normal chat.
+When you open crest with a workflow halfway through (or failed), the notice "a research flow is pending (…); `/research resume` to continue" (or "`/research retry` runs it again") appears. The workflow does **not** activate on its own: until you resume it, your lines go to the normal chat.
 
 On resume:
 
 - if the workflow was waiting for an answer, crest shows the gate's question again;
-- if it had stopped because of an error, it continues from the last checkpoint;
-- if it had finished, it stays active only so that you can use `/back <node>`, and any other line releases it;
+- if it had failed or been interrupted, the step runs again from the last checkpoint;
+- if it had finished, it cannot be resumed, but `/back <node>` reopens it at that node;
 - if it was aborted, it cannot be resumed.
-
-Only one workflow is tracked per workspace: the last one you started.
 
 ### The 14 nodes
 
@@ -90,14 +92,15 @@ There are also **question** gates: any text you type, including "yes", is taken 
 
 | Command | What it does |
 | --- | --- |
-| `/stage` | Shows the position, for example "Stage 5/14: Hypotheses (Discovery) · waiting for your answer". The status at the end can also be "running", "flow finished" or "flow aborted". |
+| `/stage` | Shows the position, for example "Stage 5/14: Hypotheses (Discovery) · waiting for your answer". The status at the end can also be "running", "failed: …", "flow finished" or "flow aborted". |
 | `/back <node>` | Goes back to that node and runs it immediately. `<node>` can be the number (1-14), the name (accents and case don't matter: `hypotheses`, `Definition and constraints`, `critical review`), the Spanish name kept as an alias (`hipótesis`, `observacion`, `Definición y restricciones`, `lluvia de ideas`, `revisión crítica`), the id (`intake`, `observation`, `data`, `analysis`, `hypotheses`, `experiments`, `definition`, `research`, `brainstorm`, `modeling`, `prototype`, `spec`, `plan`, `critical_review`) or a unique prefix of at least 3 letters of the English or Spanish name (`hyp`, `defin`, `crit`, `brain`, `hip`, `lluvia`, `revis`). Only nodes before the current one, or the current one, are accepted, except when the workflow has finished, in which case any node is. |
 | `/skip` | Skips the current node. Only valid for **Data (3)** and **Prototype (11)**. In practice, Data can only be skipped after it fails, because it has no gate. |
+| `/retry` | Runs a failed (or interrupted) node again. |
 | `/abort` | Aborts the workflow. The state and the journal stay saved and the chat goes back to normal. |
 
-An unknown `/` command (for example `/model`) does **not** produce an error: it is taken as the answer to the gate. A malformed command does produce an error, for example `usage: /back <stage>, by number (1-14) or name, e.g. /back 5 or /back hypotheses`.
+These commands work on the workspace's last workflow even when it is not waiting at a gate (for example after a failure). A malformed command produces an error, for example `usage: /back <stage>, by number (1-14) or name, e.g. /back 5 or /back hypotheses`.
 
-**If a node fails**, the timeline shows an `Error` block "<Stage>: <error>" and the workflow stays at its last checkpoint. Free text is no longer accepted (it returns "the research flow is not waiting for input"). To retry, use `/back <current stage>` or `/research resume`.
+**If a node fails** after its automatic retries, the timeline shows an `Error` block "<Stage>: <error>" with the hint to retry, the workflow is saved as failed at its last checkpoint and the chat is free again. `/research retry` runs the node again; `/back <stage>` redoes an earlier one; `/skip` skips it if it is optional.
 
 ### Automatic go-backs
 
@@ -220,7 +223,7 @@ Unknown fields are not allowed. A plan with no tasks, duplicate ids, unknown dep
 
 There is no prefix matching: `0007` only works if a folder named exactly `0007` exists. Absolute paths must be inside the workspace.
 
-Opening the same plan again **resumes** the workflow if it had not finished, with the notice "implementation flow of … resumed". A finished or aborted workflow starts from scratch. On resume, the pending question is **not** shown again: answer directly, or type `/stage` to see it. In the window only one implementation workflow can be active at a time.
+Opening the same plan again **resumes** the workflow if it had not finished, with the notice "implementation flow of … resumed". `/implement resume` (or `/implement` alone) does it for the last plan opened in the workspace, which crest also announces at start-up while it is pending. A step that failed or was interrupted runs again. A finished or aborted workflow starts from scratch. On resume, the pending question is **not** shown again: answer directly, or type `/stage` to see it. In the window only one implementation workflow can be active at a time.
 
 Requirements:
 

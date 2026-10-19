@@ -9,74 +9,87 @@ crest                 # workspace = current directory
 crest ~/src/proyecto  # or --workspace ~/src/proyecto
 ```
 
-The window opens full screen. On X11 it opens as a normal window and requests full screen after the first frame; if the compositor refuses, it stays centered at 1280×800. The title is `crest — <directory>`. It uses a dark theme and a single monospace font: JetBrains Mono if installed, otherwise the system monospace font.
+The window opens full screen. On X11 it opens as a normal window and requests full screen after the first frame; if the compositor refuses, it stays centered at 1280×800. The title is `crest — <directory>`. It uses the TwoCrest theme (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber), dark by default and light with `app.opt.theme = "light"`, and a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
 
 ```text
 ┌──────────────┬───────────────────────────────────────────────┐
 │ tree         │ timeline: blocks (text, tools, diffs,         │
-│ (<Space>e,   │ charts, tables, Mermaid, markdown...)         │
-│  hidden by   │                                               │
-│  default)    │                                               │
+│ (Ctrl+Space  │ charts, tables, Mermaid, markdown, shell...)  │
+│  e, hidden   │                                               │
+│  by default) │                                               │
 │              ├───────────────────────────────────────────────┤
-│              │ multi-line input                              │
-│              │ INSERT  <pending keys>                        │
+│              │ ❯ multi-line prompt (/ opens the palette)     │
 │              ├───────────────────────────────────────────────┤
-│              │ INSERT │ model │ ask │ $0.00 │ project ⟨notice⟩│
+│              │ ▲▲ │ model │ ask │ $0.00   ⟨notice⟩ main ~2 │ project │
 └──────────────┴───────────────────────────────────────────────┘
 ```
 
 From left to right, the status bar shows:
 
-- the input mode;
+- the crest mark;
 - the model of the current or last turn;
 - the permission mode;
 - the session cost;
+- on the right, the git branch and its changes when the workspace is a repository (`main +1 ~2 ?3 ↑1`: staged, modified, untracked, conflicted, ahead and behind its upstream; green when clean, amber with changes, red with conflicts), refreshed at start, after each turn or command and every 5 seconds;
 - the workspace.
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn and clears the queue; a running command cannot be interrupted, so there it only clears the queue. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
 
-### Modes
+### Typing, commands and shortcuts
 
-| Mode | What for | How to enter |
-| --- | --- | --- |
-| **insert** | Typing the prompt (a multi-line editor, up to 8 rows before it scrolls). | Initial mode. `i` from normal, or click the editor. |
-| **normal** | Navigating the timeline and using the `<leader>` shortcuts. | `Esc` from insert or command. |
-| **command** | Typing a one-line `:` command. | `:` from normal. `Esc`, or `Backspace` on an empty line, goes back to normal. |
+There are no modes: the prompt is always ready to type (a multi-line editor, up to 8 rows before it scrolls).
 
-In insert mode, keys without a mapping go to the editor. While crest waits for the next key of a sequence (`g` of `gg`, `<Space>` of `<Space>ff`), the line under the editor shows what you have typed so far. After `timeoutlen` (1 s by default), the exact mapping runs if there is one; otherwise the keys are dropped (in insert mode they are typed as text).
+- `Enter` sends the prompt; `Shift+Enter` adds a line.
+- A line that starts with `/` is a **command** (`/model opus`, `/research …`). To send a prompt that starts with a slash, double it: `//etc/hosts` sends `/etc/hosts`.
+- Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it.
+- **Shortcuts** are chords (`Ctrl+C`, `Alt+↑`) or the **leader** chord, `Ctrl+Space`, followed by a key (`Ctrl+Space e`). They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
+
+### Focus
+
+The prompt has the focus at start and gets it back by itself after a picker, a menu, a dialog or a modal closes.
+
+- `Ctrl+Tab` (or `Ctrl+Space w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
+- `Esc` goes back to the prompt from anywhere.
+- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there.
+
+| Panel | Keys while it has the focus |
+| --- | --- |
+| Timeline | `↑` / `↓` select blocks, `Home` / `End` the first and last, `Enter` expands or collapses, `PageUp` / `PageDown` scroll. |
+| Tree | `↑` / `↓` move, `→` / `←` open and close directories, `Enter` on a file inserts `@path`. |
+| Help | See [Help](#help). |
+| Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
+| Approval dialog | `y`, `a`, `n`, `Esc`; `↑` / `↓`, `PageUp` / `PageDown` scroll the preview. |
+| Simulation board | See [Simulation board](#simulation-board). |
 
 ### Default key bindings
 
-`<leader>` is the space bar in every builtin mapping. Changing `app.opt.leader` only affects mappings defined in Lua (see [plugins.md](plugins.md#4-keymaps)).
+`<leader>` is `Ctrl+Space` in every builtin mapping. Changing `app.opt.leader` only affects mappings defined in Lua (see [plugins.md](plugins.md#4-keymaps)).
 
-| Mode | Key | Action | What it does |
-| --- | --- | --- | --- |
-| insert | `Esc` | `mode.normal` | Switches to normal. |
-| insert | `Enter` | `submit` | Sends the prompt (if not empty). |
-| insert | `Shift+Enter` | `newline` | Inserts a new line. |
-| normal | `i` | `mode.insert` | Back to insert. |
-| normal | `j` / `k` | `block.next` / `block.prev` | Next / previous block. |
-| normal | `gg` / `G` | `block.first` / `block.last` | First / last block. |
-| normal | `Enter` | `block.toggle` | Expands or collapses the block (ToolCall, Thinking). |
-| normal | `t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
-| normal | `y` | `block.yank` | Copies the block's content to the clipboard. |
-| normal | `<Space>ff` | `picker.files` | File picker (fzf). |
-| normal | `<Space>fg` | `picker.grep` | Text search (rg). |
-| normal | `<Space>e` | `panel.tree` | Shows or hides the workspace tree. |
-| normal | `<Space>m` | `model.pick` | Picks the model for the **next** turn. |
-| normal | `<Space>p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
-| normal | `:` | `mode.command` | Opens the command line. |
-| normal | `?` | `help.open` | Opens the [help](#help). |
-| command | `Esc` | `mode.normal` | Cancels the command. |
-| all | `Ctrl+C` | `turn.interrupt` | Interrupts the running turn. Also works while a picker or a dialog is open. |
-| all | `F1` | `help.open` | Opens the [help](#help). |
-| all | `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
+| Key | Action | What it does |
+| --- | --- | --- |
+| `Enter` | `submit` | Sends the prompt (if not empty) or runs the `/` command. |
+| `Shift+Enter` | `newline` | Inserts a new line. |
+| `Esc` | `focus.input` | Back to the prompt (hides the palette when it is open). |
+| `Ctrl+Tab`, `Ctrl+Space w` | `focus.next` | Moves the focus to the next panel. |
+| `Alt+↑` / `Alt+↓` | `block.prev` / `block.next` | Previous / next block. |
+| `Alt+Home` / `Alt+End` | `block.first` / `block.last` | First / last block. |
+| `Alt+Enter` | `block.toggle` | Expands or collapses the block (ToolCall, Thinking, Shell). |
+| `Alt+t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
+| `Alt+y` | `block.yank` | Copies the block's content to the clipboard. |
+| `Ctrl+Space ff` | `picker.files` | File picker (fzf). |
+| `Ctrl+Space fg` | `picker.grep` | Text search (rg). |
+| `Ctrl+Space e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
+| `Ctrl+Space m` | `model.pick` | Picks the model for the **next** turn. |
+| `Ctrl+Space p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
+| `Ctrl+Space h`, `F1` | `help.open` | Opens the [help](#help). |
+| `Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command. Also works while a picker or a dialog is open. |
+| `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
 
-You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetmode-keys-action)).
+You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetkeys-action)). A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning.
 
-### `:` commands
+### `/` commands
 
 | Command | What it does |
 | --- | --- |
@@ -86,25 +99,33 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
+| `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
 | `/plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
 | `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
-| `/implement <spec>` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
-| `/research <problem>`, `/research resume`, `/research` | Starts, resumes or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
+| `/implement <spec>`, `/implement resume` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
+| `/research <problem>`, `/research resume [n]`, `/research retry`, `/research list`, `/research` | Starts, resumes, retries, lists or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
+| `/stage`, `/back <stage>`, `/skip`, `/retry`, `/abort` | Commands of the active flow (implementation, or else research). |
 | `/simulate <spec>` | Simulates the solution of a Spec (its folder, its number or its path) and opens its board in a full-size modal ([workflows.md](workflows.md#simulating-a-solution)). The verdicts land in the timeline. |
-| `:<name> <args>` | A command registered with `app.commands.register`. |
-| `:<dotted.action>` | Runs a builtin action, for example `/picker.files` or `:panel.tree`. |
+| `/<name> <args>` | A command registered with `app.commands.register`. |
+| `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command :x (use /help, /model, /mode, /clear, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /modal, /q; /help lists every command)`.
+
+### Shell commands (`/!`)
+
+`/!git status`, `/!cargo test -p ui` or `/! ls -la | head` runs the line with `sh -c` in the workspace (pipes, globs and variables work), without an approval: you typed it. It is cut after 120 s and `Ctrl+C` stops it.
+
+A **Shell** block shows the command, its exit status (`exit 0` in green, otherwise red) and its output, stderr in red; output longer than 20 lines is collapsed (`Alt+Enter`, or `Enter` with the timeline focused, expands it). The output also goes to the model with your **next** prompt, tagged as `<bash-input>`, `<bash-stdout>` and `<bash-stderr>` (each stream cut to 20 kB), so you can run a command and then ask about it.
 
 ### Help
 
-`?` in normal mode, `F1` in any mode or `/help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
+`F1`, `Ctrl+Space h` or `/help` open the help: a modal at 90 % of the window with everything you can use in this session, taken from what is actually loaded (not from this page).
 
 | # | Section | What it lists |
 | --- | --- | --- |
-| 1 | Commands | The builtin `:` commands with their usage, then the commands of your plugins (with the plugin and its `desc`). |
-| 2 | Keys | The effective keymap per mode: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
+| 1 | Commands | The builtin `/` commands with their usage, then the commands of your plugins (with the plugin and its `desc`). |
+| 2 | Keys | The effective keymap: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
 | 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
 | 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, or held back because the workspace config is not trusted (with the `/mcp trust` command). |
@@ -116,6 +137,7 @@ An unknown command shows `unknown command :x (use /help, /model, /mode, /clear, 
 | --- | --- |
 | `1`–`8`, `Tab` / `Shift+Tab`, click | Switches section. |
 | `j` / `k`, arrows, `PageUp` / `PageDown`, `Home` / `End` | Moves the selection. |
+| `Shift+↑` / `Shift+↓`, `Ctrl+D` / `Ctrl+U` | Scrolls without moving the selection (to read a tall expanded row). |
 | `Enter` | Expands the selected row (a tool's input schema). |
 | `y` | Copies the selected row's command or name (`/plugin trust jira` for a pending plugin). |
 | `/` | Goes to the search box: what you type filters every section at once (each word must appear in the row, ignoring case). The arrows still move; `Enter` goes back to the list. |
@@ -123,9 +145,9 @@ An unknown command shows `unknown command :x (use /help, /model, /mode, /clear, 
 
 ### File references with `@`
 
-When you pick a file in the tree, in a picker or in a `Sources` block, `@path ` (or `@path:line ` for a grep result) is inserted at the prompt cursor, and the input switches to insert. It is plain prompt text: the model reads it as a reference and opens the file with its tools.
+When you pick a file in the tree, in a picker or in a `Sources` block, `@path ` (or `@path:line ` for a grep result) is inserted at the prompt cursor, and the prompt gets the focus. It is plain prompt text: the model reads it as a reference and opens the file with its tools.
 
-### Pickers (`<Space>ff`, `<Space>fg`)
+### Pickers (`Ctrl+Space ff`, `Ctrl+Space fg`)
 
 They use the same ports and the same defaults as the agent's `find_file` and `grep` tools, so you see what the model would see:
 
@@ -133,7 +155,7 @@ They use the same ports and the same defaults as the agent's `find_file` and `gr
 - they exclude `.git/`;
 - they apply the sensitive paths.
 
-Results update as you type, with a 120 ms debounce. In `<Space>fg` the text is a ripgrep regular expression.
+Results update as you type, with a 120 ms debounce. In `Ctrl+Space fg` the text is a ripgrep regular expression.
 
 | Key | Action |
 | --- | --- |
@@ -141,21 +163,21 @@ Results update as you type, with a 120 ms debounce. In `<Space>fg` the text is a
 | `Enter` | Insert the `@...` reference into the prompt. |
 | `Esc` | Close. |
 
-### Workspace tree (`<Space>e`)
+### Workspace tree (`Ctrl+Space e`)
 
-A 280 px side panel, hidden at startup. It comes from the same `tree` the agent uses: it shows up to 16 levels and leaves out ignored files and `.git/`.
+A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` move, `→`/`←` open and close directories, `Enter` on a file inserts `@path`, typing or `Esc` goes back to the prompt). It comes from the same `tree` the agent uses: it shows up to 16 levels and leaves out ignored files and `.git/`.
 
 - Clicking a directory opens or closes it.
 - Clicking a file inserts `@path`.
 - The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
 
-### Model menu (`<Space>m`)
+### Model menu (`Ctrl+Space m`)
 
 Lists `default (main role)` and every alias, both the builtin ones (`opus`, `sonnet`, `haiku`, `fable`) and those in your config, with the model each one points to.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k`, `↓` / `↑`, `Tab` | Move the selection. |
+| `↓` / `↑`, `j` / `k`, `Tab` | Move the selection. |
 | `Enter` | Pick. |
 | `Esc` / `q` | Close. |
 
@@ -171,7 +193,7 @@ Each tool declares its effect (`read`, `write`, `execute` or `network`), and the
 | `auto-edit` | yes | yes | asks |
 | `plan` | yes | no (denied) | no (denied) |
 
-To change mode: `<Space>p`, `/mode <mode>` or `--mode` at startup.
+To change mode: `Ctrl+Space p`, `/mode <mode>` or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
@@ -183,6 +205,7 @@ When approval is needed, a dialog opens with the colored diff (for edits) or wit
 | `a` | Always approve: creates a rule for **that same tool and that exact subject** (the same path or the same command line, nothing broader). |
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
 | `Esc` | Reject without a reason. |
+| `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Scroll a long preview. |
 
 There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
@@ -197,16 +220,17 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Text | Model reply (streamed markdown); your prompt appears quoted with `>`. | — |
 | Thinking | Extended thinking. | Collapsed to one line; `Enter` expands it. |
 | ToolCall | Any tool: one line with name, subject and status (pending, awaiting approval, running, ok, failed, denied, cancelled). | `Enter` shows the input and the output. |
+| Shell | `/!command` | `$ command`, exit status and output; long output collapsed until `Enter`. |
 | Diff | `edit_file`, `write_file` | Colored diff with its approval status. |
-| Chart | `show_chart` tool (bar, line, area, pie). | **`t` toggles a table** of the same data. |
+| Chart | `show_chart` tool (bar, line, area, pie). | **`Alt+t` toggles a table** of the same data. |
 | Table | `show_table` tool | Virtualized. Clicking a column's sort icon cycles descending → ascending → original. |
-| Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `t` shows the source. If it does not parse, the source and the error are shown. |
-| Markdown | `show_markdown` tool | Document typography; `t` shows the source. |
+| Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `Alt+t` shows the source. If it does not parse, the source and the error are shown. |
+| Markdown | `show_markdown` tool | Document typography; `Alt+t` shows the source. |
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
 | Sources, StageHeader, Image | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
 | Error | API, tool or config failures | Message and suggested action. |
 
-`t` only has an effect on Chart, Markdown and Mermaid. `y` copies the content of the selected block.
+In the table, `Enter` means `Alt+Enter` from the prompt or `Enter` with the timeline focused. `Alt+t` only has an effect on Chart, Markdown and Mermaid. `Alt+y` copies the content of the selected block.
 
 ### Plugin modals
 
@@ -217,7 +241,7 @@ Plugins can open modal windows over the session ([plugins.md](plugins.md#appmoda
 | `Esc` | Closes the front modal (the one opened last). |
 | Click on the dimmed area, or the `✕` button | Same. |
 | `/modal close` | Same, from the command line. |
-| Wheel, or the scrollbars | Scrolls the content. |
+| Wheel, the scrollbars, `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Scrolls the content. |
 | Images: `fit`, `1:1`, `−`, `+` | Fit to the width, natural size, zoom. When zoomed, drag pans and `Ctrl`/`Cmd` + wheel zooms; with the image focused (click), `+`/`-`, `1` and `0` do the same. |
 | JSON: click a row | Opens or closes that branch. |
 | Links | Open in your browser. |
@@ -230,11 +254,11 @@ The focus goes back to where it was when the last modal closes. An approval dial
 
 | Key or action | Effect |
 | --- | --- |
-| Drag | Orbits (leaves the isometric preset for perspective). In the 2.5D fallback, pans. |
-| Right-drag, middle-drag or `Shift`-drag | Pans. |
+| Drag, `Shift+←/→/↑/↓` | Orbits (leaves the isometric preset for perspective). In the 2.5D fallback, pans. |
+| Right-drag, middle-drag, `Shift`-drag, `w` / `a` / `s` / `d` | Pans. |
 | Wheel, `+` / `-` | Zooms. |
 | `i`, or the `iso` button | Back to the isometric preset (orthographic, 30°). |
-| Click a chip | Inspects it: state, variables, queue and its machine as a state diagram with the current state lit. |
+| Click a chip, `Tab` / `Shift+Tab` | Inspects it: state, variables, queue and its machine as a state diagram with the current state lit. |
 | `Space`, `▶` / `⏸` | Plays or pauses the scenario (at `1×` a whole scenario lasts 10 s). |
 | `←` / `→`, `⏮` / `⏭` | Previous / next event. |
 | `−` / `+` next to the speed | Slower / faster (0.1× to 4×). |
