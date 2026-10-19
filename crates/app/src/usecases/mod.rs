@@ -5,6 +5,7 @@ pub mod cancel;
 pub mod compact;
 pub mod evidence;
 pub mod git_status;
+pub mod login;
 pub mod model3d;
 pub mod open_file;
 pub mod project_picker;

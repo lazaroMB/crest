@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod client;
 pub mod convert;
+pub mod credentials;
 pub mod error;
 pub mod request;
 pub mod retry;
@@ -12,5 +13,6 @@ pub mod wire;
 
 pub use catalog::AnthropicCatalog;
 pub use client::{AnthropicClient, ApiKey, ClientConfig, KeySource};
+pub use credentials::KeyringCredentials;
 pub use retry::{AnthropicLlm, RetryPolicy};
 pub use server_tools::{ServerToolConfig, ServerToolOptions};
