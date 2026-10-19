@@ -284,7 +284,10 @@ fn wire(
     let mut next_id = 0;
     cx.subscribe(input, move |_, event: &InputEvent, cx| {
         match event {
-            InputEvent::Submit(prompt) => fakes.notice(format!("no agent here: {prompt}")),
+            InputEvent::Submit(prompt) | InputEvent::SubmitImages { text: prompt, .. } => {
+                fakes.notice(format!("no agent here: {prompt}"));
+            }
+            InputEvent::Notice(message) => fakes.notice(message.clone()),
             InputEvent::Command(command) => {
                 next_id += 1;
                 let (name, arg) = command.split_once(' ').unwrap_or((command, ""));

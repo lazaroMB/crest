@@ -222,6 +222,11 @@ fn wire_input(
     let timeline = timeline.clone();
     cx.subscribe(input, move |_, event: &InputEvent, cx| match event {
         InputEvent::Submit(prompt) => agent.turn(prompt.clone()),
+        InputEvent::SubmitImages { text, .. } => agent.turn(text.clone()),
+        InputEvent::Notice(message) => agent.emit(DomainEvent::Notice {
+            level: NoticeLevel::Warning,
+            message: message.clone(),
+        }),
         InputEvent::Command(command) => agent.command(command, cx),
         InputEvent::Action(action) => {
             if timeline.update(cx, |view, cx| view.handle_action(action, cx)) {
