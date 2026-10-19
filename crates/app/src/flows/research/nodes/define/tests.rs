@@ -200,6 +200,37 @@ async fn reruns_replace_the_definition_with_the_users_answer() {
 }
 
 #[tokio::test]
+async fn ok_keeps_the_draft_the_user_was_asked_about() {
+    let llm = Arc::new(ScriptedLlm::new([
+        draft("login takes more than 2 s"),
+        verdict(false, "it does not say with how many users"),
+        draft(BAD),
+    ]));
+    let sink = Arc::new(RecordingSink::new());
+    let deps = NodeDeps::new(
+        Arc::clone(&llm) as _,
+        ModelPolicy::default(),
+        Arc::clone(&sink) as _,
+    )
+    .with_clock(|| 9);
+    let mut ctx = NodeContext::new(Stage::Definition, deps, "login is slow", state());
+    let asked = Definition::new().run(&mut ctx).await.unwrap();
+    assert!(
+        matches!(&asked, NodeOutcome::NeedsInput { prompt } if prompt.contains("\"ok\"")),
+        "{asked:?}"
+    );
+    let mut ctx = ctx.with_reply("ok");
+    assert_eq!(
+        Definition::new().run(&mut ctx).await.unwrap(),
+        NodeOutcome::Done
+    );
+    assert_eq!(llm.requests().len(), 3, "no new draft for an ok");
+    assert_eq!(ctx.state().problem_statements, [BAD]);
+    assert_eq!(ctx.state().constraints.len(), 2);
+    assert!(ctx.data::<Vec<ProblemDraft>>(PROBLEMS_KEY).is_some());
+}
+
+#[tokio::test]
 async fn goes_back_when_evidence_or_hypotheses_are_missing() {
     let no_evidence = run(ResearchState::default(), None, []).await;
     assert!(matches!(

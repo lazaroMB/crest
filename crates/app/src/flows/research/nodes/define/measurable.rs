@@ -7,9 +7,15 @@
 //!   `500 requests per second`);
 //! - a **comparison**: a comparator next to a number (`more than 3`,
 //!   `< 20`, `rises from 10 to 500`);
-//! - a **verifiable condition**: a trigger (`when`, `if`, `after`…) and an
-//!   observable outcome (`fails`, `returns`, `panics`…), as in "when
-//!   running `cargo test` the `offline` test fails".
+//! - a **verifiable condition**: an observable outcome (`fails`,
+//!   `returns`, `prints`…) with a trigger (`when`, `if`, `after`…), as in
+//!   "when running `cargo test` the `offline` test fails", or with a
+//!   concrete value or command, as in "the CLI must print 120 for the
+//!   argument 5".
+//!
+//! A sentence ends at `.`, `!` or `?` followed by a capitalized word, so
+//! clauses joined with `;` and factorials (`19! = …`, `n! y …`) stay in
+//! one sentence.
 //!
 //! "at 500 requests per second the response time rises from 10 ms to
 //! 500 ms" passes; "the response time depends on the load" does not.
@@ -183,6 +189,8 @@ const COMPARATORS: &[&str] = &[
     "superior a",
     "inferior a",
     "igual a",
+    "distinto de",
+    "diferente de",
     "sube de",
     "baja de",
     "pasa de",
@@ -200,6 +208,9 @@ const COMPARATORS: &[&str] = &[
     "greater than",
     "exceeds",
     "equal to",
+    "different from",
+    "other than",
+    "not equal",
     "rises from",
     "drops from",
     "goes from",
@@ -228,7 +239,14 @@ const OUTCOMES: &[&str] = &[
     "lanza",
     "muestra",
     "imprime",
+    "imprimir",
+    "imprima",
     "termina",
+    "salir",
+    "sale",
+    "devolver",
+    "mostrar",
+    "retornar",
     "aborta",
     "pánico",
     "panic",
@@ -245,11 +263,13 @@ const OUTCOMES: &[&str] = &[
     "excepción",
     "timeout",
     "deadlock",
+    "código de salida",
     "ignora",
     "omite",
     "borra",
     "sobrescribe",
     "fail",
+    "exit code",
     "return",
     "throw",
     "raise",
@@ -314,7 +334,7 @@ pub fn check(statement: &str) -> Result<Measure, NotMeasurable> {
             reason: "the definition is empty".into(),
         });
     }
-    if sentences(&text) > 1 {
+    if sentences(statement.trim()) > 1 {
         return Err(NotMeasurable {
             reason: "it must be a single sentence; split each problem into its own definition"
                 .into(),
@@ -353,8 +373,8 @@ pub fn check(statement: &str) -> Result<Measure, NotMeasurable> {
     Err(NotMeasurable { reason })
 }
 
-/// Number of sentences: terminators followed by more text, ignoring
-/// decimal points and dots inside code spans.
+/// Number of sentences: terminators followed by whitespace and a capital
+/// letter, ignoring dots inside code spans (`text` keeps its case).
 fn sentences(text: &str) -> usize {
     let chars: Vec<char> = text.chars().collect();
     let mut count = 1;
@@ -363,13 +383,12 @@ fn sentences(text: &str) -> usize {
         if c == '`' {
             in_code = !in_code;
         }
-        if in_code || !matches!(c, '.' | '!' | '?' | ';') {
+        if in_code || !matches!(c, '.' | '!' | '?') {
             continue;
         }
         let next = chars.get(i + 1).copied();
-        if next.is_some_and(char::is_whitespace)
-            && chars[i + 1..].iter().any(|c| c.is_alphanumeric())
-        {
+        let following = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+        if next.is_some_and(char::is_whitespace) && following.is_some_and(|c| c.is_uppercase()) {
             count += 1;
         }
     }
@@ -422,13 +441,20 @@ fn has_comparator(text: &str) -> bool {
     text.contains(SYMBOLS) || COMPARATORS.iter().any(|c| contains_phrase(text, c))
 }
 
+/// An observable outcome with a trigger, or with a concrete value (a
+/// number) or command (a code span) to check it against.
 fn has_condition(text: &str) -> bool {
     let words = words(text);
     let trigger = words.iter().any(|w| TRIGGERS.contains(w));
     let outcome = words
         .iter()
-        .any(|w| OUTCOMES.iter().any(|o| w.starts_with(o)));
-    trigger && outcome
+        .any(|w| OUTCOMES.iter().any(|o| w.starts_with(o)))
+        || OUTCOMES
+            .iter()
+            .filter(|o| o.contains(' '))
+            .any(|o| contains_phrase(text, o));
+    let concrete = !numbers(text).is_empty() || text.contains('`');
+    outcome && (trigger || concrete)
 }
 
 fn words(text: &str) -> Vec<&str> {
@@ -550,12 +576,53 @@ mod tests {
         }
     }
 
+    /// The statements a research flow kept rewriting while the heuristic
+    /// rejected them (factorials, `;`, values without a trigger word).
+    #[test]
+    fn accepts_the_statements_of_the_factorial_cli() {
+        let cases = [
+            "La CLI de factorial_app debe imprimir 120 para el argumento 5 y \
+             6402373705728000 para el argumento 18, y terminar con código de salida 0, lo \
+             que se verifica con npm run build && node dist/main.js 18.",
+            "Para n ≥ 19 un factorial calculado con number pierde exactitud, porque 19! = \
+             121645100408832000 supera Number.MAX_SAFE_INTEGER = 9007199254740991 (2^53 − 1), \
+             así que la CLI debe rechazar todo n > 18 con un código de salida distinto de 0 (o \
+             usar BigInt para esos valores).",
+            "Para cada entero n de 0 a 18 recibido como único argumento, la CLI debe escribir \
+             en stdout el valor exacto de n! y salir con código 0; por ejemplo, node \
+             dist/main.js 18 debe imprimir 6402373705728000.",
+            "Como 19! = 121645100408832000 supera Number.MAX_SAFE_INTEGER = 9007199254740991, \
+             toda entrada entera mayor que 18 debe producir un mensaje en stderr y un código \
+             de salida distinto de 0.",
+            "En el workspace no existe ningún directorio factorial_app; la nueva CLI \
+             factorial_app debe, al recibir como único argumento una cadena de entero decimal \
+             n con 0 ≤ n ≤ 18, imprimir en stdout el valor exacto de n! y salir con código 0 \
+             en el 100% de los casos, de modo que 18 imprima 6402373705728000, 0 imprima 1 y \
+             5 imprima 120.",
+            "La CLI debe rechazar el 100% de los enteros n ≥ 19 (por ejemplo '19') con un \
+             mensaje en stderr y un código de salida distinto de 0, porque 19! = \
+             121645100408832000 supera Number.MAX_SAFE_INTEGER = 9007199254740991 y no se \
+             puede representar con exactitud.",
+            "the CLI must print 120 for the argument 5 and exit with code 0",
+        ];
+        for statement in cases {
+            assert!(
+                check(statement).is_ok(),
+                "{statement}: {:?}",
+                check(statement)
+            );
+        }
+    }
+
     #[test]
     fn requires_one_sentence() {
         let err = check("login takes 2 s. Search takes 3 s.").unwrap_err();
         assert!(err.reason.contains("a single sentence"));
         assert!(check("el login tarda 2 s. La búsqueda tarda 3 s.").is_err());
         assert!(check("tarda 2.5 s con `a.b. c`").is_ok());
+        assert!(check("tarda 2 s; la búsqueda tarda 3 s").is_ok());
+        assert!(check("5! = 120 y tarda 2 s").is_ok());
+        assert!(check("login takes 2 s! Search takes 3 s").is_err());
         assert!(check("  ").is_err());
     }
 }

@@ -5,8 +5,9 @@
 //! Every statement must pass the [`measurable`] heuristic and then the
 //! model's own judgement; when one fails, the model is asked once more
 //! with the reasons, and if it still fails the user is asked for what is
-//! missing. Without evidence or hypotheses the flow goes back to the
-//! stage that should have produced them.
+//! missing. The user may also accept the definitions as they are (`ok`):
+//! the last draft is kept for that answer. Without evidence or hypotheses
+//! the flow goes back to the stage that should have produced them.
 
 pub mod measurable;
 
@@ -17,11 +18,15 @@ use domain::block::{BlockKind, Cell, Column, TableSpec};
 use domain::research::{ConstraintKind, EvidenceId, Stage, TestKind, TestRef};
 use serde::{Deserialize, Serialize};
 
+use crate::flows::research::gate::is_approval;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
 /// Key of the statements with the evidence they rest on
 /// (`Vec<ProblemDraft>`), for the Spec.
 pub const PROBLEMS_KEY: &str = "definition.problems";
+/// Key of the draft the user was asked about (`Option<Draft>`), kept in
+/// case they accept it as it is.
+const PENDING_KEY: &str = "definition.pending";
 
 const DRAFT_SYSTEM: &str = "\
 You are the \"Definition and constraints\" node of an investigation into a software project. \
@@ -59,7 +64,7 @@ pub struct ProblemDraft {
     pub evidence_ids: Vec<EvidenceId>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConstraintDraft {
     kind: ConstraintKind,
     statement: String,
@@ -67,7 +72,7 @@ struct ConstraintDraft {
     test: Option<TestRef>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Draft {
     problems: Vec<ProblemDraft>,
     #[serde(default)]
@@ -120,6 +125,15 @@ impl ResearchNode for Definition {
                 "there are no hypotheses to base the definition on",
             ));
         }
+        if let Some(reply) = ctx.user_reply()
+            && is_approval(reply)
+            && let Some(pending) = ctx.data::<Option<Draft>>(PENDING_KEY).flatten()
+        {
+            ctx.log("The user accepted the definitions as they are.");
+            ctx.set_data(PENDING_KEY, None::<Draft>)?;
+            save(ctx, pending)?;
+            return Ok(NodeOutcome::Done);
+        }
         let base = context_prompt(ctx);
         let mut draft = ask_draft(ctx, &base).await?;
         let mut rejected = rejections(ctx, &draft).await?;
@@ -140,16 +154,19 @@ impl ResearchNode for Definition {
                 "Still no measurable definition; asking the user:\n{}",
                 list(&rejected)
             ));
+            ctx.set_data(PENDING_KEY, Some(&draft))?;
             return Ok(NodeOutcome::NeedsInput {
                 prompt: format!(
-                    "I could not reach a measurable definition of the problem. Missing:\n{}\nSay \
-                     what is observed and how much (number and unit, e.g. \"at 500 requests per \
-                     second the response time rises from 10 ms to 500 ms\") or a condition that \
-                     can be checked (e.g. \"running X makes test Y fail\").",
+                    "I could not reach a measurable definition of the problem. Missing:\n{}\n\n\
+                     Answer \"ok\" to keep these definitions as they are, or say what is \
+                     observed and how much (number and unit, e.g. \"at 500 requests per second \
+                     the response time rises from 10 ms to 500 ms\") or a condition that can be \
+                     checked (e.g. \"running X makes test Y fail\").",
                     list(&rejected)
                 ),
             });
         }
+        ctx.set_data(PENDING_KEY, None::<Draft>)?;
         save(ctx, draft)?;
         Ok(NodeOutcome::Done)
     }
