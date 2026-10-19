@@ -52,6 +52,7 @@ flowchart TB
 | `adapter-search` | `crates/adapters/search` | `rg --files`, `rg --json` and `fzf --filter` as processes without a shell. Includes version detection. |
 | `adapter-fs` | `crates/adapters/fs` | Reading and writing through `WorkspaceGuard` (canonicalization and sensitive paths) and diffs with `similar`. |
 | `adapter-shell` | `crates/adapters/shell` | `tokio::process` with a timeout, `cwd` in the workspace and capped output. |
+| `adapter-web` | `crates/adapters/web` | `WebPort` over `curl` (no shell, minimal environment, headers on stdin): DuckDuckGo HTML, SearXNG or Brave search, and pages to text with `html2text`. |
 | `adapter-store` | `crates/adapters/store` | SQLite (embedded `rusqlite`): sessions and graph-flow's `SessionStorage`. |
 | `adapter-lua` | `crates/adapters/lua` | `mlua` host (Lua 5.4) on its own thread, with the sandbox, config loading and merging, and the `app` API. |
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |

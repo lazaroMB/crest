@@ -37,6 +37,7 @@ The theme is dark and the font monospace (JetBrains Mono if installed).
 | `ripgrep` (`rg`) | ≥ 13.0 | The `grep`, `list_files`, `find_file` and `tree` tools. |
 | `fzf` | ≥ 0.36 | `find_file` (`--filter --scheme=path`). Without `fzf`, it falls back to substring search. |
 | `git` | — | Repo data and workflows. |
+| `curl` | — | The `web_search` and `web_fetch` tools. Without it the model has no web. |
 | `jq` | — | Only for `scripts/check-arch.sh`. |
 | Anthropic API key | — | `ANTHROPIC_API_KEY` or the system keyring (service `crest`, entry `ANTHROPIC_API_KEY`). |
 
@@ -126,7 +127,7 @@ flowchart TB
     ui["crates/ui<br/>GPUI: timeline, blocks, modal input, 3D board"]
     subgraph adapters["crates/adapters"]
         direction LR
-        anthropic["anthropic"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"]
+        anthropic["anthropic"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"] --- web["web<br/>curl"]
         store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"] --- export["export<br/>board.html"]
     end
     app["crates/app · application<br/>ports, use cases, tools, workflows"]

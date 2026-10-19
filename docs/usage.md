@@ -372,10 +372,16 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `write_file` | `path`, `content` | write |
 | `run_command` | `command`, `args[]`, `timeout_s` (120). No shell, at the workspace root. | execute (read for some `git` commands) |
 | `show_chart`, `show_table`, `show_mermaid`, `show_markdown` | the block's data | read |
-| `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls) that returns a summary | read |
+| `web_search` | `query`, `max_results?` (1–10; `app.opt.web.max_results`, 8, by default): title, URL and snippet of each result | network, no approval |
+| `web_fetch` | `url` (http or https): the page as text, with its final URL and title | network, no approval |
+| `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls, with the web tools when they are on) that returns a summary | read |
 | `simulate_solution` | `spec`: a folder of `.crest/specs/`, its number or its path. Simulates the solution of that Spec, records the results in its folder and opens the board in the window; returns the verdicts | write |
 | `mcp__<server>__<tool>` | the server's schema | the server's `effect` (execute by default) |
 | plugin tools | their `schema` | their `effect` (execute by default) |
+
+### Researching on the web
+
+Ask for it in plain words ("investigate how other crates solve X", "compare A and B", "what changed in version N"): the model searches with `web_search`, reads the best pages with `web_fetch`, searches again where the answer is incomplete, and can split a broad question into `task` subagents that research in parallel. It cites the URL of each source, and after the answer a **Sources** block lists the pages it read (clickable in the window; in headless mode, a numbered `sources:` list). The searches run on your machine with curl; see [configuration.md](configuration.md#web-search) for the backend, the domains and how to turn the web off.
 
 All paths are relative to the workspace. A path that leaves it, even through a symlink, fails, and so does a sensitive path. Each result is truncated to about 32 KB, with the note `N more results; refine the search`.
 

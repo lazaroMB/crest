@@ -94,6 +94,7 @@ The API URL is fixed (`https://api.anthropic.com`): there is no variable to chan
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`g` of `gg`, `<leader>`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the cost shows as `$?`. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
+| `web` | table, see [Web search](#web-search) | DuckDuckGo, 8 results, 20 s, any domain | The `web_search` and `web_fetch` tools: on or off, search backend, limits and domains. |
 | `theme` | string | — | Read and merged across layers, but it **has no effect yet**: the window always uses the dark theme. |
 
 Any other `app.opt` key is accepted without error and stored, but crest does not use it. There are no font options: the window uses JetBrains Mono at 14 px if installed, otherwise the system monospace font.
@@ -115,6 +116,31 @@ app.opt.max_session_cost = 5
   - **always** removes the cap for the session;
   - **reject** ends the turn ("turn stopped by the spend cap ($X of $Y)").
 - The cost lives in memory: a resumed session counts from zero again.
+
+## Web search
+
+The model can search the web (`web_search`) and read pages (`web_fetch`). Both run on your machine with `curl`: crest calls the search engine itself and converts pages to text; nothing goes through the model provider's web tools. They are offered to the chat, to `task` subagents and to the read-only agent of the research flow.
+
+```lua
+app.opt.web = {
+  enabled = true,                -- false removes both tools
+  backend = "duckduckgo",        -- "duckduckgo" (no key), "searxng" or "brave"
+  searxng_url = "https://searx.example.org",  -- required with backend = "searxng"
+  max_results = 8,               -- results of a search that does not ask for a number (1-10)
+  timeout = 20,                  -- seconds per request (1-300)
+  blocked_domains = { "pinterest.com" },      -- or allowed_domains = { ... }; never both
+}
+```
+
+- **curl is required.** Without it crest starts with the warning "web search unavailable: install curl" and the tools are not offered.
+- **No approval.** Both tools only read (a search, a GET), so they run in every permission mode, plan included, without asking. To stop them, set `enabled = false`, limit the domains, or add a `deny` rule on `web_fetch` / `web_search` (the subject is the URL or the query).
+- **Backends:**
+  - `duckduckgo` reads the HTML results page of `html.duckduckgo.com`. It needs no key, but DuckDuckGo refuses automated searches when there are too many in a short time; the tool then says so.
+  - `searxng` uses the JSON API of a SearXNG instance (`/search?format=json`); the instance must have the JSON format enabled.
+  - `brave` uses the Brave Search API. The key comes from `BRAVE_API_KEY` or the keyring (service `crest`, entry `BRAVE_API_KEY`); without one crest warns and uses DuckDuckGo. The key is passed to curl on its stdin, never in its arguments, and commands run by the model (`run_command`, Lua shells, MCP servers) do not inherit `BRAVE_API_KEY`.
+- **Domains.** `allowed_domains` and `blocked_domains` include subdomains (`rust-lang.org` covers `blog.rust-lang.org`). They apply to the URL read, to the address it redirects to, and to the search results.
+- **Pages.** HTML is converted to plain text without navigation, headers, footers, scripts and styles; other text types (JSON, XML, plain text) are kept as is; PDFs and binary files are refused. curl follows up to 5 redirects and reads at most 5 MB; the text is cut to the tool result budget.
+- A workspace `app.opt.web` replaces the global one as a whole (it is one `app.opt` key).
 
 ## Models by role
 
@@ -298,6 +324,9 @@ app.opt.pricing = {
   ["claude-haiku-5"]  = { input = 1, output = 5,  cache_read = 0.1, cache_write = 1.25 },
 }
 app.opt.max_session_cost = 5  -- pause and ask on reaching 5 USD
+
+-- Web search (curl) --------------------------------------------------------
+app.opt.web = { blocked_domains = { "pinterest.com" } }
 
 -- Models by role ---------------------------------------------------------
 app.models.aliases = {

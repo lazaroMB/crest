@@ -57,11 +57,11 @@ The node and stage names are the ones the app shows.
 | 13 | Plan | Specification | `plan` | | Splits the Spec into tasks (`plan.json` and `plan.md`) and checks that there are no cycles. | Mermaid, Table |
 | 14 | Critical review | Specification | `plan` | yes | First runs deterministic checks; then a subagent with a clean context looks for gaps. If there are serious gaps, it goes back to the stage where information is missing. | Markdown, Table |
 
-Each time you enter a node, a StageHeader block (`Stage 5/14 · Hypotheses`) appears with a progress bar. The models for each role are configured in [configuration.md](configuration.md#models-by-role). The Anthropic server-side web search and fetch tools are added to calls for the `explore` and `plan` roles, except in Spec, Plan and Critical review.
+Each time you enter a node, a StageHeader block (`Stage 5/14 · Hypotheses`) appears with a progress bar. The models for each role are configured in [configuration.md](configuration.md#models-by-role). Research and Data search the web through the read-only agent with the local `web_search` and `web_fetch` tools (see [configuration.md](configuration.md#web-search)); the pages it reads become evidence with their URL. Without curl, or with `app.opt.web.enabled = false`, those stages skip the web and say so in the journal.
 
 **Agents**:
 
-- Observation, Data and Research use a **read-only** agent. It has `list_files`, `find_file`, `tree`, `grep`, `read_file`, `run_command` (with the read-only policy, so only read-only `git` commands get through) and the MCP tools declared with `effect = "read"`. It never asks for approval and is limited to 30 calls.
+- Observation, Data and Research use a **read-only** agent. It has `list_files`, `find_file`, `tree`, `grep`, `read_file`, `web_search` and `web_fetch` (when the web is configured), `run_command` (with the read-only policy, so only read-only `git` commands get through) and the MCP tools declared with `effect = "read"`. It never asks for approval and is limited to 30 calls.
 - Experiments and Prototype use the chat agent, with your permissions and approvals.
 
 ### Gates and answers
