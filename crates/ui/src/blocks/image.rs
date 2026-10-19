@@ -14,6 +14,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
+use super::sources::events::{BlockEvent, emit};
 use super::sources::{action, activate, entry_label};
 use crate::timeline::TimelineEntry;
 
@@ -108,19 +109,39 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     else {
         return super::placeholder(entry, cx);
     };
-    let (media_type, data) = (media_type.clone(), data_or_path.clone());
+    let (mime, data) = (media_type.clone(), data_or_path.clone());
     let decoded = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Decoded(image_source(&media_type, &data))
+        Decoded(image_source(&mime, &data))
     });
     let theme = cx.theme();
     let (danger, border) = (theme.danger, theme.border);
     let picture = match &decoded.read(cx).0 {
         Ok(image) => {
             let failed = format!("cannot load {}", origin(data_or_path));
-            img(image.clone())
-                .max_w_full()
-                .max_h(px(MAX_HEIGHT))
-                .with_fallback(move || error_view(failed.clone(), danger, border))
+            let inspect = BlockEvent::InspectImage {
+                block: entry.block.id,
+                media_type: media_type.clone(),
+                data: data_or_path.clone(),
+            };
+            // Kept at its aspect ratio within the column and MAX_HEIGHT; a
+            // click opens it in a modal to zoom in.
+            div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "image-{}",
+                    entry.block.id
+                ))))
+                .debug_selector(|| "image-picture".to_owned())
+                .cursor_pointer()
+                .child(
+                    img(image.clone())
+                        .max_w_full()
+                        .max_h(px(MAX_HEIGHT))
+                        .with_fallback(move || error_view(failed.clone(), danger, border)),
+                )
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    emit(inspect.clone(), cx);
+                })
                 .into_any_element()
         }
         Err(err) => error_view(err.to_string(), danger, border),
@@ -232,5 +253,14 @@ mod tests {
         cx.simulate_click(bounds.center(), Modifiers::none());
         assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/shot"));
         assert_eq!(events.borrow().len(), 1);
+        // A click on the picture asks to inspect it.
+        let picture = cx
+            .debug_bounds("image-picture")
+            .unwrap_or_else(|| panic!("picture not drawn"));
+        cx.simulate_click(picture.center(), Modifiers::none());
+        assert!(matches!(
+            events.borrow().last(),
+            Some(BlockEvent::InspectImage { media_type, .. }) if media_type == "image/png"
+        ));
     }
 }

@@ -107,6 +107,7 @@ A keymap replaces any other with the same keys, builtin ones included. These are
 | `block.toggle` | Expands or collapses the selected block. |
 | `block.toggle_view` | Alternate view (chart ↔ table, document ↔ source). |
 | `block.yank` | Copies the block to the clipboard. |
+| `image.mode` | Switches pasted images between sending them to the model and the chat only. |
 | `picker.files`, `picker.grep` | Opens a picker. |
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |

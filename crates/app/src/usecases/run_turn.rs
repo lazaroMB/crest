@@ -62,7 +62,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
 use domain::conversation::{
-    ContentPart, Message, Role, Session, SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
+    ContentPart, ImageAttachment, MAX_IMAGES_PER_MESSAGE, Message, Role, Session, SessionId,
+    StopReason, ToolUseId, Turn, TurnId, Usage,
 };
 use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
 use domain::permission::{ActionRequest, Decision};
@@ -182,6 +183,75 @@ pub enum TurnError {
         /// Configured limit of model calls.
         limit: u32,
     },
+    /// The prompt has images and a model of the turn does not take them;
+    /// nothing was sent.
+    #[error(
+        "{model} does not accept images; nothing was sent. Pick another model with /model, \
+         or add the images to the chat only"
+    )]
+    ImagesUnsupported {
+        /// The model that refuses them.
+        model: ModelId,
+    },
+    /// An attached image breaks the limits; nothing was sent.
+    #[error("{0}; nothing was sent")]
+    InvalidImages(String),
+}
+
+/// What the user sends in a turn: the prompt and the images pasted with
+/// it, which go to the model in the same message, after the text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UserInput {
+    /// The prompt.
+    pub text: String,
+    /// The images, in the order they were attached.
+    pub images: Vec<ImageAttachment>,
+}
+
+impl UserInput {
+    /// A prompt with images.
+    #[must_use]
+    pub fn new(text: impl Into<String>, images: Vec<ImageAttachment>) -> Self {
+        Self {
+            text: text.into(),
+            images,
+        }
+    }
+}
+
+impl From<String> for UserInput {
+    fn from(text: String) -> Self {
+        Self::new(text, Vec::new())
+    }
+}
+
+impl From<&str> for UserInput {
+    fn from(text: &str) -> Self {
+        Self::new(text, Vec::new())
+    }
+}
+
+impl From<&String> for UserInput {
+    fn from(text: &String) -> Self {
+        Self::new(text.as_str(), Vec::new())
+    }
+}
+
+/// Checks the number of images ([`MAX_IMAGES_PER_MESSAGE`]) and each one
+/// ([`ImageAttachment::check`]).
+fn check_images(images: &[ImageAttachment]) -> Result<(), TurnError> {
+    if images.len() > MAX_IMAGES_PER_MESSAGE {
+        return Err(TurnError::InvalidImages(format!(
+            "{} images attached, at most {MAX_IMAGES_PER_MESSAGE} go with a message",
+            images.len()
+        )));
+    }
+    for (ix, image) in images.iter().enumerate() {
+        image
+            .check()
+            .map_err(|err| TurnError::InvalidImages(format!("image {}: {err}", ix + 1)))?;
+    }
+    Ok(())
 }
 
 /// Runs turns of the agent: the use case behind the input box.
@@ -298,20 +368,45 @@ impl AgentService {
         self.deps.events.emit(event);
     }
 
-    /// Runs one turn answering `input` and appends it to `session`.
+    /// Refuses images that break the limits or that a model of the turn
+    /// (with its fallbacks) does not take.
+    fn check_input_images(
+        &self,
+        images: &[ImageAttachment],
+        model: &ResolvedModel,
+    ) -> Result<(), TurnError> {
+        if images.is_empty() {
+            return Ok(());
+        }
+        check_images(images)?;
+        let llm = &self.deps.llm;
+        match model.fallback_chain().find(|m| !llm.accepts_images(m)) {
+            Some(model) => Err(TurnError::ImagesUnsupported {
+                model: model.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// Runs one turn answering `input` (a prompt, or a [`UserInput`] with
+    /// images) and appends it to `session`.
     ///
     /// # Errors
     ///
     /// [`TurnError`] when the model fails or the iteration limit is hit; a
     /// `TurnFailed` event is emitted and the partial turn is still
     /// appended. Tool failures are not errors: they go back to the model
-    /// as `tool_result`s with `is_error`.
+    /// as `tool_result`s with `is_error`. Images that a model of the turn
+    /// does not take, or that break the limits, fail before anything is
+    /// sent ([`TurnError::ImagesUnsupported`], [`TurnError::InvalidImages`]):
+    /// an `Error` block says why and `session` is left untouched.
     pub async fn run_turn(
         &self,
         session: &mut Session,
-        input: impl Into<String>,
+        input: impl Into<UserInput>,
         opts: TurnOptions,
     ) -> Result<TurnOutcome, TurnError> {
+        let input = input.into();
         let model = self.models.resolve(&ResolveRequest {
             role: opts.role,
             turn_override: opts.turn_override,
@@ -323,7 +418,16 @@ impl AgentService {
                 message: warning.to_string(),
             });
         }
-        let mut turn = Turn::new(Message::user_text(input));
+        if let Err(err) = self.check_input_images(&input.images, &model) {
+            self.emit(DomainEvent::BlockAdded {
+                block: Block::new(BlockKind::Error {
+                    message: err.to_string(),
+                    hint: Some("the images stay in the chat; nothing went to the model".into()),
+                }),
+            });
+            return Err(err);
+        }
+        let mut turn = Turn::new(Message::user(input.text, input.images));
         let turn_id = turn.id;
         self.emit(DomainEvent::TurnStarted {
             session_id: session.id,

@@ -10,7 +10,11 @@
 //! `write.rs` (task T2.D3). Every one of them goes through the guard:
 //! [`WorkspaceGuard::resolve_readable`] for reads and
 //! [`WorkspaceGuard::resolve_for_write`] for writes, re-checked in `apply`.
+//!
+//! [`LocalProjectBrowser`] (`browse.rs`) lists directories anywhere on the
+//! disk to choose the project to open, before there is a workspace.
 
+pub mod browse;
 pub mod guard;
 mod read;
 mod write;
@@ -22,6 +26,7 @@ use application::ports::fs::{
 use async_trait::async_trait;
 use domain::workspace::{WorkspacePath, WorkspaceRoot};
 
+pub use browse::LocalProjectBrowser;
 pub use guard::WorkspaceGuard;
 
 /// [`FileSystemPort`] over the local disk, confined by a [`WorkspaceGuard`].

@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, ToolStatus};
-use domain::conversation::{ContentPart, Role, Session, StopReason, ToolResultContent};
+use domain::conversation::{
+    ContentPart, MAX_IMAGE_BYTES, Role, Session, StopReason, ToolResultContent,
+};
 use domain::model::{ModelPolicy, ModelRole};
 use domain::permission::{PermissionMode, PermissionPolicy, ToolEffect};
 use futures::FutureExt;
@@ -421,4 +423,127 @@ async fn tool_results_are_truncated_to_the_budget() {
     assert!(text.starts_with("echo: línea 1\nlínea 2\n"), "{text}");
     assert!(text.contains("more lines omitted"), "{text}");
     assert!(text.len() < 200, "{text}");
+}
+
+fn png() -> ImageAttachment {
+    ImageAttachment {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+        width: 1,
+        height: 1,
+    }
+}
+
+fn image_service(llm: ScriptedLlm) -> (Arc<ScriptedLlm>, AgentService) {
+    let (llm, _, service) = image_service_with_sink(llm);
+    (llm, service)
+}
+
+fn image_service_with_sink(
+    llm: ScriptedLlm,
+) -> (Arc<ScriptedLlm>, Arc<RecordingSink>, AgentService) {
+    let llm = Arc::new(llm);
+    let sink = Arc::new(RecordingSink::new());
+    let deps = AgentDeps {
+        llm: llm.clone(),
+        events: sink.clone(),
+        approval: Arc::new(ScriptedApproval::new()),
+        telemetry: Arc::new(RecordingTelemetry::new()),
+    };
+    let permissions = Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask)));
+    let service = AgentService::new(
+        deps,
+        ToolRegistry::new(),
+        ModelPolicy::default(),
+        permissions,
+    );
+    (llm, sink, service)
+}
+
+#[tokio::test]
+async fn images_go_after_the_prompt_in_the_user_message() {
+    let (llm, service) = image_service(ScriptedLlm::new([ScriptedResponse::text("a cat")]));
+    let mut session = Session::new("/ws", 0);
+    let input = UserInput::new("what is this?", vec![png(), png()]);
+    service
+        .run_turn(&mut session, input, TurnOptions::default())
+        .await
+        .unwrap();
+    let sent = &llm.last_request().unwrap().messages[0];
+    assert_eq!(sent.role, Role::User);
+    assert_eq!(sent.content.len(), 3);
+    assert_eq!(sent.content[0], ContentPart::text("what is this?"));
+    assert!(matches!(
+        &sent.content[1],
+        ContentPart::Image { media_type, .. } if media_type == "image/png"
+    ));
+    assert_eq!(session.turns[0].messages[0].content, sent.content);
+}
+
+#[tokio::test]
+async fn images_for_a_text_only_model_are_refused_before_sending() {
+    let (llm, sink, service) =
+        image_service_with_sink(ScriptedLlm::new([ScriptedResponse::text("never")]).text_only());
+    let mut session = Session::new("/ws", 0);
+    let err = service
+        .run_turn(
+            &mut session,
+            UserInput::new("look", vec![png()]),
+            TurnOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, TurnError::ImagesUnsupported { .. }), "{err}");
+    assert!(err.to_string().contains("nothing was sent"));
+    assert!(llm.requests().is_empty());
+    assert!(session.turns.is_empty());
+    // The use case says why, for every front end.
+    assert!(sink.events().iter().any(|event| matches!(
+        event,
+        DomainEvent::BlockAdded { block } if matches!(
+            &block.kind,
+            BlockKind::Error { message, .. } if message.contains("does not accept images")
+        )
+    )));
+    // Text alone still works with that model.
+    service
+        .run_turn(&mut session, "hello", TurnOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(llm.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn images_that_break_the_limits_are_refused() {
+    let (llm, service) = image_service(ScriptedLlm::new([]));
+    let mut session = Session::new("/ws", 0);
+    let bmp = ImageAttachment {
+        media_type: "image/bmp".into(),
+        data: "Qk0=".into(),
+        width: 1,
+        height: 1,
+    };
+    let huge = ImageAttachment {
+        media_type: "image/png".into(),
+        data: "A".repeat(MAX_IMAGE_BYTES / 3 * 4 + 400),
+        width: 1,
+        height: 1,
+    };
+    let many = vec![png(); MAX_IMAGES_PER_MESSAGE + 1];
+    for (images, needle) in [
+        (vec![bmp], "image/bmp"),
+        (vec![huge], "over the limit"),
+        (many, "at most"),
+    ] {
+        let err = service
+            .run_turn(
+                &mut session,
+                UserInput::new("x", images),
+                TurnOptions::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains(needle), "{err}");
+    }
+    assert!(llm.requests().is_empty());
 }

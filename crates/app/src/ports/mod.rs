@@ -6,6 +6,7 @@ pub mod fs;
 pub mod llm;
 pub mod mcp;
 pub mod plugin;
+pub mod projects;
 pub mod search;
 pub mod shell;
 pub mod sim;

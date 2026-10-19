@@ -90,7 +90,11 @@ impl NodeError {
                 error.is_retryable() || matches!(error, LlmError::Decode(_))
             }
             Self::EmptyAnswer => true,
-            Self::Turn(TurnError::TooManyIterations { .. })
+            Self::Turn(
+                TurnError::TooManyIterations { .. }
+                | TurnError::ImagesUnsupported { .. }
+                | TurnError::InvalidImages(_),
+            )
             | Self::Block(_)
             | Self::Unavailable(_)
             | Self::Context(_)
@@ -569,7 +573,9 @@ impl NodeContext {
         input: impl Into<String>,
         parse: impl Fn(&str) -> Result<T, String>,
     ) -> Result<T, NodeError> {
-        agent.run_turn(session, input, self.turn_options()).await?;
+        agent
+            .run_turn(session, input.into(), self.turn_options())
+            .await?;
         let error = match parse(&final_text(session)) {
             Ok(value) => return Ok(value),
             Err(error) => error,

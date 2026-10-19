@@ -11,6 +11,8 @@ use domain::conversation::{Session, SessionId};
 use domain::permission::PermissionRule;
 use serde::{Deserialize, Serialize};
 
+use super::projects::RecentWorkspace;
+
 /// Everything persisted for one session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredSession {
@@ -85,6 +87,10 @@ pub trait SessionStorePort: Send + Sync {
 
     /// Deletes the session `id`, or fails with [`StoreError::NotFound`].
     async fn delete(&self, id: SessionId) -> Result<(), StoreError>;
+
+    /// The workspaces with saved sessions, the most recently saved first,
+    /// at most `limit`.
+    async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError>;
 }
 
 #[cfg(test)]

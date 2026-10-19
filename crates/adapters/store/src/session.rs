@@ -7,6 +7,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use application::ports::projects::RecentWorkspace;
 use application::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
 use async_trait::async_trait;
 use domain::block::Block;
@@ -113,6 +114,10 @@ impl SessionStorePort for SqliteSessionStore {
 
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.run(move |conn| delete(conn, id)).await
+    }
+
+    async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError> {
+        self.run(move |conn| recent_workspaces(conn, limit)).await
     }
 }
 
@@ -300,6 +305,34 @@ pub(crate) fn list(conn: &Connection, root: &str) -> Result<Vec<SessionSummary>,
             workspace_root,
             updated_at: from_i64(updated_at, "updated_at")?,
             turns: from_i64(turns, "turn_count")?,
+        })
+    })
+    .collect()
+}
+
+/// The workspaces with sessions, by their last save, newest first.
+pub(crate) fn recent_workspaces(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<RecentWorkspace>, StoreError> {
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let mut stmt = conn
+        .prepare(
+            "SELECT workspace_root, MAX(updated_at) AS last
+             FROM sessions GROUP BY workspace_root
+             ORDER BY last DESC, workspace_root ASC LIMIT ?1",
+        )
+        .map_err(sql_error)?;
+    let rows = stmt
+        .query_map([limit], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(sql_error)?;
+    rows.map(|row| {
+        let (root, last) = row.map_err(sql_error)?;
+        Ok(RecentWorkspace {
+            root,
+            updated_at: from_i64(last, "updated_at")?,
         })
     })
     .collect()
@@ -511,6 +544,22 @@ pub(crate) mod tests {
         let loaded = store.load(stored.session.id).await.unwrap();
         assert_eq!(loaded.timeline.len(), 100);
         assert_eq!(loaded, stored);
+    }
+
+    #[tokio::test]
+    async fn recent_workspaces_match_the_fake() {
+        let sqlite = port(SqliteSessionStore::open_in_memory().unwrap());
+        let fake: Arc<dyn SessionStorePort> = Arc::new(InMemorySessionStore::new());
+        for (root, at) in [("/a", 5), ("/b", 9), ("/a", 12), ("/c", 1), ("/d", 9)] {
+            let s = sample(root, at, 0);
+            sqlite.save(&s).await.unwrap();
+            fake.save(&s).await.unwrap();
+        }
+        let recent = sqlite.recent_workspaces(3).await.unwrap();
+        let roots: Vec<&str> = recent.iter().map(|r| r.root.as_str()).collect();
+        assert_eq!(roots, ["/a", "/b", "/d"]);
+        assert_eq!(recent[0].updated_at, 12);
+        assert_eq!(recent, fake.recent_workspaces(3).await.unwrap());
     }
 
     #[tokio::test]

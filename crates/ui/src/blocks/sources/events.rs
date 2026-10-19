@@ -5,6 +5,7 @@
 //! entity instead; the shell subscribes to it once with
 //! `cx.subscribe(&block_events(cx), ...)`.
 
+use domain::block::{BlockId, ImageData};
 use domain::workspace::WorkspacePath;
 use gpui::{App, AppContext as _, Entity, EventEmitter, Global};
 
@@ -23,6 +24,16 @@ pub enum BlockEvent {
     OpenUrl {
         /// Address.
         url: String,
+    },
+    /// Show the picture of the image block `block` in a modal, with zoom
+    /// and pan.
+    InspectImage {
+        /// The block.
+        block: BlockId,
+        /// Its media type.
+        media_type: String,
+        /// Its bytes or file.
+        data: ImageData,
     },
 }
 

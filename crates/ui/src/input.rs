@@ -12,6 +12,17 @@
 //!   prompt lists the matching commands: `Up`/`Down` choose, `Tab`
 //!   completes and `Enter` runs the chosen one (or completes it up to the
 //!   argument it needs); `Esc` hides it.
+//! - While the last word starts with `@`, the same popup lists the entries
+//!   of the workspace directory it names ([`paths`]): `Tab` completes a
+//!   directory (`@src/`, whose entries are listed next) or a file, and
+//!   `Enter` completes the chosen entry, or submits once the word already
+//!   is it.
+//! - Pasting an image (`Ctrl+V` with a screenshot or a copied picture)
+//!   puts it in a tray above the prompt ([`attachments`]), with the text
+//!   kept. A chip in the tray says what `Enter` does with the images:
+//!   **→ Model** sends them with the prompt, **Chat only** adds them to the
+//!   chat without calling the model; a click or `<A-m>` switches it. `×`,
+//!   or `Backspace` in an empty prompt, removes an image.
 //!
 //! It looks like a terminal prompt: a `❯`, the text in the monospace font
 //! with no field around it, and a blinking block cursor ([`cursor`]).
@@ -28,7 +39,13 @@
 //! non-character keys of such a failed prefix are dropped. Text that an IME
 //! commits directly, without key events, bypasses the sequencer.
 
+pub mod attachments;
 pub mod cursor;
+pub mod path_popup;
+pub mod paths;
+pub mod tray;
+
+use std::sync::Arc;
 
 use application::keymap::{
     Action, Feed, Key, KeyCode, KeySequencer, Keymap, Modifiers, default_keymap,
@@ -44,6 +61,13 @@ use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
 use cursor::{BLINK_INTERVAL, Blink, CursorShape, HiddenCaret, paint_cursor};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use application::ports::search::FileSearchPort;
+use attachments::{ImageMode, PendingImage};
+use domain::conversation::ImageAttachment;
+pub use path_popup::PathPopup;
+use path_popup::{PathCompletion, PathKey, path_key};
+use tray::{ImageTray, paste_handler};
+
 use crate::help::CommandRow;
 
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
@@ -51,6 +75,8 @@ use crate::help::CommandRow;
 pub const QUEUE_EDIT_ACTION: &str = "queue.edit";
 /// Action of `<Esc>`: back to the prompt (and hide the palette).
 pub const FOCUS_INPUT_ACTION: &str = "focus.input";
+/// Action of `<A-m>`: switches what `Enter` does with the pasted images.
+pub const IMAGE_MODE_ACTION: &str = "image.mode";
 
 /// Rows of the editor before it starts scrolling.
 const MAX_ROWS: usize = 8;
@@ -62,6 +88,18 @@ const PALETTE_ROWS: usize = 8;
 pub enum InputEvent {
     /// The prompt was sent with `<CR>` (never empty).
     Submit(String),
+    /// The prompt (maybe empty) was sent with pasted images; `mode` says
+    /// whether they go to the model or only to the chat.
+    SubmitImages {
+        /// The prompt.
+        text: String,
+        /// The images, in the order they were pasted.
+        images: Vec<ImageAttachment>,
+        /// What to do with them.
+        mode: ImageMode,
+    },
+    /// Something the user should know (an image that cannot be attached).
+    Notice(String),
     /// A `/` command was run, without the slash.
     Command(String),
     /// A mapped action the input does not handle itself (timeline
@@ -135,6 +173,10 @@ enum Choice {
 fn choice(row: &CommandRow) -> Choice {
     let mut fixed = Vec::new();
     for word in row.usage.trim_start_matches('/').split_whitespace() {
+        if word.starts_with("@<") {
+            // A path: complete up to the `@`, which lists the workspace.
+            return Choice::Complete(format!("/{} @", fixed.join(" ")));
+        }
         if word.starts_with('<') {
             return Choice::Complete(format!("/{} ", fixed.join(" ")));
         }
@@ -233,6 +275,8 @@ pub struct InputView {
     commands: Vec<CommandRow>,
     palette_selected: usize,
     palette_hidden: bool,
+    paths: PathCompletion,
+    tray: ImageTray,
     blink: Blink,
     _blink: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -266,6 +310,8 @@ impl InputView {
             if matches!(event, EditorEvent::Change) {
                 this.palette_selected = 0;
                 this.palette_hidden = false;
+                let text = this.text(cx);
+                this.paths.request(&text, cx);
                 cx.notify();
             }
         });
@@ -278,6 +324,8 @@ impl InputView {
             commands: Vec::new(),
             palette_selected: 0,
             palette_hidden: false,
+            paths: PathCompletion::default(),
+            tray: ImageTray::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
             _subscriptions: vec![intercept, changes],
@@ -338,6 +386,64 @@ impl InputView {
             return Vec::new();
         }
         palette_matches(&self.commands, &self.text(cx))
+    }
+
+    /// Lists the directories `@` words name; without it they get no
+    /// suggestions.
+    pub fn set_file_search(&mut self, files: Arc<dyn FileSearchPort>) {
+        self.paths.set_file_search(files);
+    }
+
+    /// What the `@` popup shows for the current text, if anything.
+    pub fn path_popup(&self, cx: &App) -> Option<PathPopup> {
+        if self.palette_hidden {
+            return None;
+        }
+        self.paths.popup(&self.text(cx))
+    }
+
+    /// The images waiting in the tray, in paste order.
+    pub fn images(&self) -> &[PendingImage] {
+        self.tray.images()
+    }
+
+    /// What `Enter` does with the images in the tray.
+    pub fn image_mode(&self) -> ImageMode {
+        self.tray.mode()
+    }
+
+    /// Switches what `Enter` does with the images (no-op without images).
+    pub fn toggle_image_mode(&mut self, cx: &mut Context<Self>) {
+        if self.tray.toggle() {
+            cx.notify();
+        }
+    }
+
+    /// Adds pasted images to the tray; an image that cannot be attached
+    /// is reported with [`InputEvent::Notice`].
+    pub fn attach_images(&mut self, images: Vec<gpui::Image>, cx: &mut Context<Self>) {
+        let problems = self.tray.attach(images);
+        self.report(problems, cx);
+    }
+
+    /// Puts images back in the tray (a queued prompt taken back to edit).
+    pub fn restore_images(&mut self, images: Vec<ImageAttachment>, cx: &mut Context<Self>) {
+        let problems = self.tray.restore(images);
+        self.report(problems, cx);
+    }
+
+    fn report(&mut self, problems: Vec<String>, cx: &mut Context<Self>) {
+        for problem in problems {
+            cx.emit(InputEvent::Notice(problem));
+        }
+        cx.notify();
+    }
+
+    /// Removes the image at `ix` from the tray.
+    pub fn remove_image(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.tray.remove(ix) {
+            cx.notify();
+        }
     }
 
     /// Gives keyboard focus to the editor.
@@ -426,6 +532,15 @@ impl InputView {
         if !self.sequencer.pending().is_empty() || key.mods != Modifiers::default() {
             return false;
         }
+        if let Some(popup) = self.path_popup(cx) {
+            match path_key(key, &popup, &self.text(cx), self.palette_selected) {
+                PathKey::Select(ix) => self.palette_selected = ix,
+                PathKey::Hide => self.palette_hidden = true,
+                PathKey::SetText(text) => self.set_text(&text, window, cx),
+                PathKey::Ignored => return false,
+            }
+            return true;
+        }
         let choices: Vec<Choice> = self.palette(cx).into_iter().map(choice).collect();
         if choices.is_empty() {
             return false;
@@ -489,6 +604,13 @@ impl InputView {
             cx.emit(InputEvent::Action(Action::builtin(QUEUE_EDIT_ACTION)));
             return true;
         }
+        if *key == Key::plain(KeyCode::Backspace)
+            && !self.tray.is_empty()
+            && self.text(cx).is_empty()
+        {
+            self.remove_image(self.tray.images().len() - 1, cx);
+            return true;
+        }
         // The editor takes it.
         false
     }
@@ -512,20 +634,30 @@ impl InputView {
                 .editor
                 .update(cx, |editor, cx| editor.insert("\n", window, cx)),
             FOCUS_INPUT_ACTION if self.owns_focus(window, cx) => self.palette_hidden = true,
+            IMAGE_MODE_ACTION => self.toggle_image_mode(cx),
             _ => cx.emit(InputEvent::Action(action)),
         }
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(line) = classify_line(&self.text(cx)) else {
-            return;
+        let line = classify_line(&self.text(cx));
+        // A command leaves the images in the tray for the next prompt.
+        let event = match line {
+            Some(Line::Command(command)) => InputEvent::Command(command),
+            line if !self.tray.is_empty() => {
+                let text = match line {
+                    Some(Line::Prompt(text)) => text,
+                    _ => String::new(),
+                };
+                let (images, mode) = self.tray.take();
+                InputEvent::SubmitImages { text, images, mode }
+            }
+            Some(Line::Prompt(text)) => InputEvent::Submit(text),
+            None => return,
         };
         self.editor
             .update(cx, |editor, cx| editor.set_value("", window, cx));
-        cx.emit(match line {
-            Line::Prompt(text) => InputEvent::Submit(text),
-            Line::Command(command) => InputEvent::Command(command),
-        });
+        cx.emit(event);
     }
 
     fn schedule_timeout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -616,7 +748,15 @@ impl Focusable for InputView {
 
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.render_palette(cx);
+        let tray = self.tray.render(cx);
+        let paths = self
+            .path_popup(cx)
+            .map(|popup| path_popup::render(popup, self.palette_selected, cx));
+        let palette = if paths.is_none() {
+            self.render_palette(cx)
+        } else {
+            None
+        };
         let focused = self.owns_focus(window, cx);
         let theme = cx.theme();
         let (block, inverted, muted) = (theme.foreground, theme.background, theme.muted_foreground);
@@ -652,7 +792,9 @@ impl Render for InputView {
                     .flex_1()
                     .min_w_0()
                     .child(HiddenCaret::new(
-                        Textarea::new(&self.editor).appearance(false),
+                        Textarea::new(&self.editor)
+                            .appearance(false)
+                            .on_paste(paste_handler(cx.entity().downgrade())),
                         self.editor.clone(),
                     ))
                     .child(cursor),
@@ -670,7 +812,9 @@ impl Render for InputView {
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
             .font_family(theme.mono_font_family.clone())
+            .children(paths)
             .children(palette)
+            .children(tray)
             .child(prompt)
             .children(status)
     }
@@ -789,6 +933,172 @@ mod tests {
         view.update_in(cx, |view, window, cx| view.set_text("/h", window, cx));
         cx.simulate_keystrokes("escape");
         view.read_with(cx, |view, cx| assert!(view.palette(cx).is_empty()));
+    }
+
+    fn entries(view: &Entity<InputView>, cx: &mut VisualTestContext) -> Vec<String> {
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| match view.path_popup(cx) {
+            Some(PathPopup::Entries(entries)) => entries
+                .into_iter()
+                .map(|e| {
+                    if e.dir {
+                        format!("{}/", e.name)
+                    } else {
+                        e.name
+                    }
+                })
+                .collect(),
+            other => panic!("no entries: {other:?}"),
+        })
+    }
+
+    fn message(view: &Entity<InputView>, cx: &mut VisualTestContext) -> String {
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| match view.path_popup(cx) {
+            Some(PathPopup::Message(message)) => message,
+            other => panic!("no message: {other:?}"),
+        })
+    }
+
+    #[gpui::test]
+    fn at_words_complete_workspace_paths_level_by_level(cx: &mut TestAppContext) {
+        use application::testing::fs::InMemoryFs;
+        use domain::workspace::WorkspaceRoot;
+
+        let (view, cx, events) = input(cx);
+        let fs = InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            .with_file("README.md", "")
+            .with_file("src/main.rs", "")
+            .with_file("src/components/button.rs", "")
+            .with_file(".env", "SECRET=1");
+        view.update(cx, |view, cx| {
+            view.set_commands(vec![row("open", "/open @<path>")], cx);
+            view.set_file_search(Arc::new(fs));
+        });
+        // The palette completes `/open` up to the `@`, which lists the root.
+        cx.simulate_input("/op");
+        cx.simulate_keystrokes("enter");
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/open @"));
+        assert_eq!(entries(&view, cx), ["src/", "README.md"]);
+        cx.simulate_input("s");
+        assert_eq!(entries(&view, cx), ["src/"]);
+        cx.simulate_keystrokes("tab");
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/open @src/"));
+        assert_eq!(entries(&view, cx), ["components/", "main.rs"]);
+        cx.simulate_keystrokes("enter");
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.text(cx), "/open @src/components/");
+        });
+        assert_eq!(entries(&view, cx), ["button.rs"]);
+        // Enter completes the file, then submits the line.
+        cx.simulate_keystrokes("enter");
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.text(cx), "/open @src/components/button.rs ");
+            assert_eq!(view.path_popup(cx), None);
+        });
+        assert!(take(&events).is_empty());
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Command("open @src/components/button.rs".into())]
+        );
+        // Unmatched prefixes and paths out of the root only get a message.
+        cx.simulate_input("look at @zz");
+        assert_eq!(message(&view, cx), "nothing in the workspace matches `zz`");
+        view.update_in(cx, |view, window, cx| view.set_text("@../", window, cx));
+        assert!(message(&view, cx).contains("inside the workspace"));
+        view.update_in(cx, |view, window, cx| view.set_text("@/etc/", window, cx));
+        assert!(message(&view, cx).contains("inside the workspace"));
+        // Up/Down move the choice; Esc hides the popup.
+        view.update_in(cx, |view, window, cx| view.set_text("@", window, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down tab");
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "@README.md "));
+        view.update_in(cx, |view, window, cx| view.set_text("@", window, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        view.read_with(cx, |view, cx| assert_eq!(view.path_popup(cx), None));
+    }
+
+    fn clipboard_png(width: u32, cx: &mut VisualTestContext) {
+        let png = attachments::tests::encoded(width, 2, image::ImageFormat::Png);
+        let item =
+            gpui::ClipboardItem::new_image(&gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
+        cx.write_to_clipboard(item);
+    }
+
+    #[gpui::test]
+    fn pasted_images_wait_in_the_tray_until_sent(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_input("describe");
+        clipboard_png(3, cx);
+        cx.simulate_keystrokes("ctrl-v");
+        clipboard_png(5, cx);
+        cx.simulate_keystrokes("ctrl-v");
+        view.read_with(cx, |view, cx| {
+            // The typed text stays; the images are in the tray.
+            assert_eq!(view.text(cx), "describe");
+            let widths: Vec<u32> = view.images().iter().map(|i| i.attachment.width).collect();
+            assert_eq!(widths, [3, 5]);
+            assert_eq!(view.image_mode(), ImageMode::Model);
+        });
+        // Text still pastes as text.
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(" it".into()));
+        cx.simulate_keystrokes("ctrl-v");
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "describe it"));
+        // A command leaves the images for the next prompt.
+        view.update_in(cx, |view, window, cx| {
+            view.set_text("/mode ask", window, cx)
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(take(&events), [InputEvent::Command("mode ask".into())]);
+        view.read_with(cx, |view, _| assert_eq!(view.images().len(), 2));
+        // Backspace in an empty prompt removes the last one; Alt+M switches
+        // the mode, which the submission carries.
+        cx.simulate_keystrokes("backspace");
+        view.read_with(cx, |view, _| assert_eq!(view.images().len(), 1));
+        cx.simulate_keystrokes("alt-m");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.image_mode(), ImageMode::ChatOnly)
+        });
+        cx.simulate_keystrokes("alt-m");
+        cx.simulate_keystrokes("enter");
+        let sent = take(&events);
+        let [InputEvent::SubmitImages { text, images, mode }] = sent.as_slice() else {
+            panic!("{sent:?}");
+        };
+        assert_eq!((text.as_str(), *mode), ("", ImageMode::Model));
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/png");
+        view.read_with(cx, |view, _| assert!(view.images().is_empty()));
+        // An image that cannot be attached is reported.
+        clipboard_png(domain::conversation::MAX_IMAGE_SIDE + 1, cx);
+        cx.simulate_keystrokes("ctrl-v");
+        assert!(matches!(take(&events).as_slice(), [InputEvent::Notice(m)] if m.contains("px")));
+        view.read_with(cx, |view, _| assert!(view.images().is_empty()));
+    }
+
+    #[gpui::test]
+    fn the_tray_buttons_remove_images_and_switch_the_mode(cx: &mut TestAppContext) {
+        let (view, cx, _events) = input(cx);
+        clipboard_png(4, cx);
+        cx.simulate_keystrokes("ctrl-v");
+        cx.draw(
+            gpui::point(gpui::px(0.), gpui::px(0.)),
+            gpui::size(gpui::px(800.), gpui::px(400.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        let chat = cx.debug_bounds("tray-chat-only").expect("mode chip drawn");
+        cx.simulate_click(chat.center(), gpui::Modifiers::none());
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.image_mode(), ImageMode::ChatOnly)
+        });
+        let remove = cx.debug_bounds("tray-remove-0").expect("× drawn");
+        cx.simulate_click(remove.center(), gpui::Modifiers::none());
+        view.read_with(cx, |view, _| {
+            assert!(view.images().is_empty());
+            assert_eq!(view.image_mode(), ImageMode::Model);
+        });
     }
 
     #[gpui::test]

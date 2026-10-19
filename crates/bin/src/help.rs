@@ -92,6 +92,11 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
         description: "Stop the active flow for good (its journal is kept)",
     },
     CommandInfo {
+        name: "open",
+        usage: "/open @<path>",
+        description: "Show a workspace file in a modal (type @ to complete the path)",
+    },
+    CommandInfo {
         name: "simulate",
         usage: "/simulate <spec>",
         description: "Simulate the solution of a Spec and open the 3D board with every scenario",

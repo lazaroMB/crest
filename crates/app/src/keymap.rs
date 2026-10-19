@@ -603,6 +603,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "Switch the block between chart and table",
     ),
     ("<A-y>", "block.yank", "Copy the selected block"),
+    (
+        "<A-m>",
+        "image.mode",
+        "Switch pasted images between sending them to the model and adding them to the chat only",
+    ),
 ];
 
 /// What the builtin action `name` does, if it is one.

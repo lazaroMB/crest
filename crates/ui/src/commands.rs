@@ -37,6 +37,11 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Start a new, empty session (not while a turn runs)",
     },
     CommandInfo {
+        name: "project",
+        usage: "/project",
+        description: "Close this project and choose another one",
+    },
+    CommandInfo {
         name: "modal",
         usage: "/modal close",
         description: "Close the front modal window",

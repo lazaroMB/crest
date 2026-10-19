@@ -481,3 +481,203 @@ fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
     );
     assert_eq!(w.llm.remaining(), 0);
 }
+
+fn notice(w: &Window_, cx: &mut VisualTestContext) -> Option<String> {
+    w.session.read_with(cx, |s, cx| {
+        let now = cx.background_executor().now();
+        s.status()
+            .read(cx)
+            .state()
+            .notice(now)
+            .map(|n| n.message.clone())
+    })
+}
+
+fn modal_ids(w: &Window_, cx: &mut VisualTestContext) -> Vec<String> {
+    let modal = w.session.read_with(cx, |s, _| s.modal().clone());
+    modal.read_with(cx, |m, _| m.ids().into_iter().map(|id| id.0).collect())
+}
+
+#[gpui::test]
+fn open_shows_workspace_files_and_refuses_the_rest(cx: &mut TestAppContext) {
+    let (w, cx) = open(Vec::new(), cx);
+    std::fs::write(w.workspace.join("README.md"), "# crest\n").unwrap();
+    std::fs::write(w.workspace.join(".env"), "KEY=1\n").unwrap();
+    let outside = w.workspace.parent().unwrap().join("outside.txt");
+    std::fs::write(&outside, "secret\n").unwrap();
+    std::os::unix::fs::symlink(&outside, w.workspace.join("link.txt")).unwrap();
+
+    cx.simulate_input("/open @README.md");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the modal", |s, cx| s.modal().read(cx).is_open());
+    assert_eq!(modal_ids(&w, cx), ["open:README.md"]);
+    let modal = w.session.read_with(cx, |s, _| s.modal().clone());
+    modal.read_with(cx, |m, _| {
+        let spec = m
+            .spec(&domain::modal::ModalId::new("open:README.md"))
+            .unwrap();
+        assert_eq!(
+            spec.content,
+            domain::block::CustomNode::Markdown {
+                source: "# crest".into()
+            }
+        );
+    });
+    assert!(blocks(&w, cx).is_empty(), "nothing goes to the timeline");
+
+    for (line, needle) in [
+        ("/open @link.txt", "outside the workspace"),
+        ("/open @../outside.txt", "outside the workspace"),
+        ("/open @.env", "sensitive path pattern"),
+        ("/open @nope.md", "does not exist"),
+        ("/open @src", "is a directory"),
+        ("/open README.md", "usage: /open @<path>"),
+    ] {
+        // The open modal has the focus: run the line as the input would.
+        let command = line.strip_prefix('/').unwrap();
+        w.session
+            .update_in(cx, |s, window, cx| s.command(command, window, cx));
+        wait_until(&w, cx, line, |s, cx| {
+            let now = cx.background_executor().now();
+            s.status()
+                .read(cx)
+                .state()
+                .notice(now)
+                .is_some_and(|n| n.message.contains(needle))
+        });
+        assert!(notice(&w, cx).unwrap().contains(needle), "{line}");
+    }
+    assert_eq!(modal_ids(&w, cx), ["open:README.md"]);
+    assert!(w.llm.requests().is_empty());
+}
+
+#[gpui::test]
+fn chat_only_images_are_saved_without_a_model_call(cx: &mut TestAppContext) {
+    let (w, cx) = open(Vec::new(), cx);
+    // A 1×1 transparent PNG.
+    let png: Vec<u8> = vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15,
+        0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let input = w.session.read_with(cx, |s, _| s.input().clone());
+    input.update(cx, |input, cx| {
+        input.attach_images(
+            vec![gpui::Image::from_bytes(gpui::ImageFormat::Png, png)],
+            cx,
+        );
+        input.toggle_image_mode(cx);
+    });
+    cx.simulate_input("the screenshot");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the saved notice", |s, cx| {
+        let now = cx.background_executor().now();
+        s.status()
+            .read(cx)
+            .state()
+            .notice(now)
+            .is_some_and(|n| n.message.contains("not sent to the model"))
+    });
+    assert!(w.llm.requests().is_empty());
+    let store = SqliteSessionStore::open(&w.db).unwrap();
+    let root = std::fs::canonicalize(&w.workspace).unwrap();
+    let saved = w
+        .runtime
+        .block_on(store.latest_for_workspace(&root.display().to_string()))
+        .unwrap()
+        .unwrap();
+    assert!(saved.session.turns.is_empty());
+    let kinds: Vec<_> = saved.timeline.into_iter().map(|b| b.kind).collect();
+    assert_eq!(texts(&kinds), ["> the screenshot\n"]);
+    assert!(kinds.iter().any(|kind| matches!(
+        kind,
+        BlockKind::Image { media_type, .. } if media_type == "image/png"
+    )));
+}
+
+/// Hosts a project workbench as the window's root.
+struct WorkbenchHost(Entity<ui::workbench::Workbench>);
+
+impl Render for WorkbenchHost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.0.clone())
+    }
+}
+
+#[gpui::test]
+fn the_picker_opens_a_project_and_slash_project_goes_back(cx: &mut TestAppContext) {
+    use clap::Parser as _;
+
+    cx.executor().allow_parking();
+    cx.update(gpui_component::init);
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("proj");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    std::fs::write(project.join("README.md"), "# proj\n").unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let overrides = Overrides {
+        llm: Some(Arc::new(ScriptedLlm::new(Vec::new()))),
+        config_sources: Some(ConfigSources::default()),
+        db_path: Some(dir.path().join("sessions.db")),
+        ..Overrides::default()
+    };
+    let args = crest::args::Args::try_parse_from(["crest", "--pick"]).unwrap();
+    let launcher = Arc::new(crest::gui::Launcher::new(
+        args,
+        overrides,
+        runtime.handle().clone(),
+    ));
+    let slot = Rc::new(RefCell::new(None));
+    let out = slot.clone();
+    let (_host, cx) = cx.add_window_view(move |window, cx| {
+        let workbench = ui::workbench::Workbench::new_picker(launcher, window, cx);
+        *out.borrow_mut() = Some(workbench.clone());
+        WorkbenchHost(workbench)
+    });
+    cx.run_until_parked();
+    let workbench = slot.borrow_mut().take().unwrap();
+    workbench.read_with(cx, |w, _| assert!(w.project_picker().is_some()));
+
+    // The picker lists the real disk through the port.
+    let picker = workbench.read_with(cx, |w, _| w.project_picker().unwrap().clone());
+    picker.update_in(cx, |p, window, cx| p.show_dir(dir.path(), window, cx));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        let names: Vec<String> = picker.read_with(cx, |p, _| {
+            p.listing()
+                .map(|l| l.dirs.iter().map(|d| d.name.clone()).collect())
+                .unwrap_or_default()
+        });
+        if names == ["proj"] {
+            break;
+        }
+        assert!(Instant::now() < deadline, "listing never came: {names:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    cx.simulate_keystrokes("enter");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let session = loop {
+        cx.run_until_parked();
+        if let Some(session) = workbench.read_with(cx, |w, _| w.session().cloned()) {
+            break session;
+        }
+        assert!(Instant::now() < deadline, "the project never opened");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let weak = session.downgrade();
+    session.update_in(cx, |s, window, cx| s.command("project", window, cx));
+    drop(session);
+    cx.run_until_parked();
+    workbench.read_with(cx, |w, cx| {
+        let picker = w.project_picker().expect("back to the picker");
+        let shown = std::fs::canonicalize(dir.path()).unwrap();
+        assert_eq!(picker.read(cx).text(cx), format!("{}/", shown.display()));
+    });
+    assert!(weak.upgrade().is_none(), "the session was dropped");
+}

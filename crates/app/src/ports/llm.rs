@@ -436,6 +436,13 @@ pub trait LlmPort: Send + Sync {
         let _ = req;
         Err(LlmError::Unsupported)
     }
+
+    /// Whether `model` takes images in user messages. The default is
+    /// `false`: an adapter opts in for the models it knows accept them.
+    fn accepts_images(&self, model: &ModelId) -> bool {
+        let _ = model;
+        false
+    }
 }
 
 /// A model offered by the provider.

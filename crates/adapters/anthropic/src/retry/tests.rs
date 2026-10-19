@@ -341,3 +341,11 @@ async fn server_tool_options_are_sent_with_the_request() {
     let items = collect(&llm, req).await;
     assert_eq!(assemble(items), vec![ContentPart::text("Hello!")]);
 }
+
+#[tokio::test]
+async fn claude_models_accept_images() {
+    let Setup { llm, .. } = setup(1).await;
+    assert!(llm.accepts_images(&ModelId::new("claude-opus-5-5")));
+    assert!(llm.accepts_images(&ModelId::new("claude-haiku-5-5")));
+    assert!(!llm.accepts_images(&ModelId::new("some-text-model")));
+}

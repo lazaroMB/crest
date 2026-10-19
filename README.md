@@ -74,8 +74,8 @@ To store it in the keyring instead of using the variable, see [docs/configuratio
 ## Quick start
 
 ```bash
-cd ~/src/mi-proyecto
-crest                         # or: crest ~/src/mi-proyecto, or make run WORKSPACE=~/src/mi-proyecto
+crest ~/src/mi-proyecto       # or: make run WORKSPACE=~/src/mi-proyecto
+crest                         # without a directory: choose the project in the picker
 ```
 
 1. Type a prompt, for example "what does src/main.rs do?", and press `Enter`. `Shift+Enter` inserts a new line.

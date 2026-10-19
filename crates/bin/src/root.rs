@@ -95,7 +95,14 @@ impl Config {
             Some(dir) => dir.clone(),
             None => std::env::current_dir().context("cannot read the current directory")?,
         };
-        Ok(Self {
+        Ok(Self::for_workspace(args, workspace))
+    }
+
+    /// The config of `args` over the workspace `workspace` (a project
+    /// chosen in the picker).
+    #[must_use]
+    pub fn for_workspace(args: &Args, workspace: PathBuf) -> Self {
+        Self {
             workspace,
             mode: args.mode.unwrap_or_default(),
             model: args.model.clone(),
@@ -106,7 +113,7 @@ impl Config {
             } else {
                 !args.new
             },
-        })
+        }
     }
 }
 
@@ -173,6 +180,9 @@ pub struct App {
     pub config_errors: Vec<String>,
     /// The MCP servers that were started, if any.
     pub mcp: Option<McpServers>,
+    /// Reads the workspace's files with the guard of the file tools
+    /// (`/open @path`).
+    pub fs: Arc<dyn FileSystemPort>,
     /// File search of the workspace (rg/fzf), for the tree and pickers.
     pub file_search: Arc<dyn FileSearchPort>,
     /// Text search of the workspace (rg), for the `<leader>fg` picker.
@@ -575,7 +585,7 @@ pub async fn build_app(
                     web: web.clone(),
                 },
                 workspace: ResearchWorkspace {
-                    fs,
+                    fs: Arc::clone(&fs),
                     search: Arc::clone(&file_search),
                 },
                 system_prompt: system_prompt(&root),
@@ -657,6 +667,7 @@ pub async fn build_app(
         warnings,
         config_errors: loaded.errors.iter().map(startup::diagnostic).collect(),
         mcp,
+        fs,
         file_search,
         shell: Arc::clone(&shell),
         shell_context: Vec::new(),

@@ -2,6 +2,7 @@
 
 pub mod fs;
 pub mod llm;
+pub mod projects;
 pub mod sim;
 pub mod system;
 pub mod web;

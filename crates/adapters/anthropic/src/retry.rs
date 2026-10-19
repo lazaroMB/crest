@@ -195,6 +195,12 @@ impl LlmPort for AnthropicLlm {
         }
         Ok(Box::pin(futures::stream::unfold(run, Run::next)))
     }
+
+    /// Every Claude model the Messages API serves takes image input
+    /// (png, jpeg, gif, webp).
+    fn accepts_images(&self, model: &ModelId) -> bool {
+        model.as_str().starts_with("claude-")
+    }
 }
 
 enum Phase {

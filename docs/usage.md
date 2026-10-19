@@ -5,8 +5,9 @@ This guide covers the window, the command line, headless mode, sessions and MCP 
 ## The window
 
 ```bash
-crest                 # workspace = current directory
-crest ~/src/proyecto  # or --workspace ~/src/proyecto
+crest ~/src/proyecto  # workspace = ~/src/proyecto (or --workspace ~/src/proyecto)
+crest .               # workspace = current directory
+crest                 # no project yet: the project picker (also --pick)
 ```
 
 The window opens full screen. On X11 it opens as a normal window and requests full screen after the first frame; if the compositor refuses, it stays centered at 1280×800. The title is `crest — <directory>`. It uses the TwoCrest theme (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber), dark by default and light with `app.opt.theme = "light"`, and a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
@@ -78,6 +79,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Alt+Enter` | `block.toggle` | Expands or collapses the block (ToolCall, Thinking, Shell). |
 | `Alt+t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
 | `Alt+y` | `block.yank` | Copies the block's content to the clipboard. |
+| `Alt+m` | `image.mode` | Switches [pasted images](#pasted-images) between **→ Model** and **Chat only**. |
 | `Ctrl+Space ff` | `picker.files` | File picker (fzf). |
 | `Ctrl+Space fg` | `picker.grep` | Text search (rg). |
 | `Ctrl+Space e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
@@ -99,7 +101,9 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
+| `/project` | Closes this project and goes back to the [project picker](#opening-a-project). Not while a turn or command runs. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
+| `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
 | `/mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
 | `/plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
 | `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
@@ -110,7 +114,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/<name> <args>` | A command registered with `app.commands.register`. |
 | `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /project, /modal, /q; /help lists every command)`.
 
 ### Shell commands (`/!`)
 
@@ -146,6 +150,29 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 ### File references with `@`
 
 When you pick a file in the tree, in a picker or in a `Sources` block, `@path ` (or `@path:line ` for a grep result) is inserted at the prompt cursor, and the prompt gets the focus. It is plain prompt text: the model reads it as a reference and opens the file with its tools.
+
+You can also type it. While the last word of the prompt starts with `@`, a popup lists the entries of the directory it names, relative to the workspace root (the directory crest was started in, or `--workspace`): `@` lists the root, `@src/` lists `src/`, `@src/co` the entries of `src/` that match `co`. Directories come first, marked `▸` and ending in `/`. `↑`/`↓` choose, `Tab` completes (a directory as `@src/components/`, whose entries are listed next; a file as `@src/main.rs `), `Enter` completes the chosen entry or, once the word already is it, sends the line, and `Esc` hides the popup. Gitignored and sensitive files (`.env*`, `*.pem`...) are not suggested, and a path that leaves the root (`@../`, `@/etc/`) gets no suggestions.
+
+### Opening files (`/open @path`)
+
+`/open @src/main.rs` shows the file in a modal (`Esc` closes it). The `@` is not part of the path, which is resolved from the workspace root whatever the directory of a command or subprocess. The viewer depends on the extension: Markdown is rendered, JSON is a collapsible tree (or source when it does not parse), `.mmd`/`.mermaid` a diagram, `.diff`/`.patch` a colored diff, png/jpeg/gif/webp/svg/bmp/ico a picture with zoom and pan, and anything else highlighted source, HTML and CSV included. The file is only shown, never run or rendered as a page.
+
+It follows the file tools' rules: a path outside the workspace (`..`, an absolute path elsewhere, a symlink pointing out) or matching the sensitive-path patterns is refused, and so are directories, binaries that are not pictures and files over 2 MiB. Files longer than 20 000 lines are cut, and the title says so. The status bar says why a file did not open.
+
+### Pasted images
+
+Pasting an image (`Ctrl+V` with a screenshot or a copied picture) puts it in a tray above the prompt, with a thumbnail, its size in pixels and bytes, and a `×` to remove it. The text already typed stays, and you can paste several (up to 20). `Backspace` in an empty prompt removes the last one.
+
+A chip in the tray says what `Enter` does with the images, and the line under it repeats it:
+
+- **→ Model** (the default): the images go to the model with the prompt, in the same message after the text, and appear in the timeline under your prompt. If the model of the turn does not take images, nothing is sent and an error says so; an active research or implementation flow does not take them either.
+- **Chat only**: the images (and the text, if any) are added to the timeline as Image blocks and saved with the session; the model is **not** called, and the images are not sent with later prompts.
+
+A click on the chip or `Alt+m` switches it; it goes back to **→ Model** after each send. A `/` command leaves the images in the tray.
+
+Images go out as png, jpeg, gif or webp: bmp, tiff, ico and pnm are converted to png first, and svg is refused. An image larger than 8000 px on a side or 5 MB is refused with its size. Images are kept in memory until sent (nothing is written to disk); sent ones are stored in the session database with the conversation. Clicking an Image block in the timeline opens it in a modal with zoom and pan.
+
+On Wayland, a copy that offers both text and an image may paste as text (GPUI reads the text first); screenshots paste as images. Copied files (from a file manager) are not attached.
 
 ### Pickers (`Ctrl+Space ff`, `Ctrl+Space fg`)
 
@@ -227,7 +254,8 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `Alt+t` shows the source. If it does not parse, the source and the error are shown. |
 | Markdown | `show_markdown` tool | Document typography; `Alt+t` shows the source. |
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
-| Sources, StageHeader, Image | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
+| Sources, StageHeader | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
+| Image | [Pasted images](#pasted-images), research workflow | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. |
 | Error | API, tool or config failures | Message and suggested action. |
 
 In the table, `Enter` means `Alt+Enter` from the prompt or `Enter` with the timeline focused. `Alt+t` only has an effect on Chart, Markdown and Mermaid. `Alt+y` copies the content of the selected block.
@@ -279,6 +307,27 @@ The bar shows the accumulated cost of the session:
 
 See [configuration.md](configuration.md#cost-and-spending-cap).
 
+### Opening a project
+
+Without a directory (`crest`, or the desktop launcher), or with `--pick`, the window opens in the **project picker**:
+
+- The path field on top lists the directory it names, starting at the current one. Typing filters it: `~/src/` lists `~/src`, `~/src/cr` keeps the entries that match `cr` (`~` is your home). Hidden directories show once the filter starts with a dot.
+- **Recent** projects (the workspaces with saved sessions, newest first) come first while there is no filter; one that no longer exists is shown greyed out and does not open.
+- Directories that look like projects (with a `.git` or a `.crest`) are marked `◆` and listed first.
+
+| Key | What it does |
+| --- | --- |
+| `↑` / `↓` | Choose a row. |
+| `Enter` | Open the chosen row as the project; with no row, the typed path. |
+| `Ctrl+Enter`, the **Open …** button | Open the directory being listed. |
+| `Tab`, `→` | Enter the chosen directory. |
+| `←` (no filter) | Go up to the parent. |
+| Click / double click | Choose / enter (a recent project opens). |
+
+A directory that cannot be read says why under the field; a project that fails to open brings the picker back with the reason. While a project opens the window says `Opening <dir>…`.
+
+`/project` closes the open project (once no turn or command runs) and goes back to the picker, at the project's parent; the session is already saved. Everything the project started (MCP servers, plugins) stops with it.
+
 ## Command line
 
 ```text
@@ -287,7 +336,8 @@ crest [OPTIONS] [DIR]
 
 | Flag | Value | What it does |
 | --- | --- | --- |
-| `[DIR]` | directory | Workspace to open. Defaults to the current directory. |
+| `[DIR]` | directory | Workspace to open. Without it the window opens the [project picker](#opening-a-project); headless runs use the current directory. |
+| `--pick` | — | Opens the window in the project picker. Cannot be combined with `[DIR]`, `--workspace` or `--headless`. |
 | `--workspace <DIR>` | directory | Same as `[DIR]`. The two cannot be combined. |
 | `--headless [<PROMPT>]` | text | Runs one turn with that prompt in the terminal, without a window. Without a prompt, it goes with `--implement`, `--research` or `--simulate`. |
 | `--implement <RUTA>` | Spec or `plan.json` | In headless mode, runs the implementation workflow. Requires `--headless` and cannot be combined with `--research`. |
@@ -305,7 +355,8 @@ crest [OPTIONS] [DIR]
 Examples:
 
 ```bash
-crest                                        # window on the current directory, resumes the last session
+crest .                                      # window on the current directory, resumes the last session
+crest                                        # window in the project picker
 crest --new ~/src/api                        # window, new session
 crest --mode plan --model opus .             # read-only, with Opus on every turn
 crest --headless "explain what src/main.rs does" --workspace ~/src/api

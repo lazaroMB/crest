@@ -115,9 +115,10 @@ pub fn run(opts: UiOptions) -> Result<(), UiError> {
 ///
 /// `build_root` usually fills the slots of the root and focuses the input;
 /// when it leaves nothing focused, the root view gets the focus.
-pub fn run_with<F>(opts: UiOptions, build_root: F) -> Result<(), UiError>
+pub fn run_with<F, V>(opts: UiOptions, build_root: F) -> Result<(), UiError>
 where
-    F: FnOnce(&mut Window, &mut App) -> Entity<RootView> + 'static,
+    F: FnOnce(&mut Window, &mut App) -> Entity<V> + 'static,
+    V: Render + Focusable,
 {
     let title = window_title(&opts.workspace_label);
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -162,6 +163,27 @@ fn apply_theme(opts: &UiOptions, cx: &mut App) {
     });
 }
 
+/// Switches the color scheme (the project's `app.opt.theme`, once it is
+/// open), keeping the fonts already chosen.
+pub fn set_theme_mode(mode: ThemeMode, cx: &mut App) {
+    let theme = Theme::global(cx);
+    let (family, mono, size, mono_size) = (
+        theme.font_family.clone(),
+        theme.mono_font_family.clone(),
+        theme.font_size,
+        theme.mono_font_size,
+    );
+    Theme::change(mode, None, cx);
+    crate::theme::apply(mode, cx);
+    Theme::update(cx, |theme| {
+        theme.font_family = family;
+        theme.mono_font_family = mono;
+        theme.font_size = size;
+        theme.mono_font_size = mono_size;
+    });
+    cx.refresh_windows();
+}
+
 /// App-wide key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 fn app_key_bindings() -> Vec<KeyBinding> {
     vec![KeyBinding::new("secondary-q", Quit, None)]
@@ -179,9 +201,10 @@ fn bind_app_keys(cx: &mut App) {
     .detach();
 }
 
-fn open_main_window<F>(title: String, build_root: F, cx: &mut App) -> Result<(), UiError>
+fn open_main_window<F, V>(title: String, build_root: F, cx: &mut App) -> Result<(), UiError>
 where
-    F: FnOnce(&mut Window, &mut App) -> Entity<RootView>,
+    F: FnOnce(&mut Window, &mut App) -> Entity<V>,
+    V: Render + Focusable,
 {
     let restore = Bounds::centered(None, size(px(RESTORE_SIZE.0), px(RESTORE_SIZE.1)), cx);
     // GPUI asks X11 window managers for fullscreen before mapping the

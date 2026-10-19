@@ -20,6 +20,7 @@ use crate::ports::plugin::{
     CallbackId, ConfigSources, HookEvent, HookKind, HookOutcome, LoadedConfig, PluginError,
     PluginHostPort, PluginOutput,
 };
+use crate::ports::projects::RecentWorkspace;
 use crate::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 
@@ -434,6 +435,24 @@ impl SessionStorePort for InMemorySessionStore {
             .map(|_| ())
             .ok_or(StoreError::NotFound(id))
     }
+
+    async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError> {
+        self.check_failure()?;
+        let mut latest: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for stored in lock(&self.sessions).values() {
+            let at = latest
+                .entry(stored.session.workspace_root.clone())
+                .or_default();
+            *at = (*at).max(stored.session.updated_at);
+        }
+        let mut recent: Vec<RecentWorkspace> = latest
+            .into_iter()
+            .map(|(root, updated_at)| RecentWorkspace { root, updated_at })
+            .collect();
+        recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.root.cmp(&b.root)));
+        recent.truncate(limit);
+        Ok(recent)
+    }
 }
 
 #[cfg(test)]
@@ -450,6 +469,20 @@ mod store_tests {
             timeline: Vec::new(),
             permission_rules: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn recent_workspaces_are_grouped_and_newest_first() {
+        let store = InMemorySessionStore::new();
+        for (root, at) in [("/a", 5), ("/b", 9), ("/a", 12), ("/c", 1)] {
+            store.save(&stored(root, at)).await.unwrap();
+        }
+        let recent = store.recent_workspaces(2).await.unwrap();
+        let roots: Vec<(&str, u64)> = recent
+            .iter()
+            .map(|r| (r.root.as_str(), r.updated_at))
+            .collect();
+        assert_eq!(roots, [("/a", 12), ("/b", 9)]);
     }
 
     #[tokio::test]

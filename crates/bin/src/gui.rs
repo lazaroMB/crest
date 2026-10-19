@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use adapter_fs::LocalProjectBrowser;
 use adapter_search::RipgrepSearch;
 use application::flows::implement::flow::{FlowError, FlowReply};
 use application::flows::implement::graph::{ImplementSession, status_notice};
@@ -44,16 +45,19 @@ use application::ports::mcp::McpPort as _;
 use application::ports::plugin::{
     CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
 };
+use application::ports::projects::{BrowseError, DirListing, ProjectBrowserPort, RecentWorkspace};
 use application::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest, GrepResult,
     ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
+use application::ports::store::SessionStorePort as _;
 use application::usecases::approval::lock_permissions;
-use application::usecases::run_turn::SharedPermissions;
+use application::usecases::run_turn::{SharedPermissions, UserInput};
 use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
+use application::usecases::user_blocks::{chat_only_notice, user_blocks};
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind};
-use domain::conversation::StopReason;
+use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::model::{ModelId, ModelPolicy, ResolveRequest};
 use domain::permission::PermissionMode;
@@ -68,6 +72,7 @@ use ui::help::HelpSnapshot;
 use ui::session::{
     ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
 };
+use ui::workbench::{ProjectOpener, Workbench};
 
 use crate::args::Args;
 use crate::plugin_trust::PluginTrust;
@@ -444,13 +449,20 @@ pub fn plugin_reply(result: Result<PluginOutput, PluginError>) -> Reply {
     }
 }
 
+/// Shows the prompt and the images pasted with it in the timeline.
+fn emit_user_blocks(app: &App, prompt: &str, images: &[ImageAttachment]) {
+    for block in user_blocks(prompt, images) {
+        app.emit(DomainEvent::BlockAdded { block });
+    }
+}
+
 /// Runs one turn of `app` and saves the session, as the headless mode does.
 /// The output of the `/!` commands run since the last turn goes before the
-/// prompt the model gets (the timeline shows the prompt alone).
+/// prompt the model gets (the timeline shows the prompt alone). Pasted
+/// images go to the model in the same message, after the prompt.
 pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
-    app.emit(DomainEvent::BlockAdded {
-        block: prompt_block(&request.prompt),
-    });
+    emit_user_blocks(app, &request.prompt, &request.images);
+    let images = request.images;
     let mut prompt = request.prompt;
     if !app.shell_context.is_empty() {
         let mut context = std::mem::take(&mut app.shell_context).join("\n\n");
@@ -465,7 +477,10 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
     if let Some(model) = request.model_override {
         opts = opts.with_override(model);
     }
-    let result = app.service.run_turn(&mut app.session, prompt, opts).await;
+    let result = app
+        .service
+        .run_turn(&mut app.session, UserInput::new(prompt, images), opts)
+        .await;
     if let Err(err) = app.save().await {
         app.warn(format!("could not save the session: {err}"));
     }
@@ -536,6 +551,35 @@ async fn shell_command(app: Arc<tokio::sync::Mutex<App>>, line: String) -> Reply
     Reply::Done
 }
 
+/// Images added to the chat only: their blocks (after the caption) are
+/// saved with the session and the model is not called.
+async fn post_images(
+    app: Arc<tokio::sync::Mutex<App>>,
+    caption: String,
+    images: Vec<ImageAttachment>,
+) -> Reply {
+    let app = app.lock().await;
+    emit_user_blocks(&app, &caption, &images);
+    if let Err(err) = app.save().await {
+        app.warn(format!("could not save the session: {err}"));
+    }
+    Reply::Notice(NoticeLevel::Info, chat_only_notice(images.len()))
+}
+
+/// `/open @path`: shows the file in a modal. The modal goes through the
+/// app's sink, so a picture's path is checked again by the image guard; it
+/// is not part of the saved timeline.
+async fn open_command(app: Arc<tokio::sync::Mutex<App>>, args: String) -> Reply {
+    let fs = Arc::clone(&app.lock().await.fs);
+    match application::usecases::open_file::open_file(fs.as_ref(), &args).await {
+        Ok(spec) => {
+            app.lock().await.emit(DomainEvent::ModalOpened { spec });
+            Reply::Done
+        }
+        Err(err) => Reply::Notice(NoticeLevel::Warning, err.to_string()),
+    }
+}
+
 /// `/stage`, `/back`, `/skip`, `/retry` or `/abort`: for the active
 /// implementation flow, else for the research flow of the workspace.
 async fn flow_line(
@@ -577,7 +621,22 @@ impl SessionController for UiController {
             Arc::clone(&self.research),
         );
         self.handle.spawn(async move {
+            // A flow takes a line of text: images cannot answer it.
+            let refuse_images = |tx: oneshot::Sender<TurnEnd>| {
+                let message = "images cannot answer the active flow; nothing was sent \
+                               (add them with Chat only, or finish the flow first)"
+                    .to_owned();
+                events.emit(DomainEvent::Notice {
+                    level: NoticeLevel::Warning,
+                    message: message.clone(),
+                });
+                tx.send(TurnEnd::Failed(message)).ok();
+            };
             let mut active = flow.lock().await;
+            if active.is_some() && !request.images.is_empty() {
+                refuse_images(tx);
+                return;
+            }
             if active.is_some() {
                 events.emit(DomainEvent::BlockAdded {
                     block: prompt_block(&request.prompt),
@@ -589,6 +648,10 @@ impl SessionController for UiController {
             drop(active);
             let mut research = research.lock().await;
             if let Some(session) = research.as_mut().filter(|s| s.is_active()) {
+                if !request.images.is_empty() {
+                    refuse_images(tx);
+                    return;
+                }
                 events.emit(DomainEvent::BlockAdded {
                     block: prompt_block(&request.prompt),
                 });
@@ -612,6 +675,17 @@ impl SessionController for UiController {
             end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
         })
         .boxed()
+    }
+
+    fn post_images(
+        &self,
+        caption: String,
+        images: Vec<ImageAttachment>,
+    ) -> BoxFuture<'static, Reply> {
+        self.spawn_command(
+            "images",
+            post_images(Arc::clone(&self.app), caption, images),
+        )
     }
 
     fn permission_mode(&self) -> PermissionMode {
@@ -717,6 +791,7 @@ impl SessionController for UiController {
                 let task = plugin_command(Arc::clone(&self.plugin_trust), args);
                 Some(self.spawn_command("plugin", task))
             }
+            "open" => Some(self.spawn_command("open", open_command(Arc::clone(&self.app), args))),
             _ => {
                 let id = self.commands.get(name)?;
                 Some(self.run_callback(id.0, serde_json::Value::String(args)))
@@ -914,13 +989,30 @@ pub fn workspace_label(workspace: &std::path::Path) -> String {
     )
 }
 
-/// `crest [DIR]`: opens the window over the workspace. Returns the exit
-/// code: 0, 1 when the window cannot open, 2 for configuration errors.
+/// `crest [DIR]`: opens the window over the workspace, or in the project
+/// picker without one (or with `--pick`). Returns the exit code: 0, 1 when
+/// the window cannot open, 2 for configuration errors.
 #[must_use]
 pub fn run(args: &Args, handle: &Handle) -> u8 {
-    let parts = Config::from_args(args)
-        .and_then(|config| session_parts(&config, Overrides::default(), handle));
-    let parts = match parts {
+    let launcher = Arc::new(Launcher::new(
+        args.clone(),
+        Overrides::default(),
+        handle.clone(),
+    ));
+    if args.wants_picker() {
+        let opts = ui::app::UiOptions::default();
+        return window_exit(ui::app::run_with(opts, move |window, cx| {
+            Workbench::new_picker(launcher, window, cx)
+        }));
+    }
+    let config = match Config::from_args(args) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return 2;
+        }
+    };
+    let parts = match session_parts(&config, Overrides::default(), handle) {
         Ok(parts) => parts,
         Err(err) => {
             eprintln!("error: {err:#}");
@@ -932,14 +1024,126 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
         theme: parts.theme,
         ..ui::app::UiOptions::default()
     };
-    match ui::app::run_with(opts, move |window, cx| {
-        ui::session::open(parts, window, cx).0
-    }) {
+    let dir = parts.workspace_dir.clone().unwrap_or(config.workspace);
+    window_exit(ui::app::run_with(opts, move |window, cx| {
+        Workbench::new_with_session(launcher, parts, dir, window, cx)
+    }))
+}
+
+fn window_exit(result: Result<(), ui::app::UiError>) -> u8 {
+    match result {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("error: {err}");
             1
         }
+    }
+}
+
+/// Opens the projects chosen in the window's picker with the options of
+/// the command line, as `crest DIR` would.
+pub struct Launcher {
+    args: Args,
+    overrides: Overrides,
+    handle: Handle,
+    browser: Arc<dyn ProjectBrowserPort>,
+}
+
+impl Launcher {
+    /// A launcher for `args`, over the runtime of `handle`.
+    #[must_use]
+    pub fn new(args: Args, overrides: Overrides, handle: Handle) -> Self {
+        let browser: Arc<dyn ProjectBrowserPort> = Arc::new(TokioPort::new(
+            Arc::new(LocalProjectBrowser::new()) as Arc<dyn ProjectBrowserPort>,
+            handle.clone(),
+        ));
+        Self {
+            args,
+            overrides,
+            handle,
+            browser,
+        }
+    }
+
+    /// The same launcher listing directories with `browser` (tests).
+    #[must_use]
+    pub fn with_browser(mut self, browser: Arc<dyn ProjectBrowserPort>) -> Self {
+        self.browser = browser;
+        self
+    }
+}
+
+impl ProjectOpener for Launcher {
+    fn open(&self, dir: PathBuf) -> BoxFuture<'static, Result<SessionParts, String>> {
+        let config = Config::for_workspace(&self.args, dir);
+        let (overrides, handle) = (self.overrides.clone(), self.handle.clone());
+        // `session_parts` blocks on the runtime: off its worker threads.
+        self.handle
+            .spawn_blocking(move || {
+                session_parts(&config, overrides, &handle).map_err(|err| format!("{err:#}"))
+            })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn recent(&self) -> BoxFuture<'static, Vec<RecentWorkspace>> {
+        let path = self
+            .overrides
+            .db_path
+            .clone()
+            .or_else(adapter_store::path::default_db_path);
+        self.handle
+            .spawn(async move {
+                let Some(path) = path.filter(|path| path.exists()) else {
+                    return Vec::new();
+                };
+                match adapter_store::SqliteSessionStore::open(&path) {
+                    Ok(store) => store
+                        .recent_workspaces(RECENT_PROJECTS)
+                        .await
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
+            })
+            .map(Result::unwrap_or_default)
+            .boxed()
+    }
+
+    fn browser(&self) -> Arc<dyn ProjectBrowserPort> {
+        Arc::clone(&self.browser)
+    }
+}
+
+/// Most recent projects the picker lists.
+const RECENT_PROJECTS: usize = 20;
+
+#[async_trait]
+impl<T: ProjectBrowserPort + ?Sized + 'static> ProjectBrowserPort for TokioPort<T> {
+    fn start_dir(&self) -> Option<PathBuf> {
+        self.inner.start_dir()
+    }
+
+    async fn list_dirs(&self, path: &std::path::Path) -> Result<DirListing, BrowseError> {
+        let (port, path) = (Arc::clone(&self.inner), path.to_path_buf());
+        self.handle
+            .spawn(async move { port.list_dirs(&path).await })
+            .await
+            .unwrap_or_else(|err| Err(cancelled(&err)))
+    }
+
+    async fn resolve(&self, input: &str) -> Result<PathBuf, BrowseError> {
+        let (port, input) = (Arc::clone(&self.inner), input.to_owned());
+        self.handle
+            .spawn(async move { port.resolve(&input).await })
+            .await
+            .unwrap_or_else(|err| Err(cancelled(&err)))
+    }
+}
+
+fn cancelled(err: &tokio::task::JoinError) -> BrowseError {
+    BrowseError::Unreadable {
+        path: String::new(),
+        reason: err.to_string(),
     }
 }
 
@@ -984,6 +1188,7 @@ mod tests {
         let controller = UnavailableController::new("the API key is missing", PermissionMode::Ask);
         let end = futures::executor::block_on(controller.run_turn(TurnRequest {
             prompt: "hola".into(),
+            images: Vec::new(),
             model_override: None,
             role: None,
             cancel: CancelToken::new(),

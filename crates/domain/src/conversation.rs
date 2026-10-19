@@ -254,6 +254,19 @@ impl Message {
         Self::new(Role::User, vec![ContentPart::text(text)])
     }
 
+    /// Builds a user message: the text (when not empty) followed by the
+    /// images it goes with, in order.
+    #[must_use]
+    pub fn user(text: impl Into<String>, images: Vec<ImageAttachment>) -> Self {
+        let text = text.into();
+        let mut content = Vec::with_capacity(images.len() + 1);
+        if !text.is_empty() || images.is_empty() {
+            content.push(ContentPart::text(text));
+        }
+        content.extend(images.into_iter().map(ImageAttachment::into_part));
+        Self::new(Role::User, content)
+    }
+
     /// Builds an assistant message from its content parts.
     #[must_use]
     pub fn assistant(content: Vec<ContentPart>) -> Self {
@@ -404,11 +417,148 @@ impl Session {
     }
 }
 
+/// Image media types every model that accepts images takes.
+pub const IMAGE_MEDIA_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/// Largest image accepted, in bytes before base64 encoding.
+pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+/// Largest width or height of an image, in pixels.
+pub const MAX_IMAGE_SIDE: u32 = 8000;
+/// Most images attached to one message.
+pub const MAX_IMAGES_PER_MESSAGE: usize = 20;
+
+/// An image the user attached to a message (pasted in the input), kept as
+/// structured data: never inlined in the message text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImageAttachment {
+    /// One of [`IMAGE_MEDIA_TYPES`].
+    pub media_type: String,
+    /// Base64-encoded bytes.
+    pub data: String,
+    /// Width in pixels, as the front end decoded it.
+    #[serde(default)]
+    pub width: u32,
+    /// Height in pixels.
+    #[serde(default)]
+    pub height: u32,
+}
+
+impl ImageAttachment {
+    /// Size of the image in bytes, from its base64 payload.
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.data.trim_end_matches('=').len() * 3 / 4
+    }
+
+    /// Checks it against the limits every model that takes images has:
+    /// [`IMAGE_MEDIA_TYPES`], [`MAX_IMAGE_SIDE`] and [`MAX_IMAGE_BYTES`].
+    ///
+    /// # Errors
+    ///
+    /// What breaks the limits, with the sizes.
+    pub fn check(&self) -> Result<(), String> {
+        if !IMAGE_MEDIA_TYPES.contains(&self.media_type.as_str()) {
+            return Err(format!(
+                "the image is {}; only {} are accepted",
+                self.media_type,
+                IMAGE_MEDIA_TYPES.join(", ")
+            ));
+        }
+        if self.width > MAX_IMAGE_SIDE || self.height > MAX_IMAGE_SIDE {
+            return Err(format!(
+                "the image is {}×{} px; at most {MAX_IMAGE_SIDE} px on a side can be sent",
+                self.width, self.height
+            ));
+        }
+        let bytes = self.byte_len();
+        if bytes > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "the image is {}, over the limit of {}",
+                size_text(bytes),
+                size_text(MAX_IMAGE_BYTES)
+            ));
+        }
+        Ok(())
+    }
+
+    /// The content part that carries it to the model.
+    #[must_use]
+    pub fn into_part(self) -> ContentPart {
+        ContentPart::Image {
+            media_type: self.media_type,
+            data: self.data,
+        }
+    }
+}
+
+/// A size in bytes as people read it: `1.4 MB`, `820 KB`.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn size_text(bytes: usize) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    if bytes as f64 >= MB {
+        format!("{:.1} MB", bytes as f64 / MB)
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde::de::DeserializeOwned;
     use std::fmt::Debug;
+
+    #[test]
+    fn image_limits_name_what_is_wrong() {
+        let image = |media_type: &str, side: u32, data: String| ImageAttachment {
+            media_type: media_type.into(),
+            data,
+            width: side,
+            height: 2,
+        };
+        assert_eq!(image("image/png", 2, "iVBO".into()).check(), Ok(()));
+        let bmp = image("image/bmp", 2, "Qk0=".into()).check().unwrap_err();
+        assert!(bmp.contains("image/bmp"), "{bmp}");
+        let wide = image("image/png", MAX_IMAGE_SIDE + 1, "iVBO".into());
+        assert!(wide.check().unwrap_err().contains("8001×2 px"));
+        let huge = image("image/png", 2, "A".repeat(MAX_IMAGE_BYTES / 3 * 4 + 8));
+        let err = huge.check().unwrap_err();
+        assert!(err.contains("over the limit of 5.0 MB"), "{err}");
+        assert_eq!(image("image/png", 1, "QUJD".into()).byte_len(), 3);
+        assert_eq!(image("image/png", 1, "QUI=".into()).byte_len(), 2);
+    }
+
+    #[test]
+    fn sizes_read_well() {
+        assert_eq!(size_text(1), "1 KB");
+        assert_eq!(size_text(820 * 1024), "820 KB");
+        assert_eq!(size_text(MAX_IMAGE_BYTES), "5.0 MB");
+    }
+
+    #[test]
+    fn user_messages_put_the_text_before_its_images() {
+        let png = ImageAttachment {
+            media_type: "image/png".into(),
+            data: "iVBO".into(),
+            width: 1,
+            height: 1,
+        };
+        let message = Message::user("what is this?", vec![png.clone()]);
+        assert_eq!(message.role, Role::User);
+        assert_eq!(
+            message.content,
+            [ContentPart::text("what is this?"), png.clone().into_part()]
+        );
+        // Images alone carry no empty text part; plain text is unchanged.
+        assert_eq!(
+            Message::user("", vec![png.clone()]).content,
+            [png.into_part()]
+        );
+        assert_eq!(
+            Message::user("hi", Vec::new()).content,
+            Message::user_text("hi").content
+        );
+    }
 
     fn round_trip<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: &T) {
         let json = serde_json::to_string(value).unwrap();

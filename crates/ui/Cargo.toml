@@ -17,7 +17,9 @@ futures.workspace = true
 gpui.workspace = true
 gpui-base.workspace = true
 gpui_platform.workspace = true
-image.workspace = true
+# Decodes pasted images to check their size and turns the formats the
+# model does not take (bmp, tiff, ico, pnm) into png.
+image = { workspace = true, features = ["bmp", "gif", "ico", "jpeg", "png", "pnm", "tiff", "webp"] }
 # Tree-sitter highlighting for code blocks in markdown and the markdown
 # source view; only the grammars an agent session commonly shows.
 gpui-component = { workspace = true, features = [

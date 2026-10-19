@@ -67,10 +67,10 @@ use application::ports::events::{DomainEvent, NoticeLevel};
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
-use domain::block::{Block, BlockKind, CustomNode};
-use domain::conversation::StopReason;
+use domain::block::{Block, BlockId, BlockKind, CustomNode, ImageData, ImageFit};
+use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
-use domain::modal::{ModalPosition, ModalSpec, Percent};
+use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::{ModelId, ModelRole};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspacePath;
@@ -92,6 +92,7 @@ use crate::commands::unknown_command_hint;
 use crate::help::{
     HELP_ACTION, HelpSnapshot, HelpView, LocalHelp, Section, help_modal_id, parse_help_arg,
 };
+use crate::input::attachments::ImageMode;
 use crate::input::{
     FOCUS_INPUT_ACTION, InputEvent, InputView, QUEUE_EDIT_ACTION, key_from_keystroke,
 };
@@ -118,12 +119,36 @@ const GIT_REFRESH: Duration = Duration::from_secs(5);
 pub struct TurnRequest {
     /// What the user typed.
     pub prompt: String,
+    /// Images pasted with the prompt, sent after it in the same message.
+    pub images: Vec<ImageAttachment>,
     /// Alias, role or id for this turn only (`<leader>m`, `/model`).
     pub model_override: Option<String>,
     /// Role of the turn instead of `main` (`app.send(text, { role })`).
     pub role: Option<ModelRole>,
     /// Cancelled by `Ctrl+C`.
     pub cancel: CancelToken,
+}
+
+/// Share of the window an inspected image takes, in percent.
+const INSPECT_PERCENT: f32 = 90.0;
+
+/// A prompt waiting for the session to be free.
+#[derive(Debug, Clone)]
+struct Queued {
+    prompt: String,
+    role: Option<ModelRole>,
+    images: Vec<ImageAttachment>,
+}
+
+impl Queued {
+    /// What the activity line shows for it.
+    fn label(&self) -> String {
+        match self.images.len() {
+            0 => self.prompt.clone(),
+            1 => format!("{} [+1 image]", self.prompt),
+            n => format!("{} [+{n} images]", self.prompt),
+        }
+    }
 }
 
 /// How a turn sent from the UI ended.
@@ -197,6 +222,21 @@ pub trait SessionController: Send + Sync {
         .boxed()
     }
 
+    /// Adds `images` to the chat as image blocks (after `caption`, when not
+    /// empty), saved with the session. The model is not called.
+    fn post_images(
+        &self,
+        caption: String,
+        images: Vec<ImageAttachment>,
+    ) -> BoxFuture<'static, Reply> {
+        let _ = (caption, images);
+        futures::future::ready(Reply::Notice(
+            NoticeLevel::Warning,
+            "images cannot be added to this chat".into(),
+        ))
+        .boxed()
+    }
+
     /// Runs the `/name args` command, if the controller has one by that
     /// name; `None` means there is none.
     fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
@@ -238,10 +278,7 @@ fn typed_text(key: &Key) -> Option<String> {
 }
 
 /// The block that shows a prompt sent by the user in the timeline.
-pub fn prompt_block(prompt: &str) -> Block {
-    let quoted: String = prompt.lines().map(|line| format!("> {line}\n")).collect();
-    Block::new(BlockKind::Text { markdown: quoted })
-}
+pub use application::usecases::user_blocks::prompt_block;
 
 /// What `@` reference a file chosen in the tree or a picker inserts.
 pub fn file_reference(path: &WorkspacePath, line: Option<u64>) -> String {
@@ -329,7 +366,7 @@ pub struct Session {
     /// Names of the `/` commands waiting for the controller's reply.
     commands: Vec<String>,
     turn: Option<Task<()>>,
-    queue: VecDeque<(String, Option<ModelRole>)>,
+    queue: VecDeque<Queued>,
     model_override: Option<String>,
     menu: Option<ModelMenu>,
     git: Option<Task<()>>,
@@ -416,6 +453,7 @@ impl Session {
         });
         let input = cx.new(|cx| {
             let mut input = InputView::with_keymap(keymap, window, cx);
+            input.set_file_search(files.clone());
             if let Some(timeoutlen) = timeoutlen {
                 input.sequencer_mut().set_timeoutlen(timeoutlen);
             }
@@ -463,15 +501,22 @@ impl Session {
             ),
             Self::intercept_keys(cx),
         ];
-        // A file cited by a block (Sources) opens like a picker choice.
+        // A file cited by a block (Sources) opens like a picker choice; a
+        // clicked image opens in a modal to zoom in.
         let block_events = block_events(cx);
         subscriptions.push(cx.subscribe_in(
             &block_events,
             window,
-            |this, _, event: &BlockEvent, window, cx| {
-                if let BlockEvent::OpenFile { path, line } = event {
+            |this, _, event: &BlockEvent, window, cx| match event {
+                BlockEvent::OpenFile { path, line } => {
                     this.insert_reference(&file_reference(path, *line), window, cx);
                 }
+                BlockEvent::InspectImage {
+                    block,
+                    media_type,
+                    data,
+                } => this.inspect_image(*block, media_type, data, window, cx),
+                BlockEvent::OpenUrl { .. } => {}
             },
         ));
 
@@ -747,8 +792,24 @@ impl Session {
     /// Sends `prompt` answered with `role` (`main` when `None`), or queues
     /// it while the session is busy.
     pub fn submit_as(&mut self, prompt: String, role: Option<ModelRole>, cx: &mut Context<Self>) {
+        self.submit_with(prompt, role, Vec::new(), cx);
+    }
+
+    /// Sends `prompt` with the `images` pasted with it, or queues both
+    /// while the session is busy.
+    pub fn submit_with(
+        &mut self,
+        prompt: String,
+        role: Option<ModelRole>,
+        images: Vec<ImageAttachment>,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_busy() {
-            self.queue.push_back((prompt, role));
+            self.queue.push_back(Queued {
+                prompt,
+                role,
+                images,
+            });
             self.sync_activity(cx);
             return;
         }
@@ -756,6 +817,7 @@ impl Session {
         self.running = Some(cancel.clone());
         let turn = self.controller.run_turn(TurnRequest {
             prompt,
+            images,
             model_override: self.model_override.take(),
             role,
             cancel,
@@ -771,9 +833,9 @@ impl Session {
     /// Sends the next queued prompt once the session is free.
     fn drain_queue(&mut self, cx: &mut Context<Self>) {
         if !self.is_busy()
-            && let Some((next, role)) = self.queue.pop_front()
+            && let Some(next) = self.queue.pop_front()
         {
-            self.submit_as(next, role, cx);
+            self.submit_with(next.prompt, next.role, next.images, cx);
         }
         self.sync_activity(cx);
     }
@@ -786,11 +848,7 @@ impl Session {
         } else {
             self.commands.last().cloned().map(WorkKind::Command)
         };
-        let queue: Vec<String> = self
-            .queue
-            .iter()
-            .map(|(prompt, _)| prompt.clone())
-            .collect();
+        let queue: Vec<String> = self.queue.iter().map(Queued::label).collect();
         let queued = !queue.is_empty();
         self.activity.update(cx, |activity, cx| {
             activity.set_work(work, cx);
@@ -802,11 +860,13 @@ impl Session {
     /// `Up` in an empty prompt: the last queued prompt goes back to the
     /// input to be edited (or emptied to drop it).
     fn edit_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((prompt, _)) = self.queue.pop_back() else {
+        let Some(queued) = self.queue.pop_back() else {
             return;
         };
-        self.input
-            .update(cx, |input, cx| input.set_text(&prompt, window, cx));
+        self.input.update(cx, |input, cx| {
+            input.set_text(&queued.prompt, window, cx);
+            input.restore_images(queued.images, cx);
+        });
         self.sync_activity(cx);
     }
 
@@ -924,6 +984,7 @@ impl Session {
                 Err(err) => self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx),
             },
             "clear" => self.clear(window, cx),
+            "project" => self.switch_project(window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
             "modal" if arg == "close" => {
                 let closed = self
@@ -1024,6 +1085,25 @@ impl Session {
     }
 
     /// `/clear`: a new session and an empty timeline.
+    /// `/project`: back to the project picker, once nothing runs. The
+    /// window ([`crate::workbench::Workbench`]) handles the action.
+    fn switch_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.running.is_some() {
+            self.notice(
+                NoticeLevel::Warning,
+                "a turn is running; Ctrl+C to interrupt it before /project",
+                cx,
+            );
+            return;
+        }
+        if let Some(command) = self.commands.last() {
+            let message = format!("/{command} is running; /project once it stops");
+            self.notice(NoticeLevel::Warning, message, cx);
+            return;
+        }
+        window.dispatch_action(Box::new(crate::workbench::SwitchProject), cx);
+    }
+
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.running.is_some() {
             self.notice(
@@ -1049,6 +1129,48 @@ impl Session {
         cx.notify();
     }
 
+    /// Shows the picture of the image block `block` in a modal.
+    fn inspect_image(
+        &mut self,
+        block: BlockId,
+        media_type: &str,
+        data: &ImageData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let size = Percent::new(INSPECT_PERCENT).unwrap_or_default();
+        let spec = ModalSpec {
+            id: ModalId::new(format!("image:{block}")),
+            plugin: "crest".into(),
+            title: "Image".into(),
+            width: size,
+            height: size,
+            position: ModalPosition::CENTER,
+            content: CustomNode::Image {
+                source: data.clone(),
+                media_type: Some(media_type.to_owned()),
+                alt: None,
+                fit: ImageFit::Contain,
+            },
+        };
+        self.modal.update(cx, |modal, cx| {
+            modal.apply(DomainEvent::ModalOpened { spec }, window, cx);
+        });
+    }
+
+    /// Adds pasted images to the chat only: the controller saves them as
+    /// image blocks and the model is never called.
+    pub fn post_images(
+        &mut self,
+        caption: String,
+        images: Vec<ImageAttachment>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reply = self.controller.post_images(caption, images);
+        self.await_reply(reply, 0, window, cx);
+    }
+
     fn insert_reference(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.input
             .update(cx, |input, cx| input.insert_text(text, window, cx));
@@ -1063,6 +1185,17 @@ impl Session {
     ) {
         match event {
             InputEvent::Submit(prompt) => self.submit(prompt.clone(), cx),
+            InputEvent::SubmitImages {
+                text,
+                images,
+                mode: ImageMode::Model,
+            } => self.submit_with(text.clone(), None, images.clone(), cx),
+            InputEvent::SubmitImages {
+                text,
+                images,
+                mode: ImageMode::ChatOnly,
+            } => self.post_images(text.clone(), images.clone(), window, cx),
+            InputEvent::Notice(message) => self.notice(NoticeLevel::Warning, message.clone(), cx),
             InputEvent::Command(command) => self.command(command, window, cx),
             InputEvent::Action(action) => self.action(action, window, cx),
         }
@@ -1285,8 +1418,9 @@ mod tests {
     use application::testing::system::{RecordingSink, RecordingTelemetry};
     use application::tools::files::{FileToolPorts, register_file_tools};
     use application::tools::registry::ToolRegistry;
-    use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
+    use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
     use domain::block::ToolStatus;
+    use domain::conversation::ContentPart;
     use domain::conversation::Session as Conversation;
     use domain::model::{ModelPolicy, ModelRole};
     use domain::permission::PermissionPolicy;
@@ -1323,10 +1457,8 @@ mod tests {
                         opts = opts.with_override(model);
                     }
                     let mut conversation = conversation.lock().await;
-                    match service
-                        .run_turn(&mut conversation, request.prompt, opts)
-                        .await
-                    {
+                    let input = UserInput::new(request.prompt, request.images);
+                    match service.run_turn(&mut conversation, input, opts).await {
                         Ok(outcome) => TurnEnd::Finished(outcome.stop_reason),
                         Err(err) => TurnEnd::Failed(err.to_string()),
                     }
@@ -1365,6 +1497,18 @@ mod tests {
                 *conversation.lock().await = Conversation::new("/ws", 0);
             }
             .boxed()
+        }
+
+        /// Adds the images as blocks, as the binary does.
+        fn post_images(
+            &self,
+            caption: String,
+            images: Vec<ImageAttachment>,
+        ) -> BoxFuture<'static, Reply> {
+            for block in application::usecases::user_blocks::user_blocks(&caption, &images) {
+                self.events.emit(DomainEvent::BlockAdded { block });
+            }
+            futures::future::ready(Reply::Done).boxed()
         }
 
         /// Callback 7 is `function() app.cmd("clear") end`.
@@ -2066,9 +2210,71 @@ mod tests {
         assert_eq!(file_reference(&path, Some(3)), "@src/lib.rs:3 ");
     }
 
-    #[test]
-    fn the_prompt_block_quotes_every_line() {
-        let block = prompt_block("uno\ndos");
-        assert_eq!(text_of(&block.kind), Some("> uno\n> dos\n"));
+    fn paste_png(h: &Harness, cx: &mut VisualTestContext) {
+        let png = crate::input::attachments::tests::encoded(2, 2, image::ImageFormat::Png);
+        let input = h.session.read_with(cx, |s, _| s.input().clone());
+        input.update(cx, |input, cx| {
+            input.attach_images(
+                vec![gpui::Image::from_bytes(gpui::ImageFormat::Png, png)],
+                cx,
+            );
+        });
+    }
+
+    fn image_blocks(h: &Harness, cx: &mut VisualTestContext) -> usize {
+        blocks(h, cx)
+            .iter()
+            .filter(|kind| matches!(kind, BlockKind::Image { .. }))
+            .count()
+    }
+
+    #[gpui::test]
+    fn chat_only_images_become_blocks_without_calling_the_model(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![], cx);
+        paste_png(&h, cx);
+        cx.simulate_keystrokes("alt-m");
+        let input = h.session.read_with(cx, |s, _| s.input().clone());
+        input.read_with(cx, |input, _| {
+            assert_eq!(input.image_mode(), ImageMode::ChatOnly);
+        });
+        send("the bug", cx);
+        wait_until(&h, cx, "the image block", |s, cx| {
+            s.timeline()
+                .read(cx)
+                .state()
+                .entries()
+                .iter()
+                .any(|e| matches!(e.block.kind, BlockKind::Image { .. }))
+        });
+        assert!(h.llm.requests().is_empty(), "the model was called");
+        assert_eq!(image_blocks(&h, cx), 1);
+        assert!(
+            blocks(&h, cx)
+                .iter()
+                .filter_map(text_of)
+                .any(|t| t == "> the bug\n")
+        );
+        input.read_with(cx, |input, _| {
+            assert!(input.images().is_empty());
+            assert_eq!(input.image_mode(), ImageMode::Model);
+        });
+    }
+
+    #[gpui::test]
+    fn model_images_go_with_the_prompt(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("a red square")], cx);
+        paste_png(&h, cx);
+        send("what is it?", cx);
+        wait_until(&h, cx, "the answer", |s, _| !s.is_busy());
+        let request = h.llm.last_request().unwrap();
+        let content = &request.messages[0].content;
+        assert!(
+            matches!(&content[0], ContentPart::Text { text, .. } if text == "what is it?"),
+            "{content:?}"
+        );
+        assert!(matches!(
+            &content[1],
+            ContentPart::Image { media_type, .. } if media_type == "image/png"
+        ));
     }
 }

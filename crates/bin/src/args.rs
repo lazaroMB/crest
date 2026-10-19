@@ -9,9 +9,14 @@ use domain::permission::PermissionMode;
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
 #[command(name = "crest", version)]
 pub struct Args {
-    /// Workspace to open (default: the current directory).
+    /// Workspace to open. Without it the window starts in the project
+    /// picker; headless runs use the current directory.
     #[arg(value_name = "DIR", conflicts_with = "workspace")]
     pub dir: Option<PathBuf>,
+
+    /// Opens the window in the project picker (the default without DIR).
+    #[arg(long, conflicts_with_all = ["dir", "workspace", "headless"])]
+    pub pick: bool,
 
     /// Workspace to open; same as the positional argument.
     #[arg(long, value_name = "DIR")]
@@ -135,6 +140,13 @@ impl Args {
     pub fn workspace_dir(&self) -> Option<&PathBuf> {
         self.workspace.as_ref().or(self.dir.as_ref())
     }
+
+    /// Whether the window starts in the project picker: `--pick`, or no
+    /// workspace on the command line.
+    #[must_use]
+    pub fn wants_picker(&self) -> bool {
+        self.pick || self.workspace_dir().is_none()
+    }
 }
 
 #[cfg(test)]
@@ -163,11 +175,22 @@ mod tests {
     }
 
     #[test]
-    fn no_arguments_opens_the_current_directory() {
+    fn no_arguments_opens_the_project_picker() {
         let args = parse(&[]).unwrap();
         assert_eq!(args.workspace_dir(), None);
+        assert!(args.wants_picker());
         assert_eq!(args.headless, None);
         assert!(!args.yes);
+    }
+
+    #[test]
+    fn pick_is_explicit_and_excludes_a_workspace() {
+        assert!(parse(&["--pick"]).unwrap().wants_picker());
+        assert!(!parse(&["/p"]).unwrap().wants_picker());
+        assert!(!parse(&["--workspace", "/w"]).unwrap().wants_picker());
+        assert!(parse(&["--pick", "/p"]).is_err());
+        assert!(parse(&["--pick", "--workspace", "/w"]).is_err());
+        assert!(parse(&["--pick", "--headless", "hola"]).is_err());
     }
 
     #[test]

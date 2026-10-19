@@ -357,6 +357,7 @@ pub struct ScriptedLlm {
     script: Mutex<VecDeque<ScriptedResponse>>,
     requests: Mutex<Vec<LlmRequest>>,
     open: Arc<AtomicUsize>,
+    text_only: bool,
 }
 
 impl ScriptedLlm {
@@ -367,7 +368,16 @@ impl ScriptedLlm {
             script: Mutex::new(script.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
             open: Arc::new(AtomicUsize::new(0)),
+            text_only: false,
         }
+    }
+
+    /// Makes every model refuse images ([`LlmPort::accepts_images`]); by
+    /// default the fake accepts them.
+    #[must_use]
+    pub fn text_only(mut self) -> Self {
+        self.text_only = true;
+        self
     }
 
     /// Appends one more answer to the end of the script.
@@ -402,6 +412,10 @@ impl ScriptedLlm {
 
 #[async_trait]
 impl LlmPort for ScriptedLlm {
+    fn accepts_images(&self, _model: &ModelId) -> bool {
+        !self.text_only
+    }
+
     async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
         lock(&self.requests).push(req.clone());
         let response = lock(&self.script)
