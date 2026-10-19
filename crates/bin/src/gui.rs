@@ -34,12 +34,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use adapter_anthropic::KeyringCredentials;
 use adapter_fs::LocalProjectBrowser;
 use adapter_search::RipgrepSearch;
 use application::flows::implement::flow::{FlowError, FlowReply};
 use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
+use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::mcp::McpPort as _;
 use application::ports::plugin::{
@@ -77,7 +79,9 @@ use ui::workbench::{ProjectOpener, Workbench};
 use crate::args::Args;
 use crate::plugin_trust::PluginTrust;
 use crate::research::ResearchCommand;
-use crate::root::{App, Config, Frontend, Overrides, SharedPromptHistory, build_app};
+use crate::root::{
+    App, Config, Frontend, MissingApiKey, Overrides, SharedPromptHistory, build_app,
+};
 
 /// [`EventSink`] that sends every event to the UI.
 #[derive(Debug, Clone)]
@@ -179,6 +183,8 @@ pub struct UiController {
     shell: Arc<dyn application::ports::shell::ShellPort>,
     /// Commands running on the runtime, aborted by `Ctrl+C`.
     running: Arc<Mutex<Vec<AbortHandle>>>,
+    /// Where `/login` stores the API key.
+    api_keys: Arc<dyn ApiKeyPort>,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -434,6 +440,7 @@ impl UiController {
             simulator,
             shell,
             running: Arc::new(Mutex::new(Vec::new())),
+            api_keys: Arc::new(KeyringCredentials::default()),
         }
     }
 }
@@ -494,6 +501,13 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
 }
 
 impl UiController {
+    /// Returns the same controller storing `/login` keys in `keys`.
+    #[must_use]
+    pub fn with_api_keys(mut self, keys: Arc<dyn ApiKeyPort>) -> Self {
+        self.api_keys = keys;
+        self
+    }
+
     /// Runs the command `name` on the runtime; `Ctrl+C` aborts it
     /// ([`SessionController::interrupt_commands`]).
     fn spawn_command(
@@ -818,6 +832,14 @@ impl SessionController for UiController {
         !running.is_empty()
     }
 
+    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+        login_on(&self.handle, Arc::clone(&self.api_keys), key)
+    }
+
+    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+        logout_on(&self.handle, Arc::clone(&self.api_keys))
+    }
+
     fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
         let shell = Arc::clone(&self.shell);
         let task = self.handle.spawn(async move {
@@ -850,6 +872,8 @@ pub struct UnavailableController {
     reason: String,
     mode: Mutex<PermissionMode>,
     models: Vec<ModelChoice>,
+    /// `/login` and `/logout`: the runtime and where the key goes.
+    login: Option<(Handle, Arc<dyn ApiKeyPort>)>,
 }
 
 impl UnavailableController {
@@ -860,8 +884,41 @@ impl UnavailableController {
             reason: reason.into(),
             mode: Mutex::new(mode),
             models: model_choices(&ModelPolicy::default()),
+            login: None,
         }
     }
+
+    /// Returns the same controller storing `/login` keys in `keys`, on
+    /// `handle`'s runtime.
+    #[must_use]
+    pub fn with_login(mut self, handle: Handle, keys: Arc<dyn ApiKeyPort>) -> Self {
+        self.login = Some((handle, keys));
+        self
+    }
+}
+
+/// `/login` on the runtime of `handle` (the UI polls the future on its own
+/// executor; the keyring and the API check need tokio).
+fn login_on(
+    handle: &Handle,
+    keys: Arc<dyn ApiKeyPort>,
+    key: String,
+) -> BoxFuture<'static, Result<String, String>> {
+    let task =
+        handle.spawn(async move { application::usecases::login::login(keys.as_ref(), &key).await });
+    task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+        .boxed()
+}
+
+/// `/logout` on the runtime of `handle`.
+fn logout_on(
+    handle: &Handle,
+    keys: Arc<dyn ApiKeyPort>,
+) -> BoxFuture<'static, Result<String, String>> {
+    let task =
+        handle.spawn(async move { application::usecases::login::logout(keys.as_ref()).await });
+    task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+        .boxed()
 }
 
 impl SessionController for UnavailableController {
@@ -883,6 +940,20 @@ impl SessionController for UnavailableController {
 
     fn new_session(&self) -> BoxFuture<'static, ()> {
         futures::future::ready(()).boxed()
+    }
+
+    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+        match &self.login {
+            Some((handle, keys)) => login_on(handle, Arc::clone(keys), key),
+            None => futures::future::ready(Err("API keys cannot be stored here".into())).boxed(),
+        }
+    }
+
+    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+        match &self.login {
+            Some((handle, keys)) => logout_on(handle, Arc::clone(keys)),
+            None => futures::future::ready(Err("API keys cannot be stored here".into())).boxed(),
+        }
     }
 }
 
@@ -913,6 +984,10 @@ pub fn session_parts(
         events: Arc::new(sink.clone()),
         approval: Arc::new(approval),
     };
+    let api_keys: Arc<dyn ApiKeyPort> = overrides
+        .api_keys
+        .clone()
+        .unwrap_or_else(|| Arc::new(KeyringCredentials::default()));
     let built = handle.block_on(build_app(config, frontend, overrides));
     let (mut parts, workspace) = match built {
         Ok(app) => {
@@ -940,7 +1015,9 @@ pub fn session_parts(
             };
             let history = app.timeline_blocks();
             let prompt_history = app.prompt_history().clone();
-            let controller = Arc::new(UiController::new(app, handle.clone()));
+            let controller = Arc::new(
+                UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
+            );
             let mut parts = SessionParts::new(
                 controller,
                 events,
@@ -957,6 +1034,7 @@ pub fn session_parts(
             (parts, workspace)
         }
         Err(err) => {
+            let needs_login = err.chain().any(|e| e.is::<MissingApiKey>());
             let reason = format!("{err:#}");
             let root = std::fs::canonicalize(&config.workspace)
                 .map_err(anyhow::Error::from)
@@ -969,21 +1047,30 @@ pub fn session_parts(
             sink.emit(DomainEvent::BlockAdded {
                 block: Block::new(BlockKind::Error {
                     message: reason.clone(),
-                    hint: Some("the agent cannot answer; fix this and reopen crest".into()),
+                    hint: Some(if needs_login {
+                        "run /login to paste your API key; it is stored in the system keyring"
+                            .into()
+                    } else {
+                        "the agent cannot answer; fix this and reopen crest".into()
+                    }),
                 }),
             });
             let workspace = root.as_path().to_path_buf();
             let search = Arc::new(RipgrepSearch::new(root));
             let files: Arc<dyn FileSearchPort> = search.clone();
             let content: Arc<dyn ContentSearchPort> = search;
-            let controller = Arc::new(UnavailableController::new(reason, config.mode));
-            let parts = SessionParts::new(
+            let controller = Arc::new(
+                UnavailableController::new(reason, config.mode)
+                    .with_login(handle.clone(), api_keys),
+            );
+            let mut parts = SessionParts::new(
                 controller,
                 events,
                 approvals,
                 Arc::new(TokioPort::new(files, handle.clone())),
                 Arc::new(TokioPort::new(content, handle.clone())),
             );
+            parts.needs_login = needs_login;
             (parts, workspace)
         }
     };
@@ -1209,6 +1296,29 @@ mod tests {
         controller.set_permission_mode(PermissionMode::Plan);
         assert_eq!(controller.permission_mode(), PermissionMode::Plan);
         assert!(!controller.models().is_empty());
+    }
+
+    #[test]
+    fn login_and_logout_go_to_the_key_store_on_the_runtime() {
+        use application::ports::credentials::KeyCheck;
+        use application::testing::credentials::FakeKeys;
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let keys = FakeKeys::new(KeyCheck::Valid);
+        let controller = UnavailableController::new(MissingApiKey.to_string(), PermissionMode::Ask)
+            .with_login(runtime.handle().clone(), Arc::new(keys.clone()));
+        let stored = futures::executor::block_on(controller.login("sk-ant-new".into()));
+        assert_eq!(stored, Ok("API key stored in the system keyring".into()));
+        assert_eq!(keys.stored(), Some("sk-ant-new".into()));
+        let deleted = futures::executor::block_on(controller.logout());
+        assert_eq!(
+            deleted,
+            Ok("API key deleted from the system keyring".into())
+        );
+        assert_eq!(keys.stored(), None);
+
+        let without = UnavailableController::new("no", PermissionMode::Ask);
+        assert!(futures::executor::block_on(without.login("sk-ant-x".into())).is_err());
     }
 
     #[test]

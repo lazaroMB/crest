@@ -147,7 +147,27 @@ pub struct Overrides {
     /// The decision model instead of Clef (still subject to
     /// `app.opt.decision.enabled`).
     pub decision: Option<Arc<dyn application::ports::decision::DecisionPort>>,
+    /// Where `/login` checks and stores the API key, instead of the
+    /// Anthropic API and the system keyring.
+    pub api_keys: Option<Arc<dyn application::ports::credentials::ApiKeyPort>>,
 }
+
+/// No Anthropic API key in the environment nor in the keyring; the window
+/// then opens the `/login` dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MissingApiKey;
+
+impl std::fmt::Display for MissingApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "the Anthropic API key is missing: run /login in the window, export \
+             ANTHROPIC_API_KEY or store it in the system keyring (service `crest`, entry \
+             `ANTHROPIC_API_KEY`)",
+        )
+    }
+}
+
+impl std::error::Error for MissingApiKey {}
 
 /// Records the timeline of the session while forwarding every event.
 struct TimelineSink {
@@ -754,12 +774,7 @@ async fn model_ports(overrides: &Overrides) -> anyhow::Result<ModelPorts> {
     let key = tokio::task::spawn_blocking(ApiKey::from_env_or_keyring)
         .await
         .context("reading the API key")?
-        .map_err(|_| {
-            anyhow!(
-                "the Anthropic API key is missing: export ANTHROPIC_API_KEY or store it in the \
-                 system keyring (service `crest`, entry `ANTHROPIC_API_KEY`)"
-            )
-        })?;
+        .map_err(|_| MissingApiKey)?;
     let client = AnthropicClient::new(&key, ClientConfig::default())
         .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
     let catalog = overrides
