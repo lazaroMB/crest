@@ -2,8 +2,10 @@
 //! one-sentence statements (one per Spec) and the constraint table.
 //!
 //! The model drafts both as JSON from the hypotheses and the evidence.
-//! Every statement must pass the [`measurable`] heuristic and then the
-//! model's own judgement; when one fails, the model is asked once more
+//! With a decision model, it judges every statement (the [`measurable`]
+//! heuristic is only a hint it sees); without one, a statement must pass
+//! the heuristic and then the model's own judgement. When one fails, the
+//! model is asked once more
 //! with the reasons, and if it still fails the user is asked for what is
 //! missing. The user may also accept the definitions as they are (`ok`):
 //! the last draft is kept for that answer. Without evidence or hypotheses
@@ -15,6 +17,7 @@ use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use domain::block::{BlockKind, Cell, Column, TableSpec};
+use domain::decision::{DecisionRequest, Question};
 use domain::research::{ConstraintKind, EvidenceId, Stage, TestKind, TestRef};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +30,14 @@ pub const PROBLEMS_KEY: &str = "definition.problems";
 /// Key of the draft the user was asked about (`Option<Draft>`), kept in
 /// case they accept it as it is.
 const PENDING_KEY: &str = "definition.pending";
+/// Probability of "measurable" from which the decision model accepts a
+/// definition.
+const MEASURABLE_THRESHOLD: f32 = 0.6;
+/// Confidence from which the decision model's reading of the user's
+/// answer is taken.
+const REPLY_CONFIDENCE: f32 = 0.7;
+/// Evidence claims put in the decision model's state.
+const STATE_EVIDENCE: usize = 20;
 
 const DRAFT_SYSTEM: &str = "\
 You are the \"Definition and constraints\" node of an investigation into a software project. \
@@ -125,9 +136,9 @@ impl ResearchNode for Definition {
                 "there are no hypotheses to base the definition on",
             ));
         }
-        if let Some(reply) = ctx.user_reply()
-            && is_approval(reply)
+        if let Some(reply) = ctx.user_reply().map(str::to_owned)
             && let Some(pending) = ctx.data::<Option<Draft>>(PENDING_KEY).flatten()
+            && accepts(ctx, &reply).await
         {
             ctx.log("The user accepted the definitions as they are.");
             ctx.set_data(PENDING_KEY, None::<Draft>)?;
@@ -239,9 +250,42 @@ async fn ask_draft(ctx: &NodeContext, prompt: &str) -> Result<Draft, NodeError> 
     .await
 }
 
-/// The statements of `draft` that are not measurable: by the heuristic,
-/// and then by the model for those the heuristic accepts.
+/// Whether the user's `reply` accepts the pending definitions: a fixed
+/// "yes", or what the decision model reads as one.
+async fn accepts(ctx: &NodeContext, reply: &str) -> bool {
+    if is_approval(reply) {
+        return true;
+    }
+    let request = DecisionRequest::new(reply).ask(
+        "reply",
+        Question::choice(
+            "The user was shown problem definitions and asked to accept them as they are or say \
+             how to rewrite them. What does this answer do?",
+            [
+                (
+                    "accept",
+                    "accepts the definitions as they are, or says to go on",
+                ),
+                ("rewrite", "asks for changes or gives new details"),
+            ],
+        ),
+    );
+    ctx.decider()
+        .decide(&request)
+        .await
+        .and_then(|r| {
+            r.choice("reply")
+                .map(|(c, p)| c == "accept" && p >= REPLY_CONFIDENCE)
+        })
+        .unwrap_or(false)
+}
+
+/// The statements of `draft` that are not measurable: by the decision
+/// model when there is one, else by the heuristic and then the model.
 async fn rejections(ctx: &NodeContext, draft: &Draft) -> Result<Vec<Rejection>, NodeError> {
+    if let Some(rejected) = decided_rejections(ctx, draft).await {
+        return Ok(rejected);
+    }
     let mut rejected = Vec::new();
     let mut candidates = Vec::new();
     for p in &draft.problems {
@@ -282,6 +326,68 @@ async fn rejections(ctx: &NodeContext, draft: &Draft) -> Result<Vec<Rejection>, 
         }
     }
     Ok(rejected)
+}
+
+/// The decision model's verdicts, one yes/no question per statement with
+/// the heuristic's objection as a hint; `None` without a model or when it
+/// fails.
+async fn decided_rejections(ctx: &NodeContext, draft: &Draft) -> Option<Vec<Rejection>> {
+    if !ctx.decider().is_available() {
+        return None;
+    }
+    let evidence: Vec<&str> = ctx
+        .state()
+        .evidence
+        .iter()
+        .take(STATE_EVIDENCE)
+        .map(|e| e.claim.as_str())
+        .collect();
+    let state = serde_json::json!({ "request": ctx.problem(), "evidence": evidence });
+    let hints: Vec<Option<String>> = draft
+        .problems
+        .iter()
+        .map(|p| measurable::check(&p.statement).err().map(|e| e.reason))
+        .collect();
+    let request = draft.problems.iter().zip(&hints).enumerate().fold(
+        DecisionRequest::new(state),
+        |request, (i, (p, hint))| {
+            let hint = hint
+                .as_ref()
+                .map(|h| format!(" A keyword check objected: {h}."))
+                .unwrap_or_default();
+            request.ask(
+                format!("d{i}"),
+                Question::YesNo {
+                    instructions: format!(
+                        "Is this problem definition measurable and about a single problem? \
+                         Definition: \"{}\".{hint}",
+                        p.statement
+                    ),
+                    yes: Some(
+                        "it can be checked with a concrete measurement, a numeric threshold or \
+                         a test, and states one problem"
+                            .into(),
+                    ),
+                    no: Some("it is vague, untestable, or mixes several problems".into()),
+                },
+            )
+        },
+    );
+    let response = ctx.decider().decide(&request).await?;
+    let mut rejected = Vec::new();
+    for (i, (p, hint)) in draft.problems.iter().zip(hints).enumerate() {
+        let yes = response.yes(&format!("d{i}"))?;
+        if yes < MEASURABLE_THRESHOLD {
+            let reason = hint.unwrap_or_else(|| {
+                format!(
+                    "the decision model judged it not measurable ({:.0}% yes)",
+                    yes * 100.0
+                )
+            });
+            rejected.push((p.statement.clone(), reason));
+        }
+    }
+    Some(rejected)
 }
 
 fn list(rejected: &[Rejection]) -> String {

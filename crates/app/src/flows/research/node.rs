@@ -282,6 +282,14 @@ impl NodeContext {
         }
     }
 
+    /// The same context with other deps (its flow data kept), for tests.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_deps(mut self, deps: NodeDeps) -> Self {
+        self.deps = deps;
+        self
+    }
+
     /// The same context inside a graph of `stages` (in order).
     #[must_use]
     pub fn with_stages(mut self, stages: Arc<[Stage]>) -> Self {

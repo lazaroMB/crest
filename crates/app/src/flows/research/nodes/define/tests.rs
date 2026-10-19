@@ -7,9 +7,11 @@ use domain::research::{ConstraintKind, ResearchState, Stage};
 use serde_json::json;
 
 use super::*;
+use crate::decide::{Decider, DecisionOptions};
 use crate::flows::research::node::NodeDeps;
 use crate::ports::events::DomainEvent;
 use crate::ports::llm::LlmRequest;
+use crate::testing::decision::{ScriptedDecider, choice};
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::RecordingSink;
 
@@ -68,6 +70,15 @@ async fn run(
     reply: Option<&str>,
     script: impl IntoIterator<Item = ScriptedResponse>,
 ) -> Run {
+    run_with(Decider::none(), state, reply, script).await
+}
+
+async fn run_with(
+    decider: Decider,
+    state: ResearchState,
+    reply: Option<&str>,
+    script: impl IntoIterator<Item = ScriptedResponse>,
+) -> Run {
     let llm = Arc::new(ScriptedLlm::new(script));
     let sink = Arc::new(RecordingSink::new());
     let deps = NodeDeps::new(
@@ -75,7 +86,8 @@ async fn run(
         ModelPolicy::default(),
         Arc::clone(&sink) as _,
     )
-    .with_clock(|| 9);
+    .with_clock(|| 9)
+    .with_decider(decider);
     let mut ctx = NodeContext::new(Stage::Definition, deps, "login is slow", state);
     if let Some(reply) = reply {
         ctx = ctx.with_reply(reply);
@@ -228,6 +240,75 @@ async fn ok_keeps_the_draft_the_user_was_asked_about() {
     assert_eq!(ctx.state().problem_statements, [BAD]);
     assert_eq!(ctx.state().constraints.len(), 2);
     assert!(ctx.data::<Vec<ProblemDraft>>(PROBLEMS_KEY).is_some());
+}
+
+fn decider(port: ScriptedDecider) -> (Decider, Arc<ScriptedDecider>) {
+    let port = Arc::new(port);
+    (
+        Decider::new(Arc::clone(&port) as _, DecisionOptions::default()),
+        port,
+    )
+}
+
+#[tokio::test]
+async fn the_decision_model_judges_instead_of_the_model_and_the_heuristic() {
+    // The heuristic would reject BAD; the decision model has the last word.
+    let (yes, port) = decider(ScriptedDecider::yes(0.9));
+    let run = run_with(yes, state(), None, [draft(BAD)]).await;
+    assert_eq!(run.outcome, NodeOutcome::Done);
+    assert_eq!(run.state.problem_statements, [BAD]);
+    assert_eq!(run.requests.len(), 1, "no judge call to the model");
+    let asked = &port.requests()[0];
+    let Some(Question::YesNo { instructions, .. }) = asked.questions.get("d0") else {
+        panic!("no question d0: {asked:?}");
+    };
+    assert!(instructions.contains(BAD) && instructions.contains("\"depends on\""));
+    assert!(asked.state["evidence"][0].as_str().unwrap().contains("p95"));
+
+    let (no, _) = decider(ScriptedDecider::yes(0.2));
+    let run = run_with(no, state(), None, [draft(GOOD), draft(GOOD)]).await;
+    let NodeOutcome::NeedsInput { prompt } = run.outcome else {
+        panic!("expected NeedsInput, got {:?}", run.outcome);
+    };
+    assert!(prompt.contains("20% yes"), "{prompt}");
+}
+
+#[tokio::test]
+async fn without_an_answer_the_model_judges_as_before() {
+    let (failing, _) = decider(ScriptedDecider::failing());
+    let run = run_with(failing, state(), None, [draft(GOOD), verdict(true, "")]).await;
+    assert_eq!(run.outcome, NodeOutcome::Done);
+    assert_eq!(run.requests.len(), 2, "draft and the model's verdict");
+}
+
+#[tokio::test]
+async fn the_decision_model_reads_an_acceptance_in_free_text() {
+    let llm = Arc::new(ScriptedLlm::new([
+        draft("login takes more than 2 s"),
+        verdict(false, "it does not say with how many users"),
+        draft(BAD),
+    ]));
+    let sink = Arc::new(RecordingSink::new());
+    let deps = NodeDeps::new(
+        Arc::clone(&llm) as _,
+        ModelPolicy::default(),
+        Arc::clone(&sink) as _,
+    )
+    .with_clock(|| 9);
+    let mut ctx = NodeContext::new(Stage::Definition, deps.clone(), "login is slow", state());
+    assert!(matches!(
+        Definition::new().run(&mut ctx).await.unwrap(),
+        NodeOutcome::NeedsInput { .. }
+    ));
+    let (reads, port) = decider(ScriptedDecider::answering(|_, _| choice("accept", 0.9)));
+    let flow_ctx = ctx.with_reply("me parecen bien así, sigamos");
+    let mut ctx = flow_ctx.with_deps(deps.with_decider(reads));
+    assert_eq!(
+        Definition::new().run(&mut ctx).await.unwrap(),
+        NodeOutcome::Done
+    );
+    assert_eq!(ctx.state().problem_statements, [BAD]);
+    assert_eq!(port.requests().len(), 1);
 }
 
 #[tokio::test]
