@@ -23,6 +23,9 @@ pub struct StoredSession {
     /// "Allow always" rules granted in the workspace.
     #[serde(default)]
     pub permission_rules: Vec<PermissionRule>,
+    /// Lines sent from the prompt, oldest first, which `Up` brings back.
+    #[serde(default)]
+    pub prompt_history: Vec<String>,
 }
 
 impl StoredSession {
@@ -107,6 +110,7 @@ mod tests {
                 markdown: "hola".into(),
             })],
             permission_rules: Vec::new(),
+            prompt_history: Vec::new(),
         };
         let json = serde_json::to_string(&stored).unwrap();
         let back: StoredSession = serde_json::from_str(&json).unwrap();
@@ -119,6 +123,7 @@ mod tests {
             session: Session::new("/tmp/ws", 10),
             timeline: Vec::new(),
             permission_rules: Vec::new(),
+            prompt_history: Vec::new(),
         };
         let summary = stored.summary();
         assert_eq!(summary.id, stored.session.id);

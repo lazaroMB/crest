@@ -223,6 +223,7 @@ pub struct App {
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
+    prompt_history: SharedPromptHistory,
     store: Option<Arc<dyn SessionStorePort>>,
     implement: ImplementDeps,
     flow_storage: Option<Arc<SqliteFlowStorage>>,
@@ -233,6 +234,10 @@ pub struct App {
     /// `simulate_solution` tool).
     pub simulator: Simulator,
 }
+
+/// The lines sent from the prompt in the session, oldest first; the UI adds
+/// to them as they are sent and they are saved with the session.
+pub type SharedPromptHistory = Arc<Mutex<Vec<String>>>;
 
 impl std::fmt::Debug for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -275,6 +280,10 @@ impl App {
     pub fn new_session(&mut self) {
         self.session = Session::new(self.workspace.as_path().display().to_string(), now_ms());
         *self.timeline.lock().unwrap_or_else(PoisonError::into_inner) = TimelineState::new();
+        self.prompt_history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// The blocks of the session's timeline, including those of a resumed
@@ -298,6 +307,7 @@ impl App {
             session: self.session.clone(),
             timeline: self.timeline_blocks(),
             permission_rules: lock_permissions(self.service.permissions()).rules.clone(),
+            prompt_history: self.prompt_history().clone(),
         }
     }
 
@@ -311,6 +321,19 @@ impl App {
             Some(store) => store.save(&self.stored_session()).await,
             None => Ok(()),
         }
+    }
+
+    /// The lines sent from the prompt in the session, oldest first.
+    pub fn prompt_history(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.prompt_history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The prompt history shared with the UI, which adds the sent lines.
+    #[must_use]
+    pub fn shared_prompt_history(&self) -> &SharedPromptHistory {
+        &self.prompt_history
     }
 
     /// The permission policy shared with the agent.
@@ -522,6 +545,7 @@ pub async fn build_app(
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
     let mut session = Session::new(root.as_path().display().to_string(), now_ms());
     let mut resumed_notice = None;
+    let mut prompt_history = Vec::new();
     if config.resume
         && let Some(store) = &store
     {
@@ -537,6 +561,7 @@ pub async fn build_app(
                     stored.session.turns.len()
                 ));
                 session = stored.session;
+                prompt_history = stored.prompt_history;
             }
             Ok(None) => {}
             Err(err) => warnings.push(format!("could not resume the last session: {err}")),
@@ -691,6 +716,7 @@ pub async fn build_app(
         models,
         events,
         timeline,
+        prompt_history: Arc::new(Mutex::new(prompt_history)),
         store,
         implement,
         flow_storage,

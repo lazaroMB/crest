@@ -34,6 +34,10 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0003_flow_sessions",
         sql: include_str!("../migrations/0003_flow_sessions.sql"),
     },
+    Migration {
+        name: "0004_prompt_history",
+        sql: include_str!("../migrations/0004_prompt_history.sql"),
+    },
 ];
 
 /// Version a fully migrated database has.

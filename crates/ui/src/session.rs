@@ -211,6 +211,12 @@ pub trait SessionController: Send + Sync {
     /// The models `<leader>m` offers.
     fn models(&self) -> Vec<ModelChoice>;
 
+    /// Adds a line sent from the prompt to the session's history, saved
+    /// with it.
+    fn record_prompt(&self, line: String) {
+        let _ = line;
+    }
+
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
 
@@ -316,6 +322,8 @@ pub struct SessionParts {
     pub timeoutlen: Option<Duration>,
     /// Timeline of a resumed session, shown before any event.
     pub history: Vec<Block>,
+    /// Lines sent from the prompt of a resumed session, oldest first.
+    pub prompt_history: Vec<String>,
     /// Color scheme (`app.opt.theme`), applied before the window opens.
     pub theme: crate::app::ThemeMode,
 }
@@ -341,6 +349,7 @@ impl SessionParts {
             keymap: default_keymap(),
             timeoutlen: None,
             history: Vec::new(),
+            prompt_history: Vec::new(),
             theme: crate::app::ThemeMode::default(),
         }
     }
@@ -436,6 +445,7 @@ impl Session {
             keymap,
             timeoutlen,
             history,
+            prompt_history,
             theme: _,
         } = parts;
         let timeline = cx.new(|cx| {
@@ -458,6 +468,7 @@ impl Session {
         let input = cx.new(|cx| {
             let mut input = InputView::with_keymap(keymap, window, cx);
             input.set_file_search(files.clone());
+            input.set_history(prompt_history);
             if let Some(timeoutlen) = timeoutlen {
                 input.sequencer_mut().set_timeoutlen(timeoutlen);
             }
@@ -1138,7 +1149,10 @@ impl Session {
         self.root
             .update(cx, |root, cx| root.set_timeline(timeline, cx))
             .ok();
-        self.input.update(cx, |input, cx| input.focus(window, cx));
+        self.input.update(cx, |input, cx| {
+            input.set_history(Vec::new());
+            input.focus(window, cx);
+        });
         cx.spawn(async move |_, _| reset.await).detach();
         cx.notify();
     }
@@ -1212,6 +1226,7 @@ impl Session {
             InputEvent::Notice(message) => self.notice(NoticeLevel::Warning, message.clone(), cx),
             InputEvent::Command(command) => self.command(command, window, cx),
             InputEvent::Action(action) => self.action(action, window, cx),
+            InputEvent::Recorded(line) => self.controller.record_prompt(line.clone()),
         }
     }
 

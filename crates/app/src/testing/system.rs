@@ -468,6 +468,7 @@ mod store_tests {
             session: Session::new(root, updated_at),
             timeline: Vec::new(),
             permission_rules: Vec::new(),
+            prompt_history: Vec::new(),
         }
     }
 

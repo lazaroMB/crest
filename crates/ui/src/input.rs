@@ -23,6 +23,9 @@
 //!   **→ Model** sends them with the prompt, **Chat only** adds them to the
 //!   chat without calling the model; a click or `<leader>i` switches it. `×`,
 //!   or `Backspace` in an empty prompt, removes an image.
+//! - `Up` on the first line of the prompt brings back the line sent before
+//!   ([`history`]), and `Down` on the last line the one after, then the
+//!   text that was being written; elsewhere they move the cursor.
 //!
 //! It looks like a terminal prompt: a `❯`, the text in the monospace font
 //! with no field around it, and a blinking block cursor ([`cursor`]).
@@ -41,6 +44,7 @@
 
 pub mod attachments;
 pub mod cursor;
+pub mod history;
 pub mod path_popup;
 pub mod paths;
 pub mod tray;
@@ -64,6 +68,7 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use application::ports::search::FileSearchPort;
 use attachments::{ImageMode, PendingImage};
 use domain::conversation::ImageAttachment;
+use history::PromptHistory;
 pub use path_popup::PathPopup;
 use path_popup::{PathCompletion, PathKey, path_key};
 use tray::{ImageTray, paste_handler};
@@ -105,6 +110,8 @@ pub enum InputEvent {
     /// A mapped action the input does not handle itself (timeline
     /// navigation, pickers, interrupt...).
     Action(Action),
+    /// A sent line was added to the history, as typed (`/model opus`).
+    Recorded(String),
 }
 
 /// What a submitted line is.
@@ -277,6 +284,7 @@ pub struct InputView {
     palette_hidden: bool,
     paths: PathCompletion,
     tray: ImageTray,
+    history: PromptHistory,
     blink: Blink,
     _blink: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -326,6 +334,7 @@ impl InputView {
             palette_hidden: false,
             paths: PathCompletion::default(),
             tray: ImageTray::default(),
+            history: PromptHistory::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
             _subscriptions: vec![intercept, changes],
@@ -473,6 +482,16 @@ impl InputView {
         });
     }
 
+    /// The lines sent so far, oldest first.
+    pub fn history(&self) -> &[String] {
+        self.history.entries()
+    }
+
+    /// Replaces the lines `Up` brings back (a resumed or new session's).
+    pub fn set_history(&mut self, entries: Vec<String>) {
+        self.history.set_entries(entries);
+    }
+
     /// Tells the input whether prompts are queued: then `Up` in an empty
     /// prompt emits [`QUEUE_EDIT_ACTION`] instead of moving the cursor.
     pub fn set_queued(&mut self, queued: bool) {
@@ -557,6 +576,7 @@ impl InputView {
             }
             (KeyCode::Enter, Choice::Run(line)) => {
                 let line = line.clone();
+                self.record(&format!("/{line}"), cx);
                 self.editor
                     .update(cx, |editor, cx| editor.set_value("", window, cx));
                 cx.emit(InputEvent::Command(line));
@@ -590,7 +610,7 @@ impl InputView {
                         self.replay(key, window, cx);
                     }
                     if let (Some(key), Some(own)) = (key, last) {
-                        consumed = own && self.unmapped(&key, cx);
+                        consumed = own && self.unmapped(&key, window, cx);
                     }
                 }
             }
@@ -599,9 +619,12 @@ impl InputView {
     }
 
     /// Handles a live key no mapping wants; returns whether it was consumed.
-    fn unmapped(&mut self, key: &Key, cx: &mut Context<Self>) -> bool {
+    fn unmapped(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.queued && *key == Key::plain(KeyCode::Up) && self.text(cx).is_empty() {
             cx.emit(InputEvent::Action(Action::builtin(QUEUE_EDIT_ACTION)));
+            return true;
+        }
+        if self.browse(key, window, cx) {
             return true;
         }
         if *key == Key::plain(KeyCode::Backspace)
@@ -613,6 +636,33 @@ impl InputView {
         }
         // The editor takes it.
         false
+    }
+
+    /// `Up` on the first line and `Down` on the last bring back the lines
+    /// of the history; returns whether one was brought back.
+    fn browse(&mut self, key: &Key, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let text = self.text(cx);
+        let cursor = self.editor.read(cx).cursor().min(text.len());
+        let (before, after) = text.split_at(cursor);
+        let line = if *key == Key::plain(KeyCode::Up) && !before.contains('\n') {
+            self.history.older(&text).map(str::to_owned)
+        } else if *key == Key::plain(KeyCode::Down) && !after.contains('\n') {
+            self.history.newer()
+        } else {
+            None
+        };
+        let Some(line) = line else {
+            return false;
+        };
+        self.set_text(&line, window, cx);
+        true
+    }
+
+    /// Adds a sent line to the history.
+    fn record(&mut self, line: &str, cx: &mut Context<Self>) {
+        if self.history.push(line) {
+            cx.emit(InputEvent::Recorded(line.to_owned()));
+        }
     }
 
     /// Re-delivers a key of a prefix that did not match.
@@ -655,6 +705,8 @@ impl InputView {
             Some(Line::Prompt(text)) => InputEvent::Submit(text),
             None => return,
         };
+        let sent = self.text(cx);
+        self.record(&sent, cx);
         self.editor
             .update(cx, |editor, cx| editor.set_value("", window, cx));
         cx.emit(event);
@@ -846,7 +898,15 @@ mod tests {
         (view, cx, events)
     }
 
+    /// The events so far but the history's [`InputEvent::Recorded`].
     fn take(events: &Events) -> Vec<InputEvent> {
+        take_all(events)
+            .into_iter()
+            .filter(|event| !matches!(event, InputEvent::Recorded(_)))
+            .collect()
+    }
+
+    fn take_all(events: &Events) -> Vec<InputEvent> {
         events.borrow_mut().drain(..).collect()
     }
 
@@ -1132,6 +1192,67 @@ mod tests {
             take(&events).is_empty(),
             "the timed-out leader does not pair up"
         );
+    }
+
+    #[gpui::test]
+    fn up_and_down_browse_the_sent_lines_and_return_to_the_draft(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_input("uno");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input("/model opus");
+        cx.simulate_keystrokes("enter");
+        let recorded: Vec<_> = take_all(&events)
+            .into_iter()
+            .filter(|event| matches!(event, InputEvent::Recorded(_)))
+            .collect();
+        assert_eq!(
+            recorded,
+            [
+                InputEvent::Recorded("uno".into()),
+                InputEvent::Recorded("/model opus".into())
+            ]
+        );
+        let text = |cx: &mut VisualTestContext| view.read_with(cx, |view, cx| view.text(cx));
+        cx.simulate_input("bor");
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "/model opus");
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "uno");
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "uno", "the oldest line stays");
+        cx.simulate_keystrokes("down");
+        assert_eq!(text(cx), "/model opus");
+        cx.simulate_keystrokes("down");
+        assert_eq!(text(cx), "bor", "the draft comes back");
+        assert!(take(&events).is_empty());
+    }
+
+    #[gpui::test]
+    fn up_moves_the_cursor_until_the_first_line(cx: &mut TestAppContext) {
+        let (view, cx, _) = input(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| view.set_history(vec!["antes".into()]));
+            view.update(cx, |view, cx| view.set_text("a\nb", window, cx));
+        });
+        let text = |cx: &mut VisualTestContext| view.read_with(cx, |view, cx| view.text(cx));
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "a\nb", "the cursor went to the first line");
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "antes");
+        cx.simulate_keystrokes("down");
+        assert_eq!(text(cx), "a\nb");
+    }
+
+    #[gpui::test]
+    fn a_queued_prompt_comes_back_before_the_history(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        view.update(cx, |view, _| {
+            view.set_history(vec!["antes".into()]);
+            view.set_queued(true);
+        });
+        cx.simulate_keystrokes("up");
+        assert_eq!(take(&events), [action(QUEUE_EDIT_ACTION)]);
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
     }
 
     #[gpui::test]

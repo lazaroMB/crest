@@ -77,7 +77,7 @@ use ui::workbench::{ProjectOpener, Workbench};
 use crate::args::Args;
 use crate::plugin_trust::PluginTrust;
 use crate::research::ResearchCommand;
-use crate::root::{App, Config, Frontend, Overrides, build_app};
+use crate::root::{App, Config, Frontend, Overrides, SharedPromptHistory, build_app};
 
 /// [`EventSink`] that sends every event to the UI.
 #[derive(Debug, Clone)]
@@ -166,6 +166,7 @@ pub struct UiController {
     handle: Handle,
     app: Arc<tokio::sync::Mutex<App>>,
     permissions: SharedPermissions,
+    prompt_history: SharedPromptHistory,
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
@@ -395,6 +396,7 @@ impl UiController {
     pub fn new(mut app: App, handle: Handle) -> Self {
         let research = Arc::new(tokio::sync::Mutex::new(app.research.take()));
         let permissions = Arc::clone(app.permissions());
+        let prompt_history = Arc::clone(app.shared_prompt_history());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
         let mcp = Arc::new(McpTrust {
@@ -420,6 +422,7 @@ impl UiController {
             handle,
             app: Arc::new(tokio::sync::Mutex::new(app)),
             permissions,
+            prompt_history,
             models,
             plugins,
             commands,
@@ -700,6 +703,13 @@ impl SessionController for UiController {
         self.models.clone()
     }
 
+    fn record_prompt(&self, line: String) {
+        self.prompt_history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(line);
+    }
+
     fn new_session(&self) -> BoxFuture<'static, ()> {
         let app = Arc::clone(&self.app);
         let task = self
@@ -929,6 +939,7 @@ pub fn session_parts(
                 None => ui::app::ThemeMode::default(),
             };
             let history = app.timeline_blocks();
+            let prompt_history = app.prompt_history().clone();
             let controller = Arc::new(UiController::new(app, handle.clone()));
             let mut parts = SessionParts::new(
                 controller,
@@ -941,6 +952,7 @@ pub fn session_parts(
             parts.keymap = keymap;
             parts.timeoutlen = timeoutlen;
             parts.history = history;
+            parts.prompt_history = prompt_history;
             parts.theme = theme;
             (parts, workspace)
         }

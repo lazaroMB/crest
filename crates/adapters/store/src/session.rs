@@ -131,15 +131,17 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
         .map_err(sql_error)?;
     tx.execute(
         "INSERT INTO sessions
-             (id, workspace_root, title, created_at, updated_at, turn_count, data_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             (id, workspace_root, title, created_at, updated_at, turn_count, data_json,
+              prompt_history_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (id) DO UPDATE SET
              workspace_root = excluded.workspace_root,
              title = excluded.title,
              created_at = excluded.created_at,
              updated_at = excluded.updated_at,
              turn_count = excluded.turn_count,
-             data_json = excluded.data_json",
+             data_json = excluded.data_json,
+             prompt_history_json = excluded.prompt_history_json",
         params![
             id,
             session.workspace_root,
@@ -148,6 +150,7 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
             to_i64(session.updated_at, "updated_at")?,
             to_i64(session.turns.len(), "turn_count")?,
             data_json,
+            to_json(&stored.prompt_history)?,
         ],
     )
     .map_err(sql_error)?;
@@ -210,15 +213,17 @@ pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession
     // A read transaction so the three reads see the same save.
     let tx = conn.transaction().map_err(sql_error)?;
     let key = id.to_string();
-    let data_json: Option<String> = tx
+    let row: Option<(String, String)> = tx
         .query_row(
-            "SELECT data_json FROM sessions WHERE id = ?1",
+            "SELECT data_json, prompt_history_json FROM sessions WHERE id = ?1",
             [&key],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(sql_error)?;
-    let session: Session = from_json(&data_json.ok_or(StoreError::NotFound(id))?, "session")?;
+    let (data_json, history_json) = row.ok_or(StoreError::NotFound(id))?;
+    let session: Session = from_json(&data_json, "session")?;
+    let prompt_history = from_json(&history_json, "prompt history")?;
     if session.id != id {
         return Err(StoreError::Corrupt(format!(
             "row {id} holds session {}",
@@ -242,6 +247,7 @@ pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession
         session,
         timeline,
         permission_rules,
+        prompt_history,
     })
 }
 
@@ -426,6 +432,7 @@ pub(crate) mod tests {
                 RuleMatcher::Prefix("cargo test".into()),
                 RuleDecision::AllowAlways,
             )],
+            prompt_history: vec!["hola".into(), "/model opus".into()],
         }
     }
 

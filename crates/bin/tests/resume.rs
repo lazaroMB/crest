@@ -109,6 +109,8 @@ async fn a_reopened_app_resumes_history_timeline_and_rules() {
         ScriptedResponse::text("Renombrada."),
     ]));
     let (mut first, _) = app(&ws, true, "a\n", &first_llm).await;
+    // What the UI records as the prompt is sent.
+    first.prompt_history().push("renombra add".into());
     assert_eq!(
         run_turn(&mut first, "renombra add", CancelToken::new()).await,
         Exit::Success
@@ -126,6 +128,7 @@ async fn a_reopened_app_resumes_history_timeline_and_rules() {
     let (mut second, output) = app(&ws, true, "", &second_llm).await;
     assert_eq!(second.session, saved.session);
     assert_eq!(second.timeline_blocks(), saved.timeline);
+    assert_eq!(*second.prompt_history(), ["renombra add"]);
     assert_eq!(
         lock_permissions(second.permissions()).rules,
         saved.permission_rules
@@ -174,6 +177,7 @@ async fn without_resume_a_new_session_starts() {
     assert_ne!(fresh.session.id, saved.session.id);
     assert!(fresh.session.turns.is_empty());
     assert!(fresh.timeline_blocks().is_empty());
+    assert!(fresh.prompt_history().is_empty());
 }
 
 #[test]

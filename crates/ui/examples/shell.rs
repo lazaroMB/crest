@@ -240,6 +240,8 @@ fn wire_input(
                 }),
             }
         }
+        // The example keeps no sessions.
+        InputEvent::Recorded(_) => {}
     })
     .detach();
 }
