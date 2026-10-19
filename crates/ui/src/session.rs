@@ -1379,13 +1379,13 @@ mod tests {
         }
 
         /// `/review` sends a prompt with the plan role; `/loop` calls itself;
-        /// `/slow` answers after 300 ms, like a flow running to its gate.
+        /// `/slow` answers after 2 s, like a flow running to its gate.
         fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
             let reply = match name {
                 "slow" => {
                     let (tx, rx) = oneshot::channel();
                     std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(300));
+                        std::thread::sleep(Duration::from_secs(2));
                         tx.send(Reply::Notice(NoticeLevel::Info, "slow done".into()))
                             .ok();
                     });
