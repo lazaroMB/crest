@@ -5,12 +5,16 @@
 #   cargo build --release --locked --target <t> -p crest
 #   scripts/package.sh --target <t>
 #
-# Produces <out>/crest-<version>-<target>.tar.gz (a directory with the
-# binary, README.txt with the runtime requirements, LICENSE* and
-# THIRD-PARTY.md if present and
-# the icon: share/ with the .desktop entry and the hicolor icons on Linux,
-# crest.icns on macOS when it was generated) and its checksum <file>.sha256
-# in the `sha256sum -c` format.
+# Produces <out>/crest-<version>-<target>.tar.gz and its checksum
+# <file>.sha256 in the `sha256sum -c` format. The tarball holds a directory
+# with install.sh (scripts/install.sh), README.txt with the runtime
+# requirements, LICENSE* and THIRD-PARTY.md, and:
+#
+# - Linux: the binary, crest-launcher and share/ with the .desktop entry
+#   and the hicolor icons;
+# - macOS: crest.app (Contents/MacOS/crest is the launcher, crest-bin the
+#   binary, Resources/crest.icns built with iconutil from the hicolor PNGs
+#   when iconutil exists).
 #
 # Compatible with Bash 3.2 (macOS).
 
@@ -75,20 +79,51 @@ staging="$(mktemp -d "${TMPDIR:-/tmp}/crest-package.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
 mkdir "$staging/$name"
 
-cp "$bin_path" "$staging/$name/$BIN"
+cp scripts/install.sh "$staging/$name/install.sh"
+chmod 755 "$staging/$name/install.sh"
 for license in LICENSE* THIRD-PARTY.md; do
     if [ -f "$license" ]; then
         cp "$license" "$staging/$name/"
     fi
 done
 
+# crest.icns from the committed PNGs: each @2x is the next size up, and
+# 512@2x is the 512 one scaled with sips.
+make_icns() { # <output.icns>
+    local set_dir="$staging/crest.iconset" icons=assets/icons/hicolor size double
+    mkdir -p "$set_dir"
+    for size in 16 32 128 256 512; do
+        cp "$icons/${size}x${size}/apps/crest.png" "$set_dir/icon_${size}x${size}.png"
+        double=$((size * 2))
+        if [ -f "$icons/${double}x${double}/apps/crest.png" ]; then
+            cp "$icons/${double}x${double}/apps/crest.png" "$set_dir/icon_${size}x${size}@2x.png"
+        else
+            sips -z "$double" "$double" "$icons/${size}x${size}/apps/crest.png" \
+                --out "$set_dir/icon_${size}x${size}@2x.png" >/dev/null
+        fi
+    done
+    iconutil -c icns "$set_dir" -o "$1"
+}
+
 case "$target" in
     *-apple-darwin)
-        if [ -f assets/icons/crest.icns ]; then
-            cp assets/icons/crest.icns "$staging/$name/"
+        app="$staging/$name/crest.app/Contents"
+        mkdir -p "$app/MacOS" "$app/Resources"
+        cp "$bin_path" "$app/MacOS/crest-bin"
+        cp assets/crest-launcher.sh "$app/MacOS/crest"
+        chmod 755 "$app/MacOS/crest"
+        sed "s/@VERSION@/$version/g" assets/macos/Info.plist.in >"$app/Info.plist"
+        printf 'APPL????' >"$app/PkgInfo"
+        if command -v iconutil >/dev/null 2>&1 && command -v sips >/dev/null 2>&1; then
+            make_icns "$app/Resources/crest.icns"
+        else
+            echo "package.sh: iconutil not found; crest.app has no icon" >&2
         fi
         ;;
     *)
+        cp "$bin_path" "$staging/$name/$BIN"
+        cp assets/crest-launcher.sh "$staging/$name/crest-launcher"
+        chmod 755 "$staging/$name/crest-launcher"
         mkdir -p "$staging/$name/share/applications" "$staging/$name/share/icons"
         cp assets/crest.desktop "$staging/$name/share/applications/"
         cp -R assets/icons/hicolor "$staging/$name/share/icons/"
@@ -99,8 +134,11 @@ case "$target" in
     *-apple-darwin)
         platform_notes="macOS
 -----
-- The binary is neither signed nor notarized. If Gatekeeper blocks it:
-    xattr -d com.apple.quarantine ./crest
+- ./install.sh copies crest.app to ~/Applications (Launchpad, Spotlight,
+  Dock) and links ~/.local/bin/crest to it.
+- The app is neither signed nor notarized; install.sh removes the
+  Gatekeeper quarantine. By hand:
+    xattr -dr com.apple.quarantine crest.app
 - rg and fzf: brew install ripgrep fzf"
         ;;
     *)
@@ -118,9 +156,14 @@ esac
 cat >"$staging/$name/README.txt" <<EOF
 crest $version ($target)
 
-Installation: copy \`crest\` to a directory in the PATH, for example ~/.local/bin.
-On Linux, copy share/ over ~/.local/share (cp -R share ~/.local/) for the
-app icon and the launcher entry.
+Installation: run ./install.sh (no sudo). It puts \`crest\` in ~/.local/bin
+and the app in the app menu (Linux) or ~/Applications (macOS);
+./install.sh --uninstall removes it. --prefix <dir> changes ~/.local.
+
+Started from the app menu, the Dock or Launchpad, crest gets the PATH of
+your login shell (~/.zprofile, ~/.profile, ~/.bash_profile), not the one of
+~/.zshrc or ~/.bashrc. Keep ANTHROPIC_API_KEY in the system keyring, or
+export it in one of those files.
 
 Runtime requirements
 --------------------
