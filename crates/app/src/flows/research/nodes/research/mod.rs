@@ -94,12 +94,12 @@ pub struct PriorSolution {
 
 /// What the repo turn found, before it is recorded
 /// ([`Research::gather_repo`]).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RepoAnswer {
     findings: Vec<RepoFinding>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RepoFinding {
     name: String,
     summary: String,
@@ -120,20 +120,20 @@ impl RepoFinding {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct WebAnswer {
     options: Vec<WebOption>,
 }
 
 /// What the web turn found, before it is recorded
 /// ([`Research::gather_web`]).
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct WebGathered {
     answer: WebAnswer,
     citations: Vec<Citation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct WebOption {
     name: String,
     kind: SolutionKind,
@@ -390,7 +390,8 @@ fn source_label(source: &SourceRef) -> String {
     }
 }
 
-fn table(options: &[PriorSolution]) -> TableSpec {
+/// The table of prior solutions shown to the user.
+pub(crate) fn table(options: &[PriorSolution]) -> TableSpec {
     TableSpec {
         columns: ["Option", "Kind", "Summary", "Source", "Evidence"]
             .into_iter()

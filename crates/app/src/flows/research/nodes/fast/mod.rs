@@ -14,6 +14,7 @@ use domain::research::Stage;
 
 use super::super::node::ResearchNode;
 
+pub mod discovery;
 pub mod triage;
 
 /// The fast node registered for `stage`, if it is a fast stage that
@@ -22,6 +23,7 @@ pub mod triage;
 pub fn fast_node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
     match stage {
         Stage::Triage => Some(Arc::new(triage::Triage::new())),
+        Stage::Discovery => Some(Arc::new(discovery::Discovery::new())),
         _ => None,
     }
 }

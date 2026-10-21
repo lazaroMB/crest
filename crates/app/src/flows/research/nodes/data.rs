@@ -82,7 +82,7 @@ pub struct DataReport {
 }
 
 /// A commit of the history.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Commit {
     sha: String,
     #[serde(default)]
@@ -91,14 +91,14 @@ struct Commit {
 }
 
 /// A fact found by the agent.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Finding {
     claim: String,
     source: SourceRef,
 }
 
 /// What the agent answers.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Answer {
     #[serde(default)]
     commits: Vec<Commit>,
@@ -130,7 +130,7 @@ impl Answer {
 
 /// What the agent found in the repository, before it is recorded
 /// ([`Data::gather_repo`]).
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct DataAnswer {
     answer: Answer,
     /// Whether issue tools (MCP) were offered.

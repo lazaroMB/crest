@@ -80,14 +80,14 @@ pub struct KeyFile {
 }
 
 /// One observation of the agent.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Observed {
     claim: String,
     source: SourceRef,
 }
 
 /// What the agent answers.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Answer {
     summary: String,
     architecture: String,
@@ -226,7 +226,7 @@ pub(crate) fn sources_block(sources: impl IntoIterator<Item = SourceRef>) -> Blo
 }
 
 /// What the agent found, before it is recorded ([`Observation::gather`]).
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ObservationAnswer {
     answer: Answer,
     /// Whether the agent could read the git history.
@@ -380,6 +380,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::flows::research::node::NodeDeps;
     use crate::ports::events::DomainEvent;
+    use crate::ports::llm::LlmPort;
     use crate::testing::fs::{InMemoryFs, ScriptedShell};
     use crate::testing::llm::ScriptedLlm;
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
@@ -401,6 +402,16 @@ pub(crate) mod testing {
     /// The agent's tools over `fs`, with `shell` or without one.
     pub(crate) fn agent(
         llm: &Arc<ScriptedLlm>,
+        fs: &Arc<InMemoryFs>,
+        shell: Option<Arc<ScriptedShell>>,
+        extra: impl FnOnce(&mut ToolRegistry),
+    ) -> Arc<AgentService> {
+        agent_over(llm.clone(), fs, shell, extra)
+    }
+
+    /// [`agent`] over any model port.
+    pub(crate) fn agent_over(
+        llm: Arc<dyn LlmPort>,
         fs: &Arc<InMemoryFs>,
         shell: Option<Arc<ScriptedShell>>,
         extra: impl FnOnce(&mut ToolRegistry),
@@ -430,7 +441,7 @@ pub(crate) mod testing {
         }
         extra(&mut tools);
         let deps = AgentDeps {
-            llm: llm.clone(),
+            llm,
             events: Arc::new(RecordingSink::new()),
             approval: Arc::new(ScriptedApproval::new()),
             telemetry: Arc::new(RecordingTelemetry::new()),
@@ -451,8 +462,17 @@ pub(crate) mod testing {
         sink: &Arc<RecordingSink>,
         agent: Option<Arc<AgentService>>,
     ) -> NodeContext {
-        let mut deps =
-            NodeDeps::new(llm.clone(), ModelPolicy::default(), sink.clone()).with_clock(|| 9);
+        context_over(stage, llm.clone(), sink, agent)
+    }
+
+    /// [`context`] over any model port.
+    pub(crate) fn context_over(
+        stage: Stage,
+        llm: Arc<dyn LlmPort>,
+        sink: &Arc<RecordingSink>,
+        agent: Option<Arc<AgentService>>,
+    ) -> NodeContext {
+        let mut deps = NodeDeps::new(llm, ModelPolicy::default(), sink.clone()).with_clock(|| 9);
         if let Some(agent) = agent {
             deps = deps.with_agent(agent);
         }
