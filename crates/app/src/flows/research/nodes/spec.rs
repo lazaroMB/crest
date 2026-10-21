@@ -29,6 +29,7 @@ use self::render::{
 use self::sink::{MemorySpecSink, SpecSink, SpecSinkError};
 use self::structured::{ask_valid, submit_tool};
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
+use crate::ports::llm::ToolDefinition;
 
 /// Flow data with the Specs written so far (`Vec<SpecDraft>`), read by
 /// the Plan node.
@@ -93,6 +94,142 @@ impl Spec {
     pub fn with_sink(sink: Arc<dyn SpecSink>) -> Self {
         Self { sink }
     }
+
+    /// The forced tool the model answers with.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Failed`] when its schema does not serialize.
+    pub(crate) fn tool() -> Result<ToolDefinition, NodeError> {
+        submit_tool::<SpecAnswer>("submit_spec", TOOL_DESCRIPTION)
+    }
+
+    /// One job per problem statement, with its folder number reserved up
+    /// front: a statement that already has a Spec keeps its folder, the
+    /// others get the next free numbers in order. So the Specs can be
+    /// drafted in any order, or at once.
+    ///
+    /// # Errors
+    ///
+    /// The sink's error when the existing folders cannot be listed.
+    pub(crate) async fn jobs(&self, ctx: &NodeContext) -> Result<Vec<SpecJob>, NodeError> {
+        let previous: Vec<SpecDraft> = ctx.data(DRAFTS_KEY).unwrap_or_default();
+        let existing = self.sink.folders().await.map_err(sink_error)?;
+        let mut next = existing
+            .iter()
+            .chain(previous.iter().map(|d| &d.folder))
+            .filter_map(|f| folder_number(f))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let statements = ctx.state().problem_statements.clone();
+        let mut jobs = Vec::with_capacity(statements.len());
+        for problem in statements {
+            let reused = previous.iter().find(|d| d.problem == problem);
+            let number = match reused.and_then(|d| folder_number(&d.folder)) {
+                Some(n) => n,
+                None => {
+                    next += 1;
+                    next - 1
+                }
+            };
+            jobs.push(SpecJob {
+                problem,
+                number: format!("{number:04}"),
+                folder: reused.map(|d| d.folder.clone()),
+            });
+        }
+        Ok(jobs)
+    }
+
+    /// Asks the model for the Spec of `job` until it is valid, with the
+    /// user's `corrections`, and renders it with `charts`. Returns the
+    /// draft and the lines for the journal (retries). Only reads the
+    /// context: several Specs can be drafted at once.
+    ///
+    /// # Errors
+    ///
+    /// The model's errors, or [`NodeError::Failed`] when no answer was
+    /// valid.
+    pub(crate) async fn draft_one(
+        &self,
+        ctx: &NodeContext,
+        job: &SpecJob,
+        corrections: Option<&str>,
+        tool: &ToolDefinition,
+        charts: &[ChartSpec],
+    ) -> Result<(SpecDraft, Vec<String>), NodeError> {
+        let state = ctx.state();
+        let prompt = prompt(ctx, &job.problem, &state.problem_statements, corrections);
+        let mut notes = Vec::new();
+        let number = &job.number;
+        let (answer, spec_md) =
+            ask_valid(ctx, &mut notes, SYSTEM, &prompt, tool, RETRIES, |value| {
+                let answer: SpecAnswer = serde_json::from_value(value)
+                    .map_err(|e| vec![format!("the JSON does not match the schema: {e}")])?;
+                let answer = answer.normalized();
+                let mut errors = answer.problems();
+                let md = render::spec_markdown(number, &answer, state);
+                errors.extend(citation_problems(&md, &answer, state));
+                if errors.is_empty() {
+                    Ok((answer, md))
+                } else {
+                    Err(errors)
+                }
+            })
+            .await?;
+        let spec_md = spec_md + &charts_section(charts);
+        let folder = job
+            .folder
+            .clone()
+            .unwrap_or_else(|| format!("{number}-{}", slug(&answer.title)));
+        let draft = SpecDraft {
+            folder,
+            problem: job.problem.clone(),
+            title: answer.title,
+            spec_md,
+        };
+        Ok((draft, notes))
+    }
+
+    /// Writes the folders of `drafts` (in order), logs them and adds them
+    /// to the drafts under [`DRAFTS_KEY`], replacing earlier versions.
+    ///
+    /// # Errors
+    ///
+    /// The sink's errors, or a block that does not validate.
+    pub(crate) async fn store(
+        &self,
+        ctx: &mut NodeContext,
+        drafts: Vec<SpecDraft>,
+        charts: &[ChartSpec],
+    ) -> Result<(), NodeError> {
+        for draft in &drafts {
+            let cited = cited_evidence(&draft.spec_md, ctx.state()).len();
+            ctx.log(format!(
+                "Spec {} written for \"{}\" with {cited} sources cited.",
+                draft.folder, draft.problem
+            ));
+        }
+        for draft in &drafts {
+            self.write_folder(ctx, draft, charts).await?;
+        }
+        let mut all: Vec<SpecDraft> = ctx.data(DRAFTS_KEY).unwrap_or_default();
+        all.retain(|p| !drafts.iter().any(|d| d.folder == p.folder));
+        all.extend(drafts);
+        ctx.set_data(DRAFTS_KEY, &all)
+    }
+}
+
+/// A Spec to write: its problem statement and its folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpecJob {
+    /// The problem statement.
+    pub(crate) problem: String,
+    /// Folder number, e.g. `0007`.
+    pub(crate) number: String,
+    /// The folder of an earlier Spec of the same problem, reused.
+    pub(crate) folder: Option<String>,
 }
 
 /// Records `charts` under [`CHARTS_KEY`] so the Spec writes their data
@@ -145,71 +282,20 @@ impl ResearchNode for Spec {
         if let Some(back) = missing_input(ctx.state()) {
             return Ok(back);
         }
-        let previous: Vec<SpecDraft> = ctx.data(DRAFTS_KEY).unwrap_or_default();
-        let existing = self.sink.folders().await.map_err(sink_error)?;
-        let mut next = existing
-            .iter()
-            .chain(previous.iter().map(|d| &d.folder))
-            .filter_map(|f| folder_number(f))
-            .max()
-            .unwrap_or(0)
-            + 1;
         let charts: Vec<ChartSpec> = ctx.data(CHARTS_KEY).unwrap_or_default();
-        let tool = submit_tool::<SpecAnswer>("submit_spec", TOOL_DESCRIPTION)?;
-        let statements = ctx.state().problem_statements.clone();
-        let mut drafts = Vec::with_capacity(statements.len());
-        for problem in &statements {
-            let reused = previous.iter().find(|d| &d.problem == problem);
-            let number = match reused.and_then(|d| folder_number(&d.folder)) {
-                Some(n) => n,
-                None => {
-                    next += 1;
-                    next - 1
-                }
-            };
-            let number = format!("{number:04}");
-            let prompt = prompt(ctx, problem, &statements);
-            let state = ctx.state().clone();
-            let (answer, spec_md) = ask_valid(ctx, SYSTEM, &prompt, &tool, RETRIES, |value| {
-                let answer: SpecAnswer = serde_json::from_value(value)
-                    .map_err(|e| vec![format!("the JSON does not match the schema: {e}")])?;
-                let answer = answer.normalized();
-                let mut errors = answer.problems();
-                let md = render::spec_markdown(&number, &answer, &state);
-                errors.extend(citation_problems(&md, &answer, &state));
-                if errors.is_empty() {
-                    Ok((answer, md))
-                } else {
-                    Err(errors)
-                }
-            })
-            .await?;
-            let spec_md = spec_md + &charts_section(&charts);
-            let folder = reused.map_or_else(
-                || format!("{number}-{}", slug(&answer.title)),
-                |d| d.folder.clone(),
-            );
-            drafts.push(SpecDraft {
-                folder,
-                problem: problem.clone(),
-                title: answer.title,
-                spec_md,
-            });
+        let tool = Self::tool()?;
+        let jobs = self.jobs(ctx).await?;
+        let mut drafts = Vec::with_capacity(jobs.len());
+        for job in &jobs {
+            let (draft, notes) = self
+                .draft_one(ctx, job, ctx.user_reply(), &tool, &charts)
+                .await?;
+            for note in notes {
+                ctx.log(note);
+            }
+            drafts.push(draft);
         }
-        for draft in &drafts {
-            let cited = cited_evidence(&draft.spec_md, ctx.state()).len();
-            ctx.log(format!(
-                "Spec {} written for \"{}\" with {cited} sources cited.",
-                draft.folder, draft.problem
-            ));
-        }
-        for draft in &drafts {
-            self.write_folder(ctx, draft, &charts).await?;
-        }
-        let mut all = previous;
-        all.retain(|p| !drafts.iter().any(|d| d.folder == p.folder));
-        all.extend(drafts);
-        ctx.set_data(DRAFTS_KEY, &all)?;
+        self.store(ctx, drafts, &charts).await?;
         Ok(NodeOutcome::Done)
     }
 }
@@ -253,7 +339,7 @@ impl Spec {
 }
 
 /// `Back` when an earlier stage left out what the Spec needs.
-fn missing_input(state: &ResearchState) -> Option<NodeOutcome> {
+pub(crate) fn missing_input(state: &ResearchState) -> Option<NodeOutcome> {
     let (to, reason) = if state.problem_statements.is_empty() {
         (
             Stage::Definition,
@@ -275,8 +361,9 @@ fn missing_input(state: &ResearchState) -> Option<NodeOutcome> {
     })
 }
 
-/// The request for the Spec of `problem`, with the whole state.
-fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
+/// The request for the Spec of `problem`, with the whole state and the
+/// user's `corrections`.
+fn prompt(ctx: &NodeContext, problem: &str, all: &[String], corrections: Option<&str>) -> String {
     let state = ctx.state();
     let mut out = format!(
         "Original request: {}\n\nProblem of this Spec: {problem}\n",
@@ -340,7 +427,7 @@ fn prompt(ctx: &NodeContext, problem: &str, all: &[String]) -> String {
             evidence.join(", ")
         );
     }
-    if let Some(reply) = ctx.user_reply() {
+    if let Some(reply) = corrections {
         let _ = write!(out, "\nUser corrections: {reply}\n");
     }
     out

@@ -21,6 +21,7 @@ use super::spec::sink::{MemorySpecSink, SpecSink};
 use super::spec::structured::{ask_valid, submit_tool};
 use super::spec::{DRAFTS_KEY, SpecDraft, sink_error, write_journal};
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
+use crate::ports::llm::ToolDefinition;
 
 /// Flow data with the folders that got a `plan.json` (`Vec<String>`).
 pub const PLANS_KEY: &str = "plan.folders";
@@ -67,6 +68,101 @@ impl Planner {
     pub fn with_sink(sink: Arc<dyn SpecSink>) -> Self {
         Self { sink }
     }
+
+    /// Asks the model for the plan of `draft` until it is valid, with the
+    /// user's `corrections`. Returns the plan and the lines for the
+    /// journal (retries). Only reads the context: several plans can be
+    /// asked at once.
+    ///
+    /// # Errors
+    ///
+    /// The model's errors, or [`NodeError::Failed`] when no plan was
+    /// valid.
+    pub(crate) async fn plan_one(
+        &self,
+        ctx: &NodeContext,
+        draft: &SpecDraft,
+        corrections: Option<&str>,
+        tool: &PlanTool,
+    ) -> Result<(Plan, Vec<String>), NodeError> {
+        let known: Vec<ConstraintId> = ctx.state().constraints.iter().map(|c| c.id).collect();
+        let prompt = prompt(ctx, draft, &tool.schema, corrections);
+        let folder = draft.folder.as_str();
+        let mut notes = Vec::new();
+        let plan = ask_valid(
+            ctx,
+            &mut notes,
+            SYSTEM,
+            &prompt,
+            &tool.tool,
+            RETRIES,
+            |value| check(value, folder, &known),
+        )
+        .await?;
+        Ok((plan, notes))
+    }
+
+    /// Writes `plan.json` and `plan.md` of `plan`, shows it and logs it.
+    ///
+    /// # Errors
+    ///
+    /// The sink's errors, or a block that does not validate.
+    pub(crate) async fn apply(&self, ctx: &mut NodeContext, plan: &Plan) -> Result<(), NodeError> {
+        self.write_plan(ctx, plan).await?;
+        ctx.log(format!(
+            "Plan for {} with {} tasks, {} hypothesis tests and {} constraint tests.",
+            plan.spec,
+            plan.tasks.len(),
+            plan.hypothesis_tests.len(),
+            plan.constraint_tests.len()
+        ));
+        Ok(())
+    }
+
+    /// Stores `new` plans in the flow data (replacing earlier plans of the
+    /// same Specs) and rewrites the journal of their folders.
+    ///
+    /// # Errors
+    ///
+    /// The sink's errors, or flow data that cannot be written.
+    pub(crate) async fn store(
+        &self,
+        ctx: &mut NodeContext,
+        new: Vec<Plan>,
+    ) -> Result<(), NodeError> {
+        let folders: Vec<String> = new.iter().map(|p| p.spec.clone()).collect();
+        let mut plans: Vec<Plan> = ctx.data(PLANS_DATA_KEY).unwrap_or_default();
+        for plan in new {
+            plans.retain(|p| p.spec != plan.spec);
+            plans.push(plan);
+        }
+        for folder in &folders {
+            write_journal(self.sink.as_ref(), folder, ctx.state()).await?;
+        }
+        ctx.set_data(PLANS_KEY, &folders)?;
+        ctx.set_data(PLANS_DATA_KEY, &plans)
+    }
+}
+
+/// The forced tool of the plan and its schema, shown in the prompt.
+#[derive(Debug, Clone)]
+pub(crate) struct PlanTool {
+    tool: ToolDefinition,
+    schema: String,
+}
+
+impl PlanTool {
+    /// The `submit_plan` tool.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Failed`] when its schema does not serialize.
+    pub(crate) fn new() -> Result<Self, NodeError> {
+        let tool = submit_tool::<Plan>("submit_plan", TOOL_DESCRIPTION)?;
+        let schema = serde_json::to_string_pretty(&tool.input_schema)
+            .map_err(|e| NodeError::Failed(format!("schema of submit_plan: {e}")))?;
+        Ok(Self { tool, schema })
+    }
 }
 
 #[async_trait]
@@ -83,36 +179,17 @@ impl ResearchNode for Planner {
                 reason: "there is no written Spec to split into tasks".into(),
             });
         }
-        let known: Vec<ConstraintId> = ctx.state().constraints.iter().map(|c| c.id).collect();
-        let tool = submit_tool::<Plan>("submit_plan", TOOL_DESCRIPTION)?;
-        let schema = serde_json::to_string_pretty(&tool.input_schema)
-            .map_err(|e| NodeError::Failed(format!("schema of submit_plan: {e}")))?;
-        let mut folders = Vec::with_capacity(drafts.len());
-        let mut plans: Vec<Plan> = ctx.data(PLANS_DATA_KEY).unwrap_or_default();
+        let tool = PlanTool::new()?;
+        let mut plans = Vec::with_capacity(drafts.len());
         for draft in &drafts {
-            let prompt = prompt(ctx, draft, &schema);
-            let folder = draft.folder.clone();
-            let plan = ask_valid(ctx, SYSTEM, &prompt, &tool, RETRIES, |value| {
-                check(value, &folder, &known)
-            })
-            .await?;
-            self.write_plan(ctx, &plan).await?;
-            ctx.log(format!(
-                "Plan for {} with {} tasks, {} hypothesis tests and {} constraint tests.",
-                plan.spec,
-                plan.tasks.len(),
-                plan.hypothesis_tests.len(),
-                plan.constraint_tests.len()
-            ));
-            plans.retain(|p| p.spec != folder);
+            let (plan, notes) = self.plan_one(ctx, draft, ctx.user_reply(), &tool).await?;
+            for note in notes {
+                ctx.log(note);
+            }
+            self.apply(ctx, &plan).await?;
             plans.push(plan);
-            folders.push(folder);
         }
-        for folder in &folders {
-            write_journal(self.sink.as_ref(), folder, ctx.state()).await?;
-        }
-        ctx.set_data(PLANS_KEY, &folders)?;
-        ctx.set_data(PLANS_DATA_KEY, &plans)?;
+        self.store(ctx, plans).await?;
         Ok(NodeOutcome::Done)
     }
 }
@@ -193,7 +270,7 @@ fn tasks_table(plan: &Plan) -> TableSpec {
 }
 
 /// The request for the plan of `draft`.
-fn prompt(ctx: &NodeContext, draft: &SpecDraft, schema: &str) -> String {
+fn prompt(ctx: &NodeContext, draft: &SpecDraft, schema: &str, corrections: Option<&str>) -> String {
     let mut out = format!(
         "Spec folder (spec field): {}\n\nSpec:\n\n{}\n",
         draft.folder, draft.spec_md
@@ -211,7 +288,7 @@ fn prompt(ctx: &NodeContext, draft: &SpecDraft, schema: &str) -> String {
             let _ = writeln!(out, "- {}: {}{test}", c.id, c.statement);
         }
     }
-    if let Some(reply) = ctx.user_reply() {
+    if let Some(reply) = corrections {
         let _ = write!(out, "\nUser corrections: {reply}\n");
     }
     let _ = write!(out, "\nJSON schema of plan.json:\n{schema}\n");

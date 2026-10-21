@@ -152,32 +152,90 @@ impl ResearchNode for Review {
         let plans: Vec<Plan> = ctx.data(PLANS_DATA_KEY).unwrap_or_default();
         let mut reviews: Vec<(String, Vec<Gap>)> = Vec::with_capacity(drafts.len());
         for draft in &drafts {
-            let plan = match plans.iter().find(|p| p.spec == draft.folder) {
-                Some(p) => Some(p.clone()),
-                None => self.read_plan(&draft.folder).await?,
-            };
-            let mut gaps = self
-                .deterministic(ctx, draft, &planned, plan.as_ref())
+            let plan = self.plan_of(&plans, &draft.folder).await?;
+            let (gaps, notes) = self
+                .review_one(ctx, draft, plan.as_ref(), &planned, ctx.user_reply())
                 .await?;
-            let blocked = gaps.iter().any(Gap::is_major);
-            if blocked {
-                ctx.log(format!(
-                    "Deterministic review of {}: {} major gaps; the model is not consulted.",
-                    draft.folder,
-                    gaps.iter().filter(|g| g.is_major()).count()
-                ));
-            } else {
-                let found = judge(ctx, draft, plan.as_ref()).await?;
-                ctx.log(format!(
-                    "Review of {} by a subagent without history: {} gaps ({} major).",
-                    draft.folder,
-                    found.len(),
-                    found.iter().filter(|g| g.is_major()).count()
-                ));
-                gaps.extend(found);
+            for note in notes {
+                ctx.log(note);
             }
             reviews.push((draft.folder.clone(), gaps));
         }
+        self.conclude(ctx, drafts.len(), reviews).await
+    }
+}
+
+impl Review {
+    /// The plan of `folder`: from `plans` (the flow data), else from its
+    /// `plan.json` in the workspace.
+    ///
+    /// # Errors
+    ///
+    /// A `plan.json` that exists but cannot be read.
+    pub(crate) async fn plan_of(
+        &self,
+        plans: &[Plan],
+        folder: &str,
+    ) -> Result<Option<Plan>, NodeError> {
+        match plans.iter().find(|p| p.spec == folder) {
+            Some(p) => Ok(Some(p.clone())),
+            None => self.read_plan(folder).await,
+        }
+    }
+
+    /// Every gap of `draft` and its `plan`: the deterministic ones and,
+    /// when none of those is major, the judgment of a clean-context
+    /// subagent with the user's `corrections`. `planned` lists the
+    /// folders that got a plan. Returns the gaps and the lines for the
+    /// journal. Only reads the context: several Specs can be reviewed at
+    /// once.
+    ///
+    /// # Errors
+    ///
+    /// The model's errors, or a workspace that cannot be read.
+    pub(crate) async fn review_one(
+        &self,
+        ctx: &NodeContext,
+        draft: &SpecDraft,
+        plan: Option<&Plan>,
+        planned: &[String],
+        corrections: Option<&str>,
+    ) -> Result<(Vec<Gap>, Vec<String>), NodeError> {
+        let mut notes = Vec::new();
+        let mut gaps = self.deterministic(ctx, draft, planned, plan).await?;
+        if gaps.iter().any(Gap::is_major) {
+            notes.push(format!(
+                "Deterministic review of {}: {} major gaps; the model is not consulted.",
+                draft.folder,
+                gaps.iter().filter(|g| g.is_major()).count()
+            ));
+        } else {
+            let found = judge(ctx, &mut notes, draft, plan, corrections).await?;
+            notes.push(format!(
+                "Review of {} by a subagent without history: {} gaps ({} major).",
+                draft.folder,
+                found.len(),
+                found.iter().filter(|g| g.is_major()).count()
+            ));
+            gaps.extend(found);
+        }
+        Ok((gaps, notes))
+    }
+
+    /// Ends the review of `specs` Specs with the gaps of each folder:
+    /// writes `review.md` to each, stores the gaps under [`GAPS_KEY`] and
+    /// goes back to the earliest stage of a major gap, or is done with a
+    /// summary and the minor remarks.
+    ///
+    /// # Errors
+    ///
+    /// The sink's errors, or a block that does not validate.
+    pub(crate) async fn conclude(
+        &self,
+        ctx: &mut NodeContext,
+        specs: usize,
+        reviews: Vec<(String, Vec<Gap>)>,
+    ) -> Result<NodeOutcome, NodeError> {
         for (folder, gaps) in &reviews {
             self.sink
                 .write(folder, REVIEW_FILE, &review_markdown(folder, gaps))
@@ -205,8 +263,7 @@ impl ResearchNode for Review {
         ctx.emit(BlockKind::Markdown {
             title: None,
             source: format!(
-                "Review: no gaps\n\n{} Specs reviewed; {} minor remarks.",
-                drafts.len(),
+                "Review: no gaps\n\n{specs} Specs reviewed; {} minor remarks.",
                 minor.len()
             ),
         })?;
@@ -305,13 +362,15 @@ impl Review {
 
 /// Asks a clean-context reviewer for the gaps of `draft`.
 async fn judge(
-    ctx: &mut NodeContext,
+    ctx: &NodeContext,
+    notes: &mut Vec<String>,
     draft: &SpecDraft,
     plan: Option<&Plan>,
+    corrections: Option<&str>,
 ) -> Result<Vec<Gap>, NodeError> {
     let tool = submit_tool::<ReviewAnswer>("submit_review", TOOL_DESCRIPTION)?;
-    let prompt = prompt(ctx.state(), draft, plan, ctx.user_reply());
-    ask_valid(ctx, SYSTEM, &prompt, &tool, RETRIES, |value| {
+    let prompt = prompt(ctx.state(), draft, plan, corrections);
+    ask_valid(ctx, notes, SYSTEM, &prompt, &tool, RETRIES, |value| {
         let answer: ReviewAnswer = serde_json::from_value(value)
             .map_err(|e| vec![format!("the JSON does not match the schema: {e}")])?;
         let mut errors = Vec::new();

@@ -327,6 +327,17 @@ impl NodeContext {
         self.meter.snapshot()
     }
 
+    /// Adds `calls` model calls of `model` that used `usage` to this run,
+    /// for requests a node streams itself.
+    pub(crate) fn record_usage(
+        &self,
+        model: &domain::model::ModelId,
+        usage: domain::conversation::Usage,
+        calls: u32,
+    ) {
+        self.meter.record(model, usage, calls);
+    }
+
     /// The state as the node left it.
     #[must_use]
     pub fn into_state(self) -> ResearchState {

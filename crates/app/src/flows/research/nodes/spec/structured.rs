@@ -32,14 +32,16 @@ pub(crate) fn submit_tool<T: JsonSchema>(
 
 /// Asks `prompt` until `check` accepts the answer, at most `1 + retries`
 /// times. Each retry repeats the prompt with the errors of the previous
-/// answer and is written to the journal.
+/// answer and adds a line to `notes`, for the caller to write to the
+/// journal (it only reads the context, so several can run at once).
 ///
 /// # Errors
 ///
 /// The model's errors, or [`NodeError::Failed`] with the last errors when
 /// no answer was valid.
 pub(crate) async fn ask_valid<T>(
-    ctx: &mut NodeContext,
+    ctx: &NodeContext,
+    notes: &mut Vec<String>,
     system: &str,
     prompt: &str,
     tool: &ToolDefinition,
@@ -60,7 +62,7 @@ pub(crate) async fn ask_valid<T>(
             Err(found) => {
                 errors = found;
                 if attempt < retries {
-                    ctx.log(format!(
+                    notes.push(format!(
                         "Invalid answer from {}; asking again: {}",
                         tool.name,
                         errors.join("; ")
@@ -88,6 +90,7 @@ async fn ask_json(
     let mut req = ctx.request(system, vec![Message::user_text(prompt)]);
     req.tools = vec![tool.clone()];
     req.tool_choice = ToolChoice::Tool(tool.name.clone());
+    let model = req.model.spec.id.clone();
     let mut stream = ctx.llm().stream(req).await?;
     let mut assembler = MessageAssembler::new();
     while let Some(event) = stream.next().await {
@@ -95,10 +98,12 @@ async fn ask_json(
             .push(event?)
             .map_err(|e| LlmError::Decode(e.to_string()))?;
     }
-    let message = assembler
+    let assembled = assembler
         .finish()
-        .map_err(|e| LlmError::Decode(e.to_string()))?
-        .message;
+        .map_err(|e| LlmError::Decode(e.to_string()))?;
+    let model = assembled.model.unwrap_or(model);
+    ctx.record_usage(&model, assembled.usage, 1);
+    let message = assembled.message;
     let mut text = String::new();
     for part in message.content {
         match part {
