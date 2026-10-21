@@ -442,3 +442,156 @@ async fn plain_lines_answer_the_gate_and_bad_commands_fail() {
     assert!(matches!(reply, FlowReply::Status(ref s) if waiting_at(s) == Some(B)));
     assert_eq!(fx.runs(), [2, 2, 1]);
 }
+
+/// The fast pipeline end to end over scripted models: a small bug.
+mod fast {
+    use domain::research::Pipeline;
+    use serde_json::json;
+
+    use super::*;
+    use crate::flows::research::graph::fast_graph_with;
+    use crate::flows::research::nodes::fast::delivery::testing::{
+        PLAN, REVIEW, SPEC, plan, review, spec,
+    };
+    use crate::flows::research::nodes::observation::testing::{agent_over, workspace};
+    use crate::flows::research::nodes::spec::sink::MemorySpecSink;
+    use crate::flows::research::usage::UsageByStage;
+    use crate::testing::llm::{RoutedLlm, ScriptedResponse};
+
+    fn text(value: serde_json::Value) -> ScriptedResponse {
+        ScriptedResponse::text(value.to_string())
+    }
+
+    /// One route per prompt of the flow, each with one answer.
+    fn llm() -> RoutedLlm {
+        RoutedLlm::new()
+            .route(
+                "You are the first step of an investigation",
+                [text(json!({
+                    "kind": "bug", "restated": "Login takes 500 ms at 500 rps.",
+                    "questions": ["Which database?"], "size": "small", "blocking": false
+                }))],
+            )
+            .route(
+                "Observation stage",
+                [text(json!({
+                    "summary": "A crate with the login.",
+                    "architecture": "flowchart TD\n  login --> store",
+                    "key_files": [{"path": "src/login.rs", "kind": "code", "role": "logs in"}],
+                    "observations": [{"claim": "Login takes 500 ms at 500 rps.",
+                        "source": {"type": "file", "path": "src/login.rs", "line_start": 1}}]
+                }))],
+            )
+            .route(
+                "Data stage",
+                [text(json!({
+                    "findings": [{"claim": "Every login reads the session from SQLite.",
+                        "source": {"type": "file", "path": "src/login.rs", "line_start": 2}}]
+                }))],
+            )
+            .route(
+                "You are the Hypotheses stage",
+                [text(json!({
+                    "effect": "slow login",
+                    "hypotheses": [{"statement": "Reading SQLite on every login is slow.",
+                        "priority": 1, "causes": [{"category": "Data", "cause": "no cache"}],
+                        "evidence_ids": ["E2"]}]
+                }))],
+            )
+            .route(
+                "Definition and constraints\" node",
+                [text(json!({
+                    "problems": [{"statement": "at 500 requests per second the response time \
+                        rises from 10 ms to 500 ms", "evidence_ids": ["E1"]}],
+                    "constraints": [{"kind": "performance", "statement": "p95 < 20 ms at 500 rps",
+                        "test": {"kind": "command", "ref": "make bench-login"}}]
+                }))],
+            )
+            .route(
+                "Judge whether each problem definition is measurable",
+                [text(
+                    json!({"verdicts": [{"index": 0, "measurable": true, "reason": "ok"}]}),
+                )],
+            )
+            .route(
+                "\"Brainstorm\" node",
+                [text(json!({"ideas": [
+                    {"name": "In-memory cache", "description": "sessions in memory"},
+                    {"name": "SQLite index", "description": "index the sessions table"},
+                    {"name": "Redis", "description": "sessions in Redis"}
+                ]}))],
+            )
+            .route(
+                "You are the Modeling stage",
+                [text(json!({
+                    "criteria": ["Performance", "Simplicity"],
+                    "discarded": [{"title": "Redis", "constraints": ["C1"],
+                        "reason": "a network hop"}],
+                    "scores": [
+                        {"title": "In-memory cache", "values": [5, 4]},
+                        {"title": "SQLite index", "values": [3, 3]}
+                    ],
+                    "chosen": "In-memory cache",
+                    "rationale": "Avoids reading SQLite on every login [E2].",
+                    "evidence_ids": ["E2"],
+                    "black_box": {"piece": "SessionCache", "interactions": [
+                        {"with": "Login", "how": "queries"}
+                    ]}
+                }))],
+            )
+            .route(SPEC, [spec()])
+            .route(PLAN, [plan()])
+            .route(REVIEW, [review(json!([]))])
+    }
+
+    #[tokio::test]
+    async fn stops_only_at_framing_and_solution_and_writes_the_specs() {
+        let llm = Arc::new(llm());
+        let sink = Arc::new(RecordingSink::new());
+        let service = agent_over(llm.clone(), &workspace(), None, |_| {});
+        let deps = NodeDeps::new(llm.clone(), ModelPolicy::default(), Arc::clone(&sink) as _)
+            .with_agent(service)
+            .with_clock(|| 1);
+        let specs = Arc::new(MemorySpecSink::new());
+        let graph = fast_graph_with(deps, specs.clone(), None).unwrap();
+        assert_eq!(graph.pipeline(), Pipeline::Fast);
+        let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
+        let flow = ResearchFlow::start(graph, storage, "fast", "login takes 500 ms at 500 rps")
+            .await
+            .unwrap();
+
+        let status = flow.run().await.unwrap();
+        assert_eq!(waiting_at(&status), Some(Stage::Framing), "{status:?}");
+        let status = flow.provide_input("yes").await.unwrap();
+        assert_eq!(waiting_at(&status), Some(Stage::Solution), "{status:?}");
+        let status = flow.provide_input("yes").await.unwrap();
+        assert_eq!(status, FlowStatus::Completed);
+        assert_eq!(llm.remaining(), 0);
+
+        let md = specs.file("0001-session-cache", "spec.md").unwrap();
+        assert!(md.starts_with("# Spec 0001: Session cache"));
+        assert!(specs.file("0001-session-cache", "plan.json").is_some());
+        assert!(specs.file("0001-session-cache", "review.md").is_some());
+
+        // Five headers, numbered within the pipeline.
+        let headers: Vec<(u32, u32)> = sink
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                DomainEvent::BlockAdded { block } => match block.kind {
+                    BlockKind::StageHeader { index, total, .. } => Some((index, total)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headers, [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]);
+        // Quick depth: no prior art in the repo, Hypotheses on the main model.
+        let journal = flow.state().await.unwrap().journal;
+        assert!(journal.iter().any(|e| e.text.contains("Depth quick")));
+        let hypotheses = llm.requests("You are the Hypotheses stage");
+        assert_eq!(hypotheses[0].model.role, domain::model::ModelRole::Main);
+        let used: UsageByStage = flow.usage_by_stage().await.unwrap();
+        assert_eq!(used.len(), 5);
+    }
+}

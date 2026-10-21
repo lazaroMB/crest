@@ -1,11 +1,13 @@
-//! The full research graph: the 14 nodes of the X-Workflow in order.
+//! The research graphs: the 5 stages of the fast pipeline
+//! ([`fast_graph`]) and the 14 nodes of the X-Workflow ([`research_graph`],
+//! the deep pipeline); [`research_graphs`] builds both.
 //!
-//! [`research_graph`] takes the [`NodeDeps`] (model, events, agents) and
-//! the workspace where the Spec folders go. Spec, Plan and the critical
-//! review share one [`FsSpecSink`] over it, so the review reads and
-//! annotates the folders the other two wrote, and the review checks the
-//! cited files through the same file system. Without a workspace the three
-//! write to one shared [`MemorySpecSink`] (tests).
+//! Both take the [`NodeDeps`] (model, events, agents) and the workspace
+//! where the Spec folders go. Spec, Plan and the critical review (Delivery
+//! in the fast graph) share one [`FsSpecSink`] over it, so the review
+//! reads and annotates the folders the other two wrote, and the review
+//! checks the cited files through the same file system. Without a
+//! workspace they write to one shared [`MemorySpecSink`] (tests).
 
 use std::sync::Arc;
 
@@ -14,6 +16,8 @@ use domain::research::{Pipeline, Stage};
 use super::builder::{ResearchGraph, ResearchGraphBuilder};
 use super::error::FlowError;
 use super::node::{NodeDeps, ResearchNode};
+use super::nodes::fast::delivery::Delivery;
+use super::nodes::fast::fast_node_for;
 use super::nodes::node_for;
 use super::nodes::plan::Planner;
 use super::nodes::review::Review;
@@ -92,6 +96,68 @@ impl From<ResearchGraph> for ResearchGraphs {
     }
 }
 
+/// The sink of the Specs of a graph: the workspace, else memory.
+fn spec_sink(workspace: Option<&ResearchWorkspace>) -> Arc<dyn SpecSink> {
+    match workspace {
+        Some(ws) => Arc::new(FsSpecSink::new(Arc::clone(&ws.fs), Arc::clone(&ws.search))),
+        None => Arc::new(MemorySpecSink::new()),
+    }
+}
+
+/// Both research graphs over `deps`, writing the Specs to `workspace`
+/// (in memory when `None`).
+///
+/// # Errors
+///
+/// As [`fast_graph`] and [`research_graph`].
+pub fn research_graphs(
+    deps: NodeDeps,
+    workspace: Option<ResearchWorkspace>,
+) -> Result<ResearchGraphs, FlowError> {
+    let fast = fast_graph(deps.clone(), workspace.clone())?;
+    let deep = research_graph(deps, workspace)?;
+    Ok(ResearchGraphs::new(fast, deep))
+}
+
+/// The 5 stages of the fast pipeline over `deps`, writing the Specs to
+/// `workspace` (in memory when `None`).
+///
+/// # Errors
+///
+/// [`FlowError::InvalidGraph`] if a stage is missing from the registry.
+pub fn fast_graph(
+    deps: NodeDeps,
+    workspace: Option<ResearchWorkspace>,
+) -> Result<ResearchGraph, FlowError> {
+    let sink = spec_sink(workspace.as_ref());
+    fast_graph_with(deps, sink, workspace.map(|ws| ws.fs))
+}
+
+/// [`fast_graph`] writing the Specs to `sink`, with the review checking
+/// cited files through `fs` when given.
+pub(crate) fn fast_graph_with(
+    deps: NodeDeps,
+    sink: Arc<dyn SpecSink>,
+    fs: Option<Arc<dyn FileSystemPort>>,
+) -> Result<ResearchGraph, FlowError> {
+    let mut builder = ResearchGraphBuilder::new(deps).pipeline(Pipeline::Fast);
+    for stage in Stage::FAST {
+        let node: Arc<dyn ResearchNode> = match stage {
+            Stage::Delivery => {
+                let delivery = Delivery::with_sink(Arc::clone(&sink));
+                Arc::new(match &fs {
+                    Some(fs) => delivery.with_workspace(Arc::clone(fs)),
+                    None => delivery,
+                })
+            }
+            other => fast_node_for(other)
+                .ok_or_else(|| FlowError::InvalidGraph(format!("{} has no node", other.name())))?,
+        };
+        builder = builder.shared_node(node);
+    }
+    builder.build()
+}
+
 /// The 14 nodes of the research flow over `deps`, writing the Specs to
 /// `workspace` (in memory when `None`).
 ///
@@ -102,10 +168,7 @@ pub fn research_graph(
     deps: NodeDeps,
     workspace: Option<ResearchWorkspace>,
 ) -> Result<ResearchGraph, FlowError> {
-    let sink: Arc<dyn SpecSink> = match &workspace {
-        Some(ws) => Arc::new(FsSpecSink::new(Arc::clone(&ws.fs), Arc::clone(&ws.search))),
-        None => Arc::new(MemorySpecSink::new()),
-    };
+    let sink = spec_sink(workspace.as_ref());
     let mut builder = ResearchGraphBuilder::new(deps);
     for stage in Stage::ALL {
         let node: Arc<dyn ResearchNode> = match stage {
@@ -151,5 +214,19 @@ mod tests {
             Pipeline::Deep
         );
         assert!(graphs.for_id("research-fast").is_none());
+    }
+
+    #[test]
+    fn the_fast_graph_has_the_five_stages_and_both_are_built() {
+        let deps = NodeDeps::new(
+            Arc::new(ScriptedLlm::new([])),
+            ModelPolicy::default(),
+            Arc::new(RecordingSink::new()),
+        );
+        let graphs = research_graphs(deps, None).unwrap();
+        let fast = graphs.get(Pipeline::Fast).unwrap();
+        assert_eq!(fast.stages(), Stage::FAST);
+        assert_eq!(fast.id(), "research-fast");
+        assert_eq!(graphs.get(Pipeline::Deep).unwrap().stages(), Stage::ALL);
     }
 }

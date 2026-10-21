@@ -325,26 +325,23 @@ impl ResearchNode for Delivery {
     }
 }
 
+/// Scripts of the Spec, plan and review, for the tests of the fast flow.
 #[cfg(test)]
-mod tests {
+pub(crate) mod testing {
     use domain::block::SourceRef;
-    use domain::model::ModelPolicy;
     use domain::research::{ConstraintKind, ResearchState, TestKind, TestRef};
     use serde_json::{Value, json};
 
-    use super::*;
-    use crate::flows::research::node::NodeDeps;
-    use crate::flows::research::nodes::review::GAPS_KEY;
-    use crate::flows::research::nodes::spec::DRAFTS_KEY;
-    use crate::flows::research::nodes::spec::sink::MemorySpecSink;
-    use crate::ports::llm::LlmPort;
-    use crate::testing::llm::{BarrierLlm, RoutedLlm, ScriptedResponse};
-    use crate::testing::system::RecordingSink;
+    use crate::testing::llm::ScriptedResponse;
 
-    const SPEC: &str = "You are the Spec writer";
-    const PLAN: &str = "You are the planner";
-    const REVIEW: &str = "independent critical reviewer";
+    /// Routes the Spec writer.
+    pub(crate) const SPEC: &str = "You are the Spec writer";
+    /// Routes the planner.
+    pub(crate) const PLAN: &str = "You are the planner";
+    /// Routes the reviewer.
+    pub(crate) const REVIEW: &str = "independent critical reviewer";
 
+    /// Evidence, a hypothesis, a constraint and a decision for `problems`.
     pub(crate) fn state(problems: &[&str]) -> ResearchState {
         let mut s = ResearchState::default();
         let e1 = s.add_evidence(
@@ -378,6 +375,7 @@ mod tests {
         s
     }
 
+    /// A valid Spec citing E1 and E2.
     pub(crate) fn spec() -> ScriptedResponse {
         ScriptedResponse::tool_use(
             "s",
@@ -400,6 +398,7 @@ mod tests {
         )
     }
 
+    /// A valid plan that tests C1 and the hypothesis.
     pub(crate) fn plan() -> ScriptedResponse {
         ScriptedResponse::tool_use(
             "p",
@@ -420,9 +419,26 @@ mod tests {
         )
     }
 
+    /// A review with `gaps`.
     pub(crate) fn review(gaps: Value) -> ScriptedResponse {
         ScriptedResponse::tool_use("r", "submit_review", json!({ "gaps": gaps }))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::model::ModelPolicy;
+    use serde_json::{Value, json};
+
+    use super::testing::{PLAN, REVIEW, SPEC, plan, review, spec, state};
+    use super::*;
+    use crate::flows::research::node::NodeDeps;
+    use crate::flows::research::nodes::review::GAPS_KEY;
+    use crate::flows::research::nodes::spec::DRAFTS_KEY;
+    use crate::flows::research::nodes::spec::sink::MemorySpecSink;
+    use crate::ports::llm::LlmPort;
+    use crate::testing::llm::{BarrierLlm, RoutedLlm};
+    use crate::testing::system::RecordingSink;
 
     fn gap(stage: &str) -> Value {
         json!([{"claim": "the proposal", "problem": "the eviction policy is not specified",
