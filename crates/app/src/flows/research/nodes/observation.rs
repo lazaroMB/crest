@@ -225,6 +225,14 @@ pub(crate) fn sources_block(sources: impl IntoIterator<Item = SourceRef>) -> Blo
     BlockKind::Sources { sources: unique }
 }
 
+/// What the agent found, before it is recorded ([`Observation::gather`]).
+#[derive(Debug)]
+pub(crate) struct ObservationAnswer {
+    answer: Answer,
+    /// Whether the agent could read the git history.
+    git: bool,
+}
+
 /// The Observation node.
 #[derive(Debug, Default)]
 pub struct Observation;
@@ -234,6 +242,74 @@ impl Observation {
     #[must_use]
     pub fn new() -> Self {
         Self
+    }
+
+    /// Walks the repository with the read-only agent for `brief`. Only
+    /// reads the context, so it can run next to other gatherers.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Unavailable`] without an agent, the turn's errors, or
+    /// the invalid answer.
+    pub(crate) async fn gather(
+        &self,
+        ctx: &NodeContext,
+        brief: &IntakeBrief,
+    ) -> Result<ObservationAnswer, NodeError> {
+        let git = has_shell(ctx);
+        let answer: Answer =
+            explore_json(ctx, &input(ctx.problem(), brief, git), Answer::validate).await?;
+        Ok(ObservationAnswer { answer, git })
+    }
+
+    /// Records what [`Observation::gather`] found: evidence, the
+    /// [`ObservationReport`] under [`REPORT_KEY`], the blocks and the
+    /// journal entry.
+    ///
+    /// # Errors
+    ///
+    /// A block or the report that cannot be stored.
+    pub(crate) fn apply(
+        &self,
+        ctx: &mut NodeContext,
+        gathered: ObservationAnswer,
+    ) -> Result<ObservationReport, NodeError> {
+        let ObservationAnswer { answer, git } = gathered;
+        let now = ctx.now();
+        let mut sources = Vec::with_capacity(answer.observations.len());
+        let mut evidence = Vec::with_capacity(answer.observations.len());
+        for observed in answer.observations {
+            sources.push(observed.source.clone());
+            evidence.push(ctx.state_mut().add_evidence(
+                observed.claim.trim(),
+                observed.source,
+                now,
+            ));
+        }
+        let report = ObservationReport {
+            summary: answer.summary.trim().to_owned(),
+            architecture: mermaid_source(&answer.architecture),
+            key_files: answer.key_files,
+            evidence,
+        };
+        ctx.set_data(REPORT_KEY, &report)?;
+
+        ctx.emit(BlockKind::Mermaid(MermaidSpec {
+            source: report.architecture.clone(),
+            title: Some("Current architecture".into()),
+        }))?;
+        ctx.emit(BlockKind::Table(key_files_table(&report.key_files)))?;
+        ctx.emit(sources_block(sources))?;
+
+        let ids: Vec<String> = report.evidence.iter().map(ToString::to_string).collect();
+        ctx.log(format!(
+            "Repository walked{}: {} key files, evidence {}. {}",
+            if git { " (with git log)" } else { "" },
+            report.key_files.len(),
+            ids.join(", "),
+            report.summary
+        ));
+        Ok(report)
     }
 }
 
@@ -284,44 +360,8 @@ impl ResearchNode for Observation {
                     .into(),
             });
         };
-        let git = has_shell(ctx);
-        let answer: Answer =
-            explore_json(ctx, &input(ctx.problem(), &brief, git), Answer::validate).await?;
-
-        let now = ctx.now();
-        let mut sources = Vec::with_capacity(answer.observations.len());
-        let mut evidence = Vec::with_capacity(answer.observations.len());
-        for observed in answer.observations {
-            sources.push(observed.source.clone());
-            evidence.push(ctx.state_mut().add_evidence(
-                observed.claim.trim(),
-                observed.source,
-                now,
-            ));
-        }
-        let report = ObservationReport {
-            summary: answer.summary.trim().to_owned(),
-            architecture: mermaid_source(&answer.architecture),
-            key_files: answer.key_files,
-            evidence,
-        };
-        ctx.set_data(REPORT_KEY, &report)?;
-
-        ctx.emit(BlockKind::Mermaid(MermaidSpec {
-            source: report.architecture.clone(),
-            title: Some("Current architecture".into()),
-        }))?;
-        ctx.emit(BlockKind::Table(key_files_table(&report.key_files)))?;
-        ctx.emit(sources_block(sources))?;
-
-        let ids: Vec<String> = report.evidence.iter().map(ToString::to_string).collect();
-        ctx.log(format!(
-            "Repository walked{}: {} key files, evidence {}. {}",
-            if git { " (with git log)" } else { "" },
-            report.key_files.len(),
-            ids.join(", "),
-            report.summary
-        ));
+        let gathered = self.gather(ctx, &brief).await?;
+        self.apply(ctx, gathered)?;
         Ok(NodeOutcome::Done)
     }
 }

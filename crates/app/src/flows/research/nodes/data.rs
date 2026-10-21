@@ -28,6 +28,7 @@ use super::observation::{
 use super::spec::record_charts;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 use crate::ports::events::NoticeLevel;
+use crate::ports::llm::Citation;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Flow data key of the [`DataReport`].
@@ -48,6 +49,9 @@ const GIT: &str = "Use `run_command` only with read-only git commands; for the h
 `git log --date=short --format=%H%x09%ad%x09%s -n 50 -- <files>`.";
 
 const NO_GIT: &str = "You have no access to git: leave `commits` empty.";
+
+const NO_FILES: &str = "The files involved are not known yet: find them first (with `tree`, \
+`glob` or `grep`), then gather the data about them.\n";
 
 const FORMAT: &str = "When you finish, answer only with a JSON object, with no text around it:
 {\"commits\": [{\"sha\": \"…\", \"date\": \"YYYY-MM-DD\", \"summary\": \"first line\"}],
@@ -124,6 +128,27 @@ impl Answer {
     }
 }
 
+/// What the agent found in the repository, before it is recorded
+/// ([`Data::gather_repo`]).
+#[derive(Debug)]
+pub(crate) struct DataAnswer {
+    answer: Answer,
+    /// Whether issue tools (MCP) were offered.
+    mcp: bool,
+}
+
+impl DataAnswer {
+    /// The libraries whose documentation is worth checking.
+    pub(crate) fn libraries(&self) -> Vec<String> {
+        self.answer
+            .libraries
+            .iter()
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
+}
+
 /// The Data node.
 #[derive(Debug, Default)]
 pub struct Data;
@@ -134,17 +159,216 @@ impl Data {
     pub fn new() -> Self {
         Self
     }
+
+    /// Gathers history, logs, metrics and issues with the read-only agent,
+    /// about the files `observed` marks (or, without them, the ones the
+    /// agent finds). Only reads the context.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Unavailable`] without an agent, the turn's errors, or
+    /// the invalid answer.
+    pub(crate) async fn gather_repo(
+        &self,
+        ctx: &NodeContext,
+        brief: &IntakeBrief,
+        observed: Option<&ObservationReport>,
+    ) -> Result<DataAnswer, NodeError> {
+        let git = has_shell(ctx);
+        let mcp: Vec<String> = ctx
+            .explore_agent()?
+            .tools()
+            .names()
+            .filter(|name| name.starts_with("mcp__"))
+            .map(str::to_owned)
+            .collect();
+        let mcp_names: Vec<&str> = mcp.iter().map(String::as_str).collect();
+        let answer: Answer = explore_json(
+            ctx,
+            &input(brief, observed, git, &mcp_names),
+            Answer::validate,
+        )
+        .await?;
+        Ok(DataAnswer {
+            answer,
+            mcp: !mcp.is_empty(),
+        })
+    }
+
+    /// Looks up the documentation of `libraries` on the web; `None` when
+    /// there are none or the agent has no web tools.
+    async fn library_docs(
+        ctx: &NodeContext,
+        brief: &IntakeBrief,
+        libraries: &[String],
+    ) -> Option<Result<(String, Vec<Citation>), NodeError>> {
+        if libraries.is_empty() || !has_web(ctx) {
+            return None;
+        }
+        let prompt = format!(
+            "{WEB_SYSTEM}\n\nProblem: {}\nLibraries: {}",
+            brief.restated,
+            libraries.join(", ")
+        );
+        Some(explore_web(ctx, &prompt).await)
+    }
+
+    /// Records what [`Data::gather_repo`] found and, when it ran, the web
+    /// research about the libraries: evidence, the chart, the table and
+    /// sources, the journal entry and the [`DataReport`] under
+    /// [`REPORT_KEY`]. A failed web search is only a warning.
+    ///
+    /// # Errors
+    ///
+    /// A block or the report that cannot be stored.
+    pub(crate) fn apply(
+        &self,
+        ctx: &mut NodeContext,
+        gathered: DataAnswer,
+        docs: Option<Result<(String, Vec<Citation>), NodeError>>,
+    ) -> Result<DataReport, NodeError> {
+        let libraries = gathered.libraries();
+        let DataAnswer { answer, mcp } = gathered;
+        let now = ctx.now();
+        let mut evidence = Vec::new();
+        for commit in answer.commits.iter().take(MAX_COMMIT_EVIDENCE) {
+            let date = if commit.date.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", commit.date.trim())
+            };
+            evidence.push(ctx.state_mut().add_evidence(
+                format!(
+                    "Change in the files involved{date}: {}",
+                    commit.summary.trim()
+                ),
+                SourceRef::Commit {
+                    sha: commit.sha.trim().to_owned(),
+                    summary: commit.summary.trim().to_owned(),
+                },
+                now,
+            ));
+        }
+        let findings = answer.findings.len();
+        for finding in answer.findings {
+            evidence.push(
+                ctx.state_mut()
+                    .add_evidence(finding.claim.trim(), finding.source, now),
+            );
+        }
+
+        let mut web_summary = None;
+        let mut web = 0;
+        match docs {
+            Some(Ok((text, citations))) => {
+                web = citations.len();
+                for id in citations_to_evidence(&citations, ctx.state_mut(), now) {
+                    if !evidence.contains(&id) {
+                        evidence.push(id);
+                    }
+                }
+                web_summary = Some(text).filter(|t| !t.is_empty());
+            }
+            Some(Err(err)) => {
+                let message = format!("Could not search the web: {err}");
+                ctx.notice(NoticeLevel::Warning, &message);
+                ctx.log(message);
+            }
+            None => {}
+        }
+
+        let weeks = commits_per_week(&answer.commits);
+        if !weeks.is_empty() {
+            let chart = chart(&weeks);
+            ctx.emit(BlockKind::Chart(chart.clone()))?;
+            record_charts(ctx, &[chart])?;
+        }
+        let records: Vec<_> = evidence
+            .iter()
+            .filter_map(|id| ctx.state().evidence(*id).cloned())
+            .collect();
+        if records.is_empty() {
+            ctx.emit(BlockKind::Markdown {
+                title: None,
+                source: "No additional data found: no history, logs, metrics or \
+                         relevant documentation."
+                    .into(),
+            })?;
+        } else {
+            ctx.emit(BlockKind::Table(TableSpec {
+                columns: vec![
+                    Column::new("Id"),
+                    Column::new("Kind"),
+                    Column::new("Fact"),
+                    Column::new("Source"),
+                ],
+                rows: records
+                    .iter()
+                    .map(|e| {
+                        vec![
+                            Cell::Text(e.id.to_string()),
+                            Cell::Text(source_kind(&e.source).into()),
+                            Cell::Text(e.claim.clone()),
+                            Cell::Text(source_label(&e.source)),
+                        ]
+                    })
+                    .collect(),
+            }))?;
+            ctx.emit(sources_block(records.iter().map(|e| e.source.clone())))?;
+        }
+
+        let ids: Vec<String> = evidence.iter().map(ToString::to_string).collect();
+        ctx.log(format!(
+            "Data gathered: {} commits over {} weeks, {findings} findings in the repo{}, \
+             {web} web citations{}; evidence {}.",
+            answer.commits.len(),
+            weeks.len(),
+            if mcp { " (with MCP)" } else { "" },
+            if libraries.is_empty() {
+                String::new()
+            } else {
+                format!(" about {}", libraries.join(", "))
+            },
+            if ids.is_empty() {
+                "none".to_owned()
+            } else {
+                ids.join(", ")
+            },
+        ));
+        let report = DataReport {
+            evidence,
+            commits_per_week: weeks,
+            libraries,
+            web_summary,
+        };
+        ctx.set_data(REPORT_KEY, &report)?;
+        Ok(report)
+    }
 }
 
-fn input(brief: &IntakeBrief, observed: &ObservationReport, git: bool, mcp: &[&str]) -> String {
+fn input(
+    brief: &IntakeBrief,
+    observed: Option<&ObservationReport>,
+    git: bool,
+    mcp: &[&str],
+) -> String {
     let mut out = format!(
-        "{TASK}\n\nProblem ({}): {}\nObserved architecture: {}\nFiles involved:\n",
+        "{TASK}\n\nProblem ({}): {}\n",
         brief.kind.name(),
         brief.restated,
-        observed.summary
     );
-    for file in &observed.key_files {
-        let _ = writeln!(out, "- {} ({})", file.path, file.role);
+    match observed {
+        Some(observed) => {
+            let _ = writeln!(
+                out,
+                "Observed architecture: {}\nFiles involved:",
+                observed.summary
+            );
+            for file in &observed.key_files {
+                let _ = writeln!(out, "- {} ({})", file.path, file.role);
+            }
+        }
+        None => out.push_str(NO_FILES),
     }
     let _ = write!(out, "\n{}\n", if git { GIT } else { NO_GIT });
     if !mcp.is_empty() {
@@ -278,149 +502,9 @@ impl ResearchNode for Data {
                 reason: "the files involved that Observation marks are missing".into(),
             });
         };
-        let git = has_shell(ctx);
-        let mcp: Vec<String> = ctx
-            .explore_agent()?
-            .tools()
-            .names()
-            .filter(|name| name.starts_with("mcp__"))
-            .map(str::to_owned)
-            .collect();
-        let mcp_names: Vec<&str> = mcp.iter().map(String::as_str).collect();
-        let answer: Answer = explore_json(
-            ctx,
-            &input(&brief, &observed, git, &mcp_names),
-            Answer::validate,
-        )
-        .await?;
-
-        let now = ctx.now();
-        let mut evidence = Vec::new();
-        for commit in answer.commits.iter().take(MAX_COMMIT_EVIDENCE) {
-            let date = if commit.date.trim().is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", commit.date.trim())
-            };
-            evidence.push(ctx.state_mut().add_evidence(
-                format!(
-                    "Change in the files involved{date}: {}",
-                    commit.summary.trim()
-                ),
-                SourceRef::Commit {
-                    sha: commit.sha.trim().to_owned(),
-                    summary: commit.summary.trim().to_owned(),
-                },
-                now,
-            ));
-        }
-        let findings = answer.findings.len();
-        for finding in answer.findings {
-            evidence.push(
-                ctx.state_mut()
-                    .add_evidence(finding.claim.trim(), finding.source, now),
-            );
-        }
-
-        let libraries: Vec<String> = answer
-            .libraries
-            .iter()
-            .map(|l| l.trim().to_owned())
-            .filter(|l| !l.is_empty())
-            .collect();
-        let mut web_summary = None;
-        let mut web = 0;
-        if !libraries.is_empty() && has_web(ctx) {
-            let prompt = format!(
-                "{WEB_SYSTEM}\n\nProblem: {}\nLibraries: {}",
-                brief.restated,
-                libraries.join(", ")
-            );
-            match explore_web(ctx, &prompt).await {
-                Ok((text, citations)) => {
-                    web = citations.len();
-                    for id in citations_to_evidence(&citations, ctx.state_mut(), now) {
-                        if !evidence.contains(&id) {
-                            evidence.push(id);
-                        }
-                    }
-                    web_summary = Some(text).filter(|t| !t.is_empty());
-                }
-                Err(err) => {
-                    let message = format!("Could not search the web: {err}");
-                    ctx.notice(NoticeLevel::Warning, &message);
-                    ctx.log(message);
-                }
-            }
-        }
-
-        let weeks = commits_per_week(&answer.commits);
-        if !weeks.is_empty() {
-            let chart = chart(&weeks);
-            ctx.emit(BlockKind::Chart(chart.clone()))?;
-            record_charts(ctx, &[chart])?;
-        }
-        let records: Vec<_> = evidence
-            .iter()
-            .filter_map(|id| ctx.state().evidence(*id).cloned())
-            .collect();
-        if records.is_empty() {
-            ctx.emit(BlockKind::Markdown {
-                title: None,
-                source: "No additional data found: no history, logs, metrics or \
-                         relevant documentation."
-                    .into(),
-            })?;
-        } else {
-            ctx.emit(BlockKind::Table(TableSpec {
-                columns: vec![
-                    Column::new("Id"),
-                    Column::new("Kind"),
-                    Column::new("Fact"),
-                    Column::new("Source"),
-                ],
-                rows: records
-                    .iter()
-                    .map(|e| {
-                        vec![
-                            Cell::Text(e.id.to_string()),
-                            Cell::Text(source_kind(&e.source).into()),
-                            Cell::Text(e.claim.clone()),
-                            Cell::Text(source_label(&e.source)),
-                        ]
-                    })
-                    .collect(),
-            }))?;
-            ctx.emit(sources_block(records.iter().map(|e| e.source.clone())))?;
-        }
-
-        let ids: Vec<String> = evidence.iter().map(ToString::to_string).collect();
-        ctx.log(format!(
-            "Data gathered: {} commits over {} weeks, {findings} findings in the repo{}, \
-             {web} web citations{}; evidence {}.",
-            answer.commits.len(),
-            weeks.len(),
-            if mcp.is_empty() { "" } else { " (with MCP)" },
-            if libraries.is_empty() {
-                String::new()
-            } else {
-                format!(" about {}", libraries.join(", "))
-            },
-            if ids.is_empty() {
-                "none".to_owned()
-            } else {
-                ids.join(", ")
-            },
-        ));
-        ctx.set_data(
-            REPORT_KEY,
-            DataReport {
-                evidence,
-                commits_per_week: weeks,
-                libraries,
-                web_summary,
-            },
-        )?;
+        let gathered = self.gather_repo(ctx, &brief, Some(&observed)).await?;
+        let docs = Self::library_docs(ctx, &brief, &gathered.libraries()).await;
+        self.apply(ctx, gathered, docs)?;
         Ok(NodeOutcome::Done)
     }
 }
@@ -635,6 +719,28 @@ mod tests {
             "{shown:#?}"
         );
         assert!(ctx.data::<DataReport>(REPORT_KEY).is_some());
+    }
+
+    #[tokio::test]
+    async fn without_observation_the_agent_finds_the_files_itself() {
+        let llm = Arc::new(ScriptedLlm::new([ScriptedResponse::text(
+            r#"{"commits": [], "findings": [{"claim": "login hashes twice", "source": {"type": "file", "path": "src/login.rs", "line_start": 2}}], "libraries": ["bcrypt"]}"#,
+        )]));
+        let service = agent(&llm, &workspace(), None, |_| {});
+        let sink = Arc::new(RecordingSink::new());
+        let mut ctx = context(Stage::Data, &llm, &sink, Some(service));
+
+        let data = Data::new();
+        let gathered = data.gather_repo(&ctx, &brief(), None).await.unwrap();
+        let prompt = format!("{:?}", llm.requests()[0].messages);
+        assert!(prompt.contains("find them first"), "{prompt}");
+        assert!(!prompt.contains("Files involved"));
+        assert_eq!(gathered.libraries(), ["bcrypt"]);
+
+        let report = data.apply(&mut ctx, gathered, None).unwrap();
+        assert_eq!(report.evidence.len(), 1);
+        assert_eq!(report.libraries, ["bcrypt"]);
+        assert_eq!(ctx.data::<DataReport>(REPORT_KEY), Some(report));
     }
 
     #[tokio::test]

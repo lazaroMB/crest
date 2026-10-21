@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::observation::{explore_web, has_web};
 use crate::flows::research::json::final_text;
 use crate::flows::research::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
+use crate::ports::llm::Citation;
 use crate::usecases::evidence::citations_to_evidence;
 
 /// Key of the prior solutions found (`Vec<PriorSolution>`).
@@ -91,8 +92,10 @@ pub struct PriorSolution {
     pub evidence_ids: Vec<EvidenceId>,
 }
 
+/// What the repo turn found, before it is recorded
+/// ([`Research::gather_repo`]).
 #[derive(Debug, Deserialize)]
-struct RepoAnswer {
+pub(crate) struct RepoAnswer {
     findings: Vec<RepoFinding>,
 }
 
@@ -122,6 +125,14 @@ struct WebAnswer {
     options: Vec<WebOption>,
 }
 
+/// What the web turn found, before it is recorded
+/// ([`Research::gather_web`]).
+#[derive(Debug)]
+pub(crate) struct WebGathered {
+    answer: WebAnswer,
+    citations: Vec<Citation>,
+}
+
 #[derive(Debug, Deserialize)]
 struct WebOption {
     name: String,
@@ -139,6 +150,156 @@ impl Research {
     #[must_use]
     pub fn new() -> Self {
         Self
+    }
+
+    /// Looks in the repo for prior solutions to `brief` with a read-only
+    /// agent turn; `None` when there is no agent with tools. Only reads the
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// The turn's errors or the invalid answer.
+    pub(crate) async fn gather_repo(
+        &self,
+        ctx: &NodeContext,
+        brief: &str,
+    ) -> Result<Option<RepoAnswer>, NodeError> {
+        let Ok(agent) = ctx.explore_agent() else {
+            return Ok(None);
+        };
+        let prompt = format!("{REPO_PROMPT}\n\n{brief}");
+        let mut session = ctx.new_session();
+        ctx.run_agent_turn(agent, &mut session, prompt.clone())
+            .await?;
+        let report = final_text(&session);
+        let answer: RepoAnswer = ctx
+            .fix_json(
+                "",
+                vec![Message::user_text(prompt)],
+                report,
+                |a: &RepoAnswer| {
+                    a.findings.iter().try_for_each(|f| {
+                        if f.name.trim().is_empty() || f.path.trim().is_empty() {
+                            return Err("every finding needs `name` and `path`".to_owned());
+                        }
+                        f.source().validate().map_err(|e| e.to_string())
+                    })
+                },
+            )
+            .await?;
+        Ok(Some(answer))
+    }
+
+    /// Records the findings of [`Research::gather_repo`] as evidence and
+    /// returns them as prior solutions.
+    pub(crate) fn apply_repo(
+        &self,
+        ctx: &mut NodeContext,
+        gathered: Option<RepoAnswer>,
+    ) -> Vec<PriorSolution> {
+        let Some(answer) = gathered else {
+            ctx.log("No agent with tools: the repo was not explored.");
+            return Vec::new();
+        };
+        let now = ctx.now();
+        answer
+            .findings
+            .into_iter()
+            .map(|f| {
+                let source = f.source();
+                let id = ctx
+                    .state_mut()
+                    .add_evidence(f.summary.clone(), source.clone(), now);
+                PriorSolution {
+                    name: f.name,
+                    kind: SolutionKind::Pattern,
+                    summary: f.summary,
+                    source,
+                    evidence_ids: vec![id],
+                }
+            })
+            .collect()
+    }
+
+    /// Searches the web for libraries, articles and issues about `brief`;
+    /// `None` without web tools. Only reads the context.
+    ///
+    /// # Errors
+    ///
+    /// The turn's errors or the invalid answer.
+    pub(crate) async fn gather_web(
+        &self,
+        ctx: &NodeContext,
+        brief: &str,
+    ) -> Result<Option<WebGathered>, NodeError> {
+        if !has_web(ctx) {
+            return Ok(None);
+        }
+        let prompt = format!("{WEB_SYSTEM}\n\n{brief}");
+        let (text, citations) = explore_web(ctx, &prompt).await?;
+        let messages = vec![Message::user_text(prompt)];
+        let answer: WebAnswer = ctx
+            .fix_json("", messages, text, |a: &WebAnswer| {
+                a.options.iter().try_for_each(|o| {
+                    if o.name.trim().is_empty() || o.summary.trim().is_empty() {
+                        Err("every option needs `name` and `summary`".to_owned())
+                    } else if !o.url.starts_with("http") {
+                        Err(format!(
+                            "the URL of \"{}\" is not valid: {:?}",
+                            o.name, o.url
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                })
+            })
+            .await?;
+        Ok(Some(WebGathered { answer, citations }))
+    }
+
+    /// Records what [`Research::gather_web`] found: the pages read and the
+    /// page of each option not read become evidence; returns the options.
+    pub(crate) fn apply_web(
+        &self,
+        ctx: &mut NodeContext,
+        gathered: Option<WebGathered>,
+    ) -> Vec<PriorSolution> {
+        let Some(WebGathered { answer, citations }) = gathered else {
+            ctx.log("No web tools (curl or app.opt.web): the web was not searched.");
+            return Vec::new();
+        };
+        let now = ctx.now();
+        let cited = citations_to_evidence(&citations, ctx.state_mut(), now);
+        let mut options = Vec::new();
+        for o in answer.options {
+            let mut ids: Vec<EvidenceId> = cited
+                .iter()
+                .copied()
+                .filter(|id| {
+                    ctx.state().evidence(*id).is_some_and(
+                        |e| matches!(&e.source, SourceRef::Url { url, .. } if *url == o.url),
+                    )
+                })
+                .collect();
+            let source = SourceRef::Url {
+                url: o.url.clone(),
+                title: Some(o.name.clone()),
+            };
+            if ids.is_empty() {
+                ids.push(
+                    ctx.state_mut()
+                        .add_evidence(o.summary.clone(), source.clone(), now),
+                );
+            }
+            options.push(PriorSolution {
+                name: o.name,
+                kind: o.kind,
+                summary: o.summary,
+                source,
+                evidence_ids: ids,
+            });
+        }
+        options
     }
 }
 
@@ -162,9 +323,11 @@ impl ResearchNode for Research {
         }
         let brief = brief(ctx);
         let first_evidence = ctx.state().evidence.len();
-        let mut options = repo_options(ctx, &brief).await?;
+        let repo = self.gather_repo(ctx, &brief).await?;
+        let mut options = self.apply_repo(ctx, repo);
         let repo_count = options.len();
-        options.extend(web_options(ctx, &brief).await?);
+        let web = self.gather_web(ctx, &brief).await?;
+        options.extend(self.apply_web(ctx, web));
 
         ctx.emit(BlockKind::Table(table(&options)))?;
         let sources: Vec<SourceRef> = ctx.state().evidence[first_evidence..]
@@ -187,7 +350,7 @@ impl ResearchNode for Research {
 }
 
 /// The definition, constraints and hypotheses, for both prompts.
-fn brief(ctx: &NodeContext) -> String {
+pub(crate) fn brief(ctx: &NodeContext) -> String {
     let state = ctx.state();
     let mut out = String::from("Problem:\n");
     for p in &state.problem_statements {
@@ -206,111 +369,6 @@ fn brief(ctx: &NodeContext) -> String {
         }
     }
     out
-}
-
-/// Prior solutions already in the repo, from a read-only agent turn.
-async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolution>, NodeError> {
-    let Ok(agent) = ctx.explore_agent().cloned() else {
-        ctx.log("No agent with tools: the repo was not explored.");
-        return Ok(Vec::new());
-    };
-    let prompt = format!("{REPO_PROMPT}\n\n{brief}");
-    let mut session = ctx.new_session();
-    ctx.run_agent_turn(&agent, &mut session, prompt.clone())
-        .await?;
-    let report = final_text(&session);
-    let answer: RepoAnswer = ctx
-        .fix_json(
-            "",
-            vec![Message::user_text(prompt)],
-            report,
-            |a: &RepoAnswer| {
-                a.findings.iter().try_for_each(|f| {
-                    if f.name.trim().is_empty() || f.path.trim().is_empty() {
-                        return Err("every finding needs `name` and `path`".to_owned());
-                    }
-                    f.source().validate().map_err(|e| e.to_string())
-                })
-            },
-        )
-        .await?;
-    let now = ctx.now();
-    Ok(answer
-        .findings
-        .into_iter()
-        .map(|f| {
-            let source = f.source();
-            let id = ctx
-                .state_mut()
-                .add_evidence(f.summary.clone(), source.clone(), now);
-            PriorSolution {
-                name: f.name,
-                kind: SolutionKind::Pattern,
-                summary: f.summary,
-                source,
-                evidence_ids: vec![id],
-            }
-        })
-        .collect())
-}
-
-/// Libraries, articles and issues from the web, with the pages read.
-async fn web_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSolution>, NodeError> {
-    if !has_web(ctx) {
-        ctx.log("No web tools (curl or app.opt.web): the web was not searched.");
-        return Ok(Vec::new());
-    }
-    let prompt = format!("{WEB_SYSTEM}\n\n{brief}");
-    let (text, citations) = explore_web(ctx, &prompt).await?;
-    let now = ctx.now();
-    let cited = citations_to_evidence(&citations, ctx.state_mut(), now);
-    let messages = vec![Message::user_text(prompt)];
-    let answer: WebAnswer = ctx
-        .fix_json("", messages, text, |a: &WebAnswer| {
-            a.options.iter().try_for_each(|o| {
-                if o.name.trim().is_empty() || o.summary.trim().is_empty() {
-                    Err("every option needs `name` and `summary`".to_owned())
-                } else if !o.url.starts_with("http") {
-                    Err(format!(
-                        "the URL of \"{}\" is not valid: {:?}",
-                        o.name, o.url
-                    ))
-                } else {
-                    Ok(())
-                }
-            })
-        })
-        .await?;
-    let mut options = Vec::new();
-    for o in answer.options {
-        let mut ids: Vec<EvidenceId> = cited
-            .iter()
-            .copied()
-            .filter(|id| {
-                ctx.state().evidence(*id).is_some_and(
-                    |e| matches!(&e.source, SourceRef::Url { url, .. } if *url == o.url),
-                )
-            })
-            .collect();
-        let source = SourceRef::Url {
-            url: o.url.clone(),
-            title: Some(o.name.clone()),
-        };
-        if ids.is_empty() {
-            ids.push(
-                ctx.state_mut()
-                    .add_evidence(o.summary.clone(), source.clone(), now),
-            );
-        }
-        options.push(PriorSolution {
-            name: o.name,
-            kind: o.kind,
-            summary: o.summary,
-            source,
-            evidence_ids: ids,
-        });
-    }
-    Ok(options)
 }
 
 fn source_label(source: &SourceRef) -> String {
