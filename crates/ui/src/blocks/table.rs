@@ -20,7 +20,6 @@ use gpui::{
     Styled as _, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use self::sort::Direction;
@@ -193,81 +192,6 @@ impl SpecTable {
         let row = *self.order.get(row)?;
         self.spec.rows.get(row)?.get(col)
     }
-}
-
-// The `DataTable` adapter that callers still use; it goes once they draw
-// a `TableView`.
-
-impl SpecTable {
-    /// Sorts the rows by `col` (`ColumnSort::Default` restores the original
-    /// order).
-    pub fn sort(&mut self, col: usize, sort: ColumnSort) {
-        self.set_sort(match sort {
-            ColumnSort::Default => None,
-            ColumnSort::Ascending => Some((col, Direction::Ascending)),
-            ColumnSort::Descending => Some((col, Direction::Descending)),
-        });
-    }
-}
-
-impl TableDelegate for SpecTable {
-    fn columns_count(&self, _: &App) -> usize {
-        self.spec.columns.len()
-    }
-
-    fn rows_count(&self, _: &App) -> usize {
-        self.order.len()
-    }
-
-    fn column(&self, col_ix: usize, _: &App) -> Column {
-        let name = self
-            .spec
-            .columns
-            .get(col_ix)
-            .map(|c| c.name.clone())
-            .unwrap_or_default();
-        Column::new(SharedString::from(format!("c{col_ix}")), name).sortable()
-    }
-
-    fn perform_sort(
-        &mut self,
-        col_ix: usize,
-        sort: ColumnSort,
-        _: &mut Window,
-        _: &mut Context<TableState<Self>>,
-    ) {
-        self.sort(col_ix, sort);
-    }
-
-    fn render_td(
-        &mut self,
-        row_ix: usize,
-        col_ix: usize,
-        _: &mut Window,
-        _: &mut Context<TableState<Self>>,
-    ) -> impl IntoElement {
-        let text = self.cell(row_ix, col_ix).map(cell_text).unwrap_or_default();
-        div().child(SharedString::from(text))
-    }
-}
-
-/// The `DataTable` state of block `id`, showing `spec`.
-pub fn table_state(
-    id: BlockId,
-    spec: &TableSpec,
-    window: &mut Window,
-    cx: &mut App,
-) -> gpui::Entity<TableState<SpecTable>> {
-    let state = super::block_state(id, window, cx, |window, cx| {
-        TableState::new(SpecTable::new(spec.clone()), window, cx)
-    });
-    if state.read(cx).delegate().spec() != spec {
-        state.update(cx, |state, cx| {
-            *state.delegate_mut() = SpecTable::new(spec.clone());
-            state.refresh(cx);
-        });
-    }
-    state
 }
 
 /// The table of one block: its data, sort, column sizes and whether every

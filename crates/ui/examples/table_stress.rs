@@ -1,6 +1,7 @@
 //! Stress test of the table block: a 10 000-row table in the timeline,
-//! scrolled top to bottom a few rows per frame, then sorted by each column
-//! while the frame interval is logged.
+//! expanded and collapsed a few times (expanded it lays out 500 rows of
+//! wrapping cells), then sorted by each column while the frame interval
+//! is logged.
 //!
 //! `cargo run -p ui --release --example table_stress [--quit]`
 //!
@@ -19,14 +20,14 @@ use application::ports::events::{DomainEvent, EventSink as _};
 use application::testing::system::RecordingSink;
 use domain::block::{Block, BlockId, BlockKind, Cell, Column, TableSpec};
 use gpui::{App, AppContext as _, Entity, Window};
-use gpui_component::table::ColumnSort;
 use ui::app::RootView;
-use ui::blocks::table::table_state;
+use ui::blocks::table::sort::Direction;
+use ui::blocks::table::table_view;
 use ui::timeline::TimelineView;
 
 const ROWS: usize = 10_000;
-/// Rows the table scrolls per frame during the sweep.
-const STEP: usize = 40;
+/// Frames the table is expanded and collapsed for, alternating.
+const TOGGLES: usize = 40;
 
 fn spec() -> TableSpec {
     let exts = ["rs", "toml", "md", "lua", "json", "yaml"];
@@ -85,7 +86,7 @@ fn main() {
             spec,
             phase: Phase::Load,
             last_frame: None,
-            scroll: Vec::new(),
+            toggle: Vec::new(),
             sort: Vec::new(),
         }));
         schedule(window, timeline, stats);
@@ -96,8 +97,8 @@ fn main() {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Load,
-    /// Scrolling; the row at the top of the viewport.
-    Scroll(usize),
+    /// Expanding and collapsing; the frames done.
+    Toggle(usize),
     /// Sorting; the column and direction applied next.
     Sort(usize, bool),
     Done,
@@ -110,7 +111,7 @@ struct Stats {
     spec: TableSpec,
     phase: Phase,
     last_frame: Option<Instant>,
-    scroll: Vec<Duration>,
+    toggle: Vec<Duration>,
     sort: Vec<Duration>,
 }
 
@@ -145,44 +146,37 @@ fn frame(
                 "table_stress: {ROWS} rows shown after {:?}",
                 s.started.elapsed()
             );
-            s.phase = Phase::Scroll(0);
+            s.phase = Phase::Toggle(0);
         }
-        Phase::Scroll(row) => {
+        Phase::Toggle(done) => {
             if let Some(interval) = interval {
-                s.scroll.push(interval);
+                s.toggle.push(interval);
             }
-            let state = table_state(s.id, &s.spec, window, cx);
-            state.update(cx, |state, cx| state.scroll_to_row(row, cx));
-            if row % 2000 < STEP {
-                eprintln!("table_stress: scrolled to row {row}");
-            }
-            s.phase = if row + STEP >= ROWS {
-                report("scroll", &s.scroll);
+            let view = table_view(s.id, &s.spec, window, cx);
+            // End expanded, so the sorts lay out the most rows.
+            view.update(cx, |view, cx| view.set_expanded(done % 2 == 0, cx));
+            s.phase = if done + 1 >= TOGGLES {
+                report("expand", &s.toggle);
                 Phase::Sort(0, false)
             } else {
-                Phase::Scroll(row + STEP)
+                Phase::Toggle(done + 1)
             };
         }
         Phase::Sort(col, ascending) => {
             if let Some(interval) = interval {
                 s.sort.push(interval);
             }
-            let state = table_state(s.id, &s.spec, window, cx);
+            let view = table_view(s.id, &s.spec, window, cx);
             let started = Instant::now();
             let sort = if ascending {
-                ColumnSort::Ascending
+                Direction::Ascending
             } else {
-                ColumnSort::Descending
+                Direction::Descending
             };
-            let first = state.update(cx, |state, cx| {
-                state.delegate_mut().sort(col, sort);
-                state.scroll_to_row(0, cx);
+            let first = view.update(cx, |view, cx| {
+                view.table_mut().set_sort(Some((col, sort)));
                 cx.notify();
-                let delegate = state.delegate();
-                delegate
-                    .order()
-                    .first()
-                    .map(|&ix| delegate.spec().rows[ix][col].clone())
+                view.table().cell(0, col).cloned()
             });
             eprintln!(
                 "table_stress: sort column {col} {sort:?} in {:?}, first cell {first:?}",
