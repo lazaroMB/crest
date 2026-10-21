@@ -3,7 +3,7 @@
 //! Each module exposes `render(entry, window, cx)`. The timeline dispatches
 //! here for every kind it does not draw itself, so the wave-3 block tasks
 //! work in separate files. Renderers get the window and a mutable `App`
-//! because some keep GPUI state per block (a table's `TableState`, a
+//! because some keep GPUI state per block (a table's `TableView`, a
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod chart;

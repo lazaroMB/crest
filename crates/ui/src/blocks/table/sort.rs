@@ -4,6 +4,7 @@
 //! `false < true`; a column mixing kinds groups them as booleans, numbers,
 //! then text. Nulls (and missing cells) always go last, in either
 //! direction. The sort is stable, so equal cells keep their original order.
+//! Clicking a header cycles descending → ascending → original ([`cycle`]).
 
 use std::cmp::Ordering;
 
@@ -61,6 +62,17 @@ pub fn sorted_order(rows: &[Vec<Cell>], col: usize, direction: Direction) -> Vec
         compare(a, b, direction)
     });
     order
+}
+
+/// The sort after clicking column `col`'s header while sorted by
+/// `current`: another column sorts descending, then a click switches to
+/// ascending, then back to the original order (`None`).
+pub fn cycle(current: Option<(usize, Direction)>, col: usize) -> Option<(usize, Direction)> {
+    match current {
+        Some((sorted, Direction::Descending)) if sorted == col => Some((col, Direction::Ascending)),
+        Some((sorted, Direction::Ascending)) if sorted == col => None,
+        _ => Some((col, Direction::Descending)),
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +142,15 @@ mod tests {
         ];
         assert_eq!(sorted_order(&rows, 1, Direction::Ascending), [1, 2, 0]);
         assert_eq!(sorted_order(&rows, 7, Direction::Ascending), [0, 1, 2]);
+    }
+
+    #[test]
+    fn header_clicks_cycle_descending_ascending_original() {
+        let first = cycle(None, 2);
+        assert_eq!(first, Some((2, Direction::Descending)));
+        let second = cycle(first, 2);
+        assert_eq!(second, Some((2, Direction::Ascending)));
+        assert_eq!(cycle(second, 2), None);
+        assert_eq!(cycle(second, 0), Some((0, Direction::Descending)));
     }
 }

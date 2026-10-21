@@ -2,10 +2,8 @@ use application::ports::events::DomainEvent;
 use domain::block::{Cell, ChartKind, ChartSpec, Column, Series, TableSpec};
 use gpui::{TestAppContext, px};
 
-use gpui_component::table::TableState;
-
 use super::*;
-use crate::blocks::table::SpecTable;
+use crate::blocks::table::TableView;
 use crate::timeline::TimelineView;
 
 fn text(s: &str) -> CustomNode {
@@ -110,13 +108,11 @@ fn draws_a_tree_with_a_list_and_a_table(cx: &mut TestAppContext) {
         let window = cx.windows()[0];
         window
             .update(cx, |_, window, cx| {
-                let state = crate::blocks::block_state::<TableState<SpecTable>>(
-                    node_id(id, 0),
-                    window,
-                    cx,
-                    |_, _| panic!("the table node was not drawn"),
-                );
-                state.read(cx).delegate().spec().rows.len()
+                let state =
+                    crate::blocks::block_state::<TableView>(node_id(id, 0), window, cx, |_, _| {
+                        panic!("the table node was not drawn")
+                    });
+                state.read(cx).table().spec().rows.len()
             })
             .unwrap_or_default()
     });
