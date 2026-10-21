@@ -204,3 +204,56 @@ fn draws_every_rich_node_and_links_open_the_browser(cx: &mut TestAppContext) {
     cx.simulate_click(bounds.center(), gpui::Modifiers::none());
     assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
 }
+
+/// Bounds of the two charts of a `Row` drawn in a window `width` wide.
+fn row_of_two_charts(
+    cx: &mut TestAppContext,
+    width: f32,
+) -> (gpui::Bounds<gpui::Pixels>, gpui::Bounds<gpui::Pixels>) {
+    let chart = || {
+        CustomNode::Chart(ChartSpec {
+            title: "avance".into(),
+            kind: ChartKind::Bar,
+            labels: vec!["lun".into(), "mar".into(), "mié".into()],
+            series: vec![Series {
+                name: "hechas".into(),
+                values: vec![1.0, 3.0, 2.0],
+            }],
+        })
+    };
+    let block = custom(CustomNode::Row {
+        children: vec![chart(), chart()],
+    });
+    let id = block.id;
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    view.update(cx, |view, cx| {
+        view.apply(&DomainEvent::BlockAdded { block }, cx)
+    });
+    // Real frames, as in the chart tests.
+    cx.simulate_resize(gpui::size(px(width), px(3000.)));
+    cx.run_until_parked();
+    let mut bounds = |ordinal| {
+        let selector = format!("chart-plot-{}", node_id(id, ordinal));
+        cx.debug_bounds(selector.leak())
+            .unwrap_or_else(|| panic!("chart {ordinal} drawn"))
+    };
+    (bounds(0), bounds(1))
+}
+
+#[gpui::test]
+fn row_children_sit_side_by_side_when_wide(cx: &mut TestAppContext) {
+    let (a, b) = row_of_two_charts(cx, 1100.);
+    assert_eq!(a.origin.y, b.origin.y, "{a:?} {b:?}");
+    assert!(b.origin.x >= a.origin.x + a.size.width, "{a:?} {b:?}");
+    assert!((a.size.width - b.size.width).abs() < px(1.));
+    assert!(a.size.width > px(400.) && a.size.width < px(560.), "{a:?}");
+}
+
+#[gpui::test]
+fn row_children_stack_when_narrow(cx: &mut TestAppContext) {
+    let (a, b) = row_of_two_charts(cx, 500.);
+    assert_eq!(a.origin.x, b.origin.x, "{a:?} {b:?}");
+    assert!(b.origin.y >= a.origin.y + a.size.height, "{a:?} {b:?}");
+    assert!(a.size.width > px(400.), "{a:?}");
+}

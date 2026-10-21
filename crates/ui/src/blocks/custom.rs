@@ -15,6 +15,7 @@ use domain::block::{Block, BlockId, BlockKind, CustomNode, MermaidSpec, is_opena
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    px,
 };
 use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -24,6 +25,9 @@ use crate::timeline::TimelineEntry;
 
 /// Deepest node drawn; children below it show a marker.
 pub const MAX_DEPTH: usize = 16;
+/// Narrowest a child of a `Row` gets; children that do not fit side by
+/// side at this width wrap to the next line.
+pub const ROW_CHILD_MIN: f32 = 280.0;
 
 /// Id of the `ordinal`-th stateful node (table, chart, markdown) of block
 /// `parent`, in depth-first order. Stable across frames for the same tree.
@@ -100,9 +104,22 @@ impl Walk<'_> {
                 .child(SharedString::from(text.clone()))
                 .into_any_element(),
             CustomNode::Row { children } => h_flex()
+                .w_full()
+                .flex_wrap()
                 .gap_2()
                 .items_start()
-                .children(self.children(children, depth, window, cx))
+                .children(
+                    self.children(children, depth, window, cx)
+                        .into_iter()
+                        .map(|child| {
+                            div()
+                                .flex_grow_1()
+                                .flex_shrink_1()
+                                .flex_basis(px(0.))
+                                .min_w(px(ROW_CHILD_MIN))
+                                .child(child)
+                        }),
+                )
                 .into_any_element(),
             CustomNode::Col { children } => v_flex()
                 .gap_1()
