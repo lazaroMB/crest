@@ -17,6 +17,7 @@ use super::nodes::report::WriteReport;
 use super::nodes::test::TestTask;
 use super::nodes::verify::VerifyPlan;
 use super::state::{FlowStatus, KEY_STATUS};
+use crate::flows::aside::{FlowKind, GateInfo};
 use crate::ports::events::NoticeLevel;
 
 /// Name of the plan inside a Spec folder.
@@ -269,6 +270,20 @@ impl ImplementSession {
     /// A storage error.
     pub async fn status(&self) -> Result<FlowStatus, FlowError> {
         self.flow.status().await
+    }
+
+    /// The gate the flow waits at, for a side chat; `None` when it does not
+    /// wait (or its storage fails).
+    pub async fn gate_info(&self) -> Option<GateInfo> {
+        let FlowStatus::WaitingForInput { step, prompt } = self.status().await.ok()? else {
+            return None;
+        };
+        Some(GateInfo {
+            flow: FlowKind::Implement,
+            stage: step.name().to_owned(),
+            prompt,
+            topic: Some(format!("implementing the plan {}", self.plan_path)),
+        })
     }
 }
 

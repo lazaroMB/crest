@@ -24,6 +24,7 @@ use super::builder::ResearchGraph;
 use super::error::FlowError;
 use super::flow::{FlowReply, Position, ResearchFlow};
 use super::gate::FlowStatus;
+use crate::flows::aside::{FlowKind, GateInfo};
 
 /// Prefix of the index session of a workspace.
 const INDEX_PREFIX: &str = "research-index:";
@@ -94,6 +95,22 @@ impl ResearchSession {
     #[must_use]
     pub fn active(&self) -> Option<&ResearchFlow> {
         self.active.as_ref()
+    }
+
+    /// The gate the active flow waits at, for a side chat; `None` when no
+    /// flow is active (or its storage fails).
+    pub async fn gate_info(&self) -> Option<GateInfo> {
+        let flow = self.active.as_ref()?;
+        let FlowStatus::WaitingForInput { stage, prompt } = flow.status().await.ok()? else {
+            return None;
+        };
+        let topic = flow.problem().await.ok().filter(|p| !p.trim().is_empty());
+        Some(GateInfo {
+            flow: FlowKind::Research,
+            stage: stage.name().to_owned(),
+            prompt,
+            topic,
+        })
     }
 
     fn index_id(&self) -> String {
