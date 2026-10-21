@@ -108,6 +108,11 @@ pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
 
         // T5.9: Some(Arc::new(review::<Type>::new()))
         Stage::CriticalReview => Some(Arc::new(review::Review::new())),
+
+        // The fast pipeline has its own registry.
+        Stage::Triage | Stage::Discovery | Stage::Framing | Stage::Solution | Stage::Delivery => {
+            None
+        }
     }
 }
 

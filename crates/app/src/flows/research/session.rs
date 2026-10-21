@@ -377,13 +377,13 @@ pub fn describe_status(status: &FlowStatus) -> String {
             "research flow running: next is {} ({}/{})",
             next.name(),
             next.index(),
-            domain::research::Stage::total()
+            next.total()
         ),
         FlowStatus::WaitingForInput { stage, .. } => format!(
             "research flow at {} ({}/{}): answer in the chat",
             stage.name(),
             stage.index(),
-            domain::research::Stage::total()
+            stage.total()
         ),
         FlowStatus::Completed => "research flow finished; `/simulate <spec>` runs its solution on \
                                   a board before `/implement <spec>`"
@@ -393,7 +393,7 @@ pub fn describe_status(status: &FlowStatus) -> String {
             "research flow failed at {} ({}/{}): {error} — `/research retry` runs it again",
             stage.name(),
             stage.index(),
-            domain::research::Stage::total()
+            stage.total()
         ),
     }
 }

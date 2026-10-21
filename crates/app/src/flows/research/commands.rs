@@ -1,7 +1,7 @@
 //! The chat commands of the research flow: `/stage`, `/back <stage>`,
 //! `/skip`, `/retry` and `/abort`.
 
-use domain::research::Stage;
+use domain::research::{Pipeline, Stage};
 
 use super::gate::normalize;
 
@@ -73,7 +73,7 @@ pub fn parse_stage(text: &str) -> Result<Stage, CommandError> {
     let unknown = || CommandError::UnknownStage(text.to_owned());
     let wanted = normalize(text);
     if let Ok(n) = wanted.parse::<u32>() {
-        return Stage::from_index(n).ok_or_else(unknown);
+        return Stage::from_index(Pipeline::Deep, n).ok_or_else(unknown);
     }
     let id = |s: Stage| {
         serde_json::to_value(s)

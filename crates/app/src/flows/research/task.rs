@@ -66,7 +66,7 @@ pub(crate) fn log(ctx: &Context, at: u64, stage: Stage, text: &str) -> Result<()
 fn confirm_prompt(stage: Stage, next: Option<Stage>) -> String {
     let then = next.map_or_else(
         || "finish the flow".to_owned(),
-        |n| format!("go on to {} ({}/{})", n.name(), n.index(), Stage::total()),
+        |n| format!("go on to {} ({}/{})", n.name(), n.index(), n.total()),
     );
     format!(
         "**{}** is done. Answer \"yes\" to {then}, write corrections to redo this \
@@ -158,7 +158,7 @@ impl NodeTask {
         self.deps.emit(BlockKind::StageHeader {
             stage: stage.name().to_owned(),
             index: stage.index(),
-            total: Stage::total(),
+            total: stage.total(),
         })?;
         put(ctx, KEY_ENTERED, stage)
     }

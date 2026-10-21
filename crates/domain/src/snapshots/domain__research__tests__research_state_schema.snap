@@ -517,6 +517,31 @@ expression: "schemars::schema_for!(ResearchState)"
           "description": "14. A clean-context subagent looks for gaps.",
           "type": "string",
           "const": "critical_review"
+        },
+        {
+          "description": "Fast 1. Intake plus size and depth.",
+          "type": "string",
+          "const": "triage"
+        },
+        {
+          "description": "Fast 2. Repo map, history, data and prior art, in parallel.",
+          "type": "string",
+          "const": "discovery"
+        },
+        {
+          "description": "Fast 3. Hypotheses, then problem statements and constraints.",
+          "type": "string",
+          "const": "framing"
+        },
+        {
+          "description": "Fast 4. Options, then the decision matrix.",
+          "type": "string",
+          "const": "solution"
+        },
+        {
+          "description": "Fast 5. Spec, plan and review for each problem statement.",
+          "type": "string",
+          "const": "delivery"
         }
       ]
     }

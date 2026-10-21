@@ -284,6 +284,48 @@ pub enum Stage {
     Plan,
     /// 14. A clean-context subagent looks for gaps.
     CriticalReview,
+    /// Fast 1. Intake plus size and depth.
+    Triage,
+    /// Fast 2. Repo map, history, data and prior art, in parallel.
+    Discovery,
+    /// Fast 3. Hypotheses, then problem statements and constraints.
+    Framing,
+    /// Fast 4. Options, then the decision matrix.
+    Solution,
+    /// Fast 5. Spec, plan and review for each problem statement.
+    Delivery,
+}
+
+/// Which of the two research graphs a stage belongs to.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Pipeline {
+    /// Five stages; the default.
+    Fast,
+    /// The full fourteen stages (`/research --deep`).
+    Deep,
+}
+
+impl Pipeline {
+    /// Stages of the pipeline, in workflow order.
+    #[must_use]
+    pub const fn stages(self) -> &'static [Stage] {
+        match self {
+            Self::Fast => &Stage::FAST,
+            Self::Deep => &Stage::ALL,
+        }
+    }
+
+    /// Name shown to the user (`fast` or `deep`).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Deep => "deep",
+        }
+    }
 }
 
 impl Stage {
@@ -305,30 +347,82 @@ impl Stage {
         Self::CriticalReview,
     ];
 
-    /// Number of stages (14).
+    /// The stages of the fast pipeline, in workflow order.
+    pub const FAST: [Self; 5] = [
+        Self::Triage,
+        Self::Discovery,
+        Self::Framing,
+        Self::Solution,
+        Self::Delivery,
+    ];
+
+    /// Pipeline the stage belongs to.
     #[must_use]
-    pub const fn total() -> u32 {
-        // The array length is a small constant, so the cast is lossless.
-        Self::ALL.len() as u32
+    pub const fn pipeline(self) -> Pipeline {
+        match self {
+            Self::Triage | Self::Discovery | Self::Framing | Self::Solution | Self::Delivery => {
+                Pipeline::Fast
+            }
+            _ => Pipeline::Deep,
+        }
     }
 
-    /// 1-based position in the workflow, `1..=14`.
+    /// Number of stages of the stage's pipeline (14 deep, 5 fast).
+    #[must_use]
+    pub const fn total(self) -> u32 {
+        // The arrays are small constants, so the cast is lossless.
+        self.pipeline().stages().len() as u32
+    }
+
+    /// 1-based position within its pipeline: `1..=14` deep, `1..=5` fast.
     #[must_use]
     pub const fn index(self) -> u32 {
-        self as u32 + 1
+        match self.pipeline() {
+            Pipeline::Deep => self as u32 + 1,
+            Pipeline::Fast => self as u32 - Self::Triage as u32 + 1,
+        }
     }
 
-    /// The stage at a 1-based position, if any.
+    /// The stage at a 1-based position of `pipeline`, if any.
     #[must_use]
-    pub fn from_index(index: u32) -> Option<Self> {
+    pub fn from_index(pipeline: Pipeline, index: u32) -> Option<Self> {
         let i = usize::try_from(index.checked_sub(1)?).ok()?;
-        Self::ALL.get(i).copied()
+        pipeline.stages().get(i).copied()
     }
 
-    /// The following stage, `None` after the critical review.
+    /// The following stage of the same pipeline, `None` after the last.
     #[must_use]
     pub fn next(self) -> Option<Self> {
-        Self::from_index(self.index() + 1)
+        Self::from_index(self.pipeline(), self.index() + 1)
+    }
+
+    /// The stage of `pipeline` that covers this one.
+    ///
+    /// Within the same pipeline it is the stage itself. A deep stage maps to
+    /// the fast stage that absorbs its work; a fast stage maps to the first
+    /// deep stage it covers. The mapping keeps the workflow order, except
+    /// that Experiments (after Hypotheses in deep) belong to Discovery.
+    #[must_use]
+    pub const fn owner_in(self, pipeline: Pipeline) -> Self {
+        match (pipeline, self) {
+            (Pipeline::Fast, Self::Intake) => Self::Triage,
+            (
+                Pipeline::Fast,
+                Self::Observation | Self::Data | Self::Analysis | Self::Experiments,
+            ) => Self::Discovery,
+            (Pipeline::Fast, Self::Hypotheses | Self::Definition) => Self::Framing,
+            (
+                Pipeline::Fast,
+                Self::Research | Self::Brainstorm | Self::Modeling | Self::Prototype,
+            ) => Self::Solution,
+            (Pipeline::Fast, Self::Spec | Self::Plan | Self::CriticalReview) => Self::Delivery,
+            (Pipeline::Deep, Self::Triage) => Self::Intake,
+            (Pipeline::Deep, Self::Discovery) => Self::Observation,
+            (Pipeline::Deep, Self::Framing) => Self::Hypotheses,
+            (Pipeline::Deep, Self::Solution) => Self::Research,
+            (Pipeline::Deep, Self::Delivery) => Self::Spec,
+            (_, stage) => stage,
+        }
     }
 
     /// Phase the stage belongs to.
@@ -340,12 +434,16 @@ impl Stage {
             | Self::Data
             | Self::Analysis
             | Self::Hypotheses
-            | Self::Experiments => Phase::Discovery,
-            Self::Definition => Phase::Definition,
-            Self::Research | Self::Brainstorm | Self::Modeling | Self::Prototype => {
-                Phase::SolutionSearch
-            }
-            Self::Spec | Self::Plan | Self::CriticalReview => Phase::Specification,
+            | Self::Experiments
+            | Self::Triage
+            | Self::Discovery => Phase::Discovery,
+            Self::Definition | Self::Framing => Phase::Definition,
+            Self::Research
+            | Self::Brainstorm
+            | Self::Modeling
+            | Self::Prototype
+            | Self::Solution => Phase::SolutionSearch,
+            Self::Spec | Self::Plan | Self::CriticalReview | Self::Delivery => Phase::Specification,
         }
     }
 
@@ -367,6 +465,11 @@ impl Stage {
             Self::Spec => "Spec",
             Self::Plan => "Plan",
             Self::CriticalReview => "Critical review",
+            Self::Triage => "Triage",
+            Self::Discovery => "Discovery",
+            Self::Framing => "Problem definition",
+            Self::Solution => "Solution",
+            Self::Delivery => "Spec, plan and review",
         }
     }
 
@@ -389,6 +492,11 @@ impl Stage {
             Self::Spec => "Spec",
             Self::Plan => "Plan",
             Self::CriticalReview => "Revisión crítica",
+            Self::Triage => "Triaje",
+            Self::Discovery => "Descubrimiento",
+            Self::Framing => "Definición del problema",
+            Self::Solution => "Solución",
+            Self::Delivery => "Spec, plan y revisión",
         }
     }
 
@@ -396,15 +504,20 @@ impl Stage {
     #[must_use]
     pub const fn default_role(self) -> ModelRole {
         match self {
-            Self::Intake | Self::Analysis | Self::Experiments | Self::Prototype => ModelRole::Main,
-            Self::Observation | Self::Data | Self::Research => ModelRole::Explore,
+            Self::Intake | Self::Analysis | Self::Experiments | Self::Prototype | Self::Triage => {
+                ModelRole::Main
+            }
+            Self::Observation | Self::Data | Self::Research | Self::Discovery => ModelRole::Explore,
             Self::Hypotheses
             | Self::Definition
             | Self::Brainstorm
             | Self::Modeling
             | Self::Spec
             | Self::Plan
-            | Self::CriticalReview => ModelRole::Plan,
+            | Self::CriticalReview
+            | Self::Framing
+            | Self::Solution
+            | Self::Delivery => ModelRole::Plan,
         }
     }
 
@@ -418,6 +531,8 @@ impl Stage {
                 | Self::Definition
                 | Self::Modeling
                 | Self::CriticalReview
+                | Self::Framing
+                | Self::Solution
         )
     }
 }
@@ -862,18 +977,92 @@ mod tests {
 
     #[test]
     fn stages_are_numbered_one_to_fourteen() {
-        assert_eq!(Stage::total(), 14);
+        assert_eq!(Stage::Intake.total(), 14);
         for (i, stage) in Stage::ALL.into_iter().enumerate() {
             let index = u32::try_from(i).unwrap() + 1;
             assert_eq!(stage.index(), index);
-            assert_eq!(Stage::from_index(index), Some(stage));
+            assert_eq!(stage.pipeline(), Pipeline::Deep);
+            assert_eq!(Stage::from_index(Pipeline::Deep, index), Some(stage));
         }
         assert_eq!(Stage::Intake.index(), 1);
         assert_eq!(Stage::CriticalReview.index(), 14);
-        assert_eq!(Stage::from_index(0), None);
-        assert_eq!(Stage::from_index(15), None);
+        assert_eq!(Stage::from_index(Pipeline::Deep, 0), None);
+        assert_eq!(Stage::from_index(Pipeline::Deep, 15), None);
         assert_eq!(Stage::Spec.next(), Some(Stage::Plan));
         assert_eq!(Stage::CriticalReview.next(), None);
+    }
+
+    #[test]
+    fn fast_stages_are_numbered_one_to_five() {
+        assert_eq!(Stage::Triage.total(), 5);
+        for (i, stage) in Stage::FAST.into_iter().enumerate() {
+            let index = u32::try_from(i).unwrap() + 1;
+            assert_eq!(stage.index(), index);
+            assert_eq!(stage.pipeline(), Pipeline::Fast);
+            assert_eq!(Stage::from_index(Pipeline::Fast, index), Some(stage));
+        }
+        assert_eq!(Stage::from_index(Pipeline::Fast, 6), None);
+        assert_eq!(Stage::Triage.next(), Some(Stage::Discovery));
+        assert_eq!(Stage::Delivery.next(), None);
+        assert_eq!(Pipeline::Fast.stages(), Stage::FAST);
+        assert_eq!(Pipeline::Deep.stages(), Stage::ALL);
+    }
+
+    #[test]
+    fn gates_are_five_deep_and_two_fast() {
+        let gates = |p: Pipeline| p.stages().iter().filter(|s| s.has_gate()).count();
+        assert_eq!(gates(Pipeline::Deep), 5);
+        assert_eq!(gates(Pipeline::Fast), 2);
+        assert!(Stage::Framing.has_gate() && Stage::Solution.has_gate());
+    }
+
+    #[test]
+    fn owner_in_is_total_and_keeps_the_order() {
+        let mut last = Stage::Triage;
+        // Experiments come after Hypotheses in deep but belong to Discovery
+        // in fast, the only step back of the mapping.
+        assert_eq!(
+            Stage::Experiments.owner_in(Pipeline::Fast),
+            Stage::Discovery
+        );
+        for stage in Stage::ALL.into_iter().filter(|s| *s != Stage::Experiments) {
+            let owner = stage.owner_in(Pipeline::Fast);
+            assert_eq!(owner.pipeline(), Pipeline::Fast, "{stage:?}");
+            assert!(owner >= last, "{stage:?} maps back to {owner:?}");
+            assert_eq!(stage.owner_in(Pipeline::Deep), stage);
+            last = owner;
+        }
+        for stage in Stage::FAST {
+            assert_eq!(stage.owner_in(Pipeline::Fast), stage);
+            let deep = stage.owner_in(Pipeline::Deep);
+            assert_eq!(deep.pipeline(), Pipeline::Deep);
+            assert_eq!(deep.owner_in(Pipeline::Fast), stage);
+        }
+        assert_eq!(Stage::Data.owner_in(Pipeline::Fast), Stage::Discovery);
+        assert_eq!(Stage::Hypotheses.owner_in(Pipeline::Fast), Stage::Framing);
+        assert_eq!(
+            Stage::CriticalReview.owner_in(Pipeline::Fast),
+            Stage::Delivery
+        );
+    }
+
+    #[test]
+    fn fast_stages_round_trip_and_old_ids_still_parse() {
+        for stage in Stage::ALL.into_iter().chain(Stage::FAST) {
+            let value = serde_json::to_value(stage).unwrap();
+            assert_eq!(serde_json::from_value::<Stage>(value).unwrap(), stage);
+        }
+        assert_eq!(
+            serde_json::to_value(Stage::Delivery).unwrap(),
+            json!("delivery")
+        );
+        assert_eq!(
+            serde_json::from_value::<Stage>(json!("critical_review")).unwrap(),
+            Stage::CriticalReview
+        );
+        let entry: JournalEntry =
+            serde_json::from_value(json!({"at": 1, "stage": "observation", "text": "x"})).unwrap();
+        assert_eq!(entry.stage, Stage::Observation);
     }
 
     #[test]

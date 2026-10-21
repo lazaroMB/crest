@@ -30,16 +30,16 @@ pub struct Position {
 }
 
 impl Position {
-    /// 1-based position of the stage among the 14.
+    /// 1-based position of the stage within its pipeline.
     #[must_use]
     pub fn index(&self) -> u32 {
         self.stage.index()
     }
 
-    /// Number of stages of the workflow (14).
+    /// Number of stages of the stage's pipeline (14 deep, 5 fast).
     #[must_use]
     pub fn total(&self) -> u32 {
-        Stage::total()
+        self.stage.total()
     }
 
     /// Phase of the stage.
