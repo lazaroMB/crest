@@ -8,6 +8,8 @@
 //! under the middle bar) and lines are an `AreaChart` with transparent
 //! fills, which overlays any number of series on one axis.
 
+pub mod scale;
+
 use std::rc::Rc;
 
 use domain::block::{BlockKind, ChartKind, ChartSpec};
