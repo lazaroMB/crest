@@ -16,13 +16,16 @@ use domain::research::Stage;
 use super::super::depth::Depth;
 use super::super::node::{NodeContext, NodeError, NodeOutcome, ResearchNode};
 
+pub mod delivery;
 pub mod discovery;
 pub mod framing;
 pub mod solution;
 pub mod triage;
 
-/// The fast node registered for `stage`, if it is a fast stage that
-/// needs no ports beyond [`NodeDeps`](super::super::node::NodeDeps).
+/// The fast node registered for `stage`, if it is a fast stage.
+///
+/// Delivery writes its Specs to memory here; the graph gives it the
+/// workspace sink (see [`fast_graph`](super::super::graph::fast_graph)).
 #[must_use]
 pub fn fast_node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
     match stage {
@@ -30,6 +33,7 @@ pub fn fast_node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {
         Stage::Discovery => Some(Arc::new(discovery::Discovery::new())),
         Stage::Framing => Some(Arc::new(framing::Framing::new())),
         Stage::Solution => Some(Arc::new(solution::Solution::new())),
+        Stage::Delivery => Some(Arc::new(delivery::Delivery::new())),
         _ => None,
     }
 }

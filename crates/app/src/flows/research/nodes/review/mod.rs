@@ -236,6 +236,21 @@ impl Review {
         specs: usize,
         reviews: Vec<(String, Vec<Gap>)>,
     ) -> Result<NodeOutcome, NodeError> {
+        let all = self.record(ctx, reviews).await?;
+        Self::verdict(ctx, specs, &all)
+    }
+
+    /// Writes `review.md` to the folder of each review and stores every
+    /// gap under [`GAPS_KEY`]; returns them all.
+    ///
+    /// # Errors
+    ///
+    /// The sink's errors, or flow data that cannot be written.
+    pub(crate) async fn record(
+        &self,
+        ctx: &mut NodeContext,
+        reviews: Vec<(String, Vec<Gap>)>,
+    ) -> Result<Vec<Gap>, NodeError> {
         for (folder, gaps) in &reviews {
             self.sink
                 .write(folder, REVIEW_FILE, &review_markdown(folder, gaps))
@@ -244,13 +259,34 @@ impl Review {
         }
         let all: Vec<Gap> = reviews.into_iter().flat_map(|(_, g)| g).collect();
         ctx.set_data(GAPS_KEY, &all)?;
+        Ok(all)
+    }
+
+    /// Goes back to the earliest stage of a major gap in `all`, or is done
+    /// with a summary of the `specs` Specs and the minor remarks.
+    ///
+    /// # Errors
+    ///
+    /// A block that does not validate.
+    pub(crate) fn verdict(
+        ctx: &mut NodeContext,
+        specs: usize,
+        all: &[Gap],
+    ) -> Result<NodeOutcome, NodeError> {
         let major: Vec<&Gap> = all.iter().filter(|g| g.is_major()).collect();
         let minor: Vec<&Gap> = all.iter().filter(|g| !g.is_major()).collect();
-        if let Some(to) = major.iter().map(|g| g.missing_stage).min() {
+        // In the fast pipeline the earliest stage is the one whose owner
+        // comes first (Experiments belong to Discovery, before Framing).
+        let pipeline = ctx.stage().pipeline();
+        let earliest = major
+            .iter()
+            .map(|g| g.missing_stage)
+            .min_by_key(|s| (s.owner_in(pipeline), *s));
+        if let Some(to) = earliest {
             let list = gap_list(&major);
             ctx.emit(BlockKind::Markdown {
                 title: Some(format!("Review: {} gaps", major.len())),
-                source: format!("Back to **{}**.\n\n{list}", to.name()),
+                source: format!("Back to **{}**.\n\n{list}", to.owner_in(pipeline).name()),
             })?;
             return Ok(NodeOutcome::Back {
                 to,
@@ -443,7 +479,7 @@ fn prompt(
 }
 
 /// The gaps as a Markdown list.
-fn gap_list(gaps: &[&Gap]) -> String {
+pub(crate) fn gap_list(gaps: &[&Gap]) -> String {
     gaps.iter()
         .map(|g| {
             format!(
