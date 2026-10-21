@@ -14,9 +14,10 @@ use crate::ports::mcp::{
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use async_trait::async_trait;
-use domain::conversation::{StopReason, ToolUseId, Usage};
+use domain::conversation::{ContentPart, Role, StopReason, ToolUseId, Usage};
 use domain::model::ModelId;
 use futures::{StreamExt, stream};
 
@@ -470,6 +471,251 @@ impl OpenGuard {
 impl Drop for OpenGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A script of [`RoutedLlm`] and the text that selects it.
+#[derive(Debug)]
+struct Route {
+    needle: String,
+    llm: ScriptedLlm,
+}
+
+/// [`LlmPort`] with one script per route, for flows whose calls may run
+/// in any order (e.g. in parallel): each request goes to the first route
+/// whose text appears in its system prompt or its first user message, and
+/// takes the next answer of that route's queue. Requests no route matches
+/// go to the fallback script, if any.
+///
+/// ```ignore
+/// let llm = RoutedLlm::new()
+///     .route("Observation stage", [ScriptedResponse::text("{…}")])
+///     .route("Data stage", [ScriptedResponse::text("{…}")]);
+/// ```
+#[derive(Debug, Default)]
+pub struct RoutedLlm {
+    routes: Vec<Route>,
+    fallback: Option<ScriptedLlm>,
+}
+
+impl RoutedLlm {
+    /// No routes yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a route: requests whose system prompt or first user message
+    /// contains `needle` are answered from `script`, in order. Routes are
+    /// tried in the order they were added.
+    #[must_use]
+    pub fn route(
+        mut self,
+        needle: impl Into<String>,
+        script: impl IntoIterator<Item = ScriptedResponse>,
+    ) -> Self {
+        self.routes.push(Route {
+            needle: needle.into(),
+            llm: ScriptedLlm::new(script),
+        });
+        self
+    }
+
+    /// Answers the requests no route matches from `script`.
+    #[must_use]
+    pub fn fallback(mut self, script: impl IntoIterator<Item = ScriptedResponse>) -> Self {
+        self.fallback = Some(ScriptedLlm::new(script));
+        self
+    }
+
+    /// Appends one more answer to the route of `needle` (or the fallback
+    /// when no route has that needle).
+    pub fn push(&self, needle: &str, response: ScriptedResponse) {
+        match self.routes.iter().find(|r| r.needle == needle) {
+            Some(route) => route.llm.push(response),
+            None => {
+                if let Some(fallback) = &self.fallback {
+                    fallback.push(response);
+                }
+            }
+        }
+    }
+
+    /// The requests the route of `needle` received (the fallback's when
+    /// no route has that needle), oldest first.
+    #[must_use]
+    pub fn requests(&self, needle: &str) -> Vec<LlmRequest> {
+        match self.routes.iter().find(|r| r.needle == needle) {
+            Some(route) => route.llm.requests(),
+            None => self
+                .fallback
+                .as_ref()
+                .map(ScriptedLlm::requests)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Answers not consumed yet, over every route and the fallback.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.routes.iter().map(|r| r.llm.remaining()).sum::<usize>()
+            + self.fallback.as_ref().map_or(0, ScriptedLlm::remaining)
+    }
+
+    /// The script that answers `req`.
+    fn script_for(&self, req: &LlmRequest) -> Option<&ScriptedLlm> {
+        let system: String = req.system.iter().map(|b| b.text.as_str()).collect();
+        let first_user: String = req
+            .messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.routes
+            .iter()
+            .find(|r| system.contains(&r.needle) || first_user.contains(&r.needle))
+            .map(|r| &r.llm)
+            .or(self.fallback.as_ref())
+    }
+}
+
+#[async_trait]
+impl LlmPort for RoutedLlm {
+    fn accepts_images(&self, _model: &ModelId) -> bool {
+        true
+    }
+
+    async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
+        match self.script_for(&req) {
+            Some(llm) => llm.stream(req).await,
+            None => {
+                let start: String = req
+                    .messages
+                    .first()
+                    .map(|m| format!("{:?}", m.content))
+                    .unwrap_or_default()
+                    .chars()
+                    .take(120)
+                    .collect();
+                Err(LlmError::InvalidRequest {
+                    message: format!("RoutedLlm: no route matches the request {start}"),
+                })
+            }
+        }
+    }
+}
+
+/// How long [`BarrierLlm`] waits for the other calls by default.
+pub const BARRIER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// [`LlmPort`] that proves calls run at the same time: the first
+/// `parties` calls each wait, before reaching the wrapped model, until all
+/// `parties` have arrived. Calls run one after another never get there,
+/// so the first one fails with [`LlmError::InvalidRequest`] after the
+/// timeout. Later calls go straight through.
+///
+/// It needs no async runtime: the waits are oneshot channels and the
+/// timeout a sleeping thread.
+pub struct BarrierLlm {
+    inner: Arc<dyn LlmPort>,
+    parties: usize,
+    arrived: AtomicUsize,
+    /// Calls waiting at the barrier, released together.
+    waiting: Mutex<Vec<futures::channel::oneshot::Sender<()>>>,
+    timeout: Duration,
+}
+
+impl std::fmt::Debug for BarrierLlm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BarrierLlm")
+            .field("parties", &self.parties)
+            .field("arrived", &self.arrived)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BarrierLlm {
+    /// Holds the first `parties` calls to `inner` until all have arrived.
+    #[must_use]
+    pub fn new(inner: Arc<dyn LlmPort>, parties: usize) -> Self {
+        Self {
+            inner,
+            parties,
+            arrived: AtomicUsize::new(0),
+            waiting: Mutex::new(Vec::new()),
+            timeout: BARRIER_TIMEOUT,
+        }
+    }
+
+    /// Waits `timeout` for the other calls instead of [`BARRIER_TIMEOUT`].
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Calls that reached the barrier so far.
+    #[must_use]
+    pub fn arrived(&self) -> usize {
+        self.arrived.load(Ordering::SeqCst)
+    }
+
+    /// Waits until the other parties arrive; `false` on timeout.
+    async fn wait(&self) -> bool {
+        let (release, released) = futures::channel::oneshot::channel();
+        {
+            let mut waiting = lock(&self.waiting);
+            let n = self.arrived.fetch_add(1, Ordering::SeqCst) + 1;
+            if n > self.parties {
+                return true;
+            }
+            waiting.push(release);
+            if n == self.parties {
+                for waiter in waiting.drain(..) {
+                    let _ = waiter.send(());
+                }
+            }
+        }
+        let (expire, expired) = futures::channel::oneshot::channel::<()>();
+        let timeout = self.timeout;
+        std::thread::spawn(move || {
+            std::thread::sleep(timeout);
+            let _ = expire.send(());
+        });
+        matches!(
+            futures::future::select(released, expired).await,
+            futures::future::Either::Left((Ok(()), _))
+        )
+    }
+}
+
+#[async_trait]
+impl LlmPort for BarrierLlm {
+    fn accepts_images(&self, model: &ModelId) -> bool {
+        self.inner.accepts_images(model)
+    }
+
+    async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
+        if self.arrived() < self.parties && !self.wait().await {
+            return Err(LlmError::InvalidRequest {
+                message: format!(
+                    "BarrierLlm: only {} of {} calls arrived within {:?}; they do not run at \
+                     the same time",
+                    self.arrived(),
+                    self.parties,
+                    self.timeout
+                ),
+            });
+        }
+        self.inner.stream(req).await
     }
 }
 
@@ -1092,5 +1338,78 @@ mod tests {
             Err(McpError::Unavailable { ref server, .. }) if server == "jira"
         ));
         assert_eq!(mcp.calls().len(), 3);
+    }
+
+    fn system_request(system: &str, text: &str) -> LlmRequest {
+        let mut req = request(text);
+        req.system = vec![crate::ports::llm::SystemBlock::new(system)];
+        req
+    }
+
+    async fn answer(llm: &dyn LlmPort, req: LlmRequest) -> Result<String, LlmError> {
+        let events: Vec<_> = llm.stream(req).await?.collect().await;
+        let events = events.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let message = assemble(events).message;
+        Ok(message
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn routed_answers_come_from_the_matching_script() {
+        let llm = RoutedLlm::new()
+            .route("Observation", [ScriptedResponse::text("map")])
+            .route("Data", [ScriptedResponse::text("history")])
+            .fallback([ScriptedResponse::text("other")]);
+        // Out of order: each route keeps its own queue.
+        assert_eq!(
+            answer(&llm, request("Data stage: gather")).await.unwrap(),
+            "history"
+        );
+        assert_eq!(
+            answer(&llm, system_request("Observation stage", "walk"))
+                .await
+                .unwrap(),
+            "map"
+        );
+        assert_eq!(answer(&llm, request("anything")).await.unwrap(), "other");
+        assert_eq!(llm.requests("Data").len(), 1);
+        assert_eq!(llm.remaining(), 0);
+        assert!(answer(&llm, request("Data again")).await.is_err());
+
+        let strict = RoutedLlm::new().route("x", []);
+        let err = answer(&strict, request("nothing")).await.unwrap_err();
+        assert!(err.to_string().contains("no route"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn barrier_releases_concurrent_calls_and_times_out_serial_ones() {
+        let inner = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::text("a"),
+            ScriptedResponse::text("b"),
+            ScriptedResponse::text("c"),
+            ScriptedResponse::text("d"),
+        ]));
+        let llm = BarrierLlm::new(inner, 3);
+        let (a, b, c) = futures::join!(
+            answer(&llm, request("1")),
+            answer(&llm, request("2")),
+            answer(&llm, request("3")),
+        );
+        let mut got = vec![a.unwrap(), b.unwrap(), c.unwrap()];
+        got.sort();
+        assert_eq!(got, ["a", "b", "c"]);
+        // Past the barrier, calls go straight through.
+        assert_eq!(answer(&llm, request("4")).await.unwrap(), "d");
+
+        let serial = BarrierLlm::new(Arc::new(ScriptedLlm::new([ScriptedResponse::text("a")])), 2)
+            .with_timeout(Duration::from_millis(20));
+        let err = answer(&serial, request("1")).await.unwrap_err();
+        assert!(err.to_string().contains("1 of 2"), "{err}");
     }
 }
