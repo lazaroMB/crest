@@ -92,6 +92,18 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
         description: "Stop the active flow for good (its journal is kept)",
     },
     CommandInfo {
+        name: "aside",
+        usage: "/aside [question]",
+        description: "Chat aside while a flow waits at a gate: lines go to the chat, with the \
+                      gate as context, until /flow (also /aparte)",
+    },
+    CommandInfo {
+        name: "flow",
+        usage: "/flow [answer]",
+        description: "Back to the waiting flow: answers it, or proposes the answer from the \
+                      side chat for you to confirm (also /volver)",
+    },
+    CommandInfo {
         name: "open",
         usage: "/open @<path>",
         description: "Show a workspace file in a modal, 3D models included (type @ to complete the path)",

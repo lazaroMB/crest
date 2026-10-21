@@ -19,7 +19,9 @@
 //!
 //! `/research <problema>` starts the research flow of the workspace the
 //! same way (see [`crate::research`]): while it waits at a gate, the lines
-//! sent from the input go to it. `/stage`, `/back`, `/skip`, `/retry` and
+//! sent from the input go to it. A side question (`/aside`, or a line the
+//! decision model reads as one) goes to the chat instead, with the gate as
+//! context, and `/flow` goes back with an answer (see [`crate::aside`]). `/stage`, `/back`, `/skip`, `/retry` and
 //! `/abort` go to the active implementation flow, or else to the research
 //! flow. `Ctrl+C` aborts the running commands
 //! ([`UiController::interrupt_commands`](SessionController::interrupt_commands));
@@ -37,6 +39,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use adapter_anthropic::KeyringCredentials;
 use adapter_fs::LocalProjectBrowser;
 use adapter_search::RipgrepSearch;
+use application::decide::Decider;
+use application::flows::aside::{GateInfo, last_answer, preamble};
 use application::flows::implement::flow::{FlowError, FlowReply};
 use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
@@ -54,6 +58,7 @@ use application::ports::search::{
 };
 use application::ports::store::SessionStorePort as _;
 use application::usecases::approval::lock_permissions;
+use application::usecases::cancel::CancelToken;
 use application::usecases::run_turn::{SharedPermissions, UserInput};
 use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
@@ -77,6 +82,7 @@ use ui::session::{
 use ui::workbench::{ProjectOpener, Workbench};
 
 use crate::args::Args;
+use crate::aside::{Aside, Route, opened_notice};
 use crate::plugin_trust::PluginTrust;
 use crate::research::ResearchCommand;
 use crate::root::{
@@ -179,6 +185,10 @@ pub struct UiController {
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
     research: SharedResearch,
+    /// The side chat of the waiting flow (`/aside`, `/flow`).
+    aside: SharedAside,
+    /// Reads the lines typed at a gate (side questions).
+    decider: Decider,
     simulator: Simulator,
     shell: Arc<dyn application::ports::shell::ShellPort>,
     /// Commands running on the runtime, aborted by `Ctrl+C`.
@@ -397,6 +407,18 @@ async fn plugin_command(trust: Arc<PluginTrust>, args: String) -> Reply {
 }
 
 impl UiController {
+    /// The router of the chat lines over this controller's flows.
+    fn router(&self) -> Router {
+        Router {
+            app: Arc::clone(&self.app),
+            flow: Arc::clone(&self.flow),
+            research: Arc::clone(&self.research),
+            events: Arc::clone(&self.events),
+            aside: Arc::clone(&self.aside),
+            decider: self.decider.clone(),
+        }
+    }
+
     /// A controller running the turns of `app` on `handle`.
     #[must_use]
     pub fn new(mut app: App, handle: Handle) -> Self {
@@ -418,6 +440,7 @@ impl UiController {
         });
         let events = app.events();
         let simulator = app.simulator.clone();
+        let decider = app.decider.clone();
         let shell = Arc::clone(&app.shell);
         let commands = app
             .commands
@@ -437,6 +460,8 @@ impl UiController {
             events,
             flow: Arc::new(tokio::sync::Mutex::new(None)),
             research,
+            aside: Arc::default(),
+            decider,
             simulator,
             shell,
             running: Arc::new(Mutex::new(Vec::new())),
@@ -471,11 +496,19 @@ fn emit_user_blocks(app: &App, prompt: &str, images: &[ImageAttachment]) {
 /// prompt the model gets (the timeline shows the prompt alone). Pasted
 /// images go to the model in the same message, after the prompt.
 pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
+    run_turn_in(app, request, None).await
+}
+
+/// [`run_turn`] with `context` (the gate of a side chat) before the prompt
+/// the model gets, after the output of the `/!` commands.
+pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<String>) -> TurnEnd {
     emit_user_blocks(app, &request.prompt, &request.images);
     let images = request.images;
     let mut prompt = request.prompt;
-    if !app.shell_context.is_empty() {
-        let mut context = std::mem::take(&mut app.shell_context).join("\n\n");
+    let mut before = std::mem::take(&mut app.shell_context);
+    before.extend(context);
+    if !before.is_empty() {
+        let mut context = before.join("\n\n");
         context.push_str("\n\n");
         context.push_str(&prompt);
         prompt = context;
@@ -604,8 +637,10 @@ async fn flow_line(
     flow: ActiveFlow,
     research: SharedResearch,
     events: Arc<dyn EventSink>,
+    aside: SharedAside,
     line: String,
 ) -> Reply {
+    aside.lock().await.close();
     let mut active = flow.lock().await;
     if active.is_some() {
         answer_gate(&mut active, &line, events.as_ref()).await;
@@ -628,65 +663,203 @@ async fn flow_line(
     }
 }
 
+/// The side chat of the waiting flow ([`Aside`]), shared by the turns and
+/// the `/aside` and `/flow` commands.
+type SharedAside = Arc<tokio::sync::Mutex<Aside>>;
+
+/// Where a line of the chat goes: the waiting flow, its side chat or a
+/// normal turn (see [`crate::aside`]).
+#[derive(Clone)]
+struct Router {
+    app: Arc<tokio::sync::Mutex<App>>,
+    flow: ActiveFlow,
+    research: SharedResearch,
+    events: Arc<dyn EventSink>,
+    aside: SharedAside,
+    decider: Decider,
+}
+
+impl Router {
+    fn notice(&self, level: NoticeLevel, message: impl Into<String>) {
+        self.events.emit(DomainEvent::Notice {
+            level,
+            message: message.into(),
+        });
+    }
+
+    /// The gate waiting now: the implementation flow's, else the research
+    /// flow's.
+    async fn gate(&self) -> Option<GateInfo> {
+        if let Some(session) = self.flow.lock().await.as_ref() {
+            return session.gate_info().await;
+        }
+        let research = self.research.lock().await;
+        research
+            .as_ref()
+            .filter(|s| s.is_active())?
+            .gate_info()
+            .await
+    }
+
+    /// A plain line sent from the input.
+    async fn line(self, request: TurnRequest) -> TurnEnd {
+        let gate = self.gate().await;
+        let (route, notice) = {
+            let mut aside = self.aside.lock().await;
+            match gate {
+                // A flow takes a line of text: images open the side chat.
+                Some(gate) if !request.images.is_empty() && !aside.is_open() => {
+                    let notice = opened_notice(&gate);
+                    let context = preamble(&gate);
+                    aside.open(gate);
+                    (Route::Aside(context), Some(notice))
+                }
+                gate => {
+                    aside
+                        .route(&request.prompt, gate, &self.decider, true)
+                        .await
+                }
+            }
+        };
+        if let Some(message) = notice {
+            self.notice(NoticeLevel::Info, message);
+        }
+        match route {
+            Route::Chat => run_turn(&mut *self.app.lock().await, request).await,
+            Route::Aside(context) => {
+                run_turn_in(&mut *self.app.lock().await, request, Some(context)).await
+            }
+            Route::Propose(context) => self.propose(request, context).await,
+            Route::Answer(_) if !request.images.is_empty() => {
+                let message = "images cannot answer the active flow; nothing was sent \
+                               (add them with Chat only, or finish the flow first)";
+                self.notice(NoticeLevel::Warning, message);
+                TurnEnd::Failed(message.to_owned())
+            }
+            Route::Answer(text) => self.answer(&text, &request.cancel).await,
+        }
+    }
+
+    /// Answers the waiting gate with `text`: the implementation flow's,
+    /// else the research flow's.
+    async fn answer(&self, text: &str, cancel: &CancelToken) -> TurnEnd {
+        let mut active = self.flow.lock().await;
+        if active.is_some() {
+            self.events.emit(DomainEvent::BlockAdded {
+                block: prompt_block(text),
+            });
+            answer_gate(&mut active, text, self.events.as_ref()).await;
+            return TurnEnd::Finished(StopReason::EndTurn);
+        }
+        drop(active);
+        let mut research = self.research.lock().await;
+        let Some(session) = research.as_mut().filter(|s| s.is_active()) else {
+            drop(research);
+            self.notice(NoticeLevel::Warning, "no flow waits for an answer");
+            return TurnEnd::Finished(StopReason::EndTurn);
+        };
+        self.events.emit(DomainEvent::BlockAdded {
+            block: prompt_block(text),
+        });
+        let line = crate::research::line(session, text);
+        let (level, message) = match cancel.run(line).await {
+            Ok(Ok(message)) => (NoticeLevel::Info, message),
+            Ok(Err(message)) => (NoticeLevel::Warning, message),
+            Err(_) => (NoticeLevel::Info, crate::research::INTERRUPTED.to_owned()),
+        };
+        self.notice(level, message);
+        drop(research);
+        save(&self.app).await;
+        TurnEnd::Finished(StopReason::EndTurn)
+    }
+
+    /// A chat turn that proposes the answer to the gate from the side
+    /// conversation; the next line sends it.
+    async fn propose(&self, request: TurnRequest, context: String) -> TurnEnd {
+        let (end, answer) = {
+            let mut app = self.app.lock().await;
+            let before = app.session.turns.len();
+            let end = run_turn_in(&mut app, request, Some(context)).await;
+            let answer = app
+                .session
+                .turns
+                .get(before..)
+                .and_then(last_answer)
+                .filter(|_| matches!(end, TurnEnd::Finished(_)));
+            (end, answer)
+        };
+        let message = self.aside.lock().await.proposed(answer);
+        self.notice(NoticeLevel::Info, message);
+        end
+    }
+
+    /// `/aside [question]`: opens the side chat of the waiting gate, and
+    /// asks `question` in it.
+    async fn aside_command(self, args: String) -> Reply {
+        let Some(gate) = self.gate().await else {
+            return Reply::Notice(
+                NoticeLevel::Warning,
+                "no flow waits for an answer; `/aside` works while a flow waits at a gate".into(),
+            );
+        };
+        let notice = opened_notice(&gate);
+        let context = preamble(&gate);
+        self.aside.lock().await.open(gate);
+        let question = args.trim();
+        if question.is_empty() {
+            return Reply::Notice(NoticeLevel::Info, notice);
+        }
+        self.notice(NoticeLevel::Info, notice);
+        let request = command_turn(question);
+        run_turn_in(&mut *self.app.lock().await, request, Some(context)).await;
+        Reply::Done
+    }
+
+    /// `/flow [answer]`: back to the waiting flow, answering it with
+    /// `answer`, or proposing the answer from the side chat.
+    async fn flow_command(self, args: String) -> Reply {
+        let answer = args.trim();
+        if !answer.is_empty() {
+            self.aside.lock().await.close();
+            if self.gate().await.is_none() {
+                return Reply::Notice(NoticeLevel::Warning, "no flow waits for an answer".into());
+            }
+            self.answer(answer, &CancelToken::new()).await;
+            return Reply::Done;
+        }
+        let proposal = self.aside.lock().await.propose();
+        if let Some(context) = proposal {
+            self.propose(command_turn("back to the flow"), context)
+                .await;
+            return Reply::Done;
+        }
+        match self.gate().await {
+            Some(gate) => {
+                Reply::Notice(NoticeLevel::Info, format!("{gate}: {}", gate.prompt.trim()))
+            }
+            None => Reply::Notice(NoticeLevel::Warning, "no flow waits for an answer".into()),
+        }
+    }
+}
+
+/// The turn a command runs in the chat, with `prompt` as the user's line.
+#[must_use]
+pub fn command_turn(prompt: &str) -> TurnRequest {
+    TurnRequest {
+        prompt: prompt.to_owned(),
+        images: Vec::new(),
+        model_override: None,
+        role: None,
+        cancel: CancelToken::new(),
+    }
+}
+
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let (tx, rx) = oneshot::channel();
-        let (app, flow, events, research) = (
-            Arc::clone(&self.app),
-            Arc::clone(&self.flow),
-            Arc::clone(&self.events),
-            Arc::clone(&self.research),
-        );
+        let router = self.router();
         self.handle.spawn(async move {
-            // A flow takes a line of text: images cannot answer it.
-            let refuse_images = |tx: oneshot::Sender<TurnEnd>| {
-                let message = "images cannot answer the active flow; nothing was sent \
-                               (add them with Chat only, or finish the flow first)"
-                    .to_owned();
-                events.emit(DomainEvent::Notice {
-                    level: NoticeLevel::Warning,
-                    message: message.clone(),
-                });
-                tx.send(TurnEnd::Failed(message)).ok();
-            };
-            let mut active = flow.lock().await;
-            if active.is_some() && !request.images.is_empty() {
-                refuse_images(tx);
-                return;
-            }
-            if active.is_some() {
-                events.emit(DomainEvent::BlockAdded {
-                    block: prompt_block(&request.prompt),
-                });
-                answer_gate(&mut active, &request.prompt, events.as_ref()).await;
-                tx.send(TurnEnd::Finished(StopReason::EndTurn)).ok();
-                return;
-            }
-            drop(active);
-            let mut research = research.lock().await;
-            if let Some(session) = research.as_mut().filter(|s| s.is_active()) {
-                if !request.images.is_empty() {
-                    refuse_images(tx);
-                    return;
-                }
-                events.emit(DomainEvent::BlockAdded {
-                    block: prompt_block(&request.prompt),
-                });
-                let line = crate::research::line(session, &request.prompt);
-                let (level, message) = match request.cancel.run(line).await {
-                    Ok(Ok(message)) => (NoticeLevel::Info, message),
-                    Ok(Err(message)) => (NoticeLevel::Warning, message),
-                    Err(_) => (NoticeLevel::Info, crate::research::INTERRUPTED.to_owned()),
-                };
-                events.emit(DomainEvent::Notice { level, message });
-                drop(research);
-                save(&app).await;
-                tx.send(TurnEnd::Finished(StopReason::EndTurn)).ok();
-                return;
-            }
-            drop(research);
-            let mut app = app.lock().await;
-            tx.send(run_turn(&mut app, request).await).ok();
+            tx.send(router.line(request).await).ok();
         });
         rx.map(|end| {
             end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
@@ -765,6 +938,10 @@ impl SessionController for UiController {
                     research_command(Arc::clone(&self.app), Arc::clone(&self.research), args);
                 Some(self.spawn_command("research", start))
             }
+            "aside" | "aparte" => {
+                Some(self.spawn_command("aside", self.router().aside_command(args)))
+            }
+            "flow" | "volver" => Some(self.spawn_command("flow", self.router().flow_command(args))),
             "!" if args.trim().is_empty() => Some(
                 futures::future::ready(Reply::Notice(
                     NoticeLevel::Warning,
@@ -780,6 +957,7 @@ impl SessionController for UiController {
                     Arc::clone(&self.flow),
                     Arc::clone(&self.research),
                     Arc::clone(&self.events),
+                    Arc::clone(&self.aside),
                     line,
                 );
                 Some(self.spawn_command("research", task))

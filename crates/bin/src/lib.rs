@@ -5,6 +5,7 @@
 //! mode ([`headless`]).
 
 pub mod args;
+pub mod aside;
 pub mod gui;
 pub mod headless;
 pub mod help;
