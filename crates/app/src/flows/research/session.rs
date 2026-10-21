@@ -20,12 +20,13 @@
 use std::sync::Arc;
 
 use domain::block::BlockKind;
+use domain::research::Pipeline;
 use graph_flow::{Session, SessionStorage};
 
-use super::builder::ResearchGraph;
 use super::error::FlowError;
 use super::flow::{FlowReply, Position, ResearchFlow};
-use super::gate::FlowStatus;
+use super::gate::{FlowStatus, KEY_DEPTH};
+use super::graph::ResearchGraphs;
 use crate::flows::aside::{FlowKind, GateInfo};
 
 /// Prefix of the index session of a workspace.
@@ -48,11 +49,40 @@ pub struct FlowSummary {
     pub problem: String,
     /// Where it is.
     pub position: Position,
+    /// Pipeline of its graph.
+    pub pipeline: Pipeline,
+}
+
+/// How [`ResearchSession::start`] starts a flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartOptions {
+    /// Graph to run.
+    pub pipeline: Pipeline,
+    /// Depth asked for by the user (`"quick"`, `"standard"`), stored under
+    /// [`KEY_DEPTH`]; `None` lets the flow pick it.
+    pub depth: Option<String>,
+}
+
+impl StartOptions {
+    /// Runs `pipeline`, letting the flow pick the depth.
+    #[must_use]
+    pub fn new(pipeline: Pipeline) -> Self {
+        Self {
+            pipeline,
+            depth: None,
+        }
+    }
+
+    /// The deep pipeline.
+    #[must_use]
+    pub fn deep() -> Self {
+        Self::new(Pipeline::Deep)
+    }
 }
 
 /// The research flow of one workspace.
 pub struct ResearchSession {
-    graph: ResearchGraph,
+    graphs: ResearchGraphs,
     storage: Arc<dyn SessionStorage>,
     workspace: String,
     active: Option<ResearchFlow>,
@@ -71,16 +101,16 @@ impl std::fmt::Debug for ResearchSession {
 }
 
 impl ResearchSession {
-    /// The flows of `workspace` (its root, as a string) over `graph`,
-    /// stored in `storage`.
+    /// The flows of `workspace` (its root, as a string) over `graphs`
+    /// (or a single graph), stored in `storage`.
     #[must_use]
     pub fn new(
-        graph: ResearchGraph,
+        graphs: impl Into<ResearchGraphs>,
         storage: Arc<dyn SessionStorage>,
         workspace: impl Into<String>,
     ) -> Self {
         Self {
-            graph,
+            graphs: graphs.into(),
             storage,
             workspace: workspace.into(),
             active: None,
@@ -152,10 +182,22 @@ impl ResearchSession {
         Ok(self.storage.save(index).await?)
     }
 
-    /// Binds to the stored flow `id`; `None` when it is gone or belongs to
-    /// another graph.
+    /// The graphs the flows run on.
+    #[must_use]
+    pub fn graphs(&self) -> &ResearchGraphs {
+        &self.graphs
+    }
+
+    /// Binds to the stored flow `id` with the graph it was started on;
+    /// `None` when it is gone or its graph is not built here.
     async fn open(&self, id: String) -> Result<Option<ResearchFlow>, FlowError> {
-        match ResearchFlow::resume(self.graph.clone(), Arc::clone(&self.storage), id).await {
+        let Some(session) = self.storage.get(&id).await? else {
+            return Ok(None);
+        };
+        let Some(graph) = self.graphs.for_id(&session.graph_id) else {
+            return Ok(None);
+        };
+        match ResearchFlow::resume(graph.clone(), Arc::clone(&self.storage), id).await {
             Ok(flow) => Ok(Some(flow)),
             Err(FlowError::SessionNotFound(_) | FlowError::UnknownTask(_)) => Ok(None),
             Err(err) => Err(err),
@@ -212,28 +254,45 @@ impl ResearchSession {
                 id,
                 problem: flow.problem().await?,
                 position: flow.position().await?,
+                pipeline: flow.graph().pipeline(),
             });
         }
         Ok(flows)
     }
 
     /// Starts a flow for `problem` with a new session id (`now` in Unix
-    /// epoch milliseconds) and runs it to its first gate. It replaces the
-    /// active flow, if any, which stays stored.
+    /// epoch milliseconds) on the graph of `options`, and runs it to its
+    /// first gate. It replaces the active flow, if any, which stays stored.
     ///
     /// # Errors
     ///
-    /// A storage error. A failing node is not an error: the flow comes
-    /// back [`FlowStatus::Failed`].
-    pub async fn start(&mut self, problem: &str, now: u64) -> Result<FlowStatus, FlowError> {
+    /// [`FlowError::InvalidGraph`] when that pipeline has no graph, or a
+    /// storage error. A failing node is not an error: the flow comes back
+    /// [`FlowStatus::Failed`].
+    pub async fn start(
+        &mut self,
+        problem: &str,
+        now: u64,
+        options: StartOptions,
+    ) -> Result<FlowStatus, FlowError> {
+        let graph = self.graphs.get(options.pipeline).cloned().ok_or_else(|| {
+            FlowError::InvalidGraph(format!(
+                "the {} research flow is not available",
+                options.pipeline.name()
+            ))
+        })?;
         let mut id = format!("research:{}:{now}", self.workspace);
         let mut n = 1;
         while self.storage.get(&id).await?.is_some() {
             n += 1;
             id = format!("research:{}:{now}-{n}", self.workspace);
         }
-        let flow = ResearchFlow::start(self.graph.clone(), Arc::clone(&self.storage), &id, problem)
-            .await?;
+        let flow = ResearchFlow::start(graph, Arc::clone(&self.storage), &id, problem).await?;
+        if let Some(depth) = options.depth {
+            let session = flow.load().await?;
+            session.context.set(KEY_DEPTH, depth)?;
+            flow.save(session).await?;
+        }
         self.add_flow_id(&id).await?;
         // Until it stops at a gate, the chat stays free: if this run is
         // dropped (cancelled), nothing is left holding the chat.
@@ -269,7 +328,7 @@ impl ResearchSession {
         let status = match flow.status().await? {
             FlowStatus::WaitingForInput { stage, prompt } => {
                 // The gate was shown before; show it again.
-                let _ = self.graph.deps().emit(BlockKind::Text {
+                let _ = flow.graph().deps().emit(BlockKind::Text {
                     markdown: prompt.clone(),
                 });
                 FlowStatus::WaitingForInput { stage, prompt }
@@ -414,7 +473,7 @@ mod tests {
     use graph_flow::InMemorySessionStorage;
 
     use super::*;
-    use crate::flows::research::builder::ResearchGraphBuilder;
+    use crate::flows::research::builder::{ResearchGraph, ResearchGraphBuilder};
     use crate::flows::research::fake::FakeNode;
     use crate::flows::research::node::NodeDeps;
     use crate::testing::llm::ScriptedLlm;
@@ -444,7 +503,10 @@ mod tests {
             Err(FlowError::SessionNotFound(_))
         ));
 
-        let status = research.start("adds wrong", 1).await.unwrap();
+        let status = research
+            .start("adds wrong", 1, StartOptions::deep())
+            .await
+            .unwrap();
         assert!(matches!(
             status,
             FlowStatus::WaitingForInput {
@@ -488,7 +550,7 @@ mod tests {
     async fn abort_releases_the_chat() {
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
         let mut research = ResearchSession::new(graph(), storage, "/ws");
-        research.start("x", 1).await.unwrap();
+        research.start("x", 1, StartOptions::deep()).await.unwrap();
         let reply = research.handle_line("/abort").await.unwrap();
         assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
         assert!(!research.is_active());
@@ -499,9 +561,18 @@ mod tests {
     async fn cancel_closes_any_stored_flow() {
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
         let mut research = ResearchSession::new(graph(), storage, "/ws");
-        research.start("first", 1).await.unwrap();
-        research.start("second", 2).await.unwrap();
-        research.start("third", 3).await.unwrap();
+        research
+            .start("first", 1, StartOptions::deep())
+            .await
+            .unwrap();
+        research
+            .start("second", 2, StartOptions::deep())
+            .await
+            .unwrap();
+        research
+            .start("third", 3, StartOptions::deep())
+            .await
+            .unwrap();
         assert!(research.is_active());
 
         // Number 2 of the list (newest first) is "second".
@@ -542,7 +613,10 @@ mod tests {
     async fn a_failed_flow_frees_the_chat_and_resumes() {
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
         let mut research = ResearchSession::new(failing_graph(), Arc::clone(&storage), "/ws");
-        let status = research.start("adds wrong", 1).await.unwrap();
+        let status = research
+            .start("adds wrong", 1, StartOptions::deep())
+            .await
+            .unwrap();
         assert!(matches!(
             status,
             FlowStatus::Failed {
@@ -573,8 +647,14 @@ mod tests {
     async fn flows_are_listed_newest_first_and_resumed_by_number() {
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
         let mut research = ResearchSession::new(graph(), Arc::clone(&storage), "/ws");
-        research.start("first", 1).await.unwrap();
-        research.start("second", 2).await.unwrap();
+        research
+            .start("first", 1, StartOptions::deep())
+            .await
+            .unwrap();
+        research
+            .start("second", 2, StartOptions::deep())
+            .await
+            .unwrap();
         let flows = research.list().await.unwrap();
         let problems: Vec<_> = flows.iter().map(|f| f.problem.as_str()).collect();
         assert_eq!(problems, ["second", "first"]);
@@ -588,5 +668,77 @@ mod tests {
             research.resume(Some("9")).await,
             Err(FlowError::SessionNotFound(_))
         ));
+    }
+
+    fn fast_graph() -> ResearchGraph {
+        let deps = NodeDeps::new(
+            Arc::new(ScriptedLlm::new([])),
+            ModelPolicy::default(),
+            Arc::new(RecordingSink::new()),
+        );
+        ResearchGraphBuilder::new(deps)
+            .pipeline(Pipeline::Fast)
+            .node(FakeNode::new(Stage::Triage))
+            .node(FakeNode::new(Stage::Framing))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_flow_resumes_with_the_graph_it_started_on() {
+        let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
+        // A deep flow stored before the fast graph existed.
+        let mut old = ResearchSession::new(graph(), Arc::clone(&storage), "/ws");
+        old.start("deep one", 1, StartOptions::deep())
+            .await
+            .unwrap();
+        assert!(matches!(
+            old.start("fast one", 2, StartOptions::new(Pipeline::Fast))
+                .await,
+            Err(FlowError::InvalidGraph(_))
+        ));
+
+        let graphs = ResearchGraphs::new(fast_graph(), graph());
+        let mut research = ResearchSession::new(graphs, Arc::clone(&storage), "/ws");
+        let options = StartOptions {
+            pipeline: Pipeline::Fast,
+            depth: Some("quick".into()),
+        };
+        let status = research.start("fast one", 3, options).await.unwrap();
+        // Triage has no gate: the flow stops at Framing.
+        assert!(matches!(
+            status,
+            FlowStatus::WaitingForInput {
+                stage: Stage::Framing,
+                ..
+            }
+        ));
+        let depth: Option<String> = storage
+            .get(research.active().unwrap().session_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .context
+            .get(KEY_DEPTH);
+        assert_eq!(depth.as_deref(), Some("quick"));
+
+        let list = research.list().await.unwrap();
+        let listed: Vec<_> = list
+            .iter()
+            .map(|f| (f.problem.as_str(), f.pipeline))
+            .collect();
+        assert_eq!(
+            listed,
+            [("fast one", Pipeline::Fast), ("deep one", Pipeline::Deep)]
+        );
+        research.resume(Some("2")).await.unwrap();
+        let reply = research.handle_line("/stage").await.unwrap();
+        assert!(describe_reply(&reply).contains("1/14"), "{reply:?}");
+
+        // A session of a graph that is not built here is skipped.
+        let only_deep = ResearchSession::new(graph(), storage, "/ws");
+        let list = only_deep.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].problem, "deep one");
     }
 }

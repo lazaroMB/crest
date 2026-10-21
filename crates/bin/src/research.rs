@@ -29,7 +29,9 @@ use application::flows::research::flow::FlowReply;
 use application::flows::research::gate::FlowStatus;
 use application::flows::research::graph::{ResearchWorkspace, research_graph};
 use application::flows::research::node::NodeDeps;
-use application::flows::research::session::{ResearchSession, describe_reply, describe_status};
+use application::flows::research::session::{
+    ResearchSession, StartOptions, describe_reply, describe_status,
+};
 use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::run_turn::{AgentDeps, SharedPermissions};
@@ -180,7 +182,9 @@ pub async fn command(
     now: u64,
 ) -> Result<String, String> {
     let status = match command {
-        ResearchCommand::Start(problem) => research.start(&problem, now).await,
+        ResearchCommand::Start(problem) => {
+            research.start(&problem, now, StartOptions::deep()).await
+        }
         ResearchCommand::Resume(which) => research.resume(which.as_deref()).await,
         ResearchCommand::Line(line) => return self::line(research, &line).await,
         ResearchCommand::List(all) => return list(research, all).await,

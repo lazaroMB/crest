@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use domain::research::Stage;
+use domain::research::{Pipeline, Stage};
 
 use super::builder::{ResearchGraph, ResearchGraphBuilder};
 use super::error::FlowError;
@@ -34,6 +34,61 @@ pub struct ResearchWorkspace {
 impl std::fmt::Debug for ResearchWorkspace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResearchWorkspace").finish_non_exhaustive()
+    }
+}
+
+/// The research graphs of a workspace, one per pipeline.
+///
+/// Each stored session names its graph ([`ResearchGraph::id`]), so a
+/// session is always resumed with the graph that started it. A pipeline
+/// may be missing (e.g. a test or a build with only the deep graph).
+#[derive(Debug, Clone, Default)]
+pub struct ResearchGraphs {
+    fast: Option<ResearchGraph>,
+    deep: Option<ResearchGraph>,
+}
+
+impl ResearchGraphs {
+    /// Both graphs.
+    #[must_use]
+    pub fn new(fast: ResearchGraph, deep: ResearchGraph) -> Self {
+        Self::default().with(fast).with(deep)
+    }
+
+    /// Adds `graph` in the slot of its pipeline, replacing what was there.
+    #[must_use]
+    pub fn with(mut self, graph: ResearchGraph) -> Self {
+        match graph.pipeline() {
+            Pipeline::Fast => self.fast = Some(graph),
+            Pipeline::Deep => self.deep = Some(graph),
+        }
+        self
+    }
+
+    /// The graph of `pipeline`, if built.
+    #[must_use]
+    pub fn get(&self, pipeline: Pipeline) -> Option<&ResearchGraph> {
+        match pipeline {
+            Pipeline::Fast => self.fast.as_ref(),
+            Pipeline::Deep => self.deep.as_ref(),
+        }
+    }
+
+    /// The graph whose id a stored session carries, if built.
+    #[must_use]
+    pub fn for_id(&self, graph_id: &str) -> Option<&ResearchGraph> {
+        self.iter().find(|g| g.id() == graph_id)
+    }
+
+    /// The built graphs, fast first.
+    pub fn iter(&self) -> impl Iterator<Item = &ResearchGraph> {
+        self.fast.iter().chain(self.deep.iter())
+    }
+}
+
+impl From<ResearchGraph> for ResearchGraphs {
+    fn from(graph: ResearchGraph) -> Self {
+        Self::default().with(graph)
     }
 }
 
@@ -89,5 +144,12 @@ mod tests {
         let graph = research_graph(deps, None).unwrap();
         assert_eq!(graph.stages(), Stage::ALL);
         assert_eq!(graph.first(), Stage::Intake);
+        let graphs = ResearchGraphs::from(graph);
+        assert!(graphs.get(Pipeline::Fast).is_none());
+        assert_eq!(
+            graphs.for_id("research").unwrap().pipeline(),
+            Pipeline::Deep
+        );
+        assert!(graphs.for_id("research-fast").is_none());
     }
 }
