@@ -177,7 +177,8 @@ If a tool should show something rich in the timeline, return `ToolOutput::text(c
 2. **Timeline**: `crates/ui/src/timeline/`.
    - `render.rs`: `kind_name` and the `copy_text` text that `y` copies.
    - `state.rs`: `has_alt_view` if `t` should toggle, and `expanded_by_default`.
-3. **Render**: create `crates/ui/src/blocks/<type>.rs` with `pub fn render(entry, window, cx) -> AnyElement` and register it in `blocks::render` (`blocks/mod.rs`). If you need per-block GPUI state (scroll, zoom, sort order), use `blocks::block_state` as `table` and `mermaid` do.
+   - `column.rs`: `block_width`, `Wide` (~1100 px) for rich blocks such as charts, tables and diagrams, `Prose` (~760 px) for text. The `match` has no `_`, so the build fails until you pick one.
+3. **Render**: create `crates/ui/src/blocks/<type>.rs` with `pub fn render(entry, window, cx) -> AnyElement` and register it in `blocks::render` (`blocks/mod.rs`). If you need per-block GPUI state (scroll, zoom, sort order), use `blocks::block_state` as `table` and `mermaid` do. If the block's height depends on its width (a chart, a diagram), wrap it in `blocks::measured::measured` with a closure that returns the height for a width instead of fixing a height.
 4. **Headless**: decide how `crates/bin/src/headless/sink.rs` prints it.
 5. If the model should be able to create it, add a component tool in `crates/app/src/tools/components.rs` and mention it in `COMPONENT_TOOLS_PROMPT`.
 

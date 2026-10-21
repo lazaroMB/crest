@@ -298,6 +298,35 @@ fn blocks(sink: &RecordingSink, prompt: &str) {
             ],
         }),
     );
+    add(
+        sink,
+        BlockKind::Table(TableSpec {
+            columns: vec![Column::new("change"), Column::new("why it matters")],
+            rows: vec![
+                vec![
+                    Cell::Text("charts on an own renderer".into()),
+                    Cell::Text(
+                        "Bars keep a sane width on wide screens, sit centered in their \
+                         slot and group by category; lines and areas get a crosshair \
+                         with one row per series."
+                            .into(),
+                    ),
+                ],
+                vec![
+                    Cell::Text("tables that wrap".into()),
+                    Cell::Text(
+                        "Long cells wrap instead of being cut, each row takes the height \
+                         it needs and the columns share the width of the block."
+                            .into(),
+                    ),
+                ],
+                vec![
+                    Cell::Text("a centered column".into()),
+                    Cell::Text("Prose stays readable at ~760px; rich blocks get ~1100px.".into()),
+                ],
+            ],
+        }),
+    );
     usage(sink, 12_800, 960, 0.0526);
     sink.emit(DomainEvent::TurnFinished {
         turn_id,

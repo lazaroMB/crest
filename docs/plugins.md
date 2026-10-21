@@ -208,7 +208,7 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | Constructor | Node | Details |
 | --- | --- | --- |
 | `app.ui.text(s)` | text | `s` is a string or a number (not a table). |
-| `app.ui.row(children)` | horizontal row | `children` is a list of nodes or strings. |
+| `app.ui.row(children)` | horizontal row | `children` is a list of nodes or strings. They share the width equally and wrap to the next line when one would get narrower than 280 px. |
 | `app.ui.col(children)` | vertical column | Same. |
 | `app.ui.list(items)` | bulleted list | Same. |
 | `app.ui.table({ columns = ..., rows = ... })` | table | `columns` is a non-empty list of names or of `{ name = "x", align = "left" \| "center" \| "right" }`. `rows` is a list of rows, and each row is a list of scalar cells (string, number, boolean). Every row must have one cell per column. |

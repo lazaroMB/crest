@@ -255,8 +255,8 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | ToolCall | Any tool: one line with name, subject and status (pending, awaiting approval, running, ok, failed, denied, cancelled). | `Enter` shows the input and the output. |
 | Shell | `/!command` | `$ command`, exit status and output; long output collapsed until `Enter`. |
 | Diff | `edit_file`, `write_file` | Colored diff with its approval status. |
-| Chart | `show_chart` tool (bar, line, area, pie). | **`t` toggles a table** of the same data. |
-| Table | `show_table` tool | Virtualized. Clicking a column's sort icon cycles descending → ascending → original. |
+| Chart | `show_chart` tool (bar, line, area, pie). | **`t` toggles a table** of the same data. Hovering a bar shows its value; on lines and areas a crosshair shows every series at that point. Many categories or long labels switch bars to horizontal. |
+| Table | `show_table` tool | Fills the block's width; long cells wrap (up to 8 lines) and numbers stay on one line, right-aligned. Shows 12 rows until **Show all N rows** (at most 500 drawn; `y` copies all). Clicking a header cycles descending → ascending → original, over every row. |
 | Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `t` shows the source. If it does not parse, the source and the error are shown. |
 | Markdown | `show_markdown` tool | Document typography; `t` shows the source. |
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
