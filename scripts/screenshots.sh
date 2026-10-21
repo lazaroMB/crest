@@ -52,7 +52,7 @@ declare -A scenes=(
 # what is shown (ImageMagick geometry).
 declare -A crop=(
     [board]="1240x760+20+20"
-    [blocks]="1280x575+0+0"
+    [blocks]="1280x870+0+0"
     [routing]="1280x690+0+0"
 )
 # What each example prints once it is worth capturing (empty: a delay).
