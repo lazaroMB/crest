@@ -272,6 +272,16 @@ impl ImplementSession {
         self.flow.status().await
     }
 
+    /// Stops the flow for good (`/implement cancel`), wherever it is; its
+    /// state and journal stay stored and it is no longer pending.
+    ///
+    /// # Errors
+    ///
+    /// A storage error.
+    pub async fn cancel(&self) -> Result<FlowStatus, FlowError> {
+        self.flow.abort().await
+    }
+
     /// The gate the flow waits at, for a side chat; `None` when it does not
     /// wait (or its storage fails).
     pub async fn gate_info(&self) -> Option<GateInfo> {

@@ -8,6 +8,8 @@
 //!   Running, failed, finished or aborted flows leave the chat free.
 //! - `/stage`, `/back`, `/skip`, `/retry` and `/abort` act on the last flow
 //!   of the workspace whether it is active or not.
+//! - `/research cancel [n|all]` ([`ResearchSession::cancel`]) aborts any
+//!   stored flow, so it is no longer pending.
 //! - A node that fails leaves the flow [`FlowStatus::Failed`] at its last
 //!   checkpoint; `/research retry` ([`ResearchSession::resume`]) runs it
 //!   again. The same works after a restart or a cancelled run.
@@ -278,6 +280,44 @@ impl ResearchSession {
         Ok(status)
     }
 
+    /// Cancels flows of the workspace for good: the last one, `which` (its
+    /// number in [`ResearchSession::list`] or its id), or every open one
+    /// for `all`. A flow at a gate, failed or left halfway becomes
+    /// [`FlowStatus::Aborted`]; its state and journal stay stored, and it
+    /// is no longer pending. Returns how many were open and got
+    /// cancelled.
+    ///
+    /// # Errors
+    ///
+    /// [`FlowError::SessionNotFound`] when there is no such flow, or a
+    /// storage error.
+    pub async fn cancel(&mut self, which: Option<&str>) -> Result<usize, FlowError> {
+        let ids = match which.map(str::trim).filter(|w| !w.is_empty()) {
+            None => vec![
+                self.last_flow_id()
+                    .await?
+                    .ok_or_else(|| FlowError::SessionNotFound(self.index_id()))?,
+            ],
+            Some("all" | "todos" | "todo") => self.flow_ids().await?,
+            Some(which) => vec![self.find(which).await?],
+        };
+        let mut cancelled = 0;
+        for id in ids {
+            let Some(flow) = self.open(id.clone()).await? else {
+                continue;
+            };
+            if !flow.status().await?.is_open() {
+                continue;
+            }
+            flow.abort().await?;
+            cancelled += 1;
+            if self.active.as_ref().is_some_and(|a| a.session_id() == id) {
+                self.active = None;
+            }
+        }
+        Ok(cancelled)
+    }
+
     /// The id of the flow `which` names: a number of the list or an id.
     async fn find(&self, which: &str) -> Result<String, FlowError> {
         let ids = self.flow_ids().await?;
@@ -453,6 +493,36 @@ mod tests {
         assert_eq!(reply, FlowReply::Status(FlowStatus::Aborted));
         assert!(!research.is_active());
         assert!(describe_reply(&reply).contains("aborted"));
+    }
+
+    #[tokio::test]
+    async fn cancel_closes_any_stored_flow() {
+        let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
+        let mut research = ResearchSession::new(graph(), storage, "/ws");
+        research.start("first", 1).await.unwrap();
+        research.start("second", 2).await.unwrap();
+        research.start("third", 3).await.unwrap();
+        assert!(research.is_active());
+
+        // Number 2 of the list (newest first) is "second".
+        assert_eq!(research.cancel(Some("2")).await.unwrap(), 1);
+        let list = research.list().await.unwrap();
+        assert_eq!(list[1].problem, "second");
+        assert_eq!(list[1].position.status, FlowStatus::Aborted);
+        assert!(research.is_active(), "the active flow is another one");
+
+        // Without an argument, the last one: the active flow.
+        assert_eq!(research.cancel(None).await.unwrap(), 1);
+        assert!(!research.is_active());
+        assert_eq!(research.pending().await.unwrap(), None);
+
+        // `all` closes what is left open; already closed ones do not count.
+        assert_eq!(research.cancel(Some("all")).await.unwrap(), 1);
+        assert_eq!(research.cancel(Some("all")).await.unwrap(), 0);
+        assert!(matches!(
+            research.cancel(Some("9")).await,
+            Err(FlowError::SessionNotFound(_))
+        ));
     }
 
     fn failing_graph() -> ResearchGraph {

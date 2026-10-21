@@ -35,7 +35,8 @@ The side chat lives in memory. After a restart, `/research resume` (or `/impleme
 | Window | `/research <problem description>` | Starts a new workflow and runs it up to the first gate. The previous one stays saved and listed. |
 | Window | `/research resume [n]` (also `continue`, `retomar` or `reanudar`) | Resumes the workspace's last workflow, or number `n` of `/research list`. A failed or interrupted step runs again. |
 | Window | `/research retry`, `/retry` | Runs the failed step of the last workflow again. |
-| Window | `/research list` | The workflows of the workspace, newest first, with their problem and where each one is. |
+| Window | `/research list [all]` | The open workflows of the workspace, newest first, with their problem and where each one is. `all` also shows the finished and cancelled ones; the numbers are the same either way. |
+| Window | `/research cancel [n\|all]` (also `cancelar`, `descartar`, `drop`) | Drops the last workflow, number `n` of `/research list`, or every open one, for good: it becomes aborted wherever it was (at a gate, failed or halfway), its journal stays stored, and it is no longer announced at start-up. |
 | Window | `/research` | Tells you which stage the workflow is at. |
 | Headless | `crest --headless --research "<problem>"` | Runs the workflow in the terminal and reads the answers from stdin. |
 | Headless | `crest --headless --research resume` (or `retry`) | Resumes the pending or failed workflow. |
@@ -234,7 +235,7 @@ Unknown fields are not allowed. A plan with no tasks, duplicate ids, unknown dep
 
 There is no prefix matching: `0007` only works if a folder named exactly `0007` exists. Absolute paths must be inside the workspace.
 
-Opening the same plan again **resumes** the workflow if it had not finished, with the notice "implementation flow of … resumed". `/implement resume` (or `/implement` alone) does it for the last plan opened in the workspace, which crest also announces at start-up while it is pending. A step that failed or was interrupted runs again. A finished or aborted workflow starts from scratch. On resume, the pending question is **not** shown again: answer directly, or type `/stage` to see it. In the window only one implementation workflow can be active at a time.
+Opening the same plan again **resumes** the workflow if it had not finished, with the notice "implementation flow of … resumed". `/implement resume` (or `/implement` alone) does it for the last plan opened in the workspace, which crest also announces at start-up while it is pending. A step that failed or was interrupted runs again. A finished or aborted workflow starts from scratch. On resume, the pending question is **not** shown again: answer directly, or type `/stage` to see it. In the window only one implementation workflow can be active at a time. `/implement cancel` (also `cancelar`) stops the active implementation, or the pending one, for good; its journal is kept.
 
 Requirements:
 

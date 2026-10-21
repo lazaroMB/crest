@@ -306,11 +306,15 @@ async fn start_implementation(
     target: String,
 ) -> Reply {
     let mut active = flow.lock().await;
+    if matches!(target.trim(), "cancel" | "cancelar" | "descartar" | "drop") {
+        return cancel_implementation(&app, &mut active).await;
+    }
     if let Some(session) = active.as_ref() {
         return Reply::Notice(
             NoticeLevel::Warning,
             format!(
-                "an implementation flow is already active ({}); answer it or type /abort",
+                "an implementation flow is already active ({}); answer it, type /abort or \
+                 `/implement cancel`",
                 session.plan_path()
             ),
         );
@@ -341,6 +345,39 @@ async fn start_implementation(
     match settle(&mut active, session, result) {
         Some((level, message)) => Reply::Notice(level, message),
         None => resumed.map_or(Reply::Done, |m| Reply::Notice(NoticeLevel::Info, m)),
+    }
+}
+
+/// `/implement cancel`: stops the active implementation, or else the
+/// pending one of the workspace, for good.
+async fn cancel_implementation(
+    app: &tokio::sync::Mutex<App>,
+    active: &mut Option<ImplementSession>,
+) -> Reply {
+    let session = match active.take() {
+        Some(session) => session,
+        None => {
+            let app = app.lock().await;
+            let Some(plan) = app.pending_implementation().await else {
+                return Reply::Notice(NoticeLevel::Info, "no implementation flow to cancel".into());
+            };
+            match app.open_implementation(&plan).await {
+                Ok(session) => session,
+                Err(err) => {
+                    return Reply::Notice(NoticeLevel::Warning, format!("/implement: {err:#}"));
+                }
+            }
+        }
+    };
+    match session.cancel().await {
+        Ok(_) => Reply::Notice(
+            NoticeLevel::Info,
+            format!(
+                "implementation of {} cancelled; its journal is kept",
+                session.plan_path()
+            ),
+        ),
+        Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/implement cancel: {err}")),
     }
 }
 

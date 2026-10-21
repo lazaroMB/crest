@@ -46,6 +46,11 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
         description: "Continue the last implementation where it stopped (also after an error)",
     },
     CommandInfo {
+        name: "implement",
+        usage: "/implement cancel",
+        description: "Stop the active or pending implementation for good (its journal is kept)",
+    },
+    CommandInfo {
         name: "research",
         usage: "/research <problem>",
         description: "Start the research flow on a problem; it ends in a Spec",
@@ -63,8 +68,15 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "research",
-        usage: "/research list",
-        description: "The research flows of this workspace, newest first",
+        usage: "/research list [all]",
+        description: "The open research flows of this workspace, newest first (all: also \
+                      the finished and cancelled ones)",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research cancel [n|all]",
+        description: "Drop the last research flow (or number n of /research list, or every \
+                      open one) for good; it is no longer pending",
     },
     CommandInfo {
         name: "retry",

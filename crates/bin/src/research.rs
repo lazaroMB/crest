@@ -126,8 +126,11 @@ pub enum ResearchCommand {
     /// `/research resume [n|id]` (or `retry`): continues the last flow, or
     /// the one numbered `n` in `/research list`.
     Resume(Option<String>),
-    /// `/research list`.
-    List,
+    /// `/research list [all]`: the open flows, or every one with `all`.
+    List(bool),
+    /// `/research cancel [n|id|all]`: aborts the last flow, the one
+    /// numbered `n` in `/research list`, or every open one.
+    Cancel(Option<String>),
     /// `/research stage|back <stage>|skip|abort`: a command for the last flow.
     Line(String),
     /// `/research`.
@@ -147,7 +150,9 @@ impl ResearchCommand {
             "" => Self::Status,
             "resume" | "retomar" | "reanudar" | "continue" | "continuar" => Self::Resume(which),
             "retry" | "reintentar" if rest.is_empty() => Self::Resume(None),
-            "list" | "ls" | "listar" if rest.is_empty() => Self::List,
+            "list" | "ls" | "listar" if rest.is_empty() => Self::List(false),
+            "list" | "ls" | "listar" if matches!(rest, "all" | "todos") => Self::List(true),
+            "cancel" | "cancelar" | "descartar" | "drop" => Self::Cancel(which),
             "stage" | "skip" | "abort" | "back" => Self::Line(format!("/{args}")),
             _ => Self::Start(args.to_owned()),
         }
@@ -178,7 +183,17 @@ pub async fn command(
         ResearchCommand::Start(problem) => research.start(&problem, now).await,
         ResearchCommand::Resume(which) => research.resume(which.as_deref()).await,
         ResearchCommand::Line(line) => return self::line(research, &line).await,
-        ResearchCommand::List => return list(research).await,
+        ResearchCommand::List(all) => return list(research, all).await,
+        ResearchCommand::Cancel(which) => {
+            return match research.cancel(which.as_deref()).await {
+                Ok(0) => Ok("nothing to cancel: that research flow already stopped".to_owned()),
+                Ok(1) => Ok("research flow cancelled; its journal is kept".to_owned()),
+                Ok(n) => Ok(format!(
+                    "{n} research flows cancelled; their journals are kept"
+                )),
+                Err(err) => Err(message(&err)),
+            };
+        }
         ResearchCommand::Status => {
             return Ok(match research.active() {
                 Some(flow) => flow
@@ -209,12 +224,24 @@ fn resume_hint(status: &FlowStatus) -> &'static str {
     }
 }
 
-/// `/research list`: the stored flows of the workspace, newest first.
-async fn list(research: &ResearchSession) -> Result<String, String> {
+/// `/research list [all]`: the stored flows of the workspace that are
+/// still open (every one with `all`), newest first, with the numbers
+/// `/research resume` and `/research cancel` take.
+async fn list(research: &ResearchSession, all: bool) -> Result<String, String> {
     let flows = research.list().await.map_err(|e| message(&e))?;
+    let total = flows.len();
+    let flows: Vec<_> = flows
+        .into_iter()
+        .filter(|flow| all || flow.position.status.is_open())
+        .collect();
     if flows.is_empty() {
-        return Ok(USAGE.to_owned());
+        return Ok(if total == 0 {
+            USAGE.to_owned()
+        } else {
+            format!("no open research flow; `/research list all` shows the {total} stored")
+        });
     }
+    let hidden = total - flows.len();
     let mut out = String::new();
     for flow in flows {
         let problem: String = flow
@@ -230,7 +257,12 @@ async fn list(research: &ResearchSession) -> Result<String, String> {
             flow.number, flow.position
         ));
     }
-    out.push_str("\n`/research resume <n>` continues one.");
+    out.push_str("\n`/research resume <n>` continues one, `/research cancel <n>` drops it.");
+    if hidden > 0 {
+        out.push_str(&format!(
+            " {hidden} finished or cancelled: `/research list all`."
+        ));
+    }
     Ok(out)
 }
 
@@ -297,7 +329,23 @@ mod tests {
             ResearchCommand::parse("retry"),
             ResearchCommand::Resume(None)
         );
-        assert_eq!(ResearchCommand::parse("list"), ResearchCommand::List);
+        assert_eq!(ResearchCommand::parse("list"), ResearchCommand::List(false));
+        assert_eq!(
+            ResearchCommand::parse("list all"),
+            ResearchCommand::List(true)
+        );
+        assert_eq!(
+            ResearchCommand::parse("cancel 2"),
+            ResearchCommand::Cancel(Some("2".into()))
+        );
+        assert_eq!(
+            ResearchCommand::parse("cancelar"),
+            ResearchCommand::Cancel(None)
+        );
+        assert_eq!(
+            ResearchCommand::parse("cancel all"),
+            ResearchCommand::Cancel(Some("all".into()))
+        );
         assert_eq!(
             ResearchCommand::parse("back 3"),
             ResearchCommand::Line("/back 3".into())
