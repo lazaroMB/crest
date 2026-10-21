@@ -1,29 +1,34 @@
-//! Renderer of the `chart` block kind: bar, line, area and pie charts from
-//! gpui-component, colored with the theme's chart palette, with a title and
-//! a legend. `t` ([`TimelineEntry::alt_view`]) shows the same data as a
+//! Renderer of the `chart` block kind, colored with the theme's chart
+//! palette, with a title and a legend (for two or more series, and always
+//! for a pie). `t` ([`TimelineEntry::alt_view`]) shows the same data as a
 //! table ([`ChartSpec::to_table`] through the table block's renderer).
 //!
-//! gpui-component's `BarChart` and `LineChart` draw one series, so several
-//! series become grouped bars (one band per label and series, the label
-//! under the middle bar) and lines are an `AreaChart` with transparent
-//! fills, which overlays any number of series on one axis.
+//! Bars have their own renderer ([`plot::chart_frame`]): sized from the
+//! data, grouped, centered and turned on their side when upright labels
+//! would not fit; its height follows the width. Lines and areas are a
+//! gpui-component `AreaChart` (transparent fills for lines), which overlays
+//! any number of series on one axis; pies are its `PieChart`.
 
 pub mod layout;
+pub mod paint;
+pub mod plot;
 pub mod scale;
 
 use std::rc::Rc;
 
 use domain::block::{BlockKind, ChartKind, ChartSpec};
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, Hsla, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, Window, div, px, transparent_black,
+    AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    transparent_black,
 };
-use gpui_component::chart::{AreaChart, BarChart, PieChart};
+use gpui_component::chart::{AreaChart, PieChart};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use self::layout::ChartData;
 use crate::timeline::TimelineEntry;
 
-/// Height of the plot area.
+/// Height of the library charts (lines, areas and pies).
 const CHART_HEIGHT: f32 = 240.0;
 
 /// Theme color of series (or pie slice) `ix`, cycling the five chart colors.
@@ -55,27 +60,6 @@ pub fn legend_names(spec: &ChartSpec) -> Vec<String> {
         ChartKind::Pie => spec.labels.clone(),
         _ => spec.series.iter().map(|s| s.name.clone()).collect(),
     }
-}
-
-/// A bar's band on the category axis: unique per bar, labelled only under
-/// the middle bar of its group so each label shows once.
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct Band {
-    ix: usize,
-    label: SharedString,
-}
-
-impl From<Band> for SharedString {
-    fn from(band: Band) -> Self {
-        band.label
-    }
-}
-
-/// One bar: category `label` of series `series`.
-#[derive(Clone, Copy)]
-struct Bar {
-    label: usize,
-    series: usize,
 }
 
 /// The chart's data, shared by the accessor closures.
@@ -114,37 +98,6 @@ impl Data {
     fn label(&self, ix: usize) -> SharedString {
         self.labels.get(ix).cloned().unwrap_or_default()
     }
-}
-
-fn bar_chart(data: Rc<Data>, id: ElementId, cx: &App) -> AnyElement {
-    let groups = data.values.len().max(1);
-    let colors: Vec<Hsla> = (0..groups).map(|ix| series_color(ix, cx)).collect();
-    let bars = (0..data.labels.len())
-        .flat_map(|label| (0..groups).map(move |series| Bar { label, series }));
-    let (band_data, value_data, tooltip_data) = (data.clone(), data.clone(), data);
-    BarChart::new(bars)
-        .id(id)
-        .appear(false)
-        .value_axis(true)
-        .padding_inner(if groups > 1 { 0.1 } else { 0.4 })
-        .band(move |bar: &Bar| Band {
-            ix: bar.label * groups + bar.series,
-            label: if bar.series == groups / 2 {
-                band_data.label(bar.label)
-            } else {
-                SharedString::default()
-            },
-        })
-        .value(move |bar| value_data.value(bar.series, bar.label))
-        .fill(move |bar, _, _, _| colors[bar.series % colors.len()])
-        .tooltip_title(move |bar| {
-            let label = tooltip_data.label(bar.label);
-            match tooltip_data.names.get(bar.series) {
-                Some(name) if groups > 1 => format!("{label} · {name}").into(),
-                _ => label,
-            }
-        })
-        .into_any_element()
 }
 
 fn area_chart(data: Rc<Data>, filled: bool, id: ElementId, cx: &App) -> AnyElement {
@@ -208,7 +161,16 @@ fn legend(spec: &ChartSpec, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn chart_body(spec: &ChartSpec, id: &str, cx: &App) -> AnyElement {
+/// A library chart at the fixed [`CHART_HEIGHT`].
+fn fixed_height(chart: AnyElement) -> AnyElement {
+    div()
+        .w_full()
+        .h(px(CHART_HEIGHT))
+        .child(chart)
+        .into_any_element()
+}
+
+fn chart_body(spec: &ChartSpec, id: &str, window: &Window, cx: &App) -> AnyElement {
     let theme = cx.theme();
     if let Err(err) = spec.validate() {
         return div()
@@ -222,18 +184,19 @@ fn chart_body(spec: &ChartSpec, id: &str, cx: &App) -> AnyElement {
             .child("No data to plot.")
             .into_any_element();
     }
-    let data = Data::new(spec);
+    let selector = format!("chart-plot-{id}");
     let id = ElementId::Name(SharedString::from(format!("chart-{id}")));
     let chart = match spec.kind {
-        ChartKind::Bar => bar_chart(data, id, cx),
-        ChartKind::Line => area_chart(data, false, id, cx),
-        ChartKind::Area => area_chart(data, true, id, cx),
-        ChartKind::Pie => pie_chart(data, id, cx),
+        ChartKind::Bar => plot::chart_frame(ChartData::from_spec(spec), id, window, cx),
+        ChartKind::Line => fixed_height(area_chart(Data::new(spec), false, id, cx)),
+        ChartKind::Area => fixed_height(area_chart(Data::new(spec), true, id, cx)),
+        ChartKind::Pie => fixed_height(pie_chart(Data::new(spec), id, cx)),
     };
+    let show_legend = spec.kind == ChartKind::Pie || spec.series.len() >= 2;
     v_flex()
         .gap_2()
-        .child(div().w_full().h(px(CHART_HEIGHT)).child(chart))
-        .child(legend(spec, cx))
+        .child(div().w_full().debug_selector(move || selector).child(chart))
+        .when(show_legend, |this| this.child(legend(spec, cx)))
         .into_any_element()
 }
 
@@ -246,7 +209,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let body = if entry.alt_view {
         super::table::render_spec(id, &spec.to_table(), window, cx)
     } else {
-        chart_body(spec, &id.to_string(), cx)
+        chart_body(spec, &id.to_string(), window, cx)
     };
     let theme = cx.theme();
     let hint = if entry.alt_view {
@@ -296,7 +259,7 @@ mod tests {
     use application::keymap::Action;
     use application::ports::events::DomainEvent;
     use domain::block::{Block, Series};
-    use gpui::{TestAppContext, point, size};
+    use gpui::{Entity, TestAppContext, point, size};
 
     use crate::timeline::TimelineView;
 
@@ -377,5 +340,73 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// Draws `specs` in a timeline `width` wide and returns the window.
+    fn draw_charts(
+        cx: &mut TestAppContext,
+        specs: Vec<ChartSpec>,
+        width: f32,
+    ) -> (Entity<TimelineView>, &mut gpui::VisualTestContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let ids: Vec<_> = specs
+            .into_iter()
+            .map(|spec| {
+                let block = Block::new(BlockKind::Chart(spec));
+                let id = block.id;
+                view.update(cx, |view, cx| {
+                    view.apply(&DomainEvent::BlockAdded { block }, cx)
+                });
+                id
+            })
+            .collect();
+        assert!(!ids.is_empty());
+        // Real frames of the window (rather than `cx.draw`), so the
+        // tooltip's deferred box is drawn in the frame that made it.
+        cx.simulate_resize(size(px(width), px(2000.)));
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn hovering_bars_shows_a_tooltip_without_panicking(cx: &mut TestAppContext) {
+        let mut many = chart(ChartKind::Bar, 1);
+        many.labels = (0..40).map(|i| format!("category {i}")).collect();
+        many.series[0].values = (0..40).map(f64::from).collect();
+        let few = chart(ChartKind::Bar, 3);
+        let (view, cx) = draw_charts(cx, vec![few, many], 1400.);
+        let ids: Vec<_> = view.read_with(cx, |view, _| {
+            view.state().entries().iter().map(|e| e.block.id).collect()
+        });
+        for id in ids {
+            let plot = cx
+                .debug_bounds(format!("chart-plot-{id}").leak())
+                .unwrap_or_else(|| panic!("chart {id} drawn"));
+            assert!(plot.size.height > px(200.));
+            assert!(plot.size.width <= px(crate::timeline::WIDE_MAX_WIDTH));
+            for (fx, fy) in [(0.5, 0.5), (0.3, 0.2), (0.9, 0.9)] {
+                let at = point(
+                    plot.origin.x + plot.size.width * fx,
+                    plot.origin.y + plot.size.height * fy,
+                );
+                cx.simulate_mouse_move(at, None, gpui::Modifiers::none());
+                cx.run_until_parked();
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn a_wider_window_draws_a_taller_bar_chart(cx: &mut TestAppContext) {
+        let (view, cx) = draw_charts(cx, vec![chart(ChartKind::Bar, 1)], 500.);
+        let id = view.read_with(cx, |view, _| view.state().entries()[0].block.id);
+        // `debug_bounds` takes a static selector.
+        let selector: &'static str = format!("chart-plot-{id}").leak();
+        let narrow = cx.debug_bounds(selector).unwrap_or_else(|| panic!("drawn"));
+        cx.simulate_resize(size(px(1200.), px(2000.)));
+        cx.run_until_parked();
+        let wide = cx.debug_bounds(selector).unwrap_or_else(|| panic!("drawn"));
+        assert!(wide.size.width > narrow.size.width);
+        assert!(wide.size.height > narrow.size.height);
     }
 }
