@@ -15,7 +15,7 @@ crest is the workspace where a coding agent **shows its work, verifies it, and l
 ## Where we are (v0.6)
 
 - A native GPUI window: a timeline of rich blocks, a prompt with history, a status bar with model, permission mode, cost and git.
-- Guided workflows: research (14 stages, from a problem to a Spec and a plan), implementation (task by task, one commit each, a report) and simulation (a Spec's scenarios on a 3D board).
+- Guided workflows: research (from a problem to a Spec and a plan: five stages by default, with the independent work in parallel and gates only where you decide, or the full fourteen with `--deep`), implementation (task by task, one commit each, a report) and simulation (a Spec's scenarios on a 3D board).
 - Approvals with the exact diff, `ask` / `auto-edit` / `plan` modes and "allow always" rules.
 - Lua config and plugins (tools, commands, hooks, keymaps, blocks, modals) with capabilities; MCP servers with explicit trust.
 - An optional decision model (Cloudflare Clef) that routes each prompt's tools and model and reads answers at the gates.

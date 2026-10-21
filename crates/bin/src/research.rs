@@ -3,11 +3,17 @@
 //!
 //! # Commands
 //!
-//! - `/research <problem description>` starts a flow (the 14 nodes of
-//!   the X-Workflow) that runs to its first gate.
+//! - `/research <problem description>` starts a flow that runs to its
+//!   first gate: the five stages of the fast pipeline (Triage, Discovery,
+//!   Problem definition, Solution, Spec, plan and review), at the depth
+//!   its triage picks.
+//! - `/research --quick <problem>` (`-q`) runs the fast pipeline at quick
+//!   depth; `/research --deep <problem>` (`-d`) runs the 14 nodes of the
+//!   X-Workflow.
 //! - `/research resume` continues the flow left halfway in this workspace
-//!   (crest says so when it opens).
-//! - `/research` alone says where the flow is.
+//!   (crest says so when it opens), with the pipeline it started with.
+//! - `/research list` shows the stored flows with their pipeline and cost
+//!   so far; `/research` alone says where the flow is and what it cost.
 //!
 //! While a flow is active every line typed in the chat goes to it: the
 //! answer to its gate ("yes" to go on, anything else to redo the stage) or
@@ -17,7 +23,8 @@
 //!
 //! Headless: `crest --headless --research "<problem>"` runs the flow in the
 //! terminal and reads each gate's answer from stdin (`resume` as the problem
-//! continues the pending flow).
+//! continues the pending flow; `--quick` or `--deep` before the problem
+//! work as in the chat).
 
 use application::cost::PricingTable;
 use application::decide::Decider;

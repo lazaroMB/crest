@@ -2,7 +2,7 @@
 
 crest ships two guided workflows that run inside the chat:
 
-- The **research workflow** follows the stages of the [Hashlabs X-Workflow](https://www.hashlabs.com/guides/en/methodology/X-Workflow.html). It starts from a problem described in natural language and ends in a **Spec** with its implementation plan.
+- The **research workflow** follows the stages of the [Hashlabs X-Workflow](https://www.hashlabs.com/guides/en/methodology/X-Workflow.html). It starts from a problem described in natural language and ends in a **Spec** with its implementation plan. By default it runs a [fast flow](#fast-flow-default) of five stages; `--deep` runs the [full fourteen](#deep-mode---deep).
 - The **implementation workflow** takes a Spec's `plan.json` and runs it task by task, with one commit per task.
 
 Between the two, on demand, you can **simulate a solution** ([below](#simulating-a-solution)): crest turns the Spec into an executable model, runs its scenarios and shows the result on a 3D board, before anything is implemented.
@@ -32,13 +32,15 @@ The side chat lives in memory. After a restart, `/research resume` (or `/impleme
 
 | Where | Command | What it does |
 | --- | --- | --- |
-| Window | `/research <problem description>` | Starts a new workflow and runs it up to the first gate. The previous one stays saved and listed. |
+| Window | `/research <problem description>` | Starts a new workflow ([fast flow](#fast-flow-default), depth picked by its triage) and runs it up to the first gate. The previous one stays saved and listed. |
+| Window | `/research --quick <problem>` (or `-q`) | The fast flow at quick depth, whatever the triage thinks. |
+| Window | `/research --deep <problem>` (or `-d`) | The [14-node flow](#deep-mode---deep). |
 | Window | `/research resume [n]` (also `continue`, `retomar` or `reanudar`) | Resumes the workspace's last workflow, or number `n` of `/research list`. A failed or interrupted step runs again. |
 | Window | `/research retry`, `/retry` | Runs the failed step of the last workflow again. |
-| Window | `/research list [all]` | The open workflows of the workspace, newest first, with their problem and where each one is. `all` also shows the finished and cancelled ones; the numbers are the same either way. |
+| Window | `/research list [all]` | The open workflows of the workspace, newest first, with their problem, their pipeline (`fast` or `deep`), where each one is and what it cost so far. `all` also shows the finished and cancelled ones; the numbers are the same either way. |
 | Window | `/research cancel [n\|all]` (also `cancelar`, `descartar`, `drop`) | Drops the last workflow, number `n` of `/research list`, or every open one, for good: it becomes aborted wherever it was (at a gate, failed or halfway), its journal stays stored, and it is no longer announced at start-up. |
-| Window | `/research` | Tells you which stage the workflow is at. |
-| Headless | `crest --headless --research "<problem>"` | Runs the workflow in the terminal and reads the answers from stdin. |
+| Window | `/research` | Tells you which stage the workflow is at and what it cost so far ("Stage 3/5: Problem definition (Definition) · waiting for your answer · $0.38 so far"). |
+| Headless | `crest --headless --research "<problem>"` | Runs the workflow in the terminal and reads the answers from stdin. `--quick` or `--deep` at the start of the problem work as in the window (`--research "--deep <problem>"`). |
 | Headless | `crest --headless --research resume` (or `retry`) | Resumes the pending or failed workflow. |
 
 When you open crest with a workflow halfway through (or failed), the notice "a research flow is pending (…); `/research resume` to continue" (or "`/research retry` runs it again") appears. The workflow does **not** activate on its own: until you resume it, your lines go to the normal chat.
@@ -50,9 +52,41 @@ On resume:
 - if it had finished, it cannot be resumed, but `/back <node>` reopens it at that node;
 - if it was aborted, it cannot be resumed.
 
-### The 14 nodes
+Each workflow keeps the pipeline it started with: a deep workflow saved before the fast flow existed resumes as the deep flow it was.
 
-The node and stage names are the ones the app shows.
+### Fast flow (default)
+
+`/research <problem>` runs five stages that reuse the work of the fourteen nodes below, run the independent parts at the same time and stop only where you decide: after the problem is defined and after the solution is chosen.
+
+| # | Stage | Role | Gate | What it does | Runs |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Triage | `main` | question, only for blocking questions | Restates and classifies the request like Intake, judges its size (small, medium, large) and picks the **depth**. Shows "**Depth:** quick (small bug)" and how to change it. Questions that do not block the investigation are written to the journal as assumptions; blocking ones are asked, and "ok" goes on without answering them. | Intake |
+| 2 | Discovery | `explore` | | At the same time, with the read-only agent: the repository map, the history and data of the files involved, prior solutions in the repo and, with the web tools, on the web. The blocks appear afterwards, always in that order. A part that fails, other than the map, is a warning and the stage goes on. | Observation, Data, Research |
+| 3 | Problem definition | `plan` | yes | The hypotheses, then the measurable problem statements and the constraints. If Definition asks for a measurement, your answer redoes only Definition, not the hypotheses. | Hypotheses, Definition |
+| 4 | Solution | `plan` | yes | The unfiltered options, then the decision matrix and the black box of the chosen one. | Brainstorm, Modeling |
+| 5 | Spec, plan and review | `plan` | question, only if gaps remain | For each problem statement at the same time (up to three): its Spec, its plan and its critical review. The folders are then written in the order of the statements. | Spec, Plan, Critical review |
+
+Analysis, Experiments, Prototype and Data's web search of library docs only run in the deep mode.
+
+**Depth.** The triage picks it with these rules, in order:
+
+1. the depth you asked for wins: `/research --quick <problem>`;
+2. a small bug or refactor is **quick**;
+3. a large request, or a performance problem without numbers, is **standard**, with the notice "This looks large; `/research --deep <problem>` runs the 14-stage flow";
+4. anything else is **standard**.
+
+| | Quick | Standard |
+| --- | --- | --- |
+| Discovery | repo map and history only | map, history, prior art in the repo and on the web |
+| Calls per agent turn | 12 | 30 |
+| Hypotheses and Brainstorm | `main` model | `plan` model |
+
+**Spec, plan and review.** Gaps of the review decide what follows. A gap an earlier stage must close (missing evidence, a hypothesis, the decision) sends the workflow back to the stage that owns it, as below. Gaps in the Spec or the plan themselves redo only those Specs once, with the gaps as corrections; if some remain, the workflow asks you, and "ok" accepts the Specs as they are (any other text redoes them with it).
+
+**Time and cost.** When a stage finishes, in both flows, a notice says what it used, for example "Discovery: 46s · 38 calls · 210k in / 9k out · $0.41" (the cost when the models have a price, see [configuration.md](configuration.md)). It is also written to the journal, `/research` adds the total so far and `/research list` shows it for every workflow. It is not added to the chat's own cost in the status bar.
+### Deep mode (`--deep`)
+
+`/research --deep <problem>` runs the fourteen nodes of the X-Workflow, one after another, with five gates. The node and stage names are the ones the app shows.
 
 | # | Node | Stage | Role | Gate | What it does | Blocks |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -80,7 +114,7 @@ Each time you enter a node, a StageHeader block (`Stage 5/14 · Hypotheses`) app
 
 ### Gates and answers
 
-When a node with a gate finishes, the workflow asks:
+When a stage with a gate finishes, the workflow asks. The fast flow has two of these gates (Problem definition and Solution); the deep mode has five (Intake, Hypotheses, Definition, Modeling and Critical review):
 
 > **Hypotheses** is done. Answer "yes" to go on to Experiments (6/14), write corrections to redo this stage or use `/back <stage>` to go back.
 
@@ -94,9 +128,11 @@ After the last node the question ends in "to finish the flow" instead.
 
 If Intake leaves open questions, answer them by typing at the gate: your text is added to the answers and Intake is redone.
 
-There are also **question** gates: any text you type, including "yes", is taken as the answer and the node runs again with it. They appear in three cases:
+There are also **question** gates: any text you type, including "yes", is taken as the answer and the node runs again with it. They appear in these cases:
 
-- **Definition**, when after a retry the definition is still not measurable. It asks what is observed and how much (for example, "at 500 requests per second the response time rises from 10 ms to 500 ms") or a testable condition ("running X makes test Y fail").
+- **Triage** (fast), when its questions block the investigation. "ok" goes on taking them as assumptions.
+- **Definition** (Problem definition in the fast flow), when after a retry the definition is still not measurable. It asks what is observed and how much (for example, "at 500 requests per second the response time rises from 10 ms to 500 ms") or a testable condition ("running X makes test Y fail"); "ok" keeps the definitions as they are.
+- **Spec, plan and review** (fast), when gaps in the Spec or the plan remain after the redo. "ok" accepts the Specs as they are.
 - **Prototype**, before creating the worktree.
 - When a stage has asked to **go back more than 3 times** to another one. The workflow asks you what is missing.
 
@@ -104,9 +140,9 @@ There are also **question** gates: any text you type, including "yes", is taken 
 
 | Command | What it does |
 | --- | --- |
-| `/stage` | Shows the position, for example "Stage 5/14: Hypotheses (Discovery) · waiting for your answer". The status at the end can also be "running", "failed: …", "flow finished" or "flow aborted". |
-| `/back <node>` | Goes back to that node and runs it immediately. `<node>` can be the number (1-14), the name (accents and case don't matter: `hypotheses`, `Definition and constraints`, `critical review`), the Spanish name kept as an alias (`hipótesis`, `observacion`, `Definición y restricciones`, `lluvia de ideas`, `revisión crítica`), the id (`intake`, `observation`, `data`, `analysis`, `hypotheses`, `experiments`, `definition`, `research`, `brainstorm`, `modeling`, `prototype`, `spec`, `plan`, `critical_review`) or a unique prefix of at least 3 letters of the English or Spanish name (`hyp`, `defin`, `crit`, `brain`, `hip`, `lluvia`, `revis`). Only nodes before the current one, or the current one, are accepted, except when the workflow has finished, in which case any node is. |
-| `/skip` | Skips the current node. Only valid for **Data (3)** and **Prototype (11)**. In practice, Data can only be skipped after it fails, because it has no gate. |
+| `/stage` | Shows the position, for example "Stage 5/14: Hypotheses (Discovery) · waiting for your answer" (deep) or "Stage 3/5: Problem definition (Definition) · waiting for your answer" (fast). The status at the end can also be "running", "failed: …", "flow finished" or "flow aborted". |
+| `/back <node>` | Goes back to that node and runs it immediately. Numbers count within the workflow's pipeline: 1-5 in the fast flow (`/back 2` is Discovery), 1-14 in the deep mode. In the fast flow the stage names (`triage`, `discovery`, `problem definition`, `solution`, `delivery`) work, and so do the deep names, which go to the fast stage that covers them (`/back hypotheses` is Problem definition, `/back modeling` is Solution). In the deep mode `<node>` can be the number (1-14), the name (accents and case don't matter: `hypotheses`, `Definition and constraints`, `critical review`), the Spanish name kept as an alias (`hipótesis`, `observacion`, `Definición y restricciones`, `lluvia de ideas`, `revisión crítica`), the id (`intake`, `observation`, `data`, `analysis`, `hypotheses`, `experiments`, `definition`, `research`, `brainstorm`, `modeling`, `prototype`, `spec`, `plan`, `critical_review`) or a unique prefix of at least 3 letters of the English or Spanish name (`hyp`, `defin`, `crit`, `brain`, `hip`, `lluvia`, `revis`). Only nodes before the current one, or the current one, are accepted, except when the workflow has finished, in which case any node is. |
+| `/skip` | Skips the current node. Only valid for **Data (3)** and **Prototype (11)** of the deep mode; the fast flow has no optional stage. In practice, Data can only be skipped after it fails, because it has no gate. |
 | `/retry` | Runs a failed (or interrupted) node again. |
 | `/abort` | Aborts the workflow. The state and the journal stay saved and the chat goes back to normal. |
 
@@ -131,6 +167,18 @@ A node goes back to an earlier stage when it lacks information, instead of makin
 | Critical review | the stage that is missing | There are unknown `[E…]` citations, empty sections, background without citations or cited files that do not exist (Observation); a constraint without a test (Definition); an invalid plan, one without `hypothesis_tests` or without a test for a constraint (Plan); or serious gaps found by the subagent. |
 
 After 3 go-backs from the same stage, the fourth becomes a question for you.
+
+In the fast flow the same rules apply through the nodes each stage runs, and the target is the fast stage that covers it:
+
+| Deep stage asked for | Fast stage it goes back to |
+| --- | --- |
+| Intake | Triage |
+| Observation, Data, Analysis, Experiments | Discovery |
+| Hypotheses, Definition | Problem definition |
+| Research, Brainstorm, Modeling, Prototype | Solution |
+| Spec, Plan, Critical review | Spec, plan and review (it runs again) |
+
+For example, Modeling without constraints sends the workflow back to Problem definition, and a review gap about missing evidence back to Discovery. A target inside the current stage reruns it.
 
 ### Prototype (spike)
 

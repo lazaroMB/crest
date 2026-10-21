@@ -1,6 +1,23 @@
 //! Frame of the research flow (X-Workflow): the node contract, its
 //! graph-flow adapter, gates in the chat and conditional returns.
 //!
+//! # Pipelines
+//!
+//! The same frame runs two graphs ([`Pipeline`](domain::research::Pipeline)):
+//!
+//! - **fast** (the default, graph id `research-fast`): Triage, Discovery,
+//!   Framing, Solution and Delivery ([`nodes::fast`]). Each stage runs the
+//!   deep nodes it covers, the independent model calls at once (with
+//!   `futures`, never `tokio::spawn`), and only Framing and Solution stop
+//!   at a confirmation gate. Triage picks a [`depth`] (quick or standard).
+//! - **deep** (`/research --deep`, graph id `research`): the 14 nodes in
+//!   series, with five gates.
+//!
+//! A `Back` to a stage of the other pipeline goes to the stage of this one
+//! that covers it ([`Stage::owner_in`](domain::research::Stage::owner_in)),
+//! and `/back` numbers count within the pipeline. Every stage reports its
+//! time, calls, tokens and cost ([`usage`]).
+//!
 //! # Pieces
 //!
 //! - [`node`]: [`ResearchNode`](node::ResearchNode), the trait each stage
@@ -13,8 +30,11 @@
 //!   graph: `start`, `resume`, `step`, `run`, `provide_input` and the chat
 //!   commands of [`commands`] through `handle_line`.
 //! - [`nodes`]: the registry, one file per node.
-//! - [`graph`]: [`research_graph`](graph::research_graph), the 14 nodes
-//!   wired to the workspace.
+//! - [`graph`]: [`fast_graph`](graph::fast_graph) and
+//!   [`research_graph`](graph::research_graph), the 5 and 14 stages wired
+//!   to the workspace; [`research_graphs`](graph::research_graphs) builds
+//!   both.
+//! - [`depth`]: how deep the fast pipeline digs.
 //! - [`session`]: [`ResearchSession`](session::ResearchSession), the flow
 //!   of a workspace as the chat drives it (`/research`, gates, resume).
 //! - [`usage`]: time, calls, tokens and cost of each stage.
