@@ -2,10 +2,11 @@
 //! LocalFs, LocalShell, SQLite, Lua) with the model replaced by a script,
 //! over a repository where `add` subtracts and `test.sh` shows it.
 //!
-//! From the bug described in the chat the flow goes through the 14 nodes
-//! to `.crest/specs/0001-…/` with `spec.md` (a chart whose data is a CSV
-//! in `evidence/`, Mermaid diagrams and cited sources), `plan.json`,
-//! `plan.md`, `journal.md` and `sources.json`. On the way:
+//! From the bug described in the chat (with `--deep`) the flow goes
+//! through the 14 nodes to `.crest/specs/0001-…/` with `spec.md` (a chart
+//! whose data is a CSV in `evidence/`, Mermaid diagrams and cited
+//! sources), `plan.json`, `plan.md`, `journal.md` and `sources.json`. On
+//! the way:
 //!
 //! - the app is closed while node 6 (Experiments) runs, and reopening it
 //!   says so and `resume` continues at node 6;
@@ -355,7 +356,8 @@ async fn from_a_bug_in_the_chat_to_a_spec_with_a_chart_mermaid_and_sources() {
     let before = script_before_closing();
     let calls = before.len();
     let (mut app, llm, input, terminal, output) = open(&ws, before, "sí\nsí\n").await;
-    let flow = run_flow(&mut app, BUG, &input, &terminal);
+    let deep = format!("--deep {BUG}");
+    let flow = run_flow(&mut app, &deep, &input, &terminal);
     let closed = async {
         while llm.requests().len() < calls {
             tokio::time::sleep(Duration::from_millis(20)).await;

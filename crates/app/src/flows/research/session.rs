@@ -27,6 +27,7 @@ use super::error::FlowError;
 use super::flow::{FlowReply, Position, ResearchFlow};
 use super::gate::{FlowStatus, KEY_DEPTH};
 use super::graph::ResearchGraphs;
+use super::usage::StageUsage;
 use crate::flows::aside::{FlowKind, GateInfo};
 
 /// Prefix of the index session of a workspace.
@@ -39,7 +40,7 @@ const KEY_FLOWS: &str = "flows";
 const INDEX_TASK: &str = "index";
 
 /// A stored flow of the workspace, as [`ResearchSession::list`] shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FlowSummary {
     /// 1-based number, newest first; `/research resume <n>` takes it.
     pub number: usize,
@@ -51,6 +52,8 @@ pub struct FlowSummary {
     pub position: Position,
     /// Pipeline of its graph.
     pub pipeline: Pipeline,
+    /// What it used so far (time, calls, tokens, cost).
+    pub usage: StageUsage,
 }
 
 /// How [`ResearchSession::start`] starts a flow.
@@ -255,6 +258,7 @@ impl ResearchSession {
                 problem: flow.problem().await?,
                 position: flow.position().await?,
                 pipeline: flow.graph().pipeline(),
+                usage: flow.usage().await?,
             });
         }
         Ok(flows)

@@ -28,16 +28,18 @@ use application::flows::research::agents::{ExplorePorts, explore_agent, node_age
 use application::flows::research::error::FlowError;
 use application::flows::research::flow::FlowReply;
 use application::flows::research::gate::FlowStatus;
-use application::flows::research::graph::{ResearchWorkspace, research_graph};
+use application::flows::research::graph::{ResearchWorkspace, research_graphs};
 use application::flows::research::node::NodeDeps;
 use application::flows::research::session::{
     ResearchSession, StartOptions, describe_reply, describe_status,
 };
+use application::flows::research::usage::StageUsage;
 use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::run_turn::{AgentDeps, SharedPermissions};
 use domain::model::ModelPolicy;
 use domain::permission::ToolEffect;
+use domain::research::Pipeline;
 use domain::workspace::WorkspaceRoot;
 
 /// What the research flow is built from, all shared with the chat.
@@ -121,15 +123,55 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         .with_workspace_root(root.clone())
         .with_decider(decider)
         .with_pricing(pricing);
-    let graph = research_graph(deps, Some(workspace))?;
-    Ok(ResearchSession::new(graph, storage, root))
+    let graphs = research_graphs(deps, Some(workspace))?;
+    Ok(ResearchSession::new(graphs, storage, root))
+}
+
+/// How `/research <problem>` runs: the flag before the problem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartMode {
+    /// No flag: the fast pipeline, at the depth its triage picks.
+    Auto,
+    /// `--quick` (`-q`): the fast pipeline at quick depth.
+    Quick,
+    /// `--deep` (`-d`): the 14-stage pipeline.
+    Deep,
+}
+
+impl StartMode {
+    /// The mode named by a leading flag, if `word` is one.
+    fn from_flag(word: &str) -> Option<Self> {
+        match word {
+            "--quick" | "-q" | "--rapido" | "--rápido" => Some(Self::Quick),
+            "--deep" | "-d" | "--profundo" => Some(Self::Deep),
+            _ => None,
+        }
+    }
+
+    /// How [`ResearchSession::start`] starts the flow.
+    #[must_use]
+    pub fn options(self) -> StartOptions {
+        match self {
+            Self::Auto => StartOptions::new(Pipeline::Fast),
+            Self::Quick => StartOptions {
+                pipeline: Pipeline::Fast,
+                depth: Some("quick".to_owned()),
+            },
+            Self::Deep => StartOptions::deep(),
+        }
+    }
 }
 
 /// What `/research <args>` asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResearchCommand {
-    /// `/research <problem>`.
-    Start(String),
+    /// `/research [--quick|--deep] <problem>`.
+    Start {
+        /// The problem to research.
+        problem: String,
+        /// The pipeline and depth.
+        mode: StartMode,
+    },
     /// `/research resume [n|id]` (or `retry`): continues the last flow, or
     /// the one numbered `n` in `/research list`.
     Resume(Option<String>),
@@ -161,7 +203,16 @@ impl ResearchCommand {
             "list" | "ls" | "listar" if matches!(rest, "all" | "todos") => Self::List(true),
             "cancel" | "cancelar" | "descartar" | "drop" => Self::Cancel(which),
             "stage" | "skip" | "abort" | "back" => Self::Line(format!("/{args}")),
-            _ => Self::Start(args.to_owned()),
+            flag => match StartMode::from_flag(flag) {
+                Some(mode) => Self::Start {
+                    problem: rest.to_owned(),
+                    mode,
+                },
+                None => Self::Start {
+                    problem: args.to_owned(),
+                    mode: StartMode::Auto,
+                },
+            },
         }
     }
 }
@@ -187,8 +238,15 @@ pub async fn command(
     now: u64,
 ) -> Result<String, String> {
     let status = match command {
-        ResearchCommand::Start(problem) => {
-            research.start(&problem, now, StartOptions::deep()).await
+        ResearchCommand::Start { problem, .. } if problem.is_empty() => {
+            return Err(
+                "`/research --quick <problem>` and `/research --deep <problem>` need a problem \
+                 description"
+                    .to_owned(),
+            );
+        }
+        ResearchCommand::Start { problem, mode } => {
+            research.start(&problem, now, mode.options()).await
         }
         ResearchCommand::Resume(which) => research.resume(which.as_deref()).await,
         ResearchCommand::Line(line) => return self::line(research, &line).await,
@@ -205,11 +263,11 @@ pub async fn command(
         }
         ResearchCommand::Status => {
             return Ok(match research.active() {
-                Some(flow) => flow
-                    .position()
-                    .await
-                    .map(|p| p.to_string())
-                    .map_err(|e| e.to_string())?,
+                Some(flow) => {
+                    let position = flow.position().await.map_err(|e| e.to_string())?;
+                    let used = flow.usage().await.unwrap_or_default();
+                    format!("{position}{}", so_far(&used))
+                }
                 None => match research.pending().await {
                     Ok(Some(position)) => format!("{position}; {}", resume_hint(&position.status)),
                     Ok(None) => USAGE.to_owned(),
@@ -223,6 +281,13 @@ pub async fn command(
         Ok(status) => Ok(describe_status(&status)),
         Err(err) => Err(message(&err)),
     }
+}
+
+/// " · $0.41 so far" when the cost of `used` is known, else nothing.
+fn so_far(used: &StageUsage) -> String {
+    used.cost_usd
+        .map(|cost| format!(" · ${cost:.2} so far"))
+        .unwrap_or_default()
 }
 
 /// What to type to continue a flow left at `status`.
@@ -262,8 +327,11 @@ async fn list(research: &ResearchSession, all: bool) -> Result<String, String> {
             .take(80)
             .collect();
         out.push_str(&format!(
-            "{}. **{problem}** — {}\n",
-            flow.number, flow.position
+            "{}. **{problem}** — {} · {}{}\n",
+            flow.number,
+            flow.pipeline.name(),
+            flow.position,
+            so_far(&flow.usage)
         ));
     }
     out.push_str("\n`/research resume <n>` continues one, `/research cancel <n>` drops it.");
@@ -359,9 +427,39 @@ mod tests {
             ResearchCommand::parse("back 3"),
             ResearchCommand::Line("/back 3".into())
         );
+        let start = |problem: &str, mode| ResearchCommand::Start {
+            problem: problem.into(),
+            mode,
+        };
         assert_eq!(
             ResearchCommand::parse("add suma mal"),
-            ResearchCommand::Start("add suma mal".into())
+            start("add suma mal", StartMode::Auto)
         );
+        assert_eq!(
+            ResearchCommand::parse("--quick the button does nothing"),
+            start("the button does nothing", StartMode::Quick)
+        );
+        assert_eq!(ResearchCommand::parse("-q x"), start("x", StartMode::Quick));
+        assert_eq!(
+            ResearchCommand::parse("--deep  login is slow "),
+            start("login is slow", StartMode::Deep)
+        );
+        assert_eq!(ResearchCommand::parse("-d"), start("", StartMode::Deep));
+        // A flag later in the text is part of the problem.
+        assert_eq!(
+            ResearchCommand::parse("why does -q fail"),
+            start("why does -q fail", StartMode::Auto)
+        );
+    }
+
+    #[test]
+    fn modes_pick_the_pipeline_and_depth() {
+        assert_eq!(StartMode::Auto.options(), StartOptions::new(Pipeline::Fast));
+        let quick = StartMode::Quick.options();
+        assert_eq!(
+            (quick.pipeline, quick.depth.as_deref()),
+            (Pipeline::Fast, Some("quick"))
+        );
+        assert_eq!(StartMode::Deep.options(), StartOptions::deep());
     }
 }

@@ -53,12 +53,24 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "research",
         usage: "/research <problem>",
-        description: "Start the research flow on a problem; it ends in a Spec",
+        description: "Start the research flow on a problem (5 stages, depth picked by the \
+                      triage); it ends in a Spec",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research --quick <problem>",
+        description: "The 5-stage flow at quick depth: fewer explorers and a cheaper model \
+                      (also -q)",
+    },
+    CommandInfo {
+        name: "research",
+        usage: "/research --deep <problem>",
+        description: "The full 14-stage flow, with experiments and a prototype (also -d)",
     },
     CommandInfo {
         name: "research",
         usage: "/research",
-        description: "Where the research flow is",
+        description: "Where the research flow is and what it cost so far",
     },
     CommandInfo {
         name: "research",
@@ -69,8 +81,8 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "research",
         usage: "/research list [all]",
-        description: "The open research flows of this workspace, newest first (all: also \
-                      the finished and cancelled ones)",
+        description: "The open research flows of this workspace, newest first, with their \
+                      pipeline and cost (all: also the finished and cancelled ones)",
     },
     CommandInfo {
         name: "research",

@@ -39,9 +39,15 @@ pub struct Args {
     pub implement: Option<String>,
 
     /// In headless mode, runs the research flow on this problem until it
-    /// writes its Spec (`resume` picks up the pending flow). Gates are
-    /// answered on stdin.
-    #[arg(long, value_name = "PROBLEM", requires = "headless")]
+    /// writes its Spec (`resume` picks up the pending flow; `--quick` or
+    /// `--deep` before the problem pick the depth or the 14-stage flow).
+    /// Gates are answered on stdin.
+    #[arg(
+        long,
+        value_name = "PROBLEM",
+        requires = "headless",
+        allow_hyphen_values = true
+    )]
     pub research: Option<String>,
 
     /// In headless mode, simulates the solution of a Spec (its folder, its
@@ -248,6 +254,11 @@ mod tests {
         assert_eq!(
             args.headless_run(),
             Some(Ok(HeadlessRun::Research("add suma mal")))
+        );
+        let deep = parse(&["--headless", "--research", "--deep login is slow"]).unwrap();
+        assert_eq!(
+            deep.headless_run(),
+            Some(Ok(HeadlessRun::Research("--deep login is slow")))
         );
         assert!(parse(&["--research", "x"]).is_err());
         assert!(parse(&["--headless", "--research", "x", "--implement", "y"]).is_err());
