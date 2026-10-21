@@ -63,6 +63,9 @@ pub mod plan;
 // T5.9: CriticalReview
 pub mod review;
 
+// The fast pipeline.
+pub mod fast;
+
 /// The node registered for `stage`, if its task already landed.
 #[must_use]
 pub fn node_for(stage: Stage) -> Option<Arc<dyn ResearchNode>> {

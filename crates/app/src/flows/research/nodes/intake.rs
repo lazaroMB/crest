@@ -24,8 +24,11 @@ what is missing to investigate it (steps to reproduce, expected behaviour, scope
 environment). Do not make up data or propose solutions.
 Reply only with a JSON object, with no text around it:
 {\"kind\": \"feature\" | \"bug\" | \"performance\" | \"refactor\", \"restated\": \"…\", \
-\"questions\": [\"…\"]}
-If nothing is missing, `questions` is [].";
+\"questions\": [\"…\"], \"size\": \"small\" | \"medium\" | \"large\", \"blocking\": false}
+If nothing is missing, `questions` is []. `size` is how big the change looks: small (one \
+module, a few files), medium or large (several modules, a new subsystem or a redesign). \
+`blocking` is true only when the investigation cannot start without the answers; otherwise \
+the questions are taken as assumptions.";
 
 /// What the user asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +60,33 @@ impl RequestKind {
     }
 }
 
+/// How big a change the request looks, as Intake judges it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Size {
+    /// One module, a few files.
+    #[serde(alias = "pequeño", alias = "pequeno")]
+    Small,
+    /// Several files or a couple of modules.
+    #[serde(alias = "mediano")]
+    Medium,
+    /// Several modules, a new subsystem or a redesign.
+    #[serde(alias = "grande")]
+    Large,
+}
+
+impl Size {
+    /// Name shown to the user.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+        }
+    }
+}
+
 /// The request as Intake understood it, read by the later stages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntakeBrief {
@@ -69,6 +99,14 @@ pub struct IntakeBrief {
     /// The user's answers at the gate, oldest first.
     #[serde(default)]
     pub answers: Vec<String>,
+    /// How big the change looks; `None` in briefs saved before it existed
+    /// or when the model left it out.
+    #[serde(default)]
+    pub size: Option<Size>,
+    /// Whether the questions must be answered before investigating (Triage
+    /// asks them); otherwise they are taken as assumptions.
+    #[serde(default)]
+    pub blocking: bool,
 }
 
 /// What the model answers.
@@ -78,6 +116,10 @@ struct Answer {
     restated: String,
     #[serde(default)]
     questions: Vec<String>,
+    #[serde(default)]
+    size: Option<Size>,
+    #[serde(default)]
+    blocking: bool,
 }
 
 impl Answer {
@@ -177,6 +219,8 @@ impl ResearchNode for Intake {
                 .map(|q| q.trim().to_owned())
                 .collect(),
             answers,
+            size: answer.size,
+            blocking: answer.blocking,
         };
         ctx.set_data(BRIEF_KEY, &brief)?;
         ctx.emit(BlockKind::Text {
@@ -279,6 +323,8 @@ mod tests {
             restated: "Login takes more than 5 s.".into(),
             questions: vec!["Since which version?".into()],
             answers: vec![],
+            size: None,
+            blocking: false,
         };
         ctx.set_data(BRIEF_KEY, &previous).unwrap();
         let mut ctx = ctx.with_reply("since v2, on Linux");
@@ -294,6 +340,18 @@ mod tests {
         assert!(sent.contains("Since which version?"));
         assert!(texts(&sink)[0].contains("No open questions"));
         assert!(ctx.state().journal[0].text.contains("user's answer"));
+    }
+
+    #[test]
+    fn briefs_saved_before_size_and_blocking_still_parse() {
+        let old = r#"{"kind": "bug", "restated": "x", "questions": ["q"], "answers": []}"#;
+        let brief: IntakeBrief = serde_json::from_str(old).unwrap();
+        assert_eq!((brief.size, brief.blocking), (None, false));
+        let new: Answer = serde_json::from_str(
+            r#"{"kind": "bug", "restated": "x", "size": "small", "blocking": true}"#,
+        )
+        .unwrap();
+        assert_eq!((new.size, new.blocking), (Some(Size::Small), true));
     }
 
     #[tokio::test]

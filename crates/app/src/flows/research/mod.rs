@@ -107,6 +107,7 @@
 pub mod agents;
 pub mod builder;
 pub mod commands;
+pub mod depth;
 pub mod error;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;

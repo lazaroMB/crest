@@ -14,6 +14,7 @@ use futures::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use super::depth::Depth;
 use super::gate::RESERVED_PREFIX;
 use super::json::{final_text, invalid_answer, parse_valid, retry_message, text_of};
 use super::usage::{StageUsage, UsageMeter};
@@ -421,6 +422,14 @@ impl NodeContext {
         let result = node.run(self).await;
         self.stage = outer;
         result
+    }
+
+    /// How deep the fast pipeline digs, as Triage chose it
+    /// ([`DEPTH_KEY`](super::depth::DEPTH_KEY)); [`Depth::Standard`]
+    /// before Triage ran or in the deep pipeline.
+    #[must_use]
+    pub fn depth(&self) -> Depth {
+        self.data(super::depth::DEPTH_KEY).unwrap_or_default()
     }
 
     /// The user's original request that started the flow.

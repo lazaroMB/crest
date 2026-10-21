@@ -466,6 +466,8 @@ pub(crate) mod testing {
             restated: "Login takes more than 5 s.".into(),
             questions: vec![],
             answers: vec!["since v2".into()],
+            size: None,
+            blocking: false,
         }
     }
 
