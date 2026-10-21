@@ -9,7 +9,18 @@ Between the two, on demand, you can **simulate a solution** ([below](#simulating
 
 Both are built with [graph-flow](https://crates.io/crates/graph-flow). Every step is a checkpoint in SQLite, in `~/.local/share/crest/sessions.db`. At **gates**, the workflow stops and waits for your answer in the same chat input (in the window) or on stdin (in headless mode).
 
-While a workflow waits at a gate, **every plain line you send answers it** and does not start a normal turn. The window's `/` commands (`/model`, `/mode`, `/clear`, `/q`...) keep working, and `/stage`, `/back`, `/skip`, `/retry` and `/abort` go to the workflow (the implementation workflow first, if both are active).
+While a workflow waits at a gate, **every plain line you send answers it** and does not start a normal turn, unless you step aside to ask something else ([side questions](#side-questions)). The window's `/` commands (`/model`, `/mode`, `/clear`, `/q`...) keep working, and `/stage`, `/back`, `/skip`, `/retry` and `/abort` go to the workflow (the implementation workflow first, if both are active).
+
+### Side questions
+
+Sometimes you need to ask or look something up before you can answer a gate. A **side chat** lets you do that without the stage running again:
+
+- `/aside [question]` (or `/aparte`) opens it. From then on your lines go to the normal chat, with all its tools and pasted images, and the model gets the gate's question as context. The workflow keeps waiting.
+- With the [decision model](configuration.md#decision-model-cloudflare-clef), a line it is sure is a side question (and not an answer) opens the side chat by itself, with a notice. Pasting an image at a gate also opens it.
+- To go back, type `/flow <answer>` (or `/volver`) to answer the gate directly. You can also type `/flow`, or a line such as "listo, continúa", "volvamos al flujo" or "back to the flow": the model then **proposes the answer** from the side conversation. The next line decides what to do with it. `Enter` or a "yes" sends it, and any other text is sent instead. With the decision model, a line like "listo, la respuesta es 200 ms, continúa" also goes back.
+- `/flow` with no side chat open shows the gate's question again. `/stage`, `/back`, `/skip`, `/retry` and `/abort` act on the workflow and close the side chat.
+
+The side chat lives in memory. After a restart, `/research resume` (or `/implement resume`) shows the gate again. In headless mode `/aside` and `/flow` work the same, except that a side question is never guessed.
 
 **Failures never trap the chat.** A step whose model call fails for a passing reason (rate limit, overload, a dropped connection, an empty or unparsable answer) is retried twice by itself. If it still fails, the workflow is saved as **failed** at its last checkpoint, the timeline shows an `Error` block with what to do, and the chat goes back to normal. `/research retry` (or `/retry`, or `/research resume`) runs the failed step again; `/implement resume` does the same for an implementation. The same holds after a restart: the pending or failed workflow is announced when crest opens.
 

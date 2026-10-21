@@ -150,6 +150,7 @@ A decision model answers typed questions (yes/no, a choice, a score) about a tex
 
 - **judge the problem definitions** of the research flow's Definition stage (instead of a keyword heuristic and a judge call to the `plan` model), and read a free-text answer that accepts them as they are;
 - **read free-text answers at the gates** of the research and implementation flows (approve, retry, skip, abort, back to the Spec, or instructions) when they are not one of the fixed phrases;
+- **tell side questions from answers** at those gates: a line it reads as a side question with at least 0.8 confidence opens the side chat instead of redoing the stage, and in the side chat a line that says to go back to the flow ("listo, la respuesta es X, continúa") proposes the answer ([side questions](workflows.md#side-questions));
 - **route each chat prompt**: offer only the optional tool groups it needs (charts and tables, web, simulation, subagent, each MCP server, each plugin tool; the file tools are always offered) and pick its model by difficulty (a trivial prompt goes to `models.trivial`, a hard one to `models.hard`, a normal one keeps the `main` role).
 
 It is optional: without credentials, or when a call fails or takes longer than `timeout_ms`, everything works as without it.
