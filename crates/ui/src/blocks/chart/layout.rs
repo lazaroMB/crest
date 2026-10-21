@@ -46,6 +46,25 @@ pub const LABEL_HEIGHT: f32 = 16.0;
 pub const LABEL_GAP: f32 = 6.0;
 /// Space kept at the chart's edges.
 pub const PAD: f32 = 8.0;
+/// Most categories drawn upright.
+pub const MAX_UPRIGHT_CATEGORIES: usize = 16;
+/// Most bars drawn upright.
+pub const MAX_UPRIGHT_BARS: usize = 30;
+/// Fewest characters an upright category label may be cut to.
+pub const MIN_LABEL_CHARS: usize = 6;
+/// Smallest share of its length an upright category label may be cut to.
+pub const MIN_LABEL_SHARE: f32 = 0.7;
+/// Widest bar of a single-series chart on its side.
+pub const H_BAR_MAX: f32 = 24.0;
+/// Widest bar of a group on its side.
+pub const H_GROUPED_BAR_MAX: f32 = 12.0;
+/// Smallest space between two groups on a chart on its side.
+pub const H_GROUP_GAP_MIN: f32 = 8.0;
+/// Largest space between two groups on a chart on its side.
+pub const H_GROUP_GAP_MAX: f32 = 24.0;
+/// Largest share of the width the category labels of a chart on its side
+/// take; longer labels are cut with an ellipsis.
+pub const MAX_LABEL_MARGIN: f32 = 0.35;
 /// Most bars that get their value written at the tip.
 pub const MAX_VALUE_LABELS: usize = 12;
 
@@ -227,7 +246,11 @@ pub struct ChartLayout {
 
 /// The layout of `data` at `width`.
 pub fn plan(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
-    vertical_bars(data, width.max(1.0), measure)
+    let width = width.max(1.0);
+    match choose_orientation(data, width, measure) {
+        Orientation::Vertical => vertical_bars(data, width, measure),
+        Orientation::Horizontal => horizontal_bars(data, width, measure),
+    }
 }
 
 /// The height of `data` drawn at `width`; see [`plan`].
@@ -324,8 +347,19 @@ fn tick_texts(ticks: &[f64], measure: Measure) -> (Vec<String>, f32) {
     (texts, widest)
 }
 
-/// Upright bars: groups of bars along x, values up the y axis.
-fn vertical_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
+/// How upright bars fit a width, before anything is placed.
+struct VerticalFit {
+    plot_h: f32,
+    tick_values: Vec<f64>,
+    tick_texts: Vec<String>,
+    gutter: f32,
+    /// The bar width the room allows, possibly under [`BAR_MIN`].
+    fitted_bar: f32,
+    /// Width of the slot each category gets.
+    slot_w: f32,
+}
+
+fn vertical_fit(data: &ChartData, width: f32, measure: Measure) -> VerticalFit {
     let n = data.labels.len().max(1);
     let series = data.series_count();
     let plot_h = plot_height(width);
@@ -333,14 +367,63 @@ fn vertical_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout 
     let (tick_texts, widest_tick) = tick_texts(&tick_values, measure);
     let gutter = widest_tick + LABEL_GAP;
     let room = (width - gutter - PAD).max(1.0);
-
-    let cap = bar_cap(series);
-    let bar = bar_thickness(n, series, cap, room).max(BAR_MIN.min(cap));
+    let fitted_bar = bar_thickness(n, series, bar_cap(series), room);
+    let bar = fitted_bar.max(BAR_MIN.min(bar_cap(series)));
     let group = group_width(series, bar);
     let needed = n as f32 * (group + group_gap(group));
     let plot_w = needed.max(MIN_PLOT_WIDTH).min(room);
+    VerticalFit {
+        plot_h,
+        tick_values,
+        tick_texts,
+        gutter,
+        fitted_bar,
+        slot_w: plot_w / n as f32,
+    }
+}
+
+/// Whether `data` reads better on its side at `width`: too many categories
+/// or bars, bars thinner than [`BAR_MIN`], or category labels that would be
+/// cut under [`MIN_LABEL_CHARS`] characters or [`MIN_LABEL_SHARE`] of their
+/// length (GPUI cannot rotate text, so upright labels must fit their slot).
+pub fn choose_orientation(data: &ChartData, width: f32, measure: Measure) -> Orientation {
+    let n = data.labels.len();
+    if n > MAX_UPRIGHT_CATEGORIES || n * data.series_count() > MAX_UPRIGHT_BARS {
+        return Orientation::Horizontal;
+    }
+    let fit = vertical_fit(data, width.max(1.0), measure);
+    if fit.fitted_bar < BAR_MIN {
+        return Orientation::Horizontal;
+    }
+    let label_room = (fit.slot_w - 4.0).max(0.0);
+    let cut_too_short = data.labels.iter().any(|label| {
+        let len = label.chars().count();
+        let (_, kept) = truncate_to(label, label_room, measure);
+        kept < len && (kept < MIN_LABEL_CHARS || (kept as f32) < len as f32 * MIN_LABEL_SHARE)
+    });
+    if cut_too_short {
+        Orientation::Horizontal
+    } else {
+        Orientation::Vertical
+    }
+}
+
+/// Upright bars: groups of bars along x, values up the y axis.
+fn vertical_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
+    let n = data.labels.len().max(1);
+    let series = data.series_count();
+    let VerticalFit {
+        plot_h,
+        tick_values,
+        tick_texts,
+        gutter,
+        fitted_bar,
+        slot_w,
+    } = vertical_fit(data, width, measure);
+    let bar = fitted_bar.max(BAR_MIN.min(bar_cap(series)));
+    let group = group_width(series, bar);
+    let plot_w = slot_w * n as f32;
     let left = ((width - gutter - plot_w) / 2.0).max(0.0) + gutter;
-    let slot_w = plot_w / n as f32;
 
     // Values at the tips when few and each fits over its bar.
     let bar_count = data.labels.len() * series;
@@ -437,6 +520,128 @@ fn vertical_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout 
         width,
         height,
         orientation: Orientation::Vertical,
+        plot,
+        ticks,
+        tick_labels,
+        baseline,
+        category_labels,
+        groups,
+        bars,
+        value_labels,
+    }
+}
+
+/// Bars on their side: one row per category, labels on the left, values
+/// along the x axis. The height grows with the categories.
+fn horizontal_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
+    let n = data.labels.len();
+    let series = data.series_count();
+    let bar = if series > 1 {
+        H_GROUPED_BAR_MAX
+    } else {
+        H_BAR_MAX
+    };
+    let group = group_width(series, bar);
+    let gap = (group * 0.5).clamp(H_GROUP_GAP_MIN, H_GROUP_GAP_MAX);
+    let row_h = group + gap;
+
+    let widest_label = data.labels.iter().map(|l| measure(l)).fold(0.0, f32::max);
+    let margin = (widest_label + LABEL_GAP).min(width * MAX_LABEL_MARGIN);
+    let bar_count = n * series;
+    let show_values = bar_count <= MAX_VALUE_LABELS;
+    let value_width = |negative: bool| {
+        if !show_values {
+            return 0.0;
+        }
+        data.all_values()
+            .filter(|v| (*v < 0.0) == negative)
+            .map(|v| measure(&format_compact(v)) + LABEL_GAP)
+            .fold(0.0, f32::max)
+    };
+    let (left_pad, right_pad) = (value_width(true), value_width(false).max(PAD));
+    let plot_x = margin + left_pad;
+    let plot_w = (width - plot_x - right_pad).max(1.0);
+    let plot = Rect::new(plot_x, PAD / 2.0, plot_w, n as f32 * row_h);
+    let height = plot.bottom() + LABEL_GAP + LABEL_HEIGHT + PAD / 2.0;
+
+    let tick_values = {
+        let (lo, hi) = value_domain(data.kind, data.all_values());
+        let target = (plot_w / 90.0).round().clamp(2.0, 6.0) as usize;
+        nice_ticks_n(lo, hi, target)
+    };
+    let x = scale(&tick_values, plot.x, plot.right());
+    let ticks: Vec<Tick> = tick_values
+        .iter()
+        .map(|&value| Tick {
+            value,
+            pos: x(value),
+        })
+        .collect();
+    let tick_labels = ticks
+        .iter()
+        .map(|tick| Label {
+            text: format_compact(tick.value),
+            x: tick.pos,
+            y: plot.bottom() + LABEL_GAP,
+            align: Align::Center,
+        })
+        .collect();
+    let base = x(0.0);
+    let baseline = (base >= plot.x - 0.5 && base <= plot.right() + 0.5).then_some(base);
+    let base = base.clamp(plot.x, plot.right());
+
+    let mut groups = Vec::with_capacity(n);
+    let mut bars = Vec::with_capacity(bar_count);
+    let mut category_labels = Vec::with_capacity(n);
+    let mut value_labels = Vec::new();
+    for (label, text) in data.labels.iter().enumerate() {
+        let slot = Rect::new(plot.x, plot.y + label as f32 * row_h, plot.w, row_h);
+        let gy = slot.y + (row_h - group) / 2.0;
+        groups.push(Group {
+            label,
+            slot,
+            bars: Rect::new(plot.x, gy, plot.w, group),
+        });
+        let (text, _) = truncate_to(text, (margin - LABEL_GAP).max(0.0), measure);
+        category_labels.push(Label {
+            text,
+            x: margin - LABEL_GAP,
+            y: slot.center_y() - LABEL_HEIGHT / 2.0,
+            align: Align::Right,
+        });
+        for s in 0..series {
+            let value = data.value(s, label);
+            let tip = x(value).clamp(plot.x, plot.right());
+            let y = gy + s as f32 * (bar + INNER_GAP);
+            let negative = value < 0.0;
+            let rect = Rect::new(tip.min(base), y, (tip - base).abs(), bar);
+            if show_values {
+                let (lx, align) = if negative {
+                    (rect.x - LABEL_GAP / 2.0, Align::Right)
+                } else {
+                    (rect.right() + LABEL_GAP / 2.0, Align::Left)
+                };
+                value_labels.push(Label {
+                    text: format_compact(value),
+                    x: lx,
+                    y: rect.center_y() - LABEL_HEIGHT / 2.0,
+                    align,
+                });
+            }
+            bars.push(BarMark {
+                label,
+                series: s,
+                value,
+                rect,
+                negative,
+            });
+        }
+    }
+
+    ChartLayout {
+        width,
+        height,
+        orientation: Orientation::Horizontal,
         plot,
         ticks,
         tick_labels,
@@ -596,5 +801,89 @@ pub(crate) mod tests {
             Some(3)
         );
         assert_eq!(hit_bar(&l, 0.0, 0.0), None);
+    }
+
+    fn numbered(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("c{i}")).collect()
+    }
+
+    #[test]
+    fn many_categories_or_long_labels_lie_on_their_side() {
+        let labels = numbered(40);
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let many = data(ChartKind::Bar, &labels, &[&[1.0; 40]]);
+        assert_eq!(
+            choose_orientation(&many, 1100.0, &mono),
+            Orientation::Horizontal
+        );
+        let long = data(
+            ChartKind::Bar,
+            &[
+                "src/blocks/chart/layout.rs",
+                "src/blocks/chart/paint.rs",
+                "src/blocks/chart/plot.rs",
+                "src/blocks/chart/scale.rs",
+                "src/blocks/chart/mod.rs",
+                "src/blocks/measured.rs",
+                "src/timeline/column.rs",
+                "src/timeline/view.rs",
+            ],
+            &[&[1.0; 8]],
+        );
+        assert_eq!(
+            choose_orientation(&long, 800.0, &mono),
+            Orientation::Horizontal
+        );
+        let short = data(
+            ChartKind::Bar,
+            &["mon", "tue", "wed", "thu", "fri", "sat"],
+            &[&[1.0; 6]],
+        );
+        assert_eq!(
+            choose_orientation(&short, 800.0, &mono),
+            Orientation::Vertical
+        );
+    }
+
+    #[test]
+    fn bars_on_their_side_keep_labels_within_a_margin() {
+        let labels: Vec<String> = (0..30)
+            .map(|i| format!("a rather long category name number {i}"))
+            .collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let d = data(ChartKind::Bar, &labels, &[&[3.0; 30]]);
+        let l = plan(&d, 600.0, &mono);
+        assert_eq!(l.orientation, Orientation::Horizontal);
+        assert!(l.plot.x <= 600.0 * MAX_LABEL_MARGIN + 1.0);
+        assert!(l.category_labels.iter().all(|c| c.text.ends_with('…')));
+        assert!(l.category_labels.iter().all(|c| c.span(&mono).0 >= -0.5));
+        assert!(l.value_labels.is_empty(), "30 bars: values in the tooltip");
+        let fewer = data(ChartKind::Bar, &labels[..20], &[&[3.0; 20]]);
+        assert!(plan(&fewer, 600.0, &mono).height < l.height);
+        // Every bar grows from the baseline to the right.
+        let base = l.baseline.unwrap_or_else(|| panic!("zero in domain"));
+        assert!(
+            l.bars
+                .iter()
+                .all(|b| close(b.rect.x, base) && b.rect.w > 0.0)
+        );
+        assert_eq!(
+            hit_bar(&l, l.plot.x + 5.0, l.bars[7].rect.center_y()),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn negative_bars_on_their_side_grow_left() {
+        let labels = numbered(20);
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut values = vec![2.0; 20];
+        values[3] = -4.0;
+        let d = data(ChartKind::Bar, &labels, &[&values]);
+        let l = plan(&d, 900.0, &mono);
+        assert_eq!(l.orientation, Orientation::Horizontal);
+        let base = l.baseline.unwrap_or_else(|| panic!("zero in domain"));
+        assert!(base > l.plot.x && base < l.plot.right());
+        assert!(l.bars[3].negative && close(l.bars[3].rect.right(), base));
     }
 }
