@@ -19,6 +19,7 @@
 //! terminal and reads each gate's answer from stdin (`resume` as the problem
 //! continues the pending flow).
 
+use application::cost::PricingTable;
 use application::decide::Decider;
 use std::sync::Arc;
 
@@ -63,6 +64,8 @@ pub struct ResearchParts {
     pub storage: Arc<SqliteFlowStorage>,
     /// The decision model of the judges and gates (maybe none).
     pub decider: Decider,
+    /// Prices of the models, for the cost of each stage (maybe empty).
+    pub pricing: PricingTable,
 }
 
 /// The MCP tools of `tools` that only read (servers declared with a read
@@ -94,6 +97,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         root,
         storage,
         decider,
+        pricing,
     } = parts;
     let llm: Arc<dyn LlmPort> = Arc::clone(&agent.llm);
     explore.llm = Arc::clone(&llm);
@@ -115,7 +119,8 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         .with_agent(Arc::new(acting))
         .with_explore_agent(Arc::new(explorer))
         .with_workspace_root(root.clone())
-        .with_decider(decider);
+        .with_decider(decider)
+        .with_pricing(pricing);
     let graph = research_graph(deps, Some(workspace))?;
     Ok(ResearchSession::new(graph, storage, root))
 }

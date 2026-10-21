@@ -624,6 +624,12 @@ pub async fn build_app(
             None
         }
     };
+    // Built before the research flow, which prices its stages with it.
+    let cost_tracker = CostTracker::from_options(&loaded.options);
+    let pricing = cost_tracker
+        .as_ref()
+        .map(|tracker| tracker.pricing().clone())
+        .unwrap_or_default();
     let research = match &flow_storage {
         Some(storage) => {
             let parts = research::ResearchParts {
@@ -651,6 +657,7 @@ pub async fn build_app(
                 root: root.clone(),
                 storage: Arc::clone(storage),
                 decider: decider.clone(),
+                pricing,
             };
             match research::build(parts) {
                 Ok(session) => Some(session),
@@ -690,7 +697,7 @@ pub async fn build_app(
         service = service.with_plugin_host(Arc::clone(host));
     }
     // The spending cap asks through the front end's approval port.
-    match CostTracker::from_options(&loaded.options) {
+    match cost_tracker {
         Ok(tracker) => service = service.with_cost_tracker(tracker),
         Err(err) => warnings.push(format!("cost: {err}; no pricing and no spend cap")),
     }

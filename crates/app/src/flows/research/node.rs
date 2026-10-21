@@ -16,6 +16,8 @@ use serde::de::DeserializeOwned;
 
 use super::gate::RESERVED_PREFIX;
 use super::json::{final_text, invalid_answer, parse_valid, retry_message, text_of};
+use super::usage::{StageUsage, UsageMeter};
+use crate::cost::PricingTable;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{Citation, LlmError, LlmPort, LlmRequest, MessageAssembler, SystemBlock};
 use crate::usecases::run_turn::{AgentService, TurnError, TurnOptions, TurnOutcome};
@@ -124,6 +126,7 @@ pub struct NodeDeps {
     explore_agent: Option<Arc<AgentService>>,
     workspace_root: String,
     decider: Decider,
+    pricing: Option<Arc<PricingTable>>,
     clock: fn() -> u64,
 }
 
@@ -149,6 +152,7 @@ impl NodeDeps {
             explore_agent: None,
             workspace_root: ".".to_owned(),
             decider: Decider::none(),
+            pricing: None,
             clock: system_now_ms,
         }
     }
@@ -186,6 +190,14 @@ impl NodeDeps {
     #[must_use]
     pub fn with_workspace_root(mut self, root: impl Into<String>) -> Self {
         self.workspace_root = root.into();
+        self
+    }
+
+    /// Prices the model calls of the nodes (see
+    /// [`usage`](super::usage)); without it their cost is unknown.
+    #[must_use]
+    pub fn with_pricing(mut self, pricing: PricingTable) -> Self {
+        self.pricing = (!pricing.is_empty()).then(|| Arc::new(pricing));
         self
     }
 
@@ -231,6 +243,7 @@ pub struct NodeContext {
     stages: Option<Arc<[Stage]>>,
     role_override: Option<ModelRole>,
     max_iterations: Option<u32>,
+    meter: Arc<UsageMeter>,
 }
 
 impl std::fmt::Debug for NodeContext {
@@ -277,6 +290,7 @@ impl NodeContext {
         reply: Option<String>,
         flow: graph_flow::Context,
     ) -> Self {
+        let meter = Arc::new(UsageMeter::new(deps.pricing.clone()));
         Self {
             stage,
             deps,
@@ -287,6 +301,7 @@ impl NodeContext {
             stages: None,
             role_override: None,
             max_iterations: None,
+            meter,
         }
     }
 
@@ -303,6 +318,13 @@ impl NodeContext {
     pub fn with_stages(mut self, stages: Arc<[Stage]>) -> Self {
         self.stages = Some(stages);
         self
+    }
+
+    /// Model calls and tokens of this run so far (`elapsed_ms` is 0: the
+    /// frame times the run).
+    #[must_use]
+    pub fn usage(&self) -> StageUsage {
+        self.meter.snapshot()
     }
 
     /// The state as the node left it.
@@ -507,6 +529,7 @@ impl NodeContext {
     ) -> Result<(String, Vec<Citation>), NodeError> {
         let stage = self.stage.name();
         self.activity(format!("{stage}: asking {}", req.model.spec.id));
+        let model = req.model.spec.id.clone();
         let mut stream = self.deps.llm.stream(req).await?;
         let mut assembler = MessageAssembler::new();
         let mut answering = false;
@@ -522,6 +545,8 @@ impl NodeContext {
         let assembled = assembler
             .finish()
             .map_err(|e| LlmError::Decode(e.to_string()))?;
+        let model = assembled.model.as_ref().unwrap_or(&model);
+        self.meter.record(model, assembled.usage, 1);
         let text = text_of(&assembled.message.content);
         if text.is_empty() && assembled.citations.is_empty() {
             return Err(NodeError::EmptyAnswer);
@@ -654,9 +679,19 @@ impl NodeContext {
         session: &mut Session,
         input: impl Into<String>,
     ) -> Result<TurnOutcome, NodeError> {
-        Ok(agent
+        let before = session.total_usage();
+        let result = agent
             .run_turn(session, input.into(), self.turn_options())
-            .await?)
+            .await;
+        // The agent resolves the same role, so its model is this one.
+        let model = self.model().spec.id;
+        let used = usage_since(before, session.total_usage());
+        match &result {
+            Ok(outcome) => self.meter.record(&model, used, outcome.model_calls),
+            // A failed turn is kept in the session with what it used.
+            Err(_) => self.meter.record(&model, used, 0),
+        }
+        Ok(result?)
     }
 
     /// [`NodeContext::agent_parsed`] for a JSON object of type `T`.
@@ -739,6 +774,23 @@ impl NodeContext {
         self.flow
             .set(key, value)
             .map_err(|e| NodeError::Context(e.to_string()))
+    }
+}
+
+/// Tokens used between two totals of a session.
+fn usage_since(
+    before: domain::conversation::Usage,
+    after: domain::conversation::Usage,
+) -> domain::conversation::Usage {
+    domain::conversation::Usage {
+        input_tokens: after.input_tokens.saturating_sub(before.input_tokens),
+        output_tokens: after.output_tokens.saturating_sub(before.output_tokens),
+        cache_read_input_tokens: after
+            .cache_read_input_tokens
+            .saturating_sub(before.cache_read_input_tokens),
+        cache_creation_input_tokens: after
+            .cache_creation_input_tokens
+            .saturating_sub(before.cache_creation_input_tokens),
     }
 }
 
@@ -967,6 +1019,38 @@ mod tests {
         assert_eq!(llm.last_request().unwrap().model.role, ModelRole::Main);
         ctx.set_role_override(None);
         assert_eq!(ctx.role(), ModelRole::Plan);
+    }
+
+    #[tokio::test]
+    async fn model_calls_and_agent_turns_are_metered() {
+        use crate::flows::research::nodes::observation::testing::{agent, context, workspace};
+        use domain::conversation::Usage;
+
+        let usage = |input, output| Usage {
+            input_tokens: input,
+            output_tokens: output,
+            ..Usage::default()
+        };
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::text("direct").with_usage(usage(100, 10)),
+            ScriptedResponse::tool_use("toolu_1", "tree", serde_json::json!({}))
+                .with_usage(usage(1_000, 20)),
+            ScriptedResponse::text("done").with_usage(usage(2_000, 30)),
+        ]));
+        let sink = Arc::new(RecordingSink::new());
+        let service = agent(&llm, &workspace(), None, |_| {});
+        let ctx = context(Stage::Observation, &llm, &sink, Some(Arc::clone(&service)));
+        ctx.ask("", "q").await.unwrap();
+        let mut session = ctx.new_session();
+        let outcome = ctx
+            .run_agent_turn(&service, &mut session, "map it")
+            .await
+            .unwrap();
+        assert_eq!(outcome.model_calls, 2);
+        let used = ctx.usage();
+        assert_eq!(used.calls, 3);
+        assert_eq!(used.usage, usage(3_100, 60));
+        assert_eq!(used.cost_usd, None);
     }
 
     #[test]

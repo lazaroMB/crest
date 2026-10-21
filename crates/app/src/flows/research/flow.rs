@@ -12,9 +12,10 @@ use super::commands::{Command, parse_command};
 use super::error::FlowError;
 use super::gate::{
     FlowStatus, GateReply, KEY_BACKS, KEY_ENTERED, KEY_GATE, KEY_PROBLEM, KEY_REPLY, KEY_STATE,
-    KEY_STATUS, stage_of_task, task_id,
+    KEY_STATUS, KEY_USAGE, stage_of_task, task_id,
 };
 use super::node::is_optional;
+use super::usage::{StageUsage, UsageByStage};
 
 /// Most nodes one [`ResearchFlow::run`] goes through before returning,
 /// even if no gate stops it (a guard against runaway loops).
@@ -241,6 +242,25 @@ impl ResearchFlow {
     pub async fn state(&self) -> Result<ResearchState, FlowError> {
         let session = self.load().await?;
         Ok(session.context.get(KEY_STATE).unwrap_or_default())
+    }
+
+    /// What each stage used so far (time, calls, tokens, cost).
+    ///
+    /// # Errors
+    ///
+    /// As [`ResearchFlow::resume`].
+    pub async fn usage_by_stage(&self) -> Result<UsageByStage, FlowError> {
+        let session = self.load().await?;
+        Ok(session.context.get(KEY_USAGE).unwrap_or_default())
+    }
+
+    /// What the whole flow used so far.
+    ///
+    /// # Errors
+    ///
+    /// As [`ResearchFlow::resume`].
+    pub async fn usage(&self) -> Result<StageUsage, FlowError> {
+        Ok(StageUsage::total(self.usage_by_stage().await?.values()))
     }
 
     /// The user's request that started the flow.

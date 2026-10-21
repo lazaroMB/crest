@@ -17,6 +17,7 @@
 //!   wired to the workspace.
 //! - [`session`]: [`ResearchSession`](session::ResearchSession), the flow
 //!   of a workspace as the chat drives it (`/research`, gates, resume).
+//! - [`usage`]: time, calls, tokens and cost of each stage.
 //! - [`agents`]: the read-only agent of the exploring stages and the
 //!   filtered agent of the stages that act.
 //!
@@ -117,6 +118,7 @@ pub mod node;
 pub mod nodes;
 pub mod session;
 pub mod task;
+pub mod usage;
 
 #[cfg(test)]
 mod tests;

@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use domain::block::BlockKind;
@@ -28,9 +29,10 @@ use serde::Serialize;
 
 use super::gate::{
     FlowStatus, GateKind, GateReply, KEY_BACKS, KEY_ENTERED, KEY_GATE, KEY_PROBLEM, KEY_REPLY,
-    KEY_STATE, KEY_STATUS, PendingGate, approves, task_id,
+    KEY_STATE, KEY_STATUS, KEY_USAGE, PendingGate, approves, task_id,
 };
 use super::node::{NodeContext, NodeDeps, NodeError, NodeOutcome, ResearchNode};
+use super::usage::{StageUsage, UsageByStage};
 use crate::ports::events::NoticeLevel;
 
 /// Times a stage may send the flow back before the frame asks the user.
@@ -216,6 +218,26 @@ impl NodeTask {
         Ok(TaskResult::new(None, NextAction::GoTo(task_id(to))))
     }
 
+    /// Shows what the run of the stage used and adds it to the flow's
+    /// totals and journal. Runs without model calls leave no trace.
+    fn record_usage(&self, ctx: &Context, used: StageUsage) -> Result<(), NodeError> {
+        if used.calls == 0 && used.usage == domain::conversation::Usage::default() {
+            return Ok(());
+        }
+        let stage = self.stage();
+        let summary = format!("{}: {}", stage.name(), used.summary());
+        self.deps.notice(NoticeLevel::Info, summary.clone());
+        let mut by_stage: UsageByStage = ctx.get(KEY_USAGE).unwrap_or_default();
+        *by_stage.entry(stage).or_default() += used;
+        put(ctx, KEY_USAGE, &by_stage)?;
+        log(
+            ctx,
+            self.deps.now(),
+            stage,
+            &format!("Usage: {}", used.summary()),
+        )
+    }
+
     /// The user answered: the stage may send the flow back again.
     fn reset_backs(&self, ctx: &Context) -> Result<(), NodeError> {
         let mut backs: BTreeMap<Stage, u32> = ctx.get(KEY_BACKS).unwrap_or_default();
@@ -266,8 +288,23 @@ impl NodeTask {
             ctx.clone(),
         )
         .with_stages(Arc::clone(&self.stages));
-        let outcome = self.node.run(&mut node_ctx).await?;
-        put(&ctx, KEY_STATE, node_ctx.into_state())?;
+        let started = Instant::now();
+        let result = self.node.run(&mut node_ctx).await;
+        let used = StageUsage {
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ..node_ctx.usage()
+        };
+        let outcome = match result {
+            Ok(outcome) => {
+                put(&ctx, KEY_STATE, node_ctx.into_state())?;
+                outcome
+            }
+            Err(error) => {
+                self.record_usage(&ctx, used)?;
+                return Err(error);
+            }
+        };
+        self.record_usage(&ctx, used)?;
 
         match outcome {
             NodeOutcome::Done if self.node.has_gate() => {
@@ -477,6 +514,94 @@ mod tests {
                 next: Stage::Discovery
             }
         );
+    }
+
+    /// Asks the model once.
+    struct Asks;
+
+    #[async_trait]
+    impl ResearchNode for Asks {
+        fn stage(&self) -> Stage {
+            Stage::Observation
+        }
+
+        async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
+            ctx.ask("", "map the repo").await?;
+            Ok(NodeOutcome::Done)
+        }
+    }
+
+    #[tokio::test]
+    async fn each_run_reports_and_adds_up_its_usage() {
+        use crate::cost::PricingTable;
+        use crate::testing::llm::ScriptedResponse;
+        use domain::conversation::Usage;
+        use domain::model::ModelPricing;
+
+        let sink = Arc::new(RecordingSink::new());
+        let usage = Usage {
+            input_tokens: 120_000,
+            output_tokens: 4_000,
+            ..Usage::default()
+        };
+        let llm = ScriptedLlm::new([
+            ScriptedResponse::text("map")
+                .with_model("m-1")
+                .with_usage(usage),
+            ScriptedResponse::text("map")
+                .with_model("m-1")
+                .with_usage(usage),
+        ]);
+        let pricing = PricingTable::new().with(
+            "m-",
+            ModelPricing {
+                input_per_mtok: 1.0,
+                output_per_mtok: 10.0,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            },
+        );
+        let deps = NodeDeps::new(
+            Arc::new(llm),
+            ModelPolicy::default(),
+            Arc::clone(&sink) as _,
+        )
+        .with_pricing(pricing);
+        let stages: Arc<[Stage]> = [Stage::Observation].into();
+        let g = GraphBuilder::new("research")
+            .add_task(Arc::new(NodeTask::new(Arc::new(Asks), deps, stages)))
+            .build()
+            .unwrap();
+        let mut s = session(Stage::Observation);
+        for runs in 1..=2 {
+            s.current_task_id = task_id(Stage::Observation);
+            g.execute_session(&mut s).await.unwrap();
+            let by_stage: UsageByStage = s.context.get(KEY_USAGE).unwrap();
+            let used = by_stage[&Stage::Observation];
+            assert_eq!(used.calls, runs);
+            assert_eq!(used.usage.output_tokens, 4_000 * u64::from(runs));
+            assert!((used.cost_usd.unwrap() - 0.16 * f64::from(runs)).abs() < 1e-9);
+        }
+        let journal = load_state(&s.context).journal;
+        assert!(
+            journal.iter().any(|e| e.text.starts_with("Usage: ")),
+            "{journal:?}"
+        );
+        let notices: Vec<_> = sink
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                DomainEvent::Notice { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notices.len(), 2);
+        assert!(
+            notices[0].starts_with("Observation: ")
+                && notices[0].ends_with(" · 1 call · 120k in / 4k out · $0.16"),
+            "{notices:?}"
+        );
+        assert!(!sink.kinds().contains(&"usage_updated".to_owned()));
     }
 
     /// Goes back to the first of Data and Observation the graph has.

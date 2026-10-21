@@ -29,6 +29,8 @@ pub(crate) const KEY_REPLY: &str = "research.reply";
 pub(crate) const KEY_ENTERED: &str = "research.entered";
 /// Key of the `Back` count per requesting stage.
 pub(crate) const KEY_BACKS: &str = "research.backs";
+/// Key of the usage per stage ([`UsageByStage`](super::usage::UsageByStage)).
+pub(crate) const KEY_USAGE: &str = "research.usage";
 /// Key of the depth the user asked for at the start (a `String`, e.g.
 /// `"quick"`), absent when the flow picks it.
 pub const KEY_DEPTH: &str = "research.depth";
