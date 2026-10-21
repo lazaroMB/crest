@@ -216,8 +216,7 @@ async fn repo_options(ctx: &mut NodeContext, brief: &str) -> Result<Vec<PriorSol
     };
     let prompt = format!("{REPO_PROMPT}\n\n{brief}");
     let mut session = ctx.new_session();
-    agent
-        .run_turn(&mut session, prompt.clone(), ctx.turn_options())
+    ctx.run_agent_turn(&agent, &mut session, prompt.clone())
         .await?;
     let report = final_text(&session);
     let answer: RepoAnswer = ctx

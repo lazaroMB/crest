@@ -124,6 +124,9 @@ pub struct TurnOptions {
     pub pinned_role: Option<ModelRole>,
     /// Interrupts the turn when cancelled (`Ctrl+C`).
     pub cancel: CancelToken,
+    /// Lower limit of model calls for this turn; the service's limit still
+    /// applies when it is smaller.
+    pub max_iterations: Option<u32>,
 }
 
 impl Default for TurnOptions {
@@ -141,6 +144,7 @@ impl TurnOptions {
             turn_override: None,
             pinned_role: None,
             cancel: CancelToken::new(),
+            max_iterations: None,
         }
     }
 
@@ -148,6 +152,14 @@ impl TurnOptions {
     #[must_use]
     pub fn with_override(mut self, name: impl Into<String>) -> Self {
         self.turn_override = Some(name.into());
+        self
+    }
+
+    /// Returns the same options limited to `limit` model calls (at least
+    /// one), or the service's limit if that is smaller.
+    #[must_use]
+    pub fn with_max_iterations(mut self, limit: u32) -> Self {
+        self.max_iterations = Some(limit.max(1));
         self
     }
 
@@ -493,6 +505,9 @@ impl AgentService {
             tools,
             span,
             model_calls: 0,
+            max_iterations: opts.max_iterations.map_or(self.max_iterations, |limit| {
+                limit.clamp(1, self.max_iterations)
+            }),
             context: None,
             cancel: opts.cancel,
         };
@@ -597,6 +612,9 @@ struct TurnRun<'a> {
     tools: Option<BTreeSet<String>>,
     span: SpanId,
     model_calls: u32,
+    /// Most model calls of this turn (the service's limit or a lower one
+    /// from [`TurnOptions::max_iterations`]).
+    max_iterations: u32,
     /// Context reported by the last model call, for compaction.
     context: Option<ContextMark>,
     cancel: CancelToken,
@@ -652,9 +670,9 @@ impl TurnRun<'_> {
             if self.cancel.is_cancelled() {
                 return Ok(StopReason::Interrupted);
             }
-            if self.model_calls >= self.service.max_iterations {
+            if self.model_calls >= self.max_iterations {
                 return Err(TurnError::TooManyIterations {
-                    limit: self.service.max_iterations,
+                    limit: self.max_iterations,
                 });
             }
             if !self.spending_allowed().await {

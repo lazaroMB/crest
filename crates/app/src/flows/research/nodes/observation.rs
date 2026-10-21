@@ -186,9 +186,7 @@ pub(crate) async fn explore_web(
 ) -> Result<(String, Vec<Citation>), NodeError> {
     let agent = ctx.explore_agent()?;
     let mut session = ctx.new_session();
-    agent
-        .run_turn(&mut session, prompt.to_owned(), ctx.turn_options())
-        .await?;
+    ctx.run_agent_turn(agent, &mut session, prompt).await?;
     let sources = web_sources(session.turns.iter().flat_map(|turn| turn.messages.iter()));
     let used = if sources.read.is_empty() {
         sources.found

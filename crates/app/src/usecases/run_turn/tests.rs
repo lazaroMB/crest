@@ -359,6 +359,36 @@ async fn iteration_limit_stops_with_a_clear_error() {
 }
 
 #[tokio::test]
+async fn turn_options_lower_the_iteration_limit() {
+    let call = || ScriptedResponse::tool_use("toolu_x", "echo", json!({ "text": "a" }));
+    let mut h = Harness::new(vec![call(), call(), call()]);
+    let err = h
+        .service
+        .run_turn(
+            &mut h.session,
+            "hola",
+            TurnOptions::default().with_max_iterations(1),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err, TurnError::TooManyIterations { limit: 1 });
+    assert_eq!(h.llm.requests().len(), 1);
+
+    // A higher limit than the service's does not raise it.
+    let mut h = Harness::new(vec![call(), call(), call()]).configure(|s| s.with_max_iterations(2));
+    let err = h
+        .service
+        .run_turn(
+            &mut h.session,
+            "hola",
+            TurnOptions::default().with_max_iterations(9),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err, TurnError::TooManyIterations { limit: 2 });
+}
+
+#[tokio::test]
 async fn model_failure_fails_the_turn() {
     let mut h = Harness::new(vec![ScriptedResponse::open_error(LlmError::Overloaded)]);
     let err = h.run("hola").await.unwrap_err();

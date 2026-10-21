@@ -18,7 +18,7 @@ use super::gate::RESERVED_PREFIX;
 use super::json::{final_text, invalid_answer, parse_valid, retry_message, text_of};
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{Citation, LlmError, LlmPort, LlmRequest, MessageAssembler, SystemBlock};
-use crate::usecases::run_turn::{AgentService, TurnError, TurnOptions};
+use crate::usecases::run_turn::{AgentService, TurnError, TurnOptions, TurnOutcome};
 
 /// Stages that `/skip` may jump over: the optional ones.
 ///
@@ -229,6 +229,8 @@ pub struct NodeContext {
     reply: Option<String>,
     flow: graph_flow::Context,
     stages: Option<Arc<[Stage]>>,
+    role_override: Option<ModelRole>,
+    max_iterations: Option<u32>,
 }
 
 impl std::fmt::Debug for NodeContext {
@@ -283,6 +285,8 @@ impl NodeContext {
             reply,
             flow,
             stages: None,
+            role_override: None,
+            max_iterations: None,
         }
     }
 
@@ -349,10 +353,41 @@ impl NodeContext {
         Session::new(self.deps.workspace_root.clone(), self.now())
     }
 
-    /// Model role of the stage ([`Stage::default_role`]).
+    /// Model role of the stage ([`Stage::default_role`]), unless
+    /// [`NodeContext::set_role_override`] replaced it.
     #[must_use]
     pub fn role(&self) -> ModelRole {
-        self.stage.default_role()
+        self.role_override
+            .unwrap_or_else(|| self.stage.default_role())
+    }
+
+    /// Runs the model calls and agent turns that follow with `role`
+    /// instead of the stage's (e.g. a cheaper model for a quick run);
+    /// `None` goes back to the stage's role.
+    pub fn set_role_override(&mut self, role: Option<ModelRole>) {
+        self.role_override = role;
+    }
+
+    /// Limits each agent turn that follows to `limit` model calls (the
+    /// agent's own limit still applies when lower); `None` removes it.
+    pub fn set_max_iterations(&mut self, limit: Option<u32>) {
+        self.max_iterations = limit;
+    }
+
+    /// Runs `node` inside the current one, as part of a stage that covers
+    /// several (e.g. Framing runs Hypotheses and Definition): while it runs
+    /// the context takes `node`'s stage, so its role, journal entries and
+    /// errors are those of `node`; the stage is restored afterwards. No
+    /// `StageHeader` is emitted and the frame keeps the outer stage's gate.
+    ///
+    /// # Errors
+    ///
+    /// The errors of `node`.
+    pub async fn run_as(&mut self, node: &dyn ResearchNode) -> Result<NodeOutcome, NodeError> {
+        let outer = std::mem::replace(&mut self.stage, node.stage());
+        let result = node.run(self).await;
+        self.stage = outer;
+        result
     }
 
     /// The user's original request that started the flow.
@@ -596,17 +631,32 @@ impl NodeContext {
         input: impl Into<String>,
         parse: impl Fn(&str) -> Result<T, String>,
     ) -> Result<T, NodeError> {
-        agent
-            .run_turn(session, input.into(), self.turn_options())
-            .await?;
+        self.run_agent_turn(agent, session, input).await?;
         let error = match parse(&final_text(session)) {
             Ok(value) => return Ok(value),
             Err(error) => error,
         };
-        agent
-            .run_turn(session, retry_message(&error), self.turn_options())
+        self.run_agent_turn(agent, session, retry_message(&error))
             .await?;
         parse(&final_text(session)).map_err(|e| invalid_answer(self.stage, &e))
+    }
+
+    /// Runs one turn of `agent` in `session` with `input` and this
+    /// context's [`NodeContext::turn_options`]. Every agent turn of a node
+    /// goes through here.
+    ///
+    /// # Errors
+    ///
+    /// The turn's errors.
+    pub async fn run_agent_turn(
+        &self,
+        agent: &AgentService,
+        session: &mut Session,
+        input: impl Into<String>,
+    ) -> Result<TurnOutcome, NodeError> {
+        Ok(agent
+            .run_turn(session, input.into(), self.turn_options())
+            .await?)
     }
 
     /// [`NodeContext::agent_parsed`] for a JSON object of type `T`.
@@ -650,10 +700,15 @@ impl NodeContext {
         }
     }
 
-    /// Turn options for [`AgentService::run_turn`] with this stage's role.
+    /// Turn options for [`AgentService::run_turn`] with this context's
+    /// role and iteration limit.
     #[must_use]
     pub fn turn_options(&self) -> TurnOptions {
-        TurnOptions::new(self.role())
+        let options = TurnOptions::new(self.role());
+        match self.max_iterations {
+            Some(limit) => options.with_max_iterations(limit),
+            None => options,
+        }
     }
 
     /// The decision model (maybe none).
@@ -871,6 +926,61 @@ mod tests {
             ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
             Stage::Observation
         );
+    }
+
+    /// Records the stage and role it ran with.
+    struct Probe(Stage);
+
+    #[async_trait]
+    impl ResearchNode for Probe {
+        fn stage(&self) -> Stage {
+            self.0
+        }
+
+        async fn run(&self, ctx: &mut NodeContext) -> Result<NodeOutcome, NodeError> {
+            ctx.log(format!("{:?}", ctx.role()));
+            ctx.ask("", "x").await?;
+            Ok(NodeOutcome::Done)
+        }
+    }
+
+    #[tokio::test]
+    async fn run_as_takes_the_inner_stage_and_restores_it() {
+        let llm = Arc::new(ScriptedLlm::new([
+            ScriptedResponse::text("a"),
+            ScriptedResponse::text("b"),
+        ]));
+        let mut ctx = context(Arc::clone(&llm), Arc::new(RecordingSink::new()));
+        let outcome = ctx.run_as(&Probe(Stage::Observation)).await.unwrap();
+        assert_eq!(outcome, NodeOutcome::Done);
+        assert_eq!(ctx.stage(), Stage::Hypotheses);
+        assert_eq!(llm.last_request().unwrap().model.role, ModelRole::Explore);
+        let entry = &ctx.state().journal[0];
+        assert_eq!(
+            (entry.stage, entry.text.as_str()),
+            (Stage::Observation, "Explore")
+        );
+
+        // An override applies to the inner node too, until cleared.
+        ctx.set_role_override(Some(ModelRole::Main));
+        ctx.run_as(&Probe(Stage::Observation)).await.unwrap();
+        assert_eq!(llm.last_request().unwrap().model.role, ModelRole::Main);
+        ctx.set_role_override(None);
+        assert_eq!(ctx.role(), ModelRole::Plan);
+    }
+
+    #[test]
+    fn turn_options_carry_the_role_and_the_iteration_limit() {
+        let mut ctx = context(
+            Arc::new(ScriptedLlm::new([])),
+            Arc::new(RecordingSink::new()),
+        );
+        assert_eq!(ctx.turn_options().max_iterations, None);
+        ctx.set_max_iterations(Some(12));
+        ctx.set_role_override(Some(ModelRole::Main));
+        let options = ctx.turn_options();
+        assert_eq!(options.max_iterations, Some(12));
+        assert_eq!(options.role, ModelRole::Main);
     }
 
     #[test]
