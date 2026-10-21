@@ -450,7 +450,7 @@ fn research_takes_the_chat_until_it_is_aborted(cx: &mut TestAppContext) {
     ];
     let (w, cx) = open(script, cx);
 
-    cx.simulate_input("/research add(2, 2) devuelve 0");
+    cx.simulate_input("/research --deep add(2, 2) devuelve 0");
     cx.simulate_keystrokes("enter");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !has_text(&w, cx, "go on to Observation") {
