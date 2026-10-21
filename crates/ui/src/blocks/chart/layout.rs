@@ -65,6 +65,14 @@ pub const H_GROUP_GAP_MAX: f32 = 24.0;
 /// Largest share of the width the category labels of a chart on its side
 /// take; longer labels are cut with an ellipsis.
 pub const MAX_LABEL_MARGIN: f32 = 0.35;
+/// Most points of a line that get a marker.
+pub const MAX_MARKERS: usize = 24;
+/// Diameter of a point marker.
+pub const MARKER_SIZE: f32 = 8.0;
+/// Widest x-axis label of a line or area chart; longer ones are cut.
+pub const MAX_X_LABEL: f32 = 120.0;
+/// Least space between two x-axis labels.
+pub const X_LABEL_SPACE: f32 = 8.0;
 /// Most bars that get their value written at the tip.
 pub const MAX_VALUE_LABELS: usize = 12;
 
@@ -242,11 +250,20 @@ pub struct ChartLayout {
     pub bars: Vec<BarMark>,
     /// The values written at the bar tips, if any.
     pub value_labels: Vec<Label>,
+    /// Lines and areas: the x of each category.
+    pub xs: Vec<f32>,
+    /// Lines and areas: each series' points, `(x, y)` per category.
+    pub points: Vec<Vec<(f32, f32)>>,
+    /// Lines and areas: whether points get a marker (few points only).
+    pub markers: bool,
 }
 
 /// The layout of `data` at `width`.
 pub fn plan(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
     let width = width.max(1.0);
+    if matches!(data.kind, ChartKind::Line | ChartKind::Area) {
+        return lines(data, width, measure);
+    }
     match choose_orientation(data, width, measure) {
         Orientation::Vertical => vertical_bars(data, width, measure),
         Orientation::Horizontal => horizontal_bars(data, width, measure),
@@ -528,6 +545,9 @@ fn vertical_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayout 
         groups,
         bars,
         value_labels,
+        xs: Vec::new(),
+        points: Vec::new(),
+        markers: false,
     }
 }
 
@@ -650,7 +670,141 @@ fn horizontal_bars(data: &ChartData, width: f32, measure: Measure) -> ChartLayou
         groups,
         bars,
         value_labels,
+        xs: Vec::new(),
+        points: Vec::new(),
+        markers: false,
     }
+}
+
+/// Lines and areas: one point per category across the plot, values up the
+/// y axis, and as many x labels as fit without overlapping.
+fn lines(data: &ChartData, width: f32, measure: Measure) -> ChartLayout {
+    let n = data.labels.len();
+    let plot_h = plot_height(width);
+    let tick_values = ticks_for(data, plot_h);
+    let (tick_texts, widest_tick) = tick_texts(&tick_values, measure);
+    let gutter = widest_tick + LABEL_GAP;
+    let plot = Rect::new(
+        gutter,
+        LABEL_HEIGHT / 2.0,
+        (width - gutter - PAD).max(1.0),
+        plot_h,
+    );
+    let height = plot.bottom() + LABEL_GAP + LABEL_HEIGHT + PAD / 2.0;
+
+    let y = scale(&tick_values, plot.bottom(), plot.y);
+    let ticks: Vec<Tick> = tick_values
+        .iter()
+        .map(|&value| Tick {
+            value,
+            pos: y(value),
+        })
+        .collect();
+    let tick_labels = ticks
+        .iter()
+        .zip(tick_texts)
+        .map(|(tick, text)| Label {
+            text,
+            x: plot.x - LABEL_GAP,
+            y: tick.pos - LABEL_HEIGHT / 2.0,
+            align: Align::Right,
+        })
+        .collect();
+    let base = y(0.0);
+    let baseline = (base >= plot.y - 0.5 && base <= plot.bottom() + 0.5).then_some(base);
+
+    // Points keep half a marker from the plot's edges.
+    let inset = MARKER_SIZE / 2.0;
+    let span = (plot.w - 2.0 * inset).max(0.0);
+    let xs: Vec<f32> = (0..n)
+        .map(|i| {
+            if n > 1 {
+                plot.x + inset + i as f32 * span / (n - 1) as f32
+            } else {
+                plot.center_x()
+            }
+        })
+        .collect();
+    let points = (0..data.series_count())
+        .map(|s| {
+            xs.iter()
+                .enumerate()
+                .map(|(i, &x)| (x, y(data.value(s, i)).clamp(plot.y, plot.bottom())))
+                .collect()
+        })
+        .collect();
+    let category_labels = thin_labels(&data.labels, &xs, plot.bottom() + LABEL_GAP, width, measure);
+
+    ChartLayout {
+        width,
+        height,
+        orientation: Orientation::Vertical,
+        plot,
+        ticks,
+        tick_labels,
+        baseline,
+        category_labels,
+        groups: Vec::new(),
+        bars: Vec::new(),
+        value_labels: Vec::new(),
+        xs,
+        points,
+        markers: n <= MAX_MARKERS,
+    }
+}
+
+/// The x-axis labels of a line: each cut to [`MAX_X_LABEL`], kept inside the
+/// chart, and only every `k`-th one for the smallest `k` at which no two
+/// overlap (with [`X_LABEL_SPACE`] between them).
+pub fn thin_labels(
+    labels: &[String],
+    xs: &[f32],
+    top: f32,
+    width: f32,
+    measure: Measure,
+) -> Vec<Label> {
+    let texts: Vec<(String, f32)> = labels
+        .iter()
+        .map(|label| {
+            let (text, _) = truncate_to(label, MAX_X_LABEL.min(width), measure);
+            let w = measure(&text);
+            (text, w)
+        })
+        .collect();
+    // A label centered on its point, moved inward at the chart's edges.
+    let place = |ix: usize| -> Option<Label> {
+        let (text, w) = texts.get(ix)?;
+        let x = xs.get(ix)?.clamp(w / 2.0, (width - w / 2.0).max(w / 2.0));
+        Some(Label {
+            text: text.clone(),
+            x,
+            y: top,
+            align: Align::Center,
+        })
+    };
+    let n = texts.len().min(xs.len());
+    for k in 1..=n.max(1) {
+        let chosen: Vec<Label> = (0..n).step_by(k).filter_map(place).collect();
+        let fits = chosen.windows(2).all(|pair| {
+            let (_, right) = pair[0].span(measure);
+            let (left, _) = pair[1].span(measure);
+            left - right >= X_LABEL_SPACE
+        });
+        if fits {
+            return chosen;
+        }
+    }
+    Vec::new()
+}
+
+/// The category nearest `x` on a line or area chart.
+pub fn nearest_index(layout: &ChartLayout, x: f32) -> Option<usize> {
+    layout
+        .xs
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (*a - x).abs().total_cmp(&(*b - x).abs()))
+        .map(|(ix, _)| ix)
 }
 
 /// The bar under `(x, y)`: the bar of the hovered category slot nearest the
@@ -885,5 +1039,44 @@ pub(crate) mod tests {
         let base = l.baseline.unwrap_or_else(|| panic!("zero in domain"));
         assert!(base > l.plot.x && base < l.plot.right());
         assert!(l.bars[3].negative && close(l.bars[3].rect.right(), base));
+    }
+
+    #[test]
+    fn line_labels_are_thinned_until_none_overlap() {
+        let labels: Vec<String> = (0..100).map(|i| format!("2024-01-{i:02}")).collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let d = data(ChartKind::Line, &labels, &[&[1.0; 100]]);
+        let l = plan(&d, 800.0, &mono);
+        assert!(l.category_labels.len() > 1 && l.category_labels.len() < 100);
+        for pair in l.category_labels.windows(2) {
+            assert!(pair[1].span(&mono).0 - pair[0].span(&mono).1 >= X_LABEL_SPACE);
+        }
+        assert!(l.category_labels.iter().all(|c| {
+            let (a, b) = c.span(&mono);
+            a >= -0.01 && b <= l.width + 0.01
+        }));
+        assert!(!l.markers, "100 points: no markers");
+        let few = data(ChartKind::Line, &["a", "b", "c"], &[&[1.0, 2.0, 3.0]]);
+        let l = plan(&few, 800.0, &mono);
+        assert_eq!(l.category_labels.len(), 3);
+        assert!(l.markers);
+    }
+
+    #[test]
+    fn line_points_follow_the_values_and_the_cursor_finds_them() {
+        let values: [&[f64]; 2] = [&[1.0, 5.0, 3.0], &[2.0, 2.0, 2.0]];
+        let d = data(ChartKind::Line, &["a", "b", "c"], &values);
+        let l = plan(&d, 900.0, &mono);
+        assert_eq!(l.points.len(), 2);
+        assert!(
+            l.points[0][1].1 < l.points[0][0].1,
+            "higher value, higher up"
+        );
+        assert!(l.bars.is_empty());
+        assert_eq!(nearest_index(&l, l.xs[1] + 3.0), Some(1));
+        assert_eq!(nearest_index(&l, -50.0), Some(0));
+        let area = data(ChartKind::Area, &["a", "b"], &[&[5.0, 9.0]]);
+        let l = plan(&area, 900.0, &mono);
+        assert_eq!(l.ticks.first().map(|t| t.value), Some(0.0));
     }
 }

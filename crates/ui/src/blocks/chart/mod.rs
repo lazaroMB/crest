@@ -3,11 +3,11 @@
 //! for a pie). `t` ([`TimelineEntry::alt_view`]) shows the same data as a
 //! table ([`ChartSpec::to_table`] through the table block's renderer).
 //!
-//! Bars have their own renderer ([`plot::chart_frame`]): sized from the
-//! data, grouped, centered and turned on their side when upright labels
-//! would not fit; its height follows the width. Lines and areas are a
-//! gpui-component `AreaChart` (transparent fills for lines), which overlays
-//! any number of series on one axis; pies are its `PieChart`.
+//! Bars, lines and areas have their own renderer ([`plot::chart_frame`]),
+//! whose height follows the width: bars are sized from the data, grouped,
+//! centered and turned on their side when upright labels would not fit;
+//! lines and areas thin their x labels and show a crosshair on hover. Pies
+//! are gpui-component's `PieChart`.
 
 pub mod layout;
 pub mod paint;
@@ -20,15 +20,14 @@ use domain::block::{BlockKind, ChartKind, ChartSpec};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
-    transparent_black,
 };
-use gpui_component::chart::{AreaChart, PieChart};
+use gpui_component::chart::PieChart;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use self::layout::ChartData;
 use crate::timeline::TimelineEntry;
 
-/// Height of the library charts (lines, areas and pies).
+/// Height of a pie chart.
 const CHART_HEIGHT: f32 = 240.0;
 
 /// Theme color of series (or pie slice) `ix`, cycling the five chart colors.
@@ -62,80 +61,26 @@ pub fn legend_names(spec: &ChartSpec) -> Vec<String> {
     }
 }
 
-/// The chart's data, shared by the accessor closures.
-struct Data {
-    labels: Vec<SharedString>,
-    names: Vec<SharedString>,
-    values: Vec<Vec<f64>>,
-}
-
-impl Data {
-    fn new(spec: &ChartSpec) -> Rc<Self> {
-        Rc::new(Self {
-            labels: spec
-                .labels
-                .iter()
-                .cloned()
-                .map(SharedString::from)
-                .collect(),
-            names: spec
-                .series
-                .iter()
-                .map(|s| SharedString::from(s.name.clone()))
-                .collect(),
-            values: spec.series.iter().map(|s| s.values.clone()).collect(),
-        })
-    }
-
-    fn value(&self, series: usize, label: usize) -> f64 {
-        self.values
-            .get(series)
-            .and_then(|v| v.get(label))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    fn label(&self, ix: usize) -> SharedString {
-        self.labels.get(ix).cloned().unwrap_or_default()
-    }
-}
-
-fn area_chart(data: Rc<Data>, filled: bool, id: ElementId, cx: &App) -> AnyElement {
-    let x_data = data.clone();
-    let mut chart = AreaChart::new(0..data.labels.len())
-        .id(id)
-        .appear(false)
-        .y_axis(true)
-        .x(move |&ix| x_data.label(ix));
-    for series in 0..data.values.len() {
-        let color = series_color(series, cx);
-        let y_data = data.clone();
-        let fill = if filled {
-            color.opacity(0.25)
-        } else {
-            transparent_black()
-        };
-        chart = chart
-            .y(move |&ix| y_data.value(series, ix))
-            .stroke(color)
-            .fill(fill)
-            .linear()
-            .name(data.names[series].clone());
-    }
-    chart.into_any_element()
-}
-
-fn pie_chart(data: Rc<Data>, id: ElementId, cx: &App) -> AnyElement {
+/// A pie of the single series of `data`, one slice per label.
+fn pie_chart(data: ChartData, id: ElementId, cx: &App) -> AnyElement {
     let colors: Vec<Hsla> = (0..data.labels.len())
         .map(|ix| series_color(ix, cx))
         .collect();
-    let (value_data, name_data) = (data.clone(), data.clone());
-    PieChart::new(0..data.labels.len())
+    let count = data.labels.len();
+    let data = Rc::new(data);
+    let (value_data, name_data) = (data.clone(), data);
+    let pie = PieChart::new(0..count)
         .id(id)
         .appear(false)
         .value(move |&ix| value_data.value(0, ix).max(0.0) as f32)
         .color(move |&ix| colors[ix % colors.len().max(1)])
-        .tooltip_name(move |&ix| name_data.label(ix))
+        .tooltip_name(move |&ix| {
+            SharedString::from(name_data.labels.get(ix).cloned().unwrap_or_default())
+        });
+    div()
+        .w_full()
+        .h(px(CHART_HEIGHT))
+        .child(pie)
         .into_any_element()
 }
 
@@ -161,15 +106,6 @@ fn legend(spec: &ChartSpec, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// A library chart at the fixed [`CHART_HEIGHT`].
-fn fixed_height(chart: AnyElement) -> AnyElement {
-    div()
-        .w_full()
-        .h(px(CHART_HEIGHT))
-        .child(chart)
-        .into_any_element()
-}
-
 fn chart_body(spec: &ChartSpec, id: &str, window: &Window, cx: &App) -> AnyElement {
     let theme = cx.theme();
     if let Err(err) = spec.validate() {
@@ -187,10 +123,10 @@ fn chart_body(spec: &ChartSpec, id: &str, window: &Window, cx: &App) -> AnyEleme
     let selector = format!("chart-plot-{id}");
     let id = ElementId::Name(SharedString::from(format!("chart-{id}")));
     let chart = match spec.kind {
-        ChartKind::Bar => plot::chart_frame(ChartData::from_spec(spec), id, window, cx),
-        ChartKind::Line => fixed_height(area_chart(Data::new(spec), false, id, cx)),
-        ChartKind::Area => fixed_height(area_chart(Data::new(spec), true, id, cx)),
-        ChartKind::Pie => fixed_height(pie_chart(Data::new(spec), id, cx)),
+        ChartKind::Bar | ChartKind::Line | ChartKind::Area => {
+            plot::chart_frame(ChartData::from_spec(spec), id, window, cx)
+        }
+        ChartKind::Pie => pie_chart(ChartData::from_spec(spec), id, cx),
     };
     let show_legend = spec.kind == ChartKind::Pie || spec.series.len() >= 2;
     v_flex()
@@ -364,18 +300,30 @@ mod tests {
         assert!(!ids.is_empty());
         // Real frames of the window (rather than `cx.draw`), so the
         // tooltip's deferred box is drawn in the frame that made it.
-        cx.simulate_resize(size(px(width), px(2000.)));
+        cx.simulate_resize(size(px(width), px(5000.)));
         cx.run_until_parked();
         (view, cx)
     }
 
     #[gpui::test]
-    fn hovering_bars_shows_a_tooltip_without_panicking(cx: &mut TestAppContext) {
+    fn hovering_charts_shows_a_tooltip_without_panicking(cx: &mut TestAppContext) {
         let mut many = chart(ChartKind::Bar, 1);
         many.labels = (0..40).map(|i| format!("category {i}")).collect();
         many.series[0].values = (0..40).map(f64::from).collect();
         let few = chart(ChartKind::Bar, 3);
-        let (view, cx) = draw_charts(cx, vec![few, many], 1400.);
+        let mut long_line = chart(ChartKind::Line, 3);
+        long_line.labels = (0..24).map(|i| format!("{i:02}:00")).collect();
+        for (s, series) in long_line.series.iter_mut().enumerate() {
+            series.values = (0..24).map(|i| f64::from(i * (s as i32 + 1))).collect();
+        }
+        let specs = vec![
+            few,
+            long_line,
+            chart(ChartKind::Area, 2),
+            chart(ChartKind::Line, 1),
+            many,
+        ];
+        let (view, cx) = draw_charts(cx, specs, 1400.);
         let ids: Vec<_> = view.read_with(cx, |view, _| {
             view.state().entries().iter().map(|e| e.block.id).collect()
         });
@@ -403,7 +351,7 @@ mod tests {
         // `debug_bounds` takes a static selector.
         let selector: &'static str = format!("chart-plot-{id}").leak();
         let narrow = cx.debug_bounds(selector).unwrap_or_else(|| panic!("drawn"));
-        cx.simulate_resize(size(px(1200.), px(2000.)));
+        cx.simulate_resize(size(px(1200.), px(5000.)));
         cx.run_until_parked();
         let wide = cx.debug_bounds(selector).unwrap_or_else(|| panic!("drawn"));
         assert!(wide.size.width > narrow.size.width);

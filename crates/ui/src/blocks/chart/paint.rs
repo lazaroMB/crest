@@ -1,16 +1,24 @@
-//! Painting a [`ChartLayout`]: the grid, the baseline, the bars and the
-//! labels. Positions in the layout are relative to `origin`, the chart's
+//! Painting a [`ChartLayout`]: the grid, the baseline, the bars, the lines
+//! and areas, and the labels. Positions in the layout are relative to `origin`, the chart's
 //! top-left corner on screen.
 
 use gpui::{
-    App, Bounds, Corners, Font, Hsla, Pixels, Point, SharedString, TextAlign, TextRun, Window,
-    fill, point, px, size,
+    App, BorderStyle, Bounds, Corners, Font, Hsla, PathBuilder, Pixels, Point, SharedString,
+    TextAlign, TextRun, Window, fill, point, px, quad, size,
 };
 
-use super::layout::{Align, BarMark, ChartLayout, LABEL_HEIGHT, Label, Orientation, Rect};
+use super::layout::{
+    Align, BarMark, ChartLayout, LABEL_HEIGHT, Label, MARKER_SIZE, Orientation, Rect,
+};
 
 /// Corner radius at the data end of a bar.
 pub const BAR_RADIUS: f32 = 4.0;
+/// Width of a series line.
+pub const LINE_WIDTH: f32 = 2.0;
+/// Opacity of an area's fill.
+pub const AREA_OPACITY: f32 = 0.1;
+/// Width of the surface-colored ring around a point marker.
+pub const MARKER_RING: f32 = 2.0;
 
 /// The font labels are drawn and measured with, captured when the chart is
 /// rendered.
@@ -144,6 +152,66 @@ pub fn paint_bars(
         let quad = fill(to_bounds(&bar.rect, origin), color(bar.series))
             .corner_radii(bar_corners(bar, layout.orientation));
         window.paint_quad(quad);
+    }
+}
+
+/// Every series as a line, over a faint fill down to the baseline when
+/// `filled`, with a marker on each point when the layout asks for them.
+/// Markers have a ring of the `surface` color so crossing lines stay apart.
+pub fn paint_lines(
+    layout: &ChartLayout,
+    origin: Point<Pixels>,
+    color: impl Fn(usize) -> Hsla,
+    filled: bool,
+    surface: Hsla,
+    window: &mut Window,
+) {
+    let at = |(x, y): (f32, f32)| origin + point(px(x), px(y));
+    let base = layout.baseline.unwrap_or(layout.plot.bottom());
+    for (series, points) in layout.points.iter().enumerate() {
+        let (Some(&first), Some(&last)) = (points.first(), points.last()) else {
+            continue;
+        };
+        let color = color(series);
+        if filled && points.len() > 1 {
+            let mut area = PathBuilder::fill();
+            area.move_to(at((first.0, base)));
+            for &p in points {
+                area.line_to(at(p));
+            }
+            area.line_to(at((last.0, base)));
+            area.close();
+            if let Ok(path) = area.build() {
+                window.paint_path(path, color.opacity(AREA_OPACITY));
+            }
+        }
+        if points.len() > 1 {
+            let mut line = PathBuilder::stroke(px(LINE_WIDTH));
+            line.move_to(at(first));
+            for &p in &points[1..] {
+                line.line_to(at(p));
+            }
+            if let Ok(path) = line.build() {
+                window.paint_path(path, color);
+            }
+        }
+        if layout.markers {
+            let outer = MARKER_SIZE + 2.0 * MARKER_RING;
+            for &(x, y) in points {
+                let bounds = to_bounds(
+                    &Rect::new(x - outer / 2.0, y - outer / 2.0, outer, outer),
+                    origin,
+                );
+                window.paint_quad(quad(
+                    bounds,
+                    px(outer / 2.0),
+                    color,
+                    px(MARKER_RING),
+                    surface,
+                    BorderStyle::Solid,
+                ));
+            }
+        }
     }
 }
 
