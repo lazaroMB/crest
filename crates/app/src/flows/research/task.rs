@@ -164,9 +164,24 @@ impl NodeTask {
     }
 
     /// Goes back to `to`, or asks the user once the stage did it too often.
+    ///
+    /// A target from the other pipeline (a deep node run inside a fast
+    /// stage) goes to the stage of this graph that owns it, which may be
+    /// the current one.
     fn back(&self, ctx: &Context, to: Stage, reason: &str) -> Result<TaskResult, NodeError> {
         let stage = self.stage();
-        if !self.stages.contains(&to) || to >= stage {
+        let pipeline = stage.pipeline();
+        let (to, mapped) = if to.pipeline() == pipeline {
+            (to, false)
+        } else {
+            (to.owner_in(pipeline), true)
+        };
+        let position = |s: Stage| self.stages.iter().position(|x| *x == s);
+        let earlier = match (position(to), position(stage)) {
+            (Some(target), Some(current)) => target < current || (mapped && target == current),
+            _ => false,
+        };
+        if !earlier {
             return Err(NodeError::Failed(format!(
                 "{} asked to go back to {}, which is not an earlier stage of the graph",
                 stage.name(),
@@ -440,6 +455,28 @@ mod tests {
         let err = g.execute_session(&mut s).await.unwrap_err();
         assert!(err.to_string().contains("not an earlier stage"), "{err}");
         assert!(sink.kinds().contains(&"block_added".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn backs_to_deep_stages_go_to_their_fast_owner() {
+        let sink = Arc::new(RecordingSink::new());
+        let framing = FakeNode::new(Stage::Framing).then(NodeOutcome::Back {
+            to: Stage::Data,
+            reason: "logs are missing".into(),
+        });
+        let g = graph(
+            vec![Arc::new(FakeNode::new(Stage::Discovery)), Arc::new(framing)],
+            &sink,
+        );
+        let mut s = session(Stage::Framing);
+        g.execute_session(&mut s).await.unwrap();
+        assert_eq!(s.current_task_id, task_id(Stage::Discovery));
+        assert_eq!(
+            status(&s),
+            FlowStatus::Running {
+                next: Stage::Discovery
+            }
+        );
     }
 
     /// Goes back to the first of Data and Observation the graph has.

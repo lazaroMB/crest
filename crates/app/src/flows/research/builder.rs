@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use domain::research::Stage;
+use domain::research::{Pipeline, Stage};
 use graph_flow::{Graph, GraphBuilder};
 
 use super::error::FlowError;
@@ -12,8 +12,17 @@ use super::gate::task_id;
 use super::node::{NodeDeps, ResearchNode};
 use super::task::NodeTask;
 
-/// Id of the research graph, stored in its sessions.
-pub const GRAPH_ID: &str = "research";
+/// Id of the research graph of `pipeline`, stored in its sessions.
+///
+/// Deep keeps the original `"research"`, so sessions saved before the fast
+/// pipeline existed still resume.
+#[must_use]
+pub const fn graph_id(pipeline: Pipeline) -> &'static str {
+    match pipeline {
+        Pipeline::Deep => "research",
+        Pipeline::Fast => "research-fast",
+    }
+}
 
 /// Default limit for one node run (agent turns with tools can be long).
 pub const DEFAULT_NODE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -22,6 +31,7 @@ pub const DEFAULT_NODE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 #[derive(Clone)]
 pub struct ResearchGraph {
     graph: Arc<Graph>,
+    pipeline: Pipeline,
     stages: Arc<[Stage]>,
     deps: NodeDeps,
 }
@@ -29,6 +39,7 @@ pub struct ResearchGraph {
 impl std::fmt::Debug for ResearchGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResearchGraph")
+            .field("pipeline", &self.pipeline)
             .field("stages", &self.stages)
             .finish_non_exhaustive()
     }
@@ -39,6 +50,18 @@ impl ResearchGraph {
     #[must_use]
     pub fn graph(&self) -> &Arc<Graph> {
         &self.graph
+    }
+
+    /// Pipeline the graph runs.
+    #[must_use]
+    pub fn pipeline(&self) -> Pipeline {
+        self.pipeline
+    }
+
+    /// Id stored in the sessions of this graph.
+    #[must_use]
+    pub fn id(&self) -> &'static str {
+        graph_id(self.pipeline)
     }
 
     /// Stages of the graph, in workflow order.
@@ -83,6 +106,7 @@ impl ResearchGraph {
 pub struct ResearchGraphBuilder {
     deps: NodeDeps,
     nodes: Vec<Arc<dyn ResearchNode>>,
+    pipeline: Pipeline,
     timeout: Duration,
 }
 
@@ -101,6 +125,7 @@ impl ResearchGraphBuilder {
         Self {
             deps,
             nodes: Vec::new(),
+            pipeline: Pipeline::Deep,
             timeout: DEFAULT_NODE_TIMEOUT,
         }
     }
@@ -118,6 +143,14 @@ impl ResearchGraphBuilder {
         self
     }
 
+    /// Pipeline of the graph (deep by default); every node must belong to
+    /// it.
+    #[must_use]
+    pub fn pipeline(mut self, pipeline: Pipeline) -> Self {
+        self.pipeline = pipeline;
+        self
+    }
+
     /// Limit for one node run.
     #[must_use]
     pub fn with_node_timeout(mut self, timeout: Duration) -> Self {
@@ -129,12 +162,20 @@ impl ResearchGraphBuilder {
     ///
     /// # Errors
     ///
-    /// [`FlowError::InvalidGraph`] when there are no nodes or their stages
-    /// are not strictly in workflow order (no repeats).
+    /// [`FlowError::InvalidGraph`] when there are no nodes, a node belongs
+    /// to another pipeline, or their stages are not strictly in workflow
+    /// order (no repeats).
     pub fn build(self) -> Result<ResearchGraph, FlowError> {
         let stages: Arc<[Stage]> = self.nodes.iter().map(|n| n.stage()).collect();
         if stages.is_empty() {
             return Err(FlowError::InvalidGraph("no nodes".to_owned()));
+        }
+        if let Some(stray) = stages.iter().find(|s| s.pipeline() != self.pipeline) {
+            return Err(FlowError::InvalidGraph(format!(
+                "{} is not a stage of the {} pipeline",
+                stray.name(),
+                self.pipeline.name()
+            )));
         }
         if let Some(pair) = stages.windows(2).find(|w| w[0] >= w[1]) {
             return Err(FlowError::InvalidGraph(format!(
@@ -143,7 +184,8 @@ impl ResearchGraphBuilder {
                 pair[0].name()
             )));
         }
-        let mut builder = GraphBuilder::new(GRAPH_ID).with_task_timeout(self.timeout);
+        let mut builder =
+            GraphBuilder::new(graph_id(self.pipeline)).with_task_timeout(self.timeout);
         for node in self.nodes {
             let task = NodeTask::new(node, self.deps.clone(), Arc::clone(&stages));
             builder = builder.add_task(Arc::new(task));
@@ -154,6 +196,7 @@ impl ResearchGraphBuilder {
         let graph = builder.build()?;
         Ok(ResearchGraph {
             graph: Arc::new(graph),
+            pipeline: self.pipeline,
             stages,
             deps: self.deps,
         })
@@ -210,5 +253,27 @@ mod tests {
             .node(FakeNode::new(Stage::Intake))
             .build();
         assert!(matches!(repeated, Err(FlowError::InvalidGraph(_))));
+    }
+
+    #[test]
+    fn nodes_must_belong_to_the_pipeline() {
+        let mixed = builder()
+            .pipeline(Pipeline::Fast)
+            .node(FakeNode::new(Stage::Triage))
+            .node(FakeNode::new(Stage::Spec))
+            .build();
+        assert!(matches!(mixed, Err(FlowError::InvalidGraph(_))));
+        let deep = builder().node(FakeNode::new(Stage::Delivery)).build();
+        assert!(matches!(deep, Err(FlowError::InvalidGraph(_))));
+        let fast = builder()
+            .pipeline(Pipeline::Fast)
+            .node(FakeNode::new(Stage::Triage))
+            .node(FakeNode::new(Stage::Delivery))
+            .build()
+            .unwrap();
+        assert_eq!(fast.pipeline(), Pipeline::Fast);
+        assert_eq!(fast.id(), "research-fast");
+        assert_eq!(fast.graph().start_task_id(), Some("research/triage"));
+        assert_eq!(graph_id(Pipeline::Deep), "research");
     }
 }

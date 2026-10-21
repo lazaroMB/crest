@@ -7,7 +7,7 @@ use std::sync::Arc;
 use domain::research::{Phase, ResearchState, Stage};
 use graph_flow::{FlowRunner, GraphError, Session, SessionStorage};
 
-use super::builder::{GRAPH_ID, ResearchGraph};
+use super::builder::ResearchGraph;
 use super::commands::{Command, parse_command};
 use super::error::FlowError;
 use super::gate::{
@@ -147,7 +147,7 @@ impl ResearchFlow {
         }
         let first = graph.first();
         let session =
-            Session::new_from_task(session_id.clone(), &task_id(first)).with_graph_id(GRAPH_ID);
+            Session::new_from_task(session_id.clone(), &task_id(first)).with_graph_id(graph.id());
         session.context.set(KEY_PROBLEM, problem.into())?;
         session.context.set(KEY_STATE, ResearchState::default())?;
         session
@@ -477,7 +477,7 @@ impl ResearchFlow {
     /// [`FlowError::Command`] for a malformed command, or as
     /// [`ResearchFlow::command`] and [`ResearchFlow::provide_input`].
     pub async fn handle_line(&self, line: &str) -> Result<FlowReply, FlowError> {
-        match parse_command(line) {
+        match parse_command(line, self.graph.pipeline()) {
             Some(command) => {
                 let command = command?;
                 let reply = self.command(command).await?;
