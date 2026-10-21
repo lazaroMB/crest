@@ -25,6 +25,7 @@ use gpui::{
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::column::{COLUMN_GUTTER, block_width};
 use super::{TimelineChange, TimelineState, copy_text, render_block};
 
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
@@ -249,12 +250,28 @@ impl TimelineView {
         let content = render_block(entry, window, cx);
         let theme = cx.theme();
         let selected = self.state.selected() == Some(ix);
-        let row = div()
-            .id(ElementId::Integer(ix as u64))
+        let width = block_width(&entry.block.kind);
+        let block = div()
             .w_full()
+            .max_w(width.max_width())
             .px_2()
             .py_1()
             .border_l_2()
+            .debug_selector(move || format!("block-{ix}"))
+            .child(content);
+        let block = if selected {
+            block
+                .border_color(theme.list_active_border)
+                .bg(theme.list_active)
+        } else {
+            block.border_color(gpui::transparent_black())
+        };
+        div()
+            .id(ElementId::Integer(ix as u64))
+            .w_full()
+            .flex()
+            .justify_center()
+            .px(px(COLUMN_GUTTER))
             .on_click(move |_, window, cx| {
                 view.update(cx, |this, cx| {
                     window.focus(&this.focus_handle, cx);
@@ -262,15 +279,8 @@ impl TimelineView {
                 })
                 .ok();
             })
-            .child(content);
-        if selected {
-            row.border_color(theme.list_active_border)
-                .bg(theme.list_active)
-                .into_any_element()
-        } else {
-            row.border_color(gpui::transparent_black())
-                .into_any_element()
-        }
+            .child(block)
+            .into_any_element()
     }
 }
 
@@ -379,6 +389,7 @@ impl Render for TimelineView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::{PROSE_MAX_WIDTH, WIDE_MAX_WIDTH};
     use application::ports::events::EventSink as _;
     use application::testing::system::RecordingSink;
     use domain::block::{Block, BlockKind};
@@ -464,6 +475,57 @@ mod tests {
                 "all four rows laid out"
             );
         });
+    }
+
+    #[gpui::test]
+    fn blocks_sit_in_a_centered_column_of_two_widths(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let chart = Block::new(BlockKind::Chart(domain::block::ChartSpec {
+            title: "sizes".into(),
+            kind: domain::block::ChartKind::Bar,
+            labels: vec!["a".into(), "b".into()],
+            series: vec![domain::block::Series {
+                name: "s".into(),
+                values: vec![1.0, 2.0],
+            }],
+        }));
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("hola"), chart].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        let window = 2400.0;
+        cx.simulate_resize(gpui::size(px(window), px(900.)));
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(window), px(900.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        for (selector, max) in [("block-0", PROSE_MAX_WIDTH), ("block-1", WIDE_MAX_WIDTH)] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(bounds.size.width <= px(max), "{selector} is capped");
+            let left = bounds.origin.x;
+            let right = px(window) - (bounds.origin.x + bounds.size.width);
+            assert!(
+                (left - right).abs() <= px(2.),
+                "{selector} is centered: {bounds:?}"
+            );
+        }
+        cx.simulate_resize(gpui::size(px(600.), px(900.)));
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(600.), px(900.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        for selector in ["block-0", "block-1"] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(
+                bounds.size.width >= px(600. - 2. * COLUMN_GUTTER - 1.),
+                "{selector} takes the whole narrow window"
+            );
+        }
     }
 
     #[gpui::test]
