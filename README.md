@@ -12,7 +12,7 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
-![Release](https://img.shields.io/badge/release-v0.9.0-d9604a)
+![Release](https://img.shields.io/badge/release-v0.10.0-d9604a)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
 
 <img src="assets/screenshots/hero.png" alt="crest finding a bug, fixing it, running the tests and charting their timings" width="900">
@@ -124,7 +124,7 @@ app.plugins = { "~/path/to/crest/examples/plugins/showcase" }
 curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
 ```
 
-It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.9.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
+It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.10.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
