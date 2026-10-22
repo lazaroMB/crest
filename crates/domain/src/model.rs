@@ -493,7 +493,10 @@ const OPUS: &str = "claude-opus-5-5";
 const HAIKU: &str = "claude-haiku-5-5";
 const FABLE: &str = "claude-fable-5-1";
 
-/// Built-in spec for `role` (level 5 of the resolution order).
+/// `max_tokens` of the spec of a selected model.
+const SELECTED_MAX_TOKENS: u32 = 16_000;
+
+/// Built-in spec for `role` (level 6 of the resolution order).
 ///
 /// These are configuration defaults shipped in the binary; any field can be
 /// overridden from `init.lua`.
@@ -535,7 +538,7 @@ pub fn default_aliases() -> BTreeMap<String, ModelId> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpecSource {
-    /// Built-in defaults (level 5).
+    /// Built-in defaults (level 6).
     Default,
     /// `~/.config/crest/init.lua` (level 4).
     Global,
@@ -543,6 +546,28 @@ pub enum SpecSource {
     Workspace,
     /// `/model …` or a shortcut for this turn (level 1).
     TurnOverride,
+    /// The model the user picked with `/model` and crest saved (between
+    /// the config layers and the built-in defaults).
+    Selected,
+    /// Nothing chose a model: the built-in defaults are off
+    /// ([`BuiltinDefaults::None`]) and no model is selected. The spec's id
+    /// is a placeholder that must not be sent.
+    Unselected,
+}
+
+/// Which built-in specs fill the roles the config layers and the selected
+/// model leave open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BuiltinDefaults {
+    /// The Claude specs of [`default_spec`]; the selected model, if any,
+    /// replaces only the `main` and `component` ids.
+    #[default]
+    Claude,
+    /// None (the default provider does not serve Claude): the selected
+    /// model serves every role, and without one the roles are
+    /// [`SpecSource::Unselected`].
+    None,
 }
 
 /// What a caller asks the policy for.
@@ -631,7 +656,8 @@ fn replacement_note(replacement: Option<&ModelId>) -> String {
 /// 2. role pinned by a tool or plugin ([`ResolveRequest::pinned_role`]);
 /// 3. `workspace` layer;
 /// 4. `global` layer;
-/// 5. built-in defaults ([`default_spec`], [`default_aliases`]).
+/// 5. the selected model ([`ModelPolicy::selected`], see [`BuiltinDefaults`]);
+/// 6. built-in defaults ([`default_spec`], [`default_aliases`]).
 ///
 /// Levels 3–5 merge field by field. Aliases from all layers are merged too
 /// (workspace wins) and expanded once, without recursion, in ids and
@@ -646,6 +672,10 @@ pub struct ModelPolicy {
     /// Models the provider offers (`GET /v1/models`); `None` if unknown,
     /// in which case no validation happens.
     pub available: Option<BTreeSet<ModelId>>,
+    /// The model the user picked with `/model` (may be an alias).
+    pub selected: Option<ModelId>,
+    /// Which built-in specs complete the roles.
+    pub defaults: BuiltinDefaults,
 }
 
 impl ModelPolicy {
@@ -656,7 +686,25 @@ impl ModelPolicy {
             global,
             workspace,
             available: None,
+            selected: None,
+            defaults: BuiltinDefaults::Claude,
         }
+    }
+
+    /// Builder: the model the user picked and which built-ins complete the
+    /// roles.
+    #[must_use]
+    pub fn with_selection(mut self, selected: Option<ModelId>, defaults: BuiltinDefaults) -> Self {
+        self.selected = selected;
+        self.defaults = defaults;
+        self
+    }
+
+    /// Whether a model must be picked before anything can run: the main
+    /// role has no model at all.
+    #[must_use]
+    pub fn needs_selection(&self) -> bool {
+        self.resolve(&ResolveRequest::new(ModelRole::Main)).source == SpecSource::Unselected
     }
 
     /// Builder: records the models the provider offers, so that
@@ -731,10 +779,30 @@ impl ModelPolicy {
             .unwrap_or_else(|| ModelId::new(name))
     }
 
-    /// Spec for `role` from levels 3–5, with aliases expanded.
+    /// The spec levels 5–6 give `role`: the selected model where it
+    /// applies, else the built-in default (or a placeholder without one).
+    fn base(&self, role: ModelRole) -> (ModelSpec, SpecSource) {
+        let builtin = default_spec(role);
+        let selected_applies = match self.defaults {
+            BuiltinDefaults::Claude => matches!(role, ModelRole::Main | ModelRole::Component),
+            BuiltinDefaults::None => true,
+        };
+        match (&self.selected, self.defaults) {
+            (Some(id), _) if selected_applies => (
+                ModelSpec::new(id.clone(), SELECTED_MAX_TOKENS),
+                SpecSource::Selected,
+            ),
+            (_, BuiltinDefaults::Claude) => (builtin, SpecSource::Default),
+            (_, BuiltinDefaults::None) => (
+                ModelSpec::new(builtin.id, builtin.max_tokens),
+                SpecSource::Unselected,
+            ),
+        }
+    }
+
+    /// Spec for `role` from levels 3–6, with aliases expanded.
     fn layered(&self, role: ModelRole, aliases: &BTreeMap<String, ModelId>) -> ResolvedModel {
-        let mut spec = default_spec(role);
-        let mut source = SpecSource::Default;
+        let (mut spec, mut source) = self.base(role);
         for (layer, layer_source) in [
             (&self.global, SpecSource::Global),
             (&self.workspace, SpecSource::Workspace),
@@ -762,7 +830,7 @@ impl ModelPolicy {
         }
     }
 
-    /// Resolves a request following the five-level order.
+    /// Resolves a request following the six-level order.
     ///
     /// A turn override that names a role (`/model plan`) uses that role's
     /// whole spec. Otherwise it is an alias or a literal id that replaces
@@ -1446,5 +1514,84 @@ mod tests {
             ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
         );
         assert!(got.warnings.is_empty());
+    }
+
+    fn resolve_role(policy: &ModelPolicy, role: ModelRole) -> ResolvedModel {
+        policy.resolve(&ResolveRequest::new(role))
+    }
+
+    #[test]
+    fn a_selection_replaces_the_sonnet_roles_over_claude_defaults() {
+        let policy = ModelPolicy::default()
+            .with_selection(Some(ModelId::new("opus")), BuiltinDefaults::Claude);
+        let main = resolve_role(&policy, ModelRole::Main);
+        assert_eq!(main.spec.id.as_str(), "claude-opus-5-5", "aliases expand");
+        assert_eq!(main.source, SpecSource::Selected);
+        assert!(main.spec.fallbacks.is_empty());
+        assert_eq!(
+            resolve_role(&policy, ModelRole::Component).source,
+            SpecSource::Selected
+        );
+        let explore = resolve_role(&policy, ModelRole::Explore);
+        assert_eq!(explore.spec.id.as_str(), "claude-haiku-5-5");
+        assert_eq!(explore.source, SpecSource::Default);
+        assert!(!policy.needs_selection());
+    }
+
+    #[test]
+    fn without_builtins_the_selection_serves_every_role() {
+        let selected = ModelId::new("opencode-go:glm-5.3");
+        let policy =
+            ModelPolicy::default().with_selection(Some(selected.clone()), BuiltinDefaults::None);
+        for role in ModelRole::ALL {
+            let got = resolve_role(&policy, role);
+            assert_eq!(got.spec.id, selected, "{role}");
+            assert_eq!(got.source, SpecSource::Selected);
+        }
+        assert!(!policy.needs_selection());
+    }
+
+    #[test]
+    fn without_builtins_or_selection_the_roles_are_unselected() {
+        let policy = ModelPolicy::default().with_selection(None, BuiltinDefaults::None);
+        assert!(policy.needs_selection());
+        assert_eq!(
+            resolve_role(&policy, ModelRole::Plan).source,
+            SpecSource::Unselected
+        );
+        // A turn override or a configured role still names a model.
+        let over = policy.resolve(&ResolveRequest {
+            turn_override: Some("opencode-go:kimi-k3".into()),
+            ..ResolveRequest::new(ModelRole::Main)
+        });
+        assert_eq!(over.source, SpecSource::TurnOverride);
+        let mut global = RoleConfig::default();
+        global.roles.insert(
+            ModelRole::Main,
+            ModelSpecPatch {
+                id: Some(ModelId::new("opencode-go:glm-5.3")),
+                ..ModelSpecPatch::default()
+            },
+        );
+        let configured = ModelPolicy::new(global, RoleConfig::default())
+            .with_selection(None, BuiltinDefaults::None);
+        assert!(!configured.needs_selection());
+    }
+
+    #[test]
+    fn config_layers_win_over_the_selection() {
+        let mut workspace = RoleConfig::default();
+        workspace.roles.insert(
+            ModelRole::Main,
+            ModelSpecPatch {
+                id: Some(ModelId::new("claude-haiku-5-5")),
+                ..ModelSpecPatch::default()
+            },
+        );
+        let policy = ModelPolicy::new(RoleConfig::default(), workspace)
+            .with_selection(Some(ModelId::new("opus")), BuiltinDefaults::Claude);
+        let main = resolve_role(&policy, ModelRole::Main);
+        assert_eq!(main.spec.id.as_str(), "claude-haiku-5-5");
+        assert_eq!(main.source, SpecSource::Workspace);
     }
 }

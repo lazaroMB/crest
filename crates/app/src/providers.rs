@@ -102,25 +102,16 @@ pub enum ProvidersConfigError {
 }
 
 /// `app.opt.providers`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProvidersOptions {
-    /// Provider of ids without prefix.
-    pub default: ProviderId,
+    /// Provider of ids without prefix, when the config names one; otherwise
+    /// [`effective_default`] picks it from the accounts with a key.
+    pub default: Option<ProviderId>,
     /// OpenCode's inference base URL instead of the real one (tests).
     pub opencode_base_url: Option<String>,
     /// Wire format of OpenCode models (ids without prefix) that
     /// [`WireFormat::opencode_default`] gets wrong.
     pub opencode_formats: BTreeMap<String, WireFormat>,
-}
-
-impl Default for ProvidersOptions {
-    fn default() -> Self {
-        Self {
-            default: ProviderId::Anthropic,
-            opencode_base_url: None,
-            opencode_formats: BTreeMap::new(),
-        }
-    }
 }
 
 impl ProvidersOptions {
@@ -152,6 +143,7 @@ impl ProvidersOptions {
             out.default = default
                 .as_str()
                 .and_then(|s| s.trim().parse().ok())
+                .map(Some)
                 .ok_or_else(|| ProvidersConfigError::BadField {
                     field: "default".into(),
                     problem: format!(
@@ -219,6 +211,28 @@ fn as_table<'a>(value: &'a Value, empty: &'a Map<String, Value>) -> Option<&'a M
         Value::Array(items) if items.is_empty() => Some(empty),
         _ => None,
     }
+}
+
+/// The provider of ids without prefix: the one `app.opt.providers.default`
+/// names; else the one of the last `/login` (`preferred`) if it has a key;
+/// else the only account with a key (its first provider in `with_key`,
+/// which follows [`ProviderId::ALL`]); else Anthropic.
+#[must_use]
+pub fn effective_default(
+    configured: Option<ProviderId>,
+    preferred: Option<ProviderId>,
+    with_key: &[ProviderId],
+) -> ProviderId {
+    configured
+        .or_else(|| preferred.filter(|p| with_key.contains(p)))
+        .or_else(|| {
+            let first = *with_key.first()?;
+            with_key
+                .iter()
+                .all(|p| p.account() == first.account())
+                .then_some(first)
+        })
+        .unwrap_or(ProviderId::Anthropic)
 }
 
 /// Splits `model` into its provider and the id that provider knows.
@@ -293,7 +307,8 @@ impl ProviderRouter {
             let account = id.account();
             LlmError::Auth {
                 message: format!(
-                    "no {} API key for `{id}` models: run /login {account} or export {}",
+                    "no {} API key for `{id}` models: run /login {account} or export {}, \
+                     or pick a model of another provider with /model",
                     account.display_name(),
                     account.key_name()
                 ),
@@ -528,7 +543,7 @@ mod tests {
             "opencode": { "formats": { "my-model": "responses" } },
         }))
         .unwrap();
-        assert_eq!(options.default, ProviderId::OpencodeGo);
+        assert_eq!(options.default, Some(ProviderId::OpencodeGo));
         assert_eq!(options.opencode_format("my-model"), WireFormat::Responses);
         assert_eq!(options.opencode_format("glm-5.3"), WireFormat::Chat);
         assert_eq!(
@@ -562,5 +577,26 @@ mod tests {
         ] {
             assert_eq!(WireFormat::opencode_default(model), format, "{model}");
         }
+    }
+
+    #[test]
+    fn the_effective_default_follows_config_login_and_keys() {
+        use ProviderId::{Anthropic, OpencodeGo, OpencodeZen};
+        let both = [Anthropic, OpencodeGo, OpencodeZen];
+        let opencode = [OpencodeGo, OpencodeZen];
+        assert_eq!(
+            effective_default(Some(Anthropic), Some(OpencodeGo), &opencode),
+            Anthropic
+        );
+        assert_eq!(effective_default(None, Some(OpencodeGo), &both), OpencodeGo);
+        assert_eq!(effective_default(None, Some(Anthropic), &both), Anthropic);
+        // The last login has no key any more: the remaining account.
+        assert_eq!(
+            effective_default(None, Some(Anthropic), &opencode),
+            OpencodeGo
+        );
+        assert_eq!(effective_default(None, None, &opencode), OpencodeGo);
+        assert_eq!(effective_default(None, None, &both), Anthropic);
+        assert_eq!(effective_default(None, None, &[]), Anthropic);
     }
 }

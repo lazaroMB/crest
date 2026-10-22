@@ -97,7 +97,8 @@ impl NodeError {
             Self::Turn(
                 TurnError::TooManyIterations { .. }
                 | TurnError::ImagesUnsupported { .. }
-                | TurnError::InvalidImages(_),
+                | TurnError::InvalidImages(_)
+                | TurnError::NoModelSelected { .. },
             )
             | Self::Block(_)
             | Self::Unavailable(_)

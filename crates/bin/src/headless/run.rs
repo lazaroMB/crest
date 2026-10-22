@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use application::usecases::cancel::CancelToken;
+use application::usecases::run_turn::TurnError;
 use domain::conversation::StopReason;
 
 use super::{HeadlessSink, StdinApproval, Terminal};
@@ -55,6 +56,8 @@ pub async fn run_turn(app: &mut App, prompt: &str, cancel: CancelToken) -> Exit 
     match result {
         Ok(outcome) if outcome.stop_reason == StopReason::Interrupted => Exit::Interrupted,
         Ok(_) => Exit::Success,
+        // Nothing to answer with: a configuration problem, like a missing key.
+        Err(TurnError::NoModelSelected { .. }) => Exit::Config,
         Err(_) => Exit::TurnFailed,
     }
 }

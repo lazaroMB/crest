@@ -65,7 +65,7 @@ use domain::conversation::{
     ContentPart, ImageAttachment, MAX_IMAGES_PER_MESSAGE, Message, Role, Session, SessionId,
     StopReason, ToolUseId, Turn, TurnId, Usage,
 };
-use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
+use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel, SpecSource};
 use domain::permission::{ActionRequest, Decision};
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -211,6 +211,13 @@ pub enum TurnError {
     /// An attached image breaks the limits; nothing was sent.
     #[error("{0}; nothing was sent")]
     InvalidImages(String),
+    /// No model is chosen for the turn's role: the default provider has no
+    /// built-in models and none was picked. Nothing was sent.
+    #[error("no model is selected for `{role}`; nothing was sent. Pick one with /model")]
+    NoModelSelected {
+        /// The role that has no model.
+        role: ModelRole,
+    },
 }
 
 /// What the user sends in a turn: the prompt and the images pasted with
@@ -467,6 +474,18 @@ impl AgentService {
             turn_override: opts.turn_override,
             pinned_role: opts.pinned_role,
         });
+        if model.source == SpecSource::Unselected {
+            let err = TurnError::NoModelSelected { role: model.role };
+            self.emit(DomainEvent::BlockAdded {
+                block: Block::new(BlockKind::Error {
+                    message: err.to_string(),
+                    hint: Some(
+                        "/model lists the models of your providers; the choice is saved".into(),
+                    ),
+                }),
+            });
+            return Err(err);
+        }
         for warning in &model.warnings {
             self.emit(DomainEvent::Notice {
                 level: NoticeLevel::Warning,

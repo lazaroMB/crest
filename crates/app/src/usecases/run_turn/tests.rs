@@ -511,6 +511,64 @@ async fn images_go_after_the_prompt_in_the_user_message() {
 }
 
 #[tokio::test]
+async fn without_a_selected_model_nothing_is_sent() {
+    use domain::model::{BuiltinDefaults, ModelId};
+    let llm = Arc::new(ScriptedLlm::new([ScriptedResponse::text("hi")]));
+    let sink = Arc::new(RecordingSink::new());
+    let deps = AgentDeps {
+        llm: llm.clone(),
+        events: sink.clone(),
+        approval: Arc::new(ScriptedApproval::new()),
+        telemetry: Arc::new(RecordingTelemetry::new()),
+    };
+    let permissions = Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask)));
+    let unselected = ModelPolicy::default().with_selection(None, BuiltinDefaults::None);
+    let service = AgentService::new(
+        deps.clone(),
+        ToolRegistry::new(),
+        unselected,
+        permissions.clone(),
+    );
+    let mut session = Session::new("/ws", 0);
+    let err = service
+        .run_turn(&mut session, "hello", TurnOptions::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            TurnError::NoModelSelected {
+                role: ModelRole::Main
+            }
+        ),
+        "{err}"
+    );
+    assert!(llm.requests().is_empty());
+    assert!(session.turns.is_empty());
+    assert!(sink.events().iter().any(|event| matches!(
+        event,
+        DomainEvent::BlockAdded { block } if matches!(
+            &block.kind,
+            BlockKind::Error { message, .. } if message.contains("/model")
+        )
+    )));
+    // Once a model is selected, it is the one the turn uses.
+    let selected = ModelPolicy::default().with_selection(
+        Some(ModelId::new("opencode-go:glm-5.3")),
+        BuiltinDefaults::None,
+    );
+    let service = AgentService::new(deps, ToolRegistry::new(), selected, permissions);
+    service
+        .run_turn(&mut session, "hello", TurnOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        llm.last_request().unwrap().model.spec.id.as_str(),
+        "opencode-go:glm-5.3"
+    );
+}
+
+#[tokio::test]
 async fn images_for_a_text_only_model_are_refused_before_sending() {
     let (llm, sink, service) =
         image_service_with_sink(ScriptedLlm::new([ScriptedResponse::text("never")]).text_only());

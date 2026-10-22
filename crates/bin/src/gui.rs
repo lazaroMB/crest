@@ -46,6 +46,7 @@ use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
 use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::llm::{ModelCatalogPort, ModelInfo};
 use application::ports::mcp::{McpPort, McpServerState};
 use application::ports::plugin::{
     CallbackId, ConfigOrigin, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
@@ -65,7 +66,7 @@ use async_trait::async_trait;
 use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
-use domain::model::{Account, ModelId, ModelPolicy, ResolveRequest};
+use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspaceRoot;
 use futures::FutureExt as _;
@@ -83,6 +84,7 @@ use ui::workbench::{ProjectOpener, Workbench};
 use crate::args::Args;
 use crate::aside::{Aside, Route, opened_notice};
 use crate::plugin_trust::PluginTrust;
+use crate::preferences::Preferences;
 use crate::research::ResearchCommand;
 use crate::root::{
     App, Config, Frontend, MissingApiKey, Overrides, SharedPromptHistory, build_app,
@@ -160,6 +162,27 @@ impl<T: ContentSearchPort + ?Sized + 'static> ContentSearchPort for TokioPort<T>
     }
 }
 
+/// The models of a catalog for the `/model` picker, grouped by provider
+/// (ids without prefix first) and sorted by id within each.
+#[must_use]
+pub fn catalog_choices(models: Vec<ModelInfo>) -> Vec<ModelChoice> {
+    let mut choices: Vec<ModelChoice> = models
+        .into_iter()
+        .map(|info| ModelChoice {
+            alias: info.id.as_str().to_owned(),
+            model: info.id,
+        })
+        .collect();
+    choices.sort_by(|a, b| {
+        let provider = |c: &ModelChoice| c.model.provider().map(|(p, _)| p);
+        provider(a)
+            .cmp(&provider(b))
+            .then_with(|| a.model.as_str().cmp(b.model.as_str()))
+    });
+    choices.dedup_by(|a, b| a.model == b.model);
+    choices
+}
+
 /// The models of `policy` for the `<leader>m` menu.
 #[must_use]
 pub fn model_choices(policy: &ModelPolicy) -> Vec<ModelChoice> {
@@ -198,6 +221,12 @@ pub struct UiController {
     running: Arc<Mutex<Vec<AbortHandle>>>,
     /// Where `/login` stores the API key.
     api_keys: Arc<dyn ApiKeyPort>,
+    /// Where `/login` and `/model` save their choices, if anywhere.
+    preferences_path: Option<PathBuf>,
+    /// The provider of ids without prefix; `/model` saves its pick for it.
+    default_provider: ProviderId,
+    /// The models of the providers with a key, for the `/model` picker.
+    catalog: Option<Arc<dyn ModelCatalogPort>>,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -648,6 +677,9 @@ impl UiController {
         let simulator = app.simulator.clone();
         let decider = app.decider.clone();
         let shell = Arc::clone(&app.shell);
+        let preferences_path = app.preferences_path.clone();
+        let default_provider = app.default_provider;
+        let catalog = app.catalog.clone();
         let commands = app
             .commands
             .iter()
@@ -672,6 +704,9 @@ impl UiController {
             shell,
             running: Arc::new(Mutex::new(Vec::new())),
             api_keys: Arc::new(crate::credentials::KeyringCredentials::default()),
+            preferences_path,
+            default_provider,
+            catalog,
         }
     }
 }
@@ -1205,7 +1240,46 @@ impl SessionController for UiController {
     }
 
     fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
-        login_on(&self.handle, Arc::clone(&self.api_keys), account, key)
+        login_on(
+            &self.handle,
+            Arc::clone(&self.api_keys),
+            account,
+            key,
+            self.preferences_path.clone(),
+        )
+    }
+
+    fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
+        let Some(catalog) = self.catalog.clone() else {
+            return futures::future::ready(Ok(Vec::new())).boxed();
+        };
+        let task = self
+            .handle
+            .spawn(async move { catalog.list_models().await });
+        task.map(|joined| match joined {
+            Ok(Ok(models)) => Ok(catalog_choices(models)),
+            Ok(Err(err)) => Err(err.to_string()),
+            Err(err) => Err(err.to_string()),
+        })
+        .boxed()
+    }
+
+    fn select_model(&self, model: ModelId) -> BoxFuture<'static, Result<String, String>> {
+        let Some(path) = self.preferences_path.clone() else {
+            return futures::future::ready(Err(
+                "this session cannot save a model; use /model <id> for the next turn".to_owned(),
+            ))
+            .boxed();
+        };
+        let provider = self.default_provider;
+        let task = self.handle.spawn_blocking(move || {
+            crate::preferences::update(Some(&path), |p| {
+                p.models.insert(provider, model.clone());
+            })
+            .map(|()| format!("model `{model}` selected for {provider}"))
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
     }
 
     fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
@@ -1246,6 +1320,8 @@ pub struct UnavailableController {
     models: Vec<ModelChoice>,
     /// `/login` and `/logout`: the runtime and where the key goes.
     login: Option<(Handle, Arc<dyn ApiKeyPort>)>,
+    /// Where a `/login` saves its provider as the default, if anywhere.
+    preferences_path: Option<PathBuf>,
 }
 
 impl UnavailableController {
@@ -1257,7 +1333,16 @@ impl UnavailableController {
             mode: Mutex::new(mode),
             models: model_choices(&ModelPolicy::default()),
             login: None,
+            preferences_path: None,
         }
+    }
+
+    /// Returns the same controller saving the provider of a `/login` in the
+    /// preferences at `path`.
+    #[must_use]
+    pub fn with_preferences(mut self, path: Option<PathBuf>) -> Self {
+        self.preferences_path = path;
+        self
     }
 
     /// Returns the same controller storing `/login` keys in `keys`, on
@@ -1276,9 +1361,26 @@ fn login_on(
     keys: Arc<dyn ApiKeyPort>,
     account: Account,
     key: String,
+    preferences: Option<PathBuf>,
 ) -> BoxFuture<'static, Result<String, String>> {
     let task = handle.spawn(async move {
-        application::usecases::login::login(keys.as_ref(), account, &key).await
+        let stored = application::usecases::login::login(keys.as_ref(), account, &key).await?;
+        // The account logged in last serves the models without a prefix.
+        let Some(path) = preferences else {
+            return Ok(stored);
+        };
+        let saved = tokio::task::spawn_blocking(move || {
+            crate::preferences::update(Some(&path), |p| {
+                p.provider = Some(Preferences::provider_of(account));
+            })
+        })
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(|saved| saved);
+        Ok(match saved {
+            Ok(()) => stored,
+            Err(err) => format!("{stored} (it could not be made the default: {err})"),
+        })
     });
     task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
         .boxed()
@@ -1324,7 +1426,13 @@ impl SessionController for UnavailableController {
 
     fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
         match &self.login {
-            Some((handle, keys)) => login_on(handle, Arc::clone(keys), account, key),
+            Some((handle, keys)) => login_on(
+                handle,
+                Arc::clone(keys),
+                account,
+                key,
+                self.preferences_path.clone(),
+            ),
             None => futures::future::ready(Err("API keys cannot be stored here".into())).boxed(),
         }
     }
@@ -1343,7 +1451,12 @@ fn initial_model(app: &App) -> ModelId {
     request
         .turn_override
         .clone_from(&app.turn_options.turn_override);
-    app.model_policy().resolve(&request).spec.id
+    let resolved = app.model_policy().resolve(&request);
+    if resolved.source == SpecSource::Unselected {
+        // The placeholder id is never sent; say what is missing instead.
+        return ModelId::new("no model (/model)");
+    }
+    resolved.spec.id
 }
 
 /// The session of the window over `config`, with the agent built on
@@ -1368,6 +1481,14 @@ pub fn session_parts(
         .api_keys
         .clone()
         .unwrap_or_else(|| Arc::new(crate::credentials::KeyringCredentials::default()));
+    // As in build_app: a scripted model (tests) saves no preferences.
+    let preferences_path = overrides.preferences_path.clone().or_else(|| {
+        overrides
+            .llm
+            .is_none()
+            .then(crate::preferences::default_path)
+            .flatten()
+    });
     let built = handle.block_on(build_app(config, frontend, overrides));
     let (mut parts, workspace) = match built {
         Ok(app) => {
@@ -1395,6 +1516,7 @@ pub fn session_parts(
             };
             let history = app.timeline_blocks();
             let prompt_history = app.prompt_history().clone();
+            let needs_model = app.model_policy().needs_selection();
             let controller = Arc::new(
                 UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
             );
@@ -1406,6 +1528,7 @@ pub fn session_parts(
                 Arc::new(content),
             );
             parts.model = Some(model);
+            parts.needs_model = needs_model;
             parts.keymap = keymap;
             parts.timeoutlen = timeoutlen;
             parts.history = history;
@@ -1441,7 +1564,8 @@ pub fn session_parts(
             let content: Arc<dyn ContentSearchPort> = search;
             let controller = Arc::new(
                 UnavailableController::new(reason, config.mode)
-                    .with_login(handle.clone(), api_keys),
+                    .with_login(handle.clone(), api_keys)
+                    .with_preferences(preferences_path),
             );
             let mut parts = SessionParts::new(
                 controller,

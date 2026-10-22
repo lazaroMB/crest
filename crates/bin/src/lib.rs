@@ -15,6 +15,7 @@ pub mod keys;
 pub mod mcp;
 pub mod opencode;
 pub mod plugin_trust;
+pub mod preferences;
 pub mod research;
 pub mod root;
 pub mod startup;

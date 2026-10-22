@@ -215,6 +215,19 @@ pub trait SessionController: Send + Sync {
     /// The models `<leader>m` offers.
     fn models(&self) -> Vec<ModelChoice>;
 
+    /// Every model the providers with a key offer, for the `/model`
+    /// picker; `Err` says why they could not be listed.
+    fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
+        futures::future::ready(Ok(Vec::new())).boxed()
+    }
+
+    /// Saves `model` as the user's pick for the default provider; `Ok`
+    /// says what changed. The session then reopens so every role uses it.
+    fn select_model(&self, model: ModelId) -> BoxFuture<'static, Result<String, String>> {
+        let _ = model;
+        futures::future::ready(Err("this session cannot save a model".to_owned())).boxed()
+    }
+
     /// Adds a line sent from the prompt to the session's history, saved
     /// with it.
     fn record_prompt(&self, line: String) {
@@ -346,6 +359,9 @@ pub struct SessionParts {
     pub theme: crate::app::ThemeMode,
     /// The agent has no API key: the `/login` dialog opens at once.
     pub needs_login: bool,
+    /// No model is selected for the default provider: the model picker
+    /// opens at once.
+    pub needs_model: bool,
 }
 
 impl SessionParts {
@@ -372,6 +388,7 @@ impl SessionParts {
             prompt_history: Vec::new(),
             theme: crate::app::ThemeMode::default(),
             needs_login: false,
+            needs_model: false,
         }
     }
 }
@@ -386,10 +403,56 @@ pub enum SessionEvent {
     },
 }
 
-/// The `<leader>m` menu.
+/// The `<leader>m` and `/model` picker: the aliases, then every model of
+/// the providers' catalogs once they are listed, filtered by what is typed.
 struct ModelMenu {
+    /// `None` is the default row (clears the next-turn model).
     choices: Vec<Option<ModelChoice>>,
+    /// What is typed to filter the rows.
+    query: String,
+    /// Index into [`ModelMenu::visible`].
     selected: usize,
+    /// Whether the catalogs are still being listed, or why they could not.
+    catalog: CatalogState,
+}
+
+/// Where the catalog part of the model picker stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CatalogState {
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+impl ModelMenu {
+    /// The rows that match the query (the default row only without one).
+    fn visible(&self) -> Vec<&Option<ModelChoice>> {
+        let query = self.query.to_lowercase();
+        self.choices
+            .iter()
+            .filter(|choice| match choice {
+                None => query.is_empty(),
+                Some(choice) => {
+                    choice.alias.to_lowercase().contains(&query)
+                        || choice.model.as_str().to_lowercase().contains(&query)
+                }
+            })
+            .collect()
+    }
+
+    /// Adds the catalog's models that are not rows yet.
+    fn extend(&mut self, models: Vec<ModelChoice>) {
+        for choice in models {
+            let known = self
+                .choices
+                .iter()
+                .flatten()
+                .any(|c| c.model == choice.model);
+            if !known {
+                self.choices.push(Some(choice));
+            }
+        }
+    }
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -414,6 +477,8 @@ pub struct Session {
     queue: VecDeque<Queued>,
     model_override: Option<String>,
     menu: Option<ModelMenu>,
+    /// The catalogs' models, listed once per session for the picker.
+    catalog_models: Option<Vec<ModelChoice>>,
     git: Option<Task<()>>,
     _git_timer: Task<()>,
     _events: Task<()>,
@@ -482,6 +547,7 @@ impl Session {
             prompt_history,
             theme: _,
             needs_login,
+            needs_model,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -591,6 +657,7 @@ impl Session {
             queue: VecDeque::new(),
             model_override: None,
             menu: None,
+            catalog_models: None,
             git: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
@@ -604,6 +671,13 @@ impl Session {
         if needs_login {
             this.login
                 .update(cx, |login, cx| login.show(Account::Anthropic, window, cx));
+        } else if needs_model {
+            this.notice(
+                NoticeLevel::Info,
+                "pick the model crest uses with this provider (Enter saves it)",
+                cx,
+            );
+            this.open_menu(window, cx);
         }
         this
     }
@@ -1166,10 +1240,22 @@ impl Session {
         let arg = arg.trim();
         match name {
             "q" | "quit" | "qa" => cx.quit(),
-            "model" => {
-                let model = (!arg.is_empty()).then(|| arg.to_owned());
-                self.set_model_override(model, cx);
-            }
+            "model" => match arg
+                .split_once(' ')
+                .map_or((arg, ""), |(a, b)| (a, b.trim()))
+            {
+                ("", _) => self.open_menu(window, cx),
+                ("clear", "") => self.set_model_override(None, cx),
+                ("set", "") => self.notice(NoticeLevel::Warning, "usage: /model set <id>", cx),
+                ("set", id) => {
+                    let choice = ModelChoice {
+                        alias: id.to_owned(),
+                        model: ModelId::new(id),
+                    };
+                    self.select_model(choice, window, cx);
+                }
+                _ => self.set_model_override(Some(arg.to_owned()), cx),
+            },
             "mode" => match arg.parse::<PermissionMode>() {
                 Ok(mode) => self.set_permission_mode(mode, cx),
                 Err(err) => self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx),
@@ -1498,7 +1584,8 @@ impl Session {
         window.focus(&focus, cx);
     }
 
-    /// Opens the model menu with the focus on it.
+    /// Opens the model picker with the focus on it, and lists the
+    /// providers' models in the background the first time.
     pub fn open_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut choices = vec![None];
         choices.extend(self.controller.models().into_iter().map(Some));
@@ -1508,33 +1595,121 @@ impl Session {
                 choice.as_ref().map(|c| c.alias.as_str()) == self.model_override.as_deref()
             })
             .unwrap_or(0);
-        self.menu = Some(ModelMenu { choices, selected });
+        let mut menu = ModelMenu {
+            choices,
+            query: String::new(),
+            selected,
+            catalog: CatalogState::Loading,
+        };
+        match &self.catalog_models {
+            Some(models) => {
+                menu.extend(models.clone());
+                menu.catalog = CatalogState::Ready;
+            }
+            None => self.load_catalog(window, cx),
+        }
+        self.menu = Some(menu);
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
 
-    fn close_menu(&mut self, choose: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn load_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let listing = self.controller.catalog_models();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = listing.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(models) => {
+                        if let Some(menu) = &mut this.menu {
+                            menu.extend(models.clone());
+                            menu.catalog = CatalogState::Ready;
+                        }
+                        this.catalog_models = Some(models);
+                    }
+                    Err(error) => {
+                        if let Some(menu) = &mut this.menu {
+                            menu.catalog = CatalogState::Failed(error);
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Closes the picker. `Enter` on a model saves it as the selected
+    /// model and reopens the session; `Tab` (or `Enter` on the default
+    /// row) only sets the model of the next turn.
+    fn close_menu(&mut self, pick: MenuPick, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else {
             return;
         };
         self.input.update(cx, |input, cx| input.focus(window, cx));
-        if choose && let Some(choice) = menu.choices.get(menu.selected) {
-            self.set_model_override(choice.as_ref().map(|c| c.alias.clone()), cx);
+        let choice = menu.visible().get(menu.selected).map(|c| (*c).clone());
+        match (pick, choice) {
+            (MenuPick::Cancel, _) | (_, None) => {}
+            (MenuPick::Select, Some(Some(choice))) => self.select_model(choice, window, cx),
+            (MenuPick::NextTurn | MenuPick::Select, Some(choice)) => {
+                self.set_model_override(choice.map(|c| c.alias), cx);
+            }
         }
         cx.notify();
+    }
+
+    /// Saves `choice` as the selected model, then reopens the session so
+    /// every role and flow uses it; if it cannot be saved, it is still the
+    /// model of the next turn.
+    fn select_model(&mut self, choice: ModelChoice, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.idle_for("/model", cx) {
+            self.set_model_override(Some(choice.alias), cx);
+            return;
+        }
+        let select = self.controller.select_model(choice.model.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = select.await;
+            this.update(cx, |this, cx| match result {
+                Ok(message) => cx.emit(SessionEvent::Reopen {
+                    notice: Some((NoticeLevel::Info, message)),
+                }),
+                Err(error) => {
+                    this.set_model_override(Some(choice.alias), cx);
+                    this.notice(NoticeLevel::Warning, error, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = &mut self.menu else {
             return;
         };
-        let len = menu.choices.len().max(1);
-        match event.keystroke.key.as_str() {
-            "down" | "j" | "tab" => menu.selected = (menu.selected + 1) % len,
-            "up" | "k" => menu.selected = (menu.selected + len - 1) % len,
-            "enter" => self.close_menu(true, window, cx),
-            "escape" | "q" => self.close_menu(false, window, cx),
-            _ => return,
+        let len = menu.visible().len().max(1);
+        let keystroke = &event.keystroke;
+        match keystroke.key.as_str() {
+            "down" => menu.selected = (menu.selected + 1) % len,
+            "up" => menu.selected = (menu.selected + len - 1) % len,
+            "enter" => self.close_menu(MenuPick::Select, window, cx),
+            "tab" => self.close_menu(MenuPick::NextTurn, window, cx),
+            "escape" => self.close_menu(MenuPick::Cancel, window, cx),
+            "backspace" => {
+                menu.query.pop();
+                menu.selected = 0;
+            }
+            _ => match keystroke.key_char.as_deref() {
+                Some(text)
+                    if !keystroke.modifiers.control
+                        && !keystroke.modifiers.platform
+                        && !text.chars().any(char::is_control) =>
+                {
+                    menu.query.push_str(text);
+                    menu.selected = 0;
+                }
+                _ => return,
+            },
         }
         cx.stop_propagation();
         cx.notify();
@@ -1542,10 +1717,12 @@ impl Session {
 
     fn render_menu(&self, menu: &ModelMenu, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let rows = menu.choices.iter().enumerate().map(|(ix, choice)| {
+        let visible = menu.visible();
+        let rows = visible.iter().enumerate().map(|(ix, choice)| {
             let label = match choice {
+                Some(choice) if choice.alias == choice.model.as_str() => choice.alias.clone(),
                 Some(choice) => format!("{:<10} {}", choice.alias, choice.model),
-                None => "default    (main role)".to_owned(),
+                None => "default    (no model for the next turn)".to_owned(),
             };
             let mut row = div()
                 .id(ix)
@@ -1555,13 +1732,23 @@ impl Session {
                     if let Some(menu) = &mut this.menu {
                         menu.selected = ix;
                     }
-                    this.close_menu(true, window, cx);
+                    this.close_menu(MenuPick::Select, window, cx);
                 }));
             if ix == menu.selected {
                 row = row.bg(theme.list_active);
             }
             row
         });
+        let status = match &menu.catalog {
+            CatalogState::Loading => Some("listing the providers' models…".to_owned()),
+            CatalogState::Ready => None,
+            CatalogState::Failed(error) => Some(format!("could not list models: {error}")),
+        };
+        let query = if menu.query.is_empty() {
+            "type to filter".to_owned()
+        } else {
+            format!("filter: {}", menu.query)
+        };
         div()
             .absolute()
             .inset_0()
@@ -1570,8 +1757,9 @@ impl Session {
             .pt(px(80.))
             .child(
                 v_flex()
-                    .w(px(480.))
+                    .w(px(560.))
                     .max_w_full()
+                    .max_h(px(520.))
                     .gap_1()
                     .p_2()
                     .bg(theme.popover)
@@ -1579,13 +1767,41 @@ impl Session {
                     .border_color(theme.border)
                     .rounded_md()
                     .child(
-                        h_flex()
-                            .text_color(theme.muted_foreground)
-                            .child("Model for the next turn  (↑/↓, Enter, Esc)"),
+                        h_flex().text_color(theme.muted_foreground).child(
+                            "Model  (Enter: save as your model · Tab: next turn only · Esc)",
+                        ),
                     )
-                    .children(rows),
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(query)),
+                    )
+                    .children(status.map(|status| {
+                        h_flex()
+                            .px_2()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(status))
+                    }))
+                    .child(
+                        v_flex()
+                            .id("model-menu-rows")
+                            .overflow_y_scroll()
+                            .children(rows),
+                    ),
             )
     }
+}
+
+/// How the model picker was closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuPick {
+    /// `Enter`: save the model (the default row clears the next turn's).
+    Select,
+    /// `Tab`: the model of the next turn only.
+    NextTurn,
+    /// `Esc`.
+    Cancel,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -1690,6 +1906,23 @@ mod tests {
                 .into_iter()
                 .map(|(alias, model)| ModelChoice { alias, model })
                 .collect()
+        }
+
+        /// Two OpenCode models, besides the aliases.
+        fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
+            let models = ["opencode-go:glm-5.3", "opencode-go:kimi-k3"]
+                .map(|id| ModelChoice {
+                    alias: id.to_owned(),
+                    model: ModelId::new(id),
+                })
+                .to_vec();
+            futures::future::ready(Ok(models)).boxed()
+        }
+
+        /// Records the pick, as saving it would.
+        fn select_model(&self, model: ModelId) -> BoxFuture<'static, Result<String, String>> {
+            self.logins.lock().unwrap().push(format!("model {model}"));
+            futures::future::ready(Ok(format!("model `{model}` selected"))).boxed()
         }
 
         fn new_session(&self) -> BoxFuture<'static, ()> {
@@ -2187,7 +2420,7 @@ mod tests {
         cx.simulate_keystrokes("ctrl-g m");
         h.session
             .read_with(cx, |s, _| assert!(s.is_menu_open(), "the menu is open"));
-        cx.simulate_keystrokes("down enter");
+        cx.simulate_keystrokes("down tab");
         let alias = h.session.read_with(cx, |s, _| {
             assert!(!s.is_menu_open());
             s.model_override().map(str::to_owned)
@@ -2203,6 +2436,63 @@ mod tests {
         let model = h.llm.last_request().map(|r| r.model.spec.id);
         let expected = ModelPolicy::default().expand(&alias.unwrap_or_default());
         assert_eq!(model, Some(expected));
+    }
+
+    #[gpui::test]
+    fn the_model_picker_lists_the_catalog_filters_and_saves(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/model", cx);
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, _| {
+            let menu = s.menu.as_ref().expect("the picker is open");
+            assert_eq!(menu.catalog, CatalogState::Ready);
+            assert!(
+                menu.choices
+                    .iter()
+                    .flatten()
+                    .any(|c| c.model.as_str() == "opencode-go:kimi-k3")
+            );
+        });
+        cx.simulate_input("kimi");
+        h.session.read_with(cx, |s, _| {
+            let menu = s.menu.as_ref().unwrap();
+            assert_eq!(menu.query, "kimi");
+            let shown: Vec<_> = menu.visible().into_iter().flatten().collect();
+            assert_eq!(shown.len(), 1, "{shown:?}");
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(*h.logins.lock().unwrap(), ["model opencode-go:kimi-k3"]);
+        assert_eq!(
+            *h.reopens.borrow(),
+            [SessionEvent::Reopen {
+                notice: Some((
+                    NoticeLevel::Info,
+                    "model `opencode-go:kimi-k3` selected".into()
+                )),
+            }]
+        );
+        h.session.read_with(cx, |s, _| {
+            assert!(!s.is_menu_open());
+            assert_eq!(s.model_override(), None, "a saved pick is not an override");
+        });
+    }
+
+    #[gpui::test]
+    fn model_set_saves_and_model_clear_drops_the_override(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/model opus", cx);
+        cx.run_until_parked();
+        h.session
+            .read_with(cx, |s, _| assert_eq!(s.model_override(), Some("opus")));
+        send("/model clear", cx);
+        cx.run_until_parked();
+        h.session
+            .read_with(cx, |s, _| assert_eq!(s.model_override(), None));
+        send("/model set opencode-go:glm-5.3", cx);
+        cx.run_until_parked();
+        assert_eq!(*h.logins.lock().unwrap(), ["model opencode-go:glm-5.3"]);
+        assert_eq!(h.reopens.borrow().len(), 1);
     }
 
     #[gpui::test]

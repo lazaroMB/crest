@@ -23,8 +23,9 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "model",
-        usage: "/model [alias]",
-        description: "Model of the next turn only (alias, role or id); no argument clears it",
+        usage: "/model [alias|set <id>|clear]",
+        description: "Pick a model from the providers' catalogs (Enter saves it, Tab is for the next turn only); \
+                      `/model <alias>` sets the next turn's model, `set <id>` saves one, `clear` drops the next turn's",
     },
     CommandInfo {
         name: "mode",

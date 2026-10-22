@@ -41,7 +41,7 @@ use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
-use application::providers::{Provider, ProviderRouter, ProvidersOptions};
+use application::providers::{Provider, ProviderRouter, ProvidersOptions, effective_default};
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
@@ -56,7 +56,7 @@ use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
 use domain::conversation::Session;
-use domain::model::{Account, ModelPolicy, ModelRole, ProviderId};
+use domain::model::{Account, BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -65,6 +65,7 @@ use crate::args::Args;
 use crate::images::{ImageGuardSink, SharedGuard};
 use crate::mcp::{self, McpServers, TrustOptions};
 use crate::plugin_trust;
+use crate::preferences::{self, Preferences};
 use crate::research;
 use crate::startup::{self, CATALOG_TIMEOUT};
 
@@ -154,6 +155,9 @@ pub struct Overrides {
     /// Where `/login` checks and stores the API key, instead of the
     /// Anthropic API and the system keyring.
     pub api_keys: Option<Arc<dyn application::ports::credentials::ApiKeyPort>>,
+    /// The preferences file (last `/login`, models picked with `/model`)
+    /// instead of the one in crest's data directory.
+    pub preferences_path: Option<PathBuf>,
 }
 
 /// No API key of any provider in the environment nor in the keyring; the
@@ -249,6 +253,13 @@ pub struct App {
     pub db_path: Option<PathBuf>,
     /// The decision model (Clef), when it has credentials.
     pub decider: application::decide::Decider,
+    /// The provider of model ids without prefix (see
+    /// [`application::providers::effective_default`]).
+    pub default_provider: ProviderId,
+    /// The preferences file `/login` and `/model` write, if there is one.
+    pub preferences_path: Option<PathBuf>,
+    /// The models of every provider with a key, for the `/model` picker.
+    pub catalog: Option<Arc<dyn ModelCatalogPort>>,
     models: ModelPolicy,
     events: Arc<dyn EventSink>,
     timeline: Arc<Mutex<TimelineState>>,
@@ -478,8 +489,42 @@ pub async fn build_app(
     let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
     warnings.extend(search.check_tools().await.problems());
 
-    let (llm, catalog) = model_ports(&overrides, &loaded.options, &mut warnings).await?;
-    let mut policy = loaded.model_policy();
+    // A scripted model (tests) only sees the preferences it is given.
+    let preferences_path = overrides.preferences_path.clone().or_else(|| {
+        overrides
+            .llm
+            .is_none()
+            .then(preferences::default_path)
+            .flatten()
+    });
+    let preferences = match preferences_path.as_deref().map(Preferences::load) {
+        Some(Ok(preferences)) => preferences,
+        Some(Err(err)) => {
+            warnings.push(format!("the saved preferences were ignored: {err}"));
+            Preferences::default()
+        }
+        None => Preferences::default(),
+    };
+    let (llm, catalog, default_provider) = model_ports(
+        &overrides,
+        &loaded.options,
+        preferences.provider,
+        &mut warnings,
+    )
+    .await?;
+    let defaults = if default_provider == ProviderId::Anthropic {
+        BuiltinDefaults::Claude
+    } else {
+        BuiltinDefaults::None
+    };
+    let selected = preferences.models.get(&default_provider).cloned();
+    let mut policy = loaded.model_policy().with_selection(selected, defaults);
+    if policy.needs_selection() {
+        warnings.push(format!(
+            "no model is selected for {default_provider}: pick one with /model"
+        ));
+    }
+    let catalog_for_picker = catalog.clone();
     if let Some(catalog) = catalog {
         let (checked, model_warnings) =
             startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
@@ -765,6 +810,9 @@ pub async fn build_app(
             .clone()
             .or_else(adapter_store::path::default_db_path),
         decider,
+        default_provider,
+        preferences_path,
+        catalog: catalog_for_picker,
         models,
         events,
         timeline,
@@ -777,7 +825,11 @@ pub async fn build_app(
     })
 }
 
-type ModelPorts = (Arc<dyn LlmPort>, Option<Arc<dyn ModelCatalogPort>>);
+type ModelPorts = (
+    Arc<dyn LlmPort>,
+    Option<Arc<dyn ModelCatalogPort>>,
+    ProviderId,
+);
 
 /// The model and its catalog: the overrides, or every provider with a key
 /// in the environment or the keyring (Anthropic; OpenCode Go and Zen),
@@ -785,15 +837,18 @@ type ModelPorts = (Arc<dyn LlmPort>, Option<Arc<dyn ModelCatalogPort>>);
 async fn model_ports(
     overrides: &Overrides,
     options: &AppOptions,
+    preferred: Option<ProviderId>,
     warnings: &mut Vec<String>,
 ) -> anyhow::Result<ModelPorts> {
-    if let Some(llm) = &overrides.llm {
-        return Ok((Arc::clone(llm), overrides.catalog.clone()));
-    }
     let providers = ProvidersOptions::from_options(options).unwrap_or_else(|err| {
         warnings.push(format!("{err}; using the default providers"));
         ProvidersOptions::default()
     });
+    if let Some(llm) = &overrides.llm {
+        // A scripted model: only the config names the default provider.
+        let default = effective_default(providers.default, None, &[]);
+        return Ok((Arc::clone(llm), overrides.catalog.clone(), default));
+    }
     // The keyring may block (D-Bus, Keychain).
     let (anthropic, opencode) = tokio::task::spawn_blocking(|| {
         (
@@ -803,7 +858,15 @@ async fn model_ports(
     })
     .await
     .context("reading the API keys")?;
-    let mut router = ProviderRouter::new(providers.default);
+    let mut with_key = Vec::new();
+    if anthropic.is_some() {
+        with_key.push(ProviderId::Anthropic);
+    }
+    if opencode.is_some() {
+        with_key.extend([ProviderId::OpencodeGo, ProviderId::OpencodeZen]);
+    }
+    let default = effective_default(providers.default, preferred, &with_key);
+    let mut router = ProviderRouter::new(default);
     if let Some(key) = anthropic {
         let client = AnthropicClient::new(&key, ClientConfig::default())
             .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
@@ -825,8 +888,8 @@ async fn model_ports(
     if router.is_empty() {
         return Err(MissingApiKey.into());
     }
-    if !router.providers().any(|p| p == providers.default) {
-        let account = providers.default.account();
+    if !router.providers().any(|p| p == default) {
+        let account = default.account();
         warnings.push(format!(
             "no {} API key, so models without a provider prefix (the defaults) cannot run: \
              /login {account}, or point app.models.roles at prefixed models \
@@ -839,7 +902,7 @@ async fn model_ports(
         .clone()
         .unwrap_or_else(|| Arc::new(router.catalog()));
     let llm = RetryingLlm::new(Arc::new(router), Arc::new(TokioClock));
-    Ok((Arc::new(llm), Some(catalog)))
+    Ok((Arc::new(llm), Some(catalog), default))
 }
 
 fn open_store(path: Option<&Path>) -> Result<SqliteSessionStore, StoreError> {
