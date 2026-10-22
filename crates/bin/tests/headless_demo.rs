@@ -289,14 +289,21 @@ async fn a_syntax_error_in_init_lua_is_an_error_and_the_defaults_apply() {
                 esto no es lua\n";
     let (dir, app, output) = app_with_init(init).await;
     assert_eq!(app.model_policy(), &ModelPolicy::default());
-    let path = dir.path().join("ws/.crest/init.lua");
-    let expected = format!("{}:3:", path.display());
     assert_eq!(app.config_errors.len(), 1, "{:?}", app.config_errors);
+    // `<path>:3: …`; on Windows the path may mix `\` and `/`, and the
+    // temporary directory may show as a short (8.3) name.
+    let (shown, _) = app.config_errors[0]
+        .rsplit_once(":3:")
+        .unwrap_or_else(|| panic!("{:?}", app.config_errors));
     assert!(
-        app.config_errors[0].starts_with(&expected),
+        std::path::Path::new(shown).ends_with("ws/.crest/init.lua"),
         "{:?}",
         app.config_errors
     );
+    if cfg!(unix) {
+        let path = dir.path().join("ws/.crest/init.lua");
+        assert_eq!(shown, path.display().to_string());
+    }
     let out = output.text();
-    assert!(out.contains(&format!("error: {expected}")), "{out}");
+    assert!(out.contains(&format!("error: {shown}:3:")), "{out}");
 }

@@ -144,7 +144,7 @@ mod tests {
         let got = texts(&spec.content);
         assert_eq!(
             got[0],
-            format!("image {}", ws.join("out/plot.png").display())
+            format!("image {}", ws.join("out").join("plot.png").display())
         );
         for (ix, name) in [(1, "../outside.png"), (2, "id_rsa.png"), (3, "missing.png")] {
             assert!(
@@ -169,7 +169,7 @@ mod tests {
         };
         assert_eq!(
             texts(&tree)[0],
-            format!("image {}", ws.join("out/plot.png").display())
+            format!("image {}", ws.join("out").join("plot.png").display())
         );
     }
 }
