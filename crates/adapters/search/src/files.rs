@@ -250,6 +250,7 @@ fn walk(root: &Path, globs: &[String]) -> Result<Vec<WorkspacePath>, SearchError
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::time::Duration;
 
     use application::ports::search::TreeNodeKind;

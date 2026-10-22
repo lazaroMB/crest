@@ -568,6 +568,7 @@ mod windows_tests {
         let env = shell(&dir)
             .with_inherited_env([("anthropic_api_key", "k"), ("Path", r"C:\bin")])
             .environment();
-        assert_eq!(env, [("Path".into(), r"C:\bin".into())]);
+        let expected = [(OsString::from("Path"), OsString::from(r"C:\bin"))];
+        assert_eq!(env, expected);
     }
 }
