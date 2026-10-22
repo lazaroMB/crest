@@ -240,9 +240,14 @@ fn spawn_error(command: &str, err: &std::io::Error) -> String {
         return format!("cannot start `{command}`: it does not exist");
     }
     if err.kind() == std::io::ErrorKind::NotFound {
+        let where_to = if cfg!(windows) {
+            "the user's Path environment variable"
+        } else {
+            "PATH in ~/.profile or ~/.zprofile"
+        };
         return format!(
             "`{command}` was not found on PATH; if crest was opened from the desktop, use \
-             the absolute path or add its directory to PATH in ~/.profile or ~/.zprofile"
+             the absolute path or add its directory to {where_to}"
         );
     }
     format!("cannot start `{command}`: {err}")
@@ -295,14 +300,25 @@ fn expand_with(
 
 /// The command of a stdio server: the inherited environment minus
 /// [`SCRUBBED_ENV_VARS`], plus the spec's `env` (which may set them back),
-/// run in `cwd` when given.
+/// run in `cwd` when given. On Windows a bare name is looked up with the
+/// `PATHEXT` extensions (`npx` is `npx.cmd`, which Windows does not find
+/// alone) and no console window opens. Killing it on drop reaches only
+/// that process (on Windows, the `npx.cmd` shim but not its `node`); a
+/// server exits anyway once its stdin closes.
 fn stdio_command(
     command: &str,
     args: &[String],
     env: &BTreeMap<String, String>,
     cwd: Option<&Path>,
 ) -> Command {
-    let mut cmd = Command::new(command);
+    let found = (cfg!(windows) && !command.contains(['/', '\\']))
+        .then(|| platform::process::find_program(command, None))
+        .flatten();
+    let mut cmd = match found {
+        Some(program) => Command::new(program),
+        None => Command::new(command),
+    };
+    platform::process::background(cmd.as_std_mut());
     cmd.args(args).kill_on_drop(true);
     for key in SCRUBBED_ENV_VARS {
         cmd.env_remove(key);

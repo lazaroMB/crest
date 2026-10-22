@@ -94,12 +94,14 @@ pub enum WatchError {
 
 /// Whether a file-system event can change the tree: files or directories
 /// created, removed or renamed outside `.git/`. Content and metadata
-/// changes and plain accesses are ignored.
+/// changes and plain accesses are ignored. On Windows every content change
+/// arrives as an unspecified modification, so those are ignored there too.
 pub fn changes_tree(event: &notify::Event) -> bool {
     use notify::event::ModifyKind;
     let structural = match event.kind {
         EventKind::Create(_) | EventKind::Remove(_) | EventKind::Any | EventKind::Other => true,
-        EventKind::Modify(kind) => matches!(kind, ModifyKind::Name(_) | ModifyKind::Any),
+        EventKind::Modify(ModifyKind::Any) => !cfg!(windows),
+        EventKind::Modify(kind) => matches!(kind, ModifyKind::Name(_)),
         EventKind::Access(_) => false,
     };
     structural && !event.paths.iter().all(|path| in_git_dir(path))
@@ -509,8 +511,8 @@ mod tests {
 
     // -- panel --------------------------------------------------------------
 
-    use application::testing::fs::InMemoryFs;
-    use domain::workspace::WorkspaceRoot;
+    use application::testing::fs::{InMemoryFs, test_root};
+
     use gpui::{TestAppContext, VisualTestContext};
 
     fn p(path: &str) -> WorkspacePath {
@@ -519,7 +521,7 @@ mod tests {
 
     fn fake_fs() -> Arc<InMemoryFs> {
         Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            InMemoryFs::new(test_root())
                 .with_file("Cargo.toml", "[workspace]\n")
                 .with_file("src/lib.rs", "")
                 .with_file("src/ports/fs.rs", ""),

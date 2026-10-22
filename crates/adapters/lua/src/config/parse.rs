@@ -10,6 +10,7 @@ use application::cost;
 use application::ports::plugin::{AppOptions, McpServerSpec, PluginDiagnostic};
 use application::privacy::{PRIVACY_OPTION, PrivacyOptions};
 use application::rtk::{RTK_OPTION, RtkOptions};
+use application::shell;
 use application::web::{WEB_OPTION, WebOptions};
 use domain::model::{ModelId, ModelRole, ModelSpecPatch, RoleConfig, ThinkingConfig};
 use mlua::{Lua, Table};
@@ -194,6 +195,13 @@ fn options(value: Value, report: &mut Report<'_>) -> AppOptions {
             },
             // Kept in `extra` for `RtkOptions::from_options`, once valid.
             RTK_OPTION => match RtkOptions::from_json(v) {
+                Ok(_) => {
+                    out.extra.insert(key.clone(), v.clone());
+                }
+                Err(e) => report.push(e.to_string()),
+            },
+            // Kept in `extra` for `shell::from_options`, once valid.
+            shell::SHELL_OPTION => match shell::from_json(v) {
                 Ok(_) => {
                     out.extra.insert(key.clone(), v.clone());
                 }

@@ -1,0 +1,8 @@
+# LF everywhere, also in Windows checkouts: insta snapshots, SSE fixtures,
+# shell scripts and Lua compare byte for byte. PowerShell and rc.exe read
+# LF files too.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary

@@ -16,7 +16,8 @@ pub struct TypedPath<'a> {
     pub filter: &'a str,
 }
 
-/// Splits `input` at its last `/`. A bare `~` is the home directory.
+/// Splits `input` at its last separator (`/`, and `\` on Windows). A bare
+/// `~` is the home directory.
 #[must_use]
 pub fn split_typed_path(input: &str) -> TypedPath<'_> {
     if input == "~" {
@@ -25,7 +26,9 @@ pub fn split_typed_path(input: &str) -> TypedPath<'_> {
             filter: "",
         };
     }
-    let split = input.rfind('/').map_or(0, |ix| ix + 1);
+    let split = input
+        .rfind(|c| c == '/' || (cfg!(windows) && c == '\\'))
+        .map_or(0, |ix| ix + 1);
     TypedPath {
         dir: &input[..split],
         filter: &input[split..],

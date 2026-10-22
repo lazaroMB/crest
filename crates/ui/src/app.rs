@@ -210,8 +210,11 @@ where
     // GPUI asks X11 window managers for fullscreen before mapping the
     // window, and they ignore that request; on X11 the window opens
     // windowed and asks again once it has drawn its first frame.
+    // On Windows fullscreen would hide the taskbar: open maximized.
     let x11 = cx.compositor_name() == "X11";
-    let window_bounds = if x11 {
+    let window_bounds = if cfg!(windows) {
+        WindowBounds::Maximized(restore)
+    } else if x11 {
         WindowBounds::Windowed(restore)
     } else {
         WindowBounds::Fullscreen(restore)

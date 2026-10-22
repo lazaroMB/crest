@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn modal_and_block_images_are_resolved_or_replaced() {
         let dir = tempfile::tempdir().unwrap();
-        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let base = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
         let ws = base.join("ws");
         std::fs::create_dir_all(ws.join("out")).unwrap();
         std::fs::write(ws.join("out/plot.png"), "png").unwrap();

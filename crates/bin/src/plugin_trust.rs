@@ -13,7 +13,6 @@
 //! `~/.local/share/crest/`), written readable only by its owner; deleting
 //! an entry revokes it.
 
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -26,18 +25,11 @@ use crate::mcp::write_private;
 /// Name of the store file in crest's data directory.
 const TRUST_FILE: &str = "plugin-trust.json";
 
-/// Default location of the store, following `XDG_DATA_HOME`.
+/// Default location of the store, in crest's data directory (see
+/// [`platform::dirs::data_dir`]).
 #[must_use]
 pub fn default_trust_path() -> Option<PathBuf> {
-    trust_path_from(std::env::var_os("XDG_DATA_HOME"), dirs::home_dir())
-}
-
-fn trust_path_from(xdg_data_home: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    let data_home = xdg_data_home
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| home.map(|h| h.join(".local").join("share")))?;
-    Some(data_home.join("crest").join(TRUST_FILE))
+    platform::dirs::data_dir().map(|dir| dir.join(TRUST_FILE))
 }
 
 /// Approved capability declarations.
@@ -441,14 +433,5 @@ mod tests {
         let again = trust.trust("jira").await.unwrap();
         assert!(again.contains("already approved"), "{again}");
         assert!(trust.trust("nope").await.is_err());
-    }
-
-    #[test]
-    fn the_store_follows_xdg_data_home() {
-        assert_eq!(
-            trust_path_from(Some("/data".into()), None),
-            Some(PathBuf::from("/data/crest/plugin-trust.json"))
-        );
-        assert_eq!(trust_path_from(None, None), None);
     }
 }

@@ -3,9 +3,10 @@
 //!
 //! A check is a command line. Plain lines are split into program and
 //! arguments (quotes respected); lines that need a shell (pipes, `&&`,
-//! redirections, variables, globs) run as `sh -c '<line>'`.
+//! redirections, variables, globs) run with the port's
+//! [`ShellPort::line_shell`]: `sh -c '<line>'`, or PowerShell on Windows.
 
-use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellPort};
+use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellPort, ShellSpec};
 
 /// Seconds a check may run: test suites and benchmarks take longer than
 /// the agent's commands.
@@ -18,7 +19,8 @@ const OUTPUT_TAIL_LINES: usize = 40;
 const SHELL_CHARS: &[char] = &['|', '&', ';', '<', '>', '$', '`', '*', '?', '(', ')', '~'];
 
 /// Splits `line` into words, honouring single and double quotes and
-/// backslash escapes. `None` when a quote is left open.
+/// backslash escapes (on Windows a backslash is a path separator, kept as
+/// is). `None` when a quote is left open.
 fn split_words(line: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -27,6 +29,10 @@ fn split_words(line: &str) -> Option<Vec<String>> {
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
         match (quote, c) {
+            (_, '\\') if cfg!(windows) => {
+                word.push(c);
+                in_word = true;
+            }
             (Some(q), c) if c == q => quote = None,
             (Some('"'), '\\') => word.push(chars.next().unwrap_or('\\')),
             (Some(_), c) => word.push(c),
@@ -74,15 +80,16 @@ fn needs_shell(line: &str) -> bool {
     false
 }
 
-/// The request that runs the command line `line`.
+/// The request that runs the command line `line`, through `shell` when it
+/// needs one.
 ///
 /// # Errors
 ///
 /// A message when the line is empty or leaves a quote open.
-pub fn command_request(line: &str) -> Result<RunCommandRequest, String> {
+pub fn command_request(line: &str, shell: &ShellSpec) -> Result<RunCommandRequest, String> {
     let line = line.trim();
     let mut request = if needs_shell(line) {
-        RunCommandRequest::new("sh", ["-c", line])
+        shell.request(line)
     } else {
         let words = split_words(line).ok_or_else(|| format!("unclosed quote in `{line}`"))?;
         let Some((program, args)) = words.split_first() else {
@@ -162,7 +169,7 @@ impl CheckRun {
 /// Runs the command line `line`.
 pub async fn run_check(shell: &dyn ShellPort, line: &str) -> CheckRun {
     let command = line.trim().to_owned();
-    let request = match command_request(&command) {
+    let request = match command_request(&command, &shell.line_shell()) {
         Ok(request) => request,
         Err(error) => {
             return CheckRun {
@@ -193,7 +200,7 @@ mod tests {
     use crate::testing::fs::ScriptedShell;
 
     fn words(line: &str) -> (String, Vec<String>) {
-        let r = command_request(line).unwrap();
+        let r = command_request(line, &ShellSpec::posix()).unwrap();
         assert_eq!(r.timeout_s, CHECK_TIMEOUT_S);
         (r.command, r.args)
     }
@@ -213,12 +220,14 @@ mod tests {
             )
         );
         assert_eq!(
-            words(r#"grep -q "a b" 'c d' e\ f"#),
-            (
-                "grep".into(),
-                vec!["-q".into(), "a b".into(), "c d".into(), "e f".into()]
-            )
+            words(r#"grep -q "a b" 'c d'"#),
+            ("grep".into(), vec!["-q".into(), "a b".into(), "c d".into()])
         );
+        if cfg!(windows) {
+            assert_eq!(words(r"type C:\a\b.txt").1, [r"C:\a\b.txt"]);
+        } else {
+            assert_eq!(words(r"echo e\ f").1, ["e f"]);
+        }
         assert_eq!(
             words("make bench | tail -1"),
             (
@@ -227,8 +236,9 @@ mod tests {
             )
         );
         assert_eq!(words("echo 'a|b'").1, ["a|b"]);
-        assert!(command_request("  ").is_err());
-        assert!(command_request("echo 'open").is_err());
+        let shell = ShellSpec::posix();
+        assert!(command_request("  ", &shell).is_err());
+        assert!(command_request("echo 'open", &shell).is_err());
     }
 
     #[tokio::test]

@@ -4,7 +4,6 @@ use domain::block::{BlockKind, Cell, SourceRef};
 use domain::model::{ModelPolicy, ModelRole};
 use domain::permission::PermissionPolicy;
 use domain::research::{ConstraintKind, ResearchState, Stage};
-use domain::workspace::WorkspaceRoot;
 use serde_json::json;
 
 use super::*;
@@ -13,7 +12,7 @@ use crate::ports::approval::ApprovalResponse;
 use crate::ports::events::DomainEvent;
 use crate::ports::llm::LlmRequest;
 use crate::ports::web::{SearchHit, WebPage};
-use crate::testing::fs::InMemoryFs;
+use crate::testing::fs::{InMemoryFs, test_root};
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
 use crate::testing::web::ScriptedWeb;
@@ -93,9 +92,7 @@ fn web() -> Arc<ScriptedWeb> {
 }
 
 fn agent(llm: &Arc<ScriptedLlm>, sink: &Arc<RecordingSink>, with_web: bool) -> Arc<AgentService> {
-    let fs = Arc::new(
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/cache.rs", CACHE),
-    );
+    let fs = Arc::new(InMemoryFs::new(test_root()).with_file("src/cache.rs", CACHE));
     let budget = ResultBudget::default();
     let mut tools = ToolRegistry::new().with_budget(budget);
     tools.register_typed(ReadFileTool::new(fs, budget)).unwrap();

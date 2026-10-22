@@ -79,6 +79,7 @@ impl ProcessSpec {
             .current_dir(&self.cwd)
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .kill_on_drop(true);
+        platform::process::background(command.as_std_mut());
         command
     }
 
@@ -487,7 +488,9 @@ async fn kill(child: &mut Child) -> io::Result<ExitStatus> {
     child.wait().await
 }
 
+// The tests drive POSIX tools (`printf`, `cat`, `tail`, `sort`).
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 

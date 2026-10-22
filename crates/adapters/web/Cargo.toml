@@ -12,6 +12,7 @@ application.workspace = true
 async-trait.workspace = true
 html2text.workspace = true
 keyring.workspace = true
+platform.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

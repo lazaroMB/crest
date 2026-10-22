@@ -15,7 +15,7 @@ use application::ports::llm::ModelCatalogPort;
 use application::ports::plugin::{
     AppOptions, ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort,
 };
-use application::ports::shell::CommandRewritePort;
+use application::ports::shell::{CommandRewritePort, ShellSpec};
 use application::ports::web::WebPort;
 use application::privacy::{PrivacyOptions, Redactor};
 use application::rtk::RtkOptions;
@@ -124,6 +124,28 @@ pub fn rtk(
                 options.path
             )),
         ),
+    }
+}
+
+/// The shell for whole command lines: `app.opt.shell` when set and valid;
+/// else `sh -c` on Unix and, on Windows, `pwsh` when it is on `PATH` or the
+/// bundled `powershell`. A broken option is a warning.
+pub fn line_shell(options: &AppOptions) -> (ShellSpec, Option<String>) {
+    let fallback = || {
+        if cfg!(windows) && platform::process::find_program("pwsh", None).is_some() {
+            ShellSpec::powershell("pwsh")
+        } else {
+            ShellSpec::default()
+        }
+    };
+    match application::shell::from_options(options) {
+        Ok(Some(shell)) => (shell, None),
+        Ok(None) => (fallback(), None),
+        Err(err) => {
+            let shell = fallback();
+            let warning = format!("{err}; using `{}`", shell.program);
+            (shell, Some(warning))
+        }
     }
 }
 

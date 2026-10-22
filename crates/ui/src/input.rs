@@ -1022,11 +1022,10 @@ mod tests {
 
     #[gpui::test]
     fn at_words_complete_workspace_paths_level_by_level(cx: &mut TestAppContext) {
-        use application::testing::fs::InMemoryFs;
-        use domain::workspace::WorkspaceRoot;
+        use application::testing::fs::{InMemoryFs, test_root};
 
         let (view, cx, events) = input(cx);
-        let fs = InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+        let fs = InMemoryFs::new(test_root())
             .with_file("README.md", "")
             .with_file("src/main.rs", "")
             .with_file("src/components/button.rs", "")

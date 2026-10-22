@@ -5,7 +5,9 @@
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
 #![allow(clippy::unwrap_used)]
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use adapter_lua::{HostOptions, LuaHandle, LuaHost};
@@ -32,7 +34,7 @@ impl Fixture {
         std::fs::write(plugin_dir.join("init.lua"), plugin).unwrap();
         let workspace = dir.path().join("ws");
         std::fs::create_dir_all(workspace.join("sub")).unwrap();
-        let workspace = workspace.canonicalize().unwrap();
+        let workspace = dunce::canonicalize(&workspace).unwrap();
         Self {
             _dir: dir,
             config,
@@ -120,6 +122,8 @@ fn local_cap(server: &MockServer) -> String {
     format!("network:http://127.0.0.1:{}", server.address().port())
 }
 
+// Runs POSIX tools (`echo`, `cat`, `env`, `sleep`).
+#[cfg(unix)]
 #[tokio::test]
 async fn the_declaration_is_reported_and_inactive_until_granted() {
     let fx = Fixture::new(&plugin(&[
@@ -239,6 +243,7 @@ async fn http_times_out() {
     assert!(start.elapsed() < Duration::from_secs(3));
 }
 
+#[cfg(unix)]
 fn shell_plugin() -> String {
     plugin(&[
         "shell:cat".into(),
@@ -248,6 +253,8 @@ fn shell_plugin() -> String {
     ])
 }
 
+// Runs POSIX tools (`echo`, `cat`, `env`, `sleep`).
+#[cfg(unix)]
 #[tokio::test]
 async fn shell_runs_granted_programs_in_the_workspace() {
     let fx = Fixture::new(&shell_plugin());
@@ -280,10 +287,13 @@ async fn shell_runs_granted_programs_in_the_workspace() {
     assert!(denied.contains("did not declare shell:ls"), "{denied}");
 }
 
+#[cfg(unix)]
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+// Runs POSIX tools (`echo`, `cat`, `env`, `sleep`).
+#[cfg(unix)]
 #[tokio::test]
 async fn shell_hides_credentials_from_programs() {
     let fx = Fixture::new(&shell_plugin());
@@ -302,6 +312,8 @@ async fn shell_hides_credentials_from_programs() {
     assert!(!env.contains("CREST_PLUGIN_JIRA_TOKEN"), "{env}");
 }
 
+// Runs POSIX tools (`echo`, `cat`, `env`, `sleep`).
+#[cfg(unix)]
 #[tokio::test]
 async fn shell_kills_a_program_on_timeout() {
     let fx = Fixture::new(&shell_plugin());

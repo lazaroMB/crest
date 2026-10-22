@@ -257,11 +257,11 @@ impl ApprovalPort for DenyApprovals {
 mod tests {
     use domain::conversation::Session;
     use domain::model::ModelRole;
-    use domain::workspace::WorkspaceRoot;
+
     use serde_json::json;
 
     use super::*;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::RecordingTelemetry;
     use crate::usecases::run_turn::TurnOptions;
@@ -284,9 +284,7 @@ mod tests {
     #[tokio::test]
     async fn the_node_agent_shows_tool_calls_but_not_its_answer() {
         use crate::testing::system::{RecordingSink, ScriptedApproval};
-        let fs = Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/lib.rs", "x\n"),
-        );
+        let fs = Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "x\n"));
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::text("miro").then_tool_use(
                 "t1",
@@ -339,9 +337,7 @@ mod tests {
     #[tokio::test]
     async fn the_explore_agent_reports_only_its_tool_calls_as_activity() {
         use crate::testing::system::RecordingSink;
-        let fs = Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/lib.rs", "x\n"),
-        );
+        let fs = Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "x\n"));
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::tool_use("t1", "read_file", json!({ "path": "src/lib.rs" })),
             ScriptedResponse::text("listo"),
@@ -365,9 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn reads_but_cannot_write_or_run() {
-        let fs = Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()).with_file("src/lib.rs", "x\n"),
-        );
+        let fs = Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "x\n"));
         let llm = Arc::new(ScriptedLlm::new([
             ScriptedResponse::tool_use("t1", "read_file", json!({ "path": "src/lib.rs" }))
                 .then_tool_use(

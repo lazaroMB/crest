@@ -8,7 +8,6 @@ use async_trait::async_trait;
 
 use domain::model::ModelPolicy;
 use domain::permission::{PermissionMode, PermissionPolicy};
-use domain::workspace::WorkspaceRoot;
 
 use crate::flows::implement::load::parse_plan;
 use crate::flows::implement::load::tests::plan_json;
@@ -16,7 +15,7 @@ use crate::flows::implement::node::{AgentKit, ImplementDeps, StepContext};
 use crate::flows::implement::state::{ImplementState, Step};
 use crate::ports::approval::ApprovalResponse;
 use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
-use crate::testing::fs::{InMemoryFs, ScriptedShell};
+use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
 use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
 use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
 use crate::tools::files::{FileToolPorts, register_file_tools};
@@ -98,7 +97,7 @@ impl Harness {
     ) -> Self {
         Self {
             llm: Arc::new(ScriptedLlm::new(script)),
-            fs: Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())),
+            fs: Arc::new(InMemoryFs::new(test_root())),
             shell,
             approval: Arc::new(ScriptedApproval::new()),
             sink: Arc::new(RecordingSink::new()),

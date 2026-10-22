@@ -55,7 +55,10 @@ impl RtkRewriter {
     fn environment() -> Vec<(OsString, OsString)> {
         std::env::vars_os()
             .filter(|(key, _)| {
-                key != REWRITE_HOST_VAR && !SCRUBBED_ENV_VARS.iter().any(|scrubbed| key == scrubbed)
+                !platform::process::same_env_name(key, REWRITE_HOST_VAR)
+                    && !SCRUBBED_ENV_VARS
+                        .iter()
+                        .any(|scrubbed| platform::process::same_env_name(key, scrubbed))
             })
             .collect()
     }
@@ -69,11 +72,13 @@ impl CommandRewritePort for RtkRewriter {
 
     async fn rewrite(&self, request: &RunCommandRequest) -> Option<RunCommandRequest> {
         // Already an rtk command, or crest's own binary path: leave it.
-        if Path::new(&request.command).file_name() == Some("rtk".as_ref()) {
+        if platform::process::program_name(&request.command) == "rtk" {
             return None;
         }
         let line = request.display();
-        let child = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        platform::process::background(command.as_std_mut());
+        let child = command
             .arg("rewrite")
             .arg(&line)
             .current_dir(self.root.as_path())
@@ -117,20 +122,18 @@ impl CommandRewritePort for RtkRewriter {
 }
 
 /// `program` itself when it is a path to a file, else the first match on
-/// `PATH`.
+/// `PATH` (with the `PATHEXT` extensions on Windows: `rtk.exe`).
 fn find_program(program: &str) -> Option<PathBuf> {
-    let program = Path::new(program);
-    if program.components().count() > 1 {
-        return program.is_file().then(|| program.to_path_buf());
+    let path = Path::new(program);
+    if path.components().count() > 1 {
+        return path.is_file().then(|| path.to_path_buf());
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(program))
-        .find(|candidate| candidate.is_file())
+    platform::process::find_program(program, None)
 }
 
 /// Splits a command line into words with POSIX quoting (`'…'`, `"…"`,
-/// backslash escapes); `None` when it uses anything a shell would
+/// backslash escapes outside quotes, except on Windows where an unquoted
+/// backslash is a path separator); `None` when it uses anything a shell would
 /// interpret (pipes, redirections, `&&`, variables, substitutions, globs)
 /// or a quote is left open.
 fn split_words(line: &str) -> Option<Vec<String>> {
@@ -171,6 +174,10 @@ fn split_words(line: &str) -> Option<Vec<String>> {
                         c => word.push(c),
                     }
                 }
+            }
+            '\\' if cfg!(windows) => {
+                in_word = true;
+                word.push('\\');
             }
             '\\' => {
                 in_word = true;

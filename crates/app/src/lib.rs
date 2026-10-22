@@ -9,6 +9,7 @@ pub mod ports;
 pub mod privacy;
 pub mod providers;
 pub mod rtk;
+pub mod shell;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tools;

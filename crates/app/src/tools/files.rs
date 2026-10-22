@@ -851,12 +851,12 @@ pub fn register_file_tools(
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
-    use domain::workspace::WorkspaceRoot;
+
     use serde_json::{Value, json};
 
     use super::*;
     use crate::ports::shell::ShellError;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell, unified_diff};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root, unified_diff};
     use crate::tools::registry::{Tool, Typed};
 
     fn ctx() -> ToolContext {
@@ -865,7 +865,7 @@ mod tests {
 
     fn workspace() -> Arc<InMemoryFs> {
         Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            InMemoryFs::new(test_root())
                 .with_file("Cargo.toml", "[workspace]\n")
                 .with_file("src/lib.rs", "pub mod tools;\n\nfn main() {}\n")
                 .with_file("src/tools/mod.rs", "// tools\npub mod files;\n")
@@ -987,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn tree_rejects_a_path_outside_the_workspace() {
         let fs = Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            InMemoryFs::new(test_root())
                 .with_file("link/x", "")
                 .with_escaping_link("link"),
         );

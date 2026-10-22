@@ -10,8 +10,9 @@
 //!
 //! There is no shell: the program, which must be the name of a granted
 //! `shell:` capability, is looked up in the absolute directories of `PATH`
-//! and run with the arguments as given. It runs in the workspace root (or
-//! `cwd`, which must stay inside it), in its own process group, which is
+//! (with the `PATHEXT` extensions on Windows) and run with the arguments as
+//! given. It runs in the workspace root (or `cwd`, which must stay inside
+//! it), in its own process group (its process tree on Windows), which is
 //! killed when the timeout (default [`DEFAULT_TIMEOUT_S`] seconds) elapses.
 //! It inherits crest's environment minus the LLM credentials and every
 //! `CREST_PLUGIN_*` secret. Stdout and stderr keep at most
@@ -209,12 +210,10 @@ impl Run {
 /// `dir` (relative to `root`, or absolute) if it is an existing directory
 /// inside `root` once links are resolved.
 fn inside(root: &Path, dir: &str) -> mlua::Result<PathBuf> {
-    let root = root
-        .canonicalize()
+    let root = dunce::canonicalize(root)
         .map_err(|e| error(format!("cannot open the workspace {}: {e}", root.display())))?;
     let wanted = root.join(dir);
-    let real = wanted
-        .canonicalize()
+    let real = dunce::canonicalize(&wanted)
         .map_err(|e| error(format!("cannot use `{dir}` as cwd: {e}")))?;
     if !real.starts_with(&root) {
         return Err(error(format!(
@@ -232,21 +231,7 @@ fn inside(root: &Path, dir: &str) -> mlua::Result<PathBuf> {
 /// entries (`.`, empty) are skipped, so a repository cannot shadow a
 /// program with its own file.
 fn resolve(program: &str, path: Option<OsString>) -> Option<PathBuf> {
-    std::env::split_paths(&path?)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(program))
-        .find(|candidate| is_executable(candidate))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    platform::process::find_program(program, Some(path?))
 }
 
 /// crest's environment minus the credentials.
@@ -255,8 +240,14 @@ pub(crate) fn environment(
 ) -> Vec<(OsString, OsString)> {
     inherited
         .filter(|(key, _)| {
+            // Windows variable names ignore case.
             let key = key.to_string_lossy();
-            !SCRUBBED_ENV_VARS.contains(&key.as_ref()) && !key.starts_with(SECRET_ENV_PREFIX)
+            let key = if cfg!(windows) {
+                key.to_ascii_uppercase()
+            } else {
+                key.into_owned()
+            };
+            !SCRUBBED_ENV_VARS.contains(&key.as_str()) && !key.starts_with(SECRET_ENV_PREFIX)
         })
         .collect()
 }
@@ -277,8 +268,7 @@ async fn execute(run: Run) -> mlua::Result<Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(unix)]
-    command.process_group(0);
+    platform::process::own_group(command.as_std_mut());
     let shown = run.program.display().to_string();
     let mut child = command
         .spawn()
@@ -337,29 +327,14 @@ async fn execute(run: Run) -> mlua::Result<Output> {
     })
 }
 
-/// The process group of the child, killed with the system `kill` (the
-/// workspace forbids `unsafe`, so no `kill(2)` with a negative pid).
+/// The process group of the child (see [`platform::process::kill_group`]).
 struct Group(Option<u32>);
 
 impl Group {
     fn kill(&mut self) {
-        let Some(pgid) = self.0.take() else {
-            return;
-        };
-        #[cfg(unix)]
-        {
-            let result = std::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{pgid}")])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            if let Err(err) = result {
-                tracing::warn!(pgid, %err, "could not run kill for a plugin's process group");
-            }
+        if let Some(pgid) = self.0.take() {
+            platform::process::kill_group(pgid);
         }
-        #[cfg(not(unix))]
-        let _ = pgid;
     }
 }
 
@@ -425,6 +400,7 @@ mod tests {
         assert_eq!(keys, ["PATH", "HOME"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn programs_are_found_only_in_absolute_path_entries() {
         let dir = tempfile::tempdir().unwrap();
@@ -438,6 +414,7 @@ mod tests {
         assert_eq!(resolve("sh", None), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn cwd_must_stay_in_the_workspace() {
         let dir = tempfile::tempdir().unwrap();

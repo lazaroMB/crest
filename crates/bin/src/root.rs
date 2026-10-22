@@ -499,7 +499,10 @@ pub async fn build_app(
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
-    let shell: Arc<dyn ShellPort> = Arc::new(LocalShell::new(root.clone()));
+    let (line_shell, shell_warning) = startup::line_shell(&loaded.options);
+    warnings.extend(shell_warning);
+    let shell: Arc<dyn ShellPort> =
+        Arc::new(LocalShell::new(root.clone()).with_line_shell(line_shell));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     let (web, web_warnings) = startup::web_tools(&loaded.options, overrides.web.clone()).await;
     warnings.extend(web_warnings);
@@ -864,6 +867,7 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
          # Environment\n\
          - Workspace root: {root}. Tool paths are relative to it; you cannot leave it.\n\
          - Platform: {os} ({arch}).\n\
+         {windows}\
          \n\
          # How to work\n\
          - Locate before reading: `find_file` for names, `grep` for contents, `tree` or \
@@ -879,8 +883,15 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
         root = root.as_path().display(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
+        windows = if cfg!(windows) { WINDOWS_NOTE } else { "" },
     )
 }
+
+/// What the model must know on Windows, where its Unix habits fail.
+const WINDOWS_NOTE: &str = "- `run_command` starts programs directly, without a shell: \
+     Unix tools (`ls`, `cat`, `sh`, `sed`) are usually missing and shell builtins \
+     (`dir`, `echo`) are not programs. Prefer crest's file tools; run builtins and \
+     pipelines with `powershell -NoProfile -Command \"...\"`.\n";
 
 /// Wall clock in Unix epoch milliseconds.
 #[must_use]
@@ -896,10 +907,13 @@ mod tests {
 
     #[test]
     fn the_system_prompt_names_the_workspace_and_the_components() {
-        let root = WorkspaceRoot::new("/tmp/ws").unwrap();
+        let dir = std::env::temp_dir().join("ws");
+        let root = WorkspaceRoot::new(&dir).unwrap();
         let prompt = system_prompt(&root);
-        assert!(prompt.contains("Workspace root: /tmp/ws."), "{prompt}");
+        let line = format!("Workspace root: {}.", dir.display());
+        assert!(prompt.contains(&line), "{prompt}");
         assert!(prompt.contains(std::env::consts::OS));
+        assert_eq!(prompt.contains(WINDOWS_NOTE), cfg!(windows));
         assert!(prompt.ends_with(COMPONENT_TOOLS_PROMPT));
     }
 

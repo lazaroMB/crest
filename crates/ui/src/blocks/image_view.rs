@@ -216,7 +216,11 @@ impl ImageView {
             Some(zoom) => format!("{:.0}%", zoom * 100.0),
         };
         let label = self.alt.clone().unwrap_or_else(|| match &self.data {
-            ImageData::Path { path } => path.rsplit('/').next().unwrap_or(path).to_owned(),
+            ImageData::Path { path } => path
+                .rsplit(|c| c == '/' || (cfg!(windows) && c == '\\'))
+                .next()
+                .unwrap_or(path)
+                .to_owned(),
             ImageData::Base64 { .. } => "image".to_owned(),
         });
         h_flex()

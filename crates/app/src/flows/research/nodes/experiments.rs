@@ -415,7 +415,7 @@ mod tests {
 
     use domain::model::ModelPolicy;
     use domain::permission::{PermissionMode, PermissionPolicy};
-    use domain::workspace::WorkspaceRoot;
+
     use serde_json::json;
 
     use super::*;
@@ -423,7 +423,7 @@ mod tests {
     use crate::ports::approval::ApprovalResponse;
     use crate::ports::events::DomainEvent;
     use crate::ports::shell::CommandOutput;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
     use crate::tools::files::{FileToolPorts, register_file_tools};
@@ -442,8 +442,7 @@ mod tests {
         fn new(script: Vec<ScriptedResponse>) -> Self {
             let llm = Arc::new(ScriptedLlm::new(script));
             let fs = Arc::new(
-                InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
-                    .with_file("src/login.rs", "pub fn login() {}\n"),
+                InMemoryFs::new(test_root()).with_file("src/login.rs", "pub fn login() {}\n"),
             );
             let shell = Arc::new(ScriptedShell::new().on(
                 "cargo",

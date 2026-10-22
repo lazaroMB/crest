@@ -9,9 +9,11 @@
 //!
 //! Every command runs in its own process group. When the leader exits, or
 //! the timeout elapses, or the `run` future is dropped, the whole group is
-//! killed with `SIGKILL` (see [`group`](crate::group) for how, without
-//! `unsafe`), so background children never outlive the command nor keep
-//! its pipes open. On timeout the output read so far is returned with
+//! killed (see [`group`](crate::group) for how, without `unsafe`), so
+//! background children never outlive the command nor keep its pipes open.
+//! On Windows the tree is killed instead, and only while the command is
+//! alive; a program found on `PATH` through `PATHEXT` (`npm.cmd`) runs as
+//! well as an `.exe`, and no console window opens. On timeout the output read so far is returned with
 //! `timed_out` set and no exit status.
 //!
 //! Commands inherit crest's environment minus [`SCRUBBED_ENV_VARS`]: the
@@ -28,7 +30,9 @@ use std::pin::pin;
 use std::process::Stdio;
 use std::time::Duration;
 
-use application::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
+use application::ports::shell::{
+    CommandOutput, RunCommandRequest, ShellError, ShellPort, ShellSpec,
+};
 use async_trait::async_trait;
 use domain::workspace::WorkspaceRoot;
 use tokio::process::{Child, Command};
@@ -61,6 +65,8 @@ const DRAIN_GRACE: Duration = Duration::from_millis(500);
 #[derive(Debug, Clone)]
 pub struct LocalShell {
     root: WorkspaceRoot,
+    /// The shell for whole command lines ([`ShellPort::line_shell`]).
+    line_shell: ShellSpec,
     /// Environment to inherit instead of crest's own (tests only).
     inherited_env: Option<Vec<(OsString, OsString)>>,
 }
@@ -71,8 +77,17 @@ impl LocalShell {
     pub fn new(root: WorkspaceRoot) -> Self {
         Self {
             root,
+            line_shell: ShellSpec::default(),
             inherited_env: None,
         }
+    }
+
+    /// Uses `shell` for whole command lines (`app.opt.shell`, or `pwsh`
+    /// when installed on Windows).
+    #[must_use]
+    pub fn with_line_shell(mut self, shell: ShellSpec) -> Self {
+        self.line_shell = shell;
+        self
     }
 
     /// Uses `env` as the inherited environment, so tests can check the
@@ -94,7 +109,11 @@ impl LocalShell {
         };
         inherited
             .into_iter()
-            .filter(|(key, _)| !SCRUBBED_ENV_VARS.iter().any(|scrubbed| key == scrubbed))
+            .filter(|(key, _)| {
+                !SCRUBBED_ENV_VARS
+                    .iter()
+                    .any(|scrubbed| platform::process::same_env_name(key, scrubbed))
+            })
             .collect()
     }
 
@@ -104,7 +123,7 @@ impl LocalShell {
     }
 
     fn command(&self, request: &RunCommandRequest) -> Command {
-        let mut command = Command::new(&request.command);
+        let mut command = Command::new(program(&request.command));
         command
             .args(&request.args)
             .current_dir(self.root.as_path())
@@ -114,8 +133,7 @@ impl LocalShell {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
+        platform::process::own_group(command.as_std_mut());
         command
     }
 
@@ -140,6 +158,21 @@ impl LocalShell {
     }
 }
 
+/// The program to spawn for `command`. Windows only starts a bare name
+/// that is an `.exe`, so there a name without a directory is looked up on
+/// `PATH` with the `PATHEXT` extensions first (`npm` is `npm.cmd`); a
+/// miss is left to the spawn to report.
+fn program(command: &str) -> std::path::PathBuf {
+    let bare = !command.contains(['/', '\\']);
+    if cfg!(windows)
+        && bare
+        && let Some(found) = platform::process::find_program(command, None)
+    {
+        return found;
+    }
+    command.into()
+}
+
 /// Rejects requests no process could be started for.
 fn validate(request: &RunCommandRequest) -> Result<(), ShellError> {
     if request.command.trim().is_empty() {
@@ -158,6 +191,10 @@ fn validate(request: &RunCommandRequest) -> Result<(), ShellError> {
 
 #[async_trait]
 impl ShellPort for LocalShell {
+    fn line_shell(&self) -> ShellSpec {
+        self.line_shell.clone()
+    }
+
     async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
         validate(&request)?;
         let mut child = self.spawn(&request).await?;
@@ -195,7 +232,8 @@ impl ShellPort for LocalShell {
             Ok(status) => (status.map_err(io)?.code(), false),
             Err(_) => {
                 group.kill();
-                // Fallback in case `kill` could not run; harmless otherwise.
+                // Fallback in case the kill utility could not run; harmless
+                // otherwise.
                 if let Err(err) = child.start_kill() {
                     tracing::trace!(%err, "leader already gone");
                 }
@@ -214,7 +252,9 @@ impl ShellPort for LocalShell {
     }
 }
 
+// The tests drive POSIX tools (`sh`, `sleep`, `env`, `pwd`).
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
@@ -466,5 +506,68 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ShellError::Spawn(_)), "{err:?}");
+    }
+}
+
+#[cfg(test)]
+#[cfg(windows)]
+mod windows_tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    fn shell(dir: &tempfile::TempDir) -> LocalShell {
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = root
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_owned();
+        LocalShell::new(WorkspaceRoot::new(root).unwrap())
+    }
+
+    #[tokio::test]
+    async fn runs_a_program_found_on_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = shell(&dir)
+            .run(RunCommandRequest::new("cmd", ["/C", "echo", "hello"]))
+            .await
+            .unwrap();
+        assert!(out.success(), "{out:?}");
+        assert_eq!(out.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_the_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        let request = RunCommandRequest {
+            timeout_s: 1,
+            ..RunCommandRequest::new("cmd", ["/C", "ping -n 30 127.0.0.1 > NUL"])
+        };
+        let out = shell(&dir).run(request).await.unwrap();
+        assert!(out.timed_out);
+        assert!(started.elapsed() < Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn missing_program_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = shell(&dir)
+            .run(RunCommandRequest::new(
+                "crest-no-such-program",
+                Vec::<String>::new(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ShellError::NotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn credentials_are_scrubbed_whatever_the_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = shell(&dir)
+            .with_inherited_env([("anthropic_api_key", "k"), ("Path", r"C:\bin")])
+            .environment();
+        assert_eq!(env, [("Path".into(), r"C:\bin".into())]);
     }
 }

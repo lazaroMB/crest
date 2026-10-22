@@ -425,7 +425,10 @@ mod tests {
                 .env("GIT_AUTHOR_EMAIL", "crest@example.com")
                 .env("GIT_COMMITTER_NAME", "crest")
                 .env("GIT_COMMITTER_EMAIL", "crest@example.com")
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
                 .output()
                 .map_err(|e| crate::ports::shell::ShellError::Spawn(e.to_string()))?;
             Ok(CommandOutput {

@@ -20,13 +20,20 @@ pub const MAX_BODY_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_REDIRECTS: u32 = 5;
 /// Marks the trailer `-w` writes after the body.
 const TRAILER: &str = "\n\u{1f}crest\u{1f}";
-/// Environment variables passed to curl; everything else is dropped.
-const KEPT_ENV: [&str; 16] = [
+/// Environment variables passed to curl; everything else is dropped. The
+/// Windows ones (`SYSTEMROOT`…) are what its networking and TLS need there.
+const KEPT_ENV: [&str; 22] = [
     "PATH",
     "HOME",
     "LANG",
     "LC_ALL",
     "SYSTEMROOT",
+    "WINDIR",
+    "USERPROFILE",
+    "TEMP",
+    "TMP",
+    "COMSPEC",
+    "PATHEXT",
     "http_proxy",
     "https_proxy",
     "all_proxy",
@@ -40,7 +47,13 @@ const KEPT_ENV: [&str; 16] = [
     "CURL_CA_BUNDLE",
 ];
 /// What curl says it is.
-pub const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) crest";
+pub const USER_AGENT: &str = if cfg!(windows) {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) crest"
+} else if cfg!(target_os = "macos") {
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) crest"
+} else {
+    "Mozilla/5.0 (X11; Linux x86_64) crest"
+};
 
 /// One request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,13 +188,18 @@ fn exit_error(code: Option<i32>, stderr: &str, timeout_s: u64) -> WebError {
     }
 }
 
-/// The environment curl gets from `inherited`.
+/// The environment curl gets from `inherited` (names compared as the
+/// platform does: `Path` is `PATH` on Windows).
 pub fn environment(
     inherited: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> Vec<(OsString, OsString)> {
     inherited
         .into_iter()
-        .filter(|(key, _)| KEPT_ENV.iter().any(|kept| key == kept))
+        .filter(|(key, _)| {
+            KEPT_ENV
+                .iter()
+                .any(|kept| platform::process::same_env_name(key, kept))
+        })
         .collect()
 }
 
@@ -192,7 +210,9 @@ pub async fn run(
     request: &Request,
     timeout_s: u64,
 ) -> Result<Response, WebError> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    platform::process::background(command.as_std_mut());
+    let mut child = command
         .args(args(request, timeout_s))
         .env_clear()
         .envs(env.iter().cloned())

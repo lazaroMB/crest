@@ -8,7 +8,6 @@
 //!
 //! [`LoadedConfig`]: application::ports::plugin::LoadedConfig
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,8 +27,6 @@ mod diag;
 mod merge;
 mod parse;
 
-/// Directory under the config home that holds crest's files.
-const APP_DIR: &str = "crest";
 /// Name of every config file.
 const INIT_FILE: &str = "init.lua";
 /// Workspace directory holding the workspace config.
@@ -41,25 +38,17 @@ const GLOBAL_NAME: &str = "config";
 /// Name tools and hooks of the workspace config are attributed to.
 const WORKSPACE_NAME: &str = "workspace";
 
-/// Config files for `workspace`, following `XDG_CONFIG_HOME` and falling
-/// back to `~/.config` on every platform.
+/// Config files for `workspace`: the global one in crest's config directory
+/// (`$XDG_CONFIG_HOME/crest`, else `~/.config/crest`, or `%APPDATA%\crest`
+/// on Windows; see [`platform::dirs::config_dir`]) and the workspace's.
 #[must_use]
 pub fn default_sources(workspace: &Path) -> ConfigSources {
-    sources_from(
-        std::env::var_os("XDG_CONFIG_HOME"),
-        dirs::home_dir(),
-        workspace,
-    )
+    sources_from(platform::dirs::config_dir(), workspace)
 }
 
-fn sources_from(xdg: Option<OsString>, home: Option<PathBuf>, workspace: &Path) -> ConfigSources {
-    let config_home = xdg
-        .map(PathBuf::from)
-        // The XDG spec says relative values must be ignored.
-        .filter(|p| p.is_absolute())
-        .or_else(|| home.map(|h| h.join(".config")));
+fn sources_from(config_dir: Option<PathBuf>, workspace: &Path) -> ConfigSources {
     ConfigSources {
-        global: config_home.map(|dir| dir.join(APP_DIR).join(INIT_FILE)),
+        global: config_dir.map(|dir| dir.join(INIT_FILE)),
         workspace: Some(workspace.join(WORKSPACE_DIR).join(INIT_FILE)),
     }
 }
@@ -253,8 +242,11 @@ fn plugin_files(
     found.sort();
 
     for entry in listed {
-        let dir = match entry.strip_prefix("~/") {
-            Some(rest) => match dirs::home_dir() {
+        let home_relative = entry
+            .strip_prefix("~/")
+            .or_else(|| entry.strip_prefix("~\\").filter(|_| cfg!(windows)));
+        let dir = match home_relative {
+            Some(rest) => match platform::dirs::home_dir() {
                 Some(home) => home.join(rest),
                 None => {
                     errors.push(PluginDiagnostic {
@@ -307,7 +299,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
-            let config_dir = dir.path().join("config").join(APP_DIR);
+            let config_dir = dir.path().join("config").join(platform::dirs::APP_DIR);
             let workspace = dir.path().join("ws");
             std::fs::create_dir_all(&config_dir).unwrap();
             std::fs::create_dir_all(workspace.join(WORKSPACE_DIR)).unwrap();
@@ -756,37 +748,17 @@ end)
     }
 
     #[test]
-    fn uses_xdg_config_home_when_set() {
-        let s = sources_from(
-            Some("/xdg".into()),
-            Some("/home/u".into()),
-            Path::new("/ws"),
-        );
-        assert_eq!(s.global, Some(PathBuf::from("/xdg/crest/init.lua")));
-        assert_eq!(s.workspace, Some(PathBuf::from("/ws/.crest/init.lua")));
-    }
-
-    #[test]
-    fn falls_back_to_dot_config_in_home() {
-        let s = sources_from(None, Some("/home/u".into()), Path::new("/ws"));
-        assert_eq!(
-            s.global,
-            Some(PathBuf::from("/home/u/.config/crest/init.lua"))
-        );
-    }
-
-    #[test]
-    fn ignores_a_relative_xdg_config_home() {
-        let s = sources_from(Some("rel".into()), Some("/home/u".into()), Path::new("/ws"));
-        assert_eq!(
-            s.global,
-            Some(PathBuf::from("/home/u/.config/crest/init.lua"))
-        );
+    fn the_global_config_lives_in_the_config_dir() {
+        let config = std::env::temp_dir().join("crest");
+        let ws = std::env::temp_dir().join("ws");
+        let s = sources_from(Some(config.clone()), &ws);
+        assert_eq!(s.global, Some(config.join("init.lua")));
+        assert_eq!(s.workspace, Some(ws.join(".crest").join("init.lua")));
     }
 
     #[test]
     fn no_home_means_no_global_config() {
-        let s = sources_from(None, None, Path::new("/ws"));
+        let s = sources_from(None, Path::new("ws"));
         assert_eq!(s.global, None);
         assert!(s.workspace.is_some());
     }

@@ -15,6 +15,7 @@ members = [
     "crates/adapters/mcp",
     "crates/adapters/telemetry",
     "crates/adapters/export",
+    "crates/platform",
     "crates/ui",
     "crates/bin",
 ]
@@ -43,6 +44,7 @@ adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
 adapter-export = { path = "crates/adapters/export" }
 ui = { path = "crates/ui" }
+platform = { path = "crates/platform" }
 
 # Shared external crates
 anyhow = "1.0.104"
@@ -59,6 +61,8 @@ uuid = { version = "1.28.0", features = ["v4", "serde"] }
 # Adapter crates (wave 2). Workers may adjust features of the line they use.
 base64 = "0.23.1"
 dirs = "7.0.0"
+# Canonical paths without Windows' verbatim `\\?\` prefix.
+dunce = "1.0.5"
 eventsource-stream = "0.2.3"
 # Investigative and implementation flow engine. No `postgres` feature: it would pull sqlx.
 graph-flow = { version = "0.8.0", default-features = false }
@@ -103,12 +107,18 @@ notify = "8.2.0"
 # itself. 0.2.0 publishes no `gpui` feature; `-core` names the primitives.
 rusty-mermaid = { version = "=0.2.0", default-features = false }
 rusty-mermaid-core = "=0.2.0"
-# Offscreen 3D board of the simulator. Same major version as the wgpu GPUI
-# links on Linux (gpui-pre-wgpu 0.3.9), so it is not built twice there.
-wgpu = { version = "29.0.4", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "metal"] }
+# Offscreen 3D board of the simulator (DirectX 12 on Windows). Same major
+# version as the wgpu GPUI links on Linux (gpui-pre-wgpu 0.3.9), so it is not
+# built twice there.
+wgpu = { version = "29.0.4", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "metal", "dx12"] }
 bytemuck = "1.25.2"
 # Frames of GPUI's RenderImage (the version gpui-pre uses).
 image = { version = "0.25.10", default-features = false }
+
+# Icon and version of crest.exe (crates/bin build script, Windows targets).
+embed-resource = "3.0.12"
+# Windows console of the GUI binary (crates/platform only).
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 # Test-only crates
 # hyper serves adapter-mcp's example server over streamable HTTP.

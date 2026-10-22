@@ -185,7 +185,9 @@ pub(crate) fn io_error(path: &WorkspacePath, real: &Path, error: &std::io::Error
     }
 }
 
+// The fixtures build symlinks and permission modes, which are Unix-only.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::symlink;
 

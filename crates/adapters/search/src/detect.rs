@@ -112,9 +112,17 @@ impl Tool {
 
 /// How to install `tool` on `os` (a value of [`std::env::consts::OS`]).
 pub fn install_hint(tool: Tool, os: &str) -> String {
-    let (package, releases) = match tool {
-        Tool::Ripgrep => ("ripgrep", "https://github.com/BurntSushi/ripgrep/releases"),
-        Tool::Fzf => ("fzf", "https://github.com/junegunn/fzf/releases"),
+    let (package, winget, releases) = match tool {
+        Tool::Ripgrep => (
+            "ripgrep",
+            "BurntSushi.ripgrep.MSVC",
+            "https://github.com/BurntSushi/ripgrep/releases",
+        ),
+        Tool::Fzf => (
+            "fzf",
+            "junegunn.fzf",
+            "https://github.com/junegunn/fzf/releases",
+        ),
     };
     let min = tool.min_version();
     match os {
@@ -127,6 +135,10 @@ pub fn install_hint(tool: Tool, os: &str) -> String {
              (`apt install {package}`, `dnf install {package}`, `pacman -S {package}`); \
              if your distribution ships a version older than {min}, put the \
              official binary from {releases} in ~/.local/bin"
+        ),
+        "windows" => format!(
+            "install it with `winget install {winget}` or `scoop install {package}` \
+             (version {min} or newer), or download a binary from {releases}"
         ),
         _ => format!("install version {min} or newer from {releases} and put it in PATH"),
     }
@@ -344,6 +356,10 @@ mod tests {
         assert!(linux.contains("apt install ripgrep"), "{linux}");
         assert!(linux.contains("~/.local/bin"), "{linux}");
         assert!(install_hint(Tool::Ripgrep, "freebsd").contains("releases"));
+        assert!(
+            install_hint(Tool::Ripgrep, "windows")
+                .contains("winget install BurntSushi.ripgrep.MSVC")
+        );
     }
 
     #[tokio::test]

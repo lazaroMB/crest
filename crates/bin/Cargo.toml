@@ -38,12 +38,15 @@ ui.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-dirs.workspace = true
+platform.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # `signal` for Ctrl+C in headless mode.
 tokio = { workspace = true, features = ["signal"] }
+
+[build-dependencies]
+embed-resource.workspace = true
 
 [dev-dependencies]
 application = { workspace = true, features = ["testing"] }

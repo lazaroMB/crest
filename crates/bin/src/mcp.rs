@@ -16,7 +16,6 @@
 //! only by its owner.
 
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -35,18 +34,11 @@ use serde::{Deserialize, Serialize};
 /// Name of the store file in crest's data directory.
 const TRUST_FILE: &str = "mcp-trust.json";
 
-/// Default location of the store, following `XDG_DATA_HOME`.
+/// Default location of the store, in crest's data directory (see
+/// [`platform::dirs::data_dir`]).
 #[must_use]
 pub fn default_trust_path() -> Option<PathBuf> {
-    trust_path_from(std::env::var_os("XDG_DATA_HOME"), dirs::home_dir())
-}
-
-fn trust_path_from(xdg_data_home: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    let data_home = xdg_data_home
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| home.map(|h| h.join(".local").join("share")))?;
-    Some(data_home.join("crest").join(TRUST_FILE))
+    platform::dirs::data_dir().map(|dir| dir.join(TRUST_FILE))
 }
 
 /// Approved workspace servers, by workspace root and server name.
@@ -122,7 +114,8 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)
 }
 
-/// Writes `bytes` to `path`.
+/// Writes `bytes` to `path`. On Windows the file inherits the access list of
+/// crest's data directory under `%LOCALAPPDATA%`, already private to the user.
 #[cfg(not(unix))]
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::write(path, bytes)
@@ -331,18 +324,7 @@ fn change_notice(name: &str, state: &McpServerState) -> Option<(NoticeLevel, Str
 /// not open.
 fn login_page(events: Option<Arc<dyn EventSink>>) -> adapter_mcp::ShowLoginUrl {
     Arc::new(move |server: &str, url: &str| {
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        let opened = std::process::Command::new(opener)
-            .arg(url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .is_ok();
+        let opened = platform::process::open_url(url);
         let message = if opened {
             format!("MCP server `{server}`: log in in the browser (if it did not open: {url})")
         } else {
@@ -731,18 +713,5 @@ mod tests {
                 .await
                 .is_ok()
         );
-    }
-
-    #[test]
-    fn the_store_follows_xdg_data_home() {
-        assert_eq!(
-            trust_path_from(Some("/data".into()), Some("/home/u".into())),
-            Some(PathBuf::from("/data/crest/mcp-trust.json"))
-        );
-        assert_eq!(
-            trust_path_from(Some("rel".into()), Some("/home/u".into())),
-            Some(PathBuf::from("/home/u/.local/share/crest/mcp-trust.json"))
-        );
-        assert_eq!(trust_path_from(None, None), None);
     }
 }

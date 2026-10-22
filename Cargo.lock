@@ -133,7 +133,9 @@ version = "0.11.0"
 dependencies = [
  "application",
  "async-trait",
+ "dirs 7.0.0",
  "domain",
+ "dunce",
  "similar 3.2.0",
  "tempfile",
  "thiserror 2.0.21",
@@ -147,10 +149,11 @@ version = "0.11.0"
 dependencies = [
  "application",
  "async-trait",
- "dirs 7.0.0",
  "domain",
+ "dunce",
  "keyring",
  "mlua",
+ "platform",
  "reqwest",
  "serde_json",
  "tempfile",
@@ -169,6 +172,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "keyring",
+ "platform",
  "reqwest",
  "rmcp",
  "schemars",
@@ -205,7 +209,9 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "domain",
+ "dunce",
  "ignore",
+ "platform",
  "serde",
  "serde_json",
  "tempfile",
@@ -221,6 +227,7 @@ dependencies = [
  "application",
  "async-trait",
  "domain",
+ "platform",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -233,9 +240,9 @@ version = "0.11.0"
 dependencies = [
  "application",
  "async-trait",
- "dirs 7.0.0",
  "domain",
  "graph-flow",
+ "platform",
  "rusqlite",
  "serde",
  "serde_json",
@@ -272,6 +279,7 @@ dependencies = [
  "async-trait",
  "html2text",
  "keyring",
+ "platform",
  "regex",
  "serde_json",
  "tokio",
@@ -1606,11 +1614,12 @@ dependencies = [
  "application",
  "async-trait",
  "clap",
- "dirs 7.0.0",
  "domain",
+ "embed-resource",
  "futures",
  "gpui-component",
  "gpui-pre",
+ "platform",
  "serde",
  "serde_json",
  "tempfile",
@@ -5726,6 +5735,16 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "platform"
+version = "0.11.0"
+dependencies = [
+ "dirs 7.0.0",
+ "tempfile",
+ "tracing",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "png"

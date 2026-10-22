@@ -186,6 +186,60 @@ fn is_unsafe_git_option(arg: &str) -> bool {
             .any(|unsafe_| unsafe_.starts_with(name))
 }
 
+/// The shell that runs a whole command line, where pipes and globs must
+/// work: `/!` commands and plan checks with shell syntax. The line is
+/// passed as the last argument, after [`ShellSpec::args`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellSpec {
+    /// The shell program (`sh`, `pwsh`).
+    pub program: String,
+    /// Arguments before the line (`-c`).
+    pub args: Vec<String>,
+}
+
+impl ShellSpec {
+    /// `sh -c <line>`.
+    #[must_use]
+    pub fn posix() -> Self {
+        Self {
+            program: "sh".into(),
+            args: vec!["-c".into()],
+        }
+    }
+
+    /// `<program> -NoProfile -NonInteractive -Command <line>`, for `pwsh`
+    /// (PowerShell 7) or `powershell` (Windows PowerShell 5.1).
+    #[must_use]
+    pub fn powershell(program: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            args: ["-NoProfile", "-NonInteractive", "-Command"]
+                .map(String::from)
+                .to_vec(),
+        }
+    }
+
+    /// The request that runs `line` with this shell.
+    #[must_use]
+    pub fn request(&self, line: &str) -> RunCommandRequest {
+        RunCommandRequest::new(
+            self.program.clone(),
+            self.args.iter().cloned().chain([line.to_owned()]),
+        )
+    }
+}
+
+impl Default for ShellSpec {
+    /// `sh -c` on Unix; Windows PowerShell, present on every Windows, there.
+    fn default() -> Self {
+        if cfg!(windows) {
+            Self::powershell("powershell")
+        } else {
+            Self::posix()
+        }
+    }
+}
+
 /// Runs external commands in the workspace.
 #[async_trait]
 pub trait ShellPort: Send + Sync {
@@ -201,6 +255,12 @@ pub trait ShellPort: Send + Sync {
     /// [`classify_command`]; adapters may only make it stricter.
     fn classify(&self, request: &RunCommandRequest) -> ToolEffect {
         classify_command(request)
+    }
+
+    /// The shell for whole command lines (see [`ShellSpec`]); the
+    /// platform's default unless configured (`app.opt.shell`).
+    fn line_shell(&self) -> ShellSpec {
+        ShellSpec::default()
     }
 }
 

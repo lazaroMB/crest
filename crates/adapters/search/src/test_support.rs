@@ -1,6 +1,8 @@
 //! Helpers shared by the adapter's tests.
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use domain::workspace::{WorkspacePath, WorkspaceRoot};
 
@@ -15,7 +17,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         Self { _dir: dir, root }
     }
 
@@ -55,6 +57,7 @@ pub fn strs(paths: &[WorkspacePath]) -> Vec<&str> {
 /// its path. It waits until the script can be executed: a process forked
 /// by another test while the file was open for writing keeps it "busy"
 /// (`ETXTBSY`) until that process calls `exec`.
+#[cfg(unix)]
 pub fn fake_tool(dir: &Path, name: &str, script: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);

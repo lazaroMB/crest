@@ -133,7 +133,9 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::*;
-    use crate::test_support::{Workspace, fake_tool, p, strs};
+    #[cfg(unix)]
+    use crate::test_support::fake_tool;
+    use crate::test_support::{Workspace, p, strs};
 
     fn ws() -> Workspace {
         let ws = Workspace::new();
@@ -225,6 +227,7 @@ mod tests {
         assert_eq!((list.total, list.truncated), (4, false));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn falls_back_to_substrings_with_an_old_fzf() {
         let ws = ws();
@@ -257,6 +260,7 @@ mod tests {
         assert!(list.truncated);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn fzf_errors_are_reported() {
         let ws = ws();

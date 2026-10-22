@@ -417,13 +417,14 @@ impl ProjectPickerView {
     }
 }
 
-/// `dir` as the path field shows it, ending in `/`.
+/// `dir` as the path field shows it, ending in a separator (`\` on
+/// Windows).
 fn with_slash(dir: &Path) -> String {
     let text = dir.display().to_string();
-    if text.ends_with('/') {
+    if text.ends_with(std::path::is_separator) {
         text
     } else {
-        format!("{text}/")
+        format!("{text}{}", std::path::MAIN_SEPARATOR)
     }
 }
 

@@ -471,8 +471,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use application::ports::search::{ListFilesRequest, TreeNode, TreeRequest};
-    use application::testing::fs::InMemoryFs;
-    use domain::workspace::WorkspaceRoot;
+    use application::testing::fs::{InMemoryFs, test_root};
+
     use futures::executor::block_on;
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -480,7 +480,7 @@ mod tests {
 
     fn fake_fs() -> Arc<InMemoryFs> {
         Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            InMemoryFs::new(test_root())
                 .with_file("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n")
                 .with_file("src/main.rs", "fn main() {\n    run();\n}\n")
                 .with_file("src/lib.rs", "pub fn run() {}\n")

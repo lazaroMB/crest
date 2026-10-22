@@ -40,11 +40,18 @@ impl RipgrepSearch {
 
     /// Arguments shared by every `rg` invocation: no user config (it could
     /// change the output format), hidden files included, ignore files
-    /// honored outside git repositories too, and the walk globs.
+    /// honored outside git repositories too, `/` between components on
+    /// every platform (paths parse as [`WorkspacePath`]), and the walk globs.
     pub(crate) fn rg_common_args(&self, user_glob: Option<&str>) -> Vec<OsString> {
-        let mut args: Vec<OsString> = ["--no-config", "--hidden", "--no-require-git"]
-            .map(OsString::from)
-            .to_vec();
+        let mut args: Vec<OsString> = [
+            "--no-config",
+            "--hidden",
+            "--no-require-git",
+            "--path-separator",
+            "/",
+        ]
+        .map(OsString::from)
+        .to_vec();
         for glob in self.walk_globs(user_glob) {
             args.push("--glob".into());
             args.push(glob.into());
@@ -248,7 +255,9 @@ mod tests {
     use application::ports::search::TreeNodeKind;
 
     use super::*;
-    use crate::test_support::{Workspace, fake_tool, p, strs};
+    #[cfg(unix)]
+    use crate::test_support::fake_tool;
+    use crate::test_support::{Workspace, p, strs};
 
     /// The same workspace searched with `rg` and with the fallback walker.
     fn both(ws: &Workspace) -> [(&'static str, RipgrepSearch); 2] {
@@ -430,6 +439,7 @@ mod tests {
         assert_eq!(names, [".config", "src", ".gitignore", "README.md"]);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rg_timeout_is_reported() {
         let ws = Workspace::new();
@@ -450,6 +460,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rg_errors_without_output_fail() {
         let ws = Workspace::new();
@@ -464,6 +475,7 @@ mod tests {
         assert_eq!(err, SearchError::Io("rg: boom".into()));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn partial_rg_errors_keep_the_output() {
         let ws = Workspace::new();

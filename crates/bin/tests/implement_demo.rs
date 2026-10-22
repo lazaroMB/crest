@@ -2,8 +2,10 @@
 //! tasks over a real git repository with a real bug and a failing test,
 //! implemented end to end by the real composition root (LocalFs,
 //! LocalShell with git, SQLite) with the model replaced by a script and
-//! the gates and approvals answered on a simulated stdin.
+//! the gates and approvals answered on a simulated stdin. The checks run
+//! `sh` scripts: Unix only.
 
+#![cfg(unix)]
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
 #![allow(clippy::unwrap_used)]
 

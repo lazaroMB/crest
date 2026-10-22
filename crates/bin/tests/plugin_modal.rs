@@ -141,7 +141,7 @@ async fn a_plugin_tool_opens_a_modal_with_checked_images() {
     let CustomNode::Col { children } = &spec.content else {
         panic!("{:?}", spec.content)
     };
-    let plot = std::fs::canonicalize(ws.join("out/plot.png")).unwrap();
+    let plot = adapter_fs::guard::canonicalize_blocking(&ws.join("out/plot.png")).unwrap();
     assert!(
         matches!(
             &children[0],

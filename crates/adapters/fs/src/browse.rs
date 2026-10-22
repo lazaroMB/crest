@@ -22,11 +22,11 @@ pub struct LocalProjectBrowser {
 }
 
 impl LocalProjectBrowser {
-    /// A browser whose `~` is `$HOME`.
+    /// A browser whose `~` is the user's home (`$HOME`, `%USERPROFILE%`).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            home: std::env::var_os("HOME").map(PathBuf::from),
+            home: dirs::home_dir(),
         }
     }
 
@@ -41,8 +41,10 @@ impl LocalProjectBrowser {
     /// `input` with a leading `~` replaced by the home directory.
     fn expand(&self, input: &str) -> PathBuf {
         match (input.strip_prefix('~'), &self.home) {
-            (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
-                home.join(rest.trim_start_matches('/'))
+            (Some(rest), Some(home))
+                if rest.is_empty() || rest.starts_with(std::path::is_separator) =>
+            {
+                home.join(rest.trim_start_matches(std::path::is_separator))
             }
             _ => PathBuf::from(input),
         }
@@ -59,7 +61,7 @@ fn unreadable(path: &Path, err: &std::io::Error) -> BrowseError {
 /// The canonical directory at `path`, or why it is not one.
 async fn directory(path: &Path) -> Result<PathBuf, BrowseError> {
     let shown = || path.display().to_string();
-    let canonical = match tokio::fs::canonicalize(path).await {
+    let canonical = match crate::guard::canonicalize(path).await {
         Ok(canonical) => canonical,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(BrowseError::NotFound(shown()));
@@ -145,7 +147,9 @@ impl ProjectBrowserPort for LocalProjectBrowser {
     }
 }
 
+// The fixtures build symlinks and permission modes, which are Unix-only.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
 

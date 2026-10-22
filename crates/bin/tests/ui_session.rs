@@ -206,7 +206,7 @@ fn a_turn_from_the_input_edits_after_approval_and_is_saved(cx: &mut TestAppConte
 
     // Saved at the end of the turn, with the prompt in the timeline.
     let store = SqliteSessionStore::open(&w.db).unwrap();
-    let root = std::fs::canonicalize(&w.workspace).unwrap();
+    let root = adapter_fs::guard::canonicalize_blocking(&w.workspace).unwrap();
     let saved = w
         .runtime
         .block_on(store.latest_for_workspace(&root.display().to_string()))
@@ -328,6 +328,7 @@ fn keymaps_and_commands_of_init_lua_run_their_actions(cx: &mut TestAppContext) {
     );
 }
 
+#[cfg(unix)]
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .args(args)
@@ -339,7 +340,8 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
 }
 
 /// A git repository in the workspace with the Spec `0001-suma` and its
-/// one-task plan, committed on `main`.
+/// one-task plan, committed on `main`. Its check runs `grep`: Unix only.
+#[cfg(unix)]
 fn spec_repository(workspace: &std::path::Path) {
     let spec = workspace.join(".crest/specs/0001-suma");
     std::fs::create_dir_all(&spec).unwrap();
@@ -374,6 +376,7 @@ fn has_text(w: &Window_, cx: &mut VisualTestContext, needle: &str) -> bool {
     texts(&blocks(w, cx)).iter().any(|t| t.contains(needle))
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn implement_runs_the_flow_and_the_chat_answers_its_gates(cx: &mut TestAppContext) {
     let script = vec![
@@ -505,6 +508,8 @@ fn open_shows_workspace_files_and_refuses_the_rest(cx: &mut TestAppContext) {
     std::fs::write(w.workspace.join(".env"), "KEY=1\n").unwrap();
     let outside = w.workspace.parent().unwrap().join("outside.txt");
     std::fs::write(&outside, "secret\n").unwrap();
+    // Creating symlinks on Windows needs a privilege the CI may not have.
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, w.workspace.join("link.txt")).unwrap();
 
     cx.simulate_input("/open @README.md");
@@ -532,7 +537,10 @@ fn open_shows_workspace_files_and_refuses_the_rest(cx: &mut TestAppContext) {
         ("/open @nope.md", "does not exist"),
         ("/open @src", "is a directory"),
         ("/open README.md", "usage: /open @<path>"),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(line, _)| cfg!(unix) || !line.contains("link.txt"))
+    {
         // The open modal has the focus: run the line as the input would.
         let command = line.strip_prefix('/').unwrap();
         w.session
@@ -580,7 +588,7 @@ fn chat_only_images_are_saved_without_a_model_call(cx: &mut TestAppContext) {
     });
     assert!(w.llm.requests().is_empty());
     let store = SqliteSessionStore::open(&w.db).unwrap();
-    let root = std::fs::canonicalize(&w.workspace).unwrap();
+    let root = adapter_fs::guard::canonicalize_blocking(&w.workspace).unwrap();
     let saved = w
         .runtime
         .block_on(store.latest_for_workspace(&root.display().to_string()))
@@ -676,8 +684,9 @@ fn the_picker_opens_a_project_and_slash_project_goes_back(cx: &mut TestAppContex
     cx.run_until_parked();
     workbench.read_with(cx, |w, cx| {
         let picker = w.project_picker().expect("back to the picker");
-        let shown = std::fs::canonicalize(dir.path()).unwrap();
-        assert_eq!(picker.read(cx).text(cx), format!("{}/", shown.display()));
+        let shown = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
+        let expected = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
+        assert_eq!(picker.read(cx).text(cx), expected);
     });
     assert!(weak.upgrade().is_none(), "the session was dropped");
 }

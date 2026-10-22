@@ -28,7 +28,19 @@ use crate::ports::search::{
     ColumnRange, ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepHit,
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
-use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort};
+use crate::ports::shell::{CommandOutput, RunCommandRequest, ShellError, ShellPort, ShellSpec};
+
+/// The root of in-memory test workspaces: `/ws`, or `C:\ws` on Windows,
+/// where `/ws` is not absolute.
+///
+/// # Panics
+///
+/// Never: the path is absolute on its platform.
+#[must_use]
+pub fn test_root() -> WorkspaceRoot {
+    let path = if cfg!(windows) { r"C:\ws" } else { "/ws" };
+    WorkspaceRoot::new(path).unwrap_or_else(|err| panic!("{err}"))
+}
 
 /// A workspace held in memory. Directories are implied by the files below
 /// them, as in a file listing, so empty directories do not exist.
@@ -688,6 +700,11 @@ impl Drop for CancelGuard {
 
 #[async_trait]
 impl ShellPort for ScriptedShell {
+    /// `sh -c` on every platform, so scripts are the same everywhere.
+    fn line_shell(&self) -> ShellSpec {
+        ShellSpec::posix()
+    }
+
     async fn run(&self, request: RunCommandRequest) -> Result<CommandOutput, ShellError> {
         let key = (request.command.clone(), request.args.clone());
         let reply = self.script.get(&key).or(self.default.as_ref()).cloned();
@@ -713,7 +730,7 @@ mod tests {
     }
 
     fn fs() -> InMemoryFs {
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+        InMemoryFs::new(test_root())
             .with_file("src/lib.rs", "one\ntwo\nthree\n")
             .with_file(".env", "KEY=secret\n")
             .with_bytes("logo.png", vec![0x89, b'P', 0, 1])
@@ -726,7 +743,7 @@ mod tests {
     #[tokio::test]
     async fn reads_a_slice_of_a_text_file() {
         let fs = fs();
-        assert_eq!(fs.root().as_path(), std::path::Path::new("/ws"));
+        assert_eq!(fs.root(), &test_root());
         let request = ReadFileRequest {
             offset: Some(2),
             limit: Some(1),
@@ -1016,7 +1033,7 @@ mod tests {
     }
 
     fn search_fs() -> InMemoryFs {
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+        InMemoryFs::new(test_root())
             .with_file("Cargo.toml", "")
             .with_file("src/main.rs", "")
             .with_file("src/ports/fs.rs", "")
@@ -1117,7 +1134,7 @@ mod tests {
     }
 
     fn grep_fs() -> InMemoryFs {
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+        InMemoryFs::new(test_root())
             .with_file("src/a.rs", "fn one() {}\nlet x = 1;\nfn two() {}\nend\n")
             .with_file("src/b.txt", "FN upper\n")
             .with_file("docs/c.md", "fn in docs\n")

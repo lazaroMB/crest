@@ -12,6 +12,7 @@ application.workspace = true
 async-trait.workspace = true
 domain.workspace = true
 keyring.workspace = true
+platform.workspace = true
 reqwest.workspace = true
 rmcp = { workspace = true, features = ["auth"] }
 serde.workspace = true

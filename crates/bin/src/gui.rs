@@ -1416,7 +1416,7 @@ pub fn session_parts(
         Err(err) => {
             let needs_login = err.chain().any(|e| e.is::<MissingApiKey>());
             let reason = format!("{err:#}");
-            let root = std::fs::canonicalize(&config.workspace)
+            let root = adapter_fs::guard::canonicalize_blocking(&config.workspace)
                 .map_err(anyhow::Error::from)
                 .and_then(|dir| WorkspaceRoot::new(dir).map_err(anyhow::Error::from))
                 // The workspace itself is the problem: report the original

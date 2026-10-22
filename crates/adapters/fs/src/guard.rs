@@ -35,7 +35,7 @@ impl WorkspaceGuard {
     /// Fails when `path` does not exist or is not a directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FsError> {
         let path = path.as_ref();
-        let canonical = std::fs::canonicalize(path).map_err(|e| io_error(path, &e))?;
+        let canonical = canonicalize_blocking(path).map_err(|e| io_error(path, &e))?;
         if !canonical.is_dir() {
             return Err(FsError::Io(format!(
                 "workspace root is not a directory: {}",
@@ -76,7 +76,7 @@ impl WorkspaceGuard {
     pub async fn resolve_existing(&self, input: &str) -> Result<(WorkspacePath, PathBuf), FsError> {
         let path = self.root.resolve(input)?;
         let joined = self.root.join(&path);
-        let canonical = match tokio::fs::canonicalize(&joined).await {
+        let canonical = match canonicalize(&joined).await {
             Ok(canonical) => canonical,
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 // A dangling symlink pointing outside must not look like a
@@ -153,7 +153,7 @@ impl WorkspaceGuard {
     ) -> Result<(WorkspacePath, PathBuf), FsError> {
         let path = self.root.resolve(input)?;
         let joined = self.root.join(&path);
-        let canonical = match std::fs::canonicalize(&joined) {
+        let canonical = match canonicalize_blocking(&joined) {
             Ok(canonical) => canonical,
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(FsError::NotFound { path }),
             Err(e) => return Err(io_error(&joined, &e)),
@@ -207,6 +207,20 @@ impl WorkspaceGuard {
     }
 }
 
+/// [`std::fs::canonicalize`] without Windows' verbatim `\\?\` prefix when
+/// the plain form names the same file, so canonical paths compare with the
+/// root and read well in messages.
+pub fn canonicalize_blocking(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
+
+/// Async form of [`canonicalize_blocking`].
+pub async fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    tokio::fs::canonicalize(path)
+        .await
+        .map(|p| dunce::simplified(&p).to_path_buf())
+}
+
 /// How many dangling symlinks [`resolve_lenient`] follows, as Linux's
 /// `MAXSYMLINKS`.
 const MAX_SYMLINK_HOPS: usize = 40;
@@ -225,7 +239,7 @@ async fn resolve_lenient(path: &Path) -> Result<Option<PathBuf>, FsError> {
     let mut tail: Vec<std::ffi::OsString> = Vec::new();
     let mut hops = 0;
     loop {
-        match tokio::fs::canonicalize(&current).await {
+        match canonicalize(&current).await {
             Ok(canonical) => {
                 return Ok(Some(tail.iter().rev().fold(canonical, |p, n| p.join(n))));
             }
@@ -270,7 +284,9 @@ fn io_error(path: &Path, error: &std::io::Error) -> FsError {
     FsError::Io(format!("{}: {error}", path.display()))
 }
 
+// The fixtures build symlinks and permission modes, which are Unix-only.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::symlink;
 
@@ -589,5 +605,68 @@ mod tests {
             sensitive(guard.resolve_readable("notes.md").await).as_deref(),
             Some("*.md")
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg(windows)]
+mod windows_tests {
+    use super::*;
+
+    fn guard() -> (tempfile::TempDir, WorkspaceGuard) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src/sub")).unwrap();
+        std::fs::write(dir.path().join("src/sub/a.rs"), "a").unwrap();
+        std::fs::write(dir.path().join("src/sub/.env"), "SECRET=1").unwrap();
+        let guard = WorkspaceGuard::open(dir.path()).unwrap();
+        (dir, guard)
+    }
+
+    #[test]
+    fn the_root_has_no_verbatim_prefix() {
+        let (_dir, guard) = guard();
+        let root = guard.root().as_path().to_string_lossy().into_owned();
+        assert!(!root.starts_with(r"\\?\"), "{root}");
+    }
+
+    #[tokio::test]
+    async fn backslash_input_resolves_and_reports_slashes() {
+        let (_dir, guard) = guard();
+        let (path, real) = guard.resolve_readable(r"src\sub\a.rs").await.unwrap();
+        assert_eq!(path.as_str(), "src/sub/a.rs");
+        assert!(real.starts_with(guard.root().as_path()));
+        let absolute = guard.root().as_path().join(r"src\sub\a.rs");
+        let (path, _) = guard
+            .resolve_readable(&absolute.to_string_lossy())
+            .await
+            .unwrap();
+        assert_eq!(path.as_str(), "src/sub/a.rs");
+    }
+
+    #[tokio::test]
+    async fn sensitive_files_are_denied_whatever_the_spelling() {
+        let (_dir, guard) = guard();
+        for input in [r"src\sub\.env", "src/sub/.ENV", r"SRC\Sub\.Env"] {
+            assert!(
+                matches!(
+                    guard.resolve_readable(input).await,
+                    Err(FsError::SensitivePath { .. })
+                ),
+                "{input}"
+            );
+        }
+        assert!(matches!(
+            guard.resolve_readable_blocking(r"src\sub\.ENV"),
+            Err(FsError::SensitivePath { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn other_drives_are_outside() {
+        let (_dir, guard) = guard();
+        assert!(matches!(
+            guard.resolve_existing(r"Z:\x").await,
+            Err(FsError::Path(PathError::OutsideWorkspace { .. }))
+        ));
     }
 }

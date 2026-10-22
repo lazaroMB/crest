@@ -73,8 +73,13 @@ fn quoted_token(text: &str) -> Option<PathToken<'_>> {
     (at_word_start && !rest.contains('"')).then(|| split_token(start, rest, true))
 }
 
+/// Whether `c` separates path components: `/`, and `\` too on Windows.
+fn is_separator(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
 fn split_token(start: usize, rest: &str, quoted: bool) -> PathToken<'_> {
-    let split = rest.rfind('/').map_or(0, |ix| ix + 1);
+    let split = rest.rfind(is_separator).map_or(0, |ix| ix + 1);
     PathToken {
         start,
         dir_text: &rest[..split],
@@ -94,13 +99,15 @@ pub fn at_path(path: &str) -> String {
 
 /// The directory `token` lists.
 pub fn token_dir(token: &PathToken<'_>) -> TokenDir {
-    let dir = token.dir_text.trim_end_matches('/');
+    let dir = token.dir_text.trim_end_matches(is_separator);
     if dir.is_empty() && token.dir_text.is_empty() {
         return TokenDir::Inside(WorkspacePath::root());
     }
-    if token.dir_text.starts_with('/') || dir.split('/').any(|part| part == "..") {
+    if token.dir_text.starts_with(is_separator) || dir.split(is_separator).any(|part| part == "..")
+    {
         return TokenDir::Outside;
     }
+    // Rejects absolute paths, Windows drives (`C:`) included.
     WorkspacePath::parse(dir).map_or(TokenDir::Outside, TokenDir::Inside)
 }
 

@@ -375,13 +375,12 @@ pub(crate) mod testing {
     use domain::model::ModelPolicy;
     use domain::permission::PermissionPolicy;
     use domain::research::ResearchState;
-    use domain::workspace::WorkspaceRoot;
 
     use super::*;
     use crate::flows::research::node::NodeDeps;
     use crate::ports::events::DomainEvent;
     use crate::ports::llm::LlmPort;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::llm::ScriptedLlm;
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
     use crate::tools::files::{FileToolPorts, register_file_tools};
@@ -391,7 +390,7 @@ pub(crate) mod testing {
     /// A workspace with a small crate and its docs.
     pub(crate) fn workspace() -> Arc<InMemoryFs> {
         Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+            InMemoryFs::new(test_root())
                 .with_file("Cargo.toml", "[workspace]\n")
                 .with_file("src/login.rs", "pub fn login() {\n    hash();\n}\n")
                 .with_file("tests/login.rs", "#[test]\nfn logs_in() {}\n")

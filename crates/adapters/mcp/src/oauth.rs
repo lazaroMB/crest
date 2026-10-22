@@ -3,6 +3,9 @@
 //! registration (or a pre-registered client from the config), PKCE and a
 //! one-shot callback on a loopback port. Tokens live in the system keyring
 //! (service `crest`, entry `mcp-oauth:<server>`) and rmcp refreshes them.
+//! Windows' Credential Manager holds at most 2560 bytes per secret, less
+//! than an access and a refresh token together, so a long entry is split
+//! over `mcp-oauth:<server>#1`, `#2`… and the main entry says how many.
 
 use std::time::Duration;
 
@@ -18,6 +21,11 @@ use tokio::net::TcpListener;
 
 /// Keyring service of every crest secret.
 const KEYRING_SERVICE: &str = "crest";
+/// Most characters of one keyring secret; a longer entry is split. Windows
+/// stores secrets as UTF-16 in at most 2560 bytes.
+const CHUNK_CHARS: usize = 1000;
+/// Starts the main entry of a split one, followed by the number of parts.
+const CHUNKED_PREFIX: &str = "crest-chunks:";
 /// Longest wait for the browser to come back.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -45,16 +53,15 @@ impl KeyringStore {
 
     async fn blocking<T: Send + 'static>(
         &self,
-        work: impl FnOnce(keyring::Entry) -> Result<T, String> + Send + 'static,
+        work: impl FnOnce(&Entries) -> Result<T, String> + Send + 'static,
     ) -> Result<T, AuthError> {
-        let user = self.user.clone();
-        tokio::task::spawn_blocking(move || {
-            let entry = keyring::Entry::new(KEYRING_SERVICE, &user).map_err(|e| e.to_string())?;
-            work(entry)
-        })
-        .await
-        .map_err(|e| AuthError::CredentialStoreError(e.to_string()))?
-        .map_err(AuthError::CredentialStoreError)
+        let entries = Entries {
+            user: self.user.clone(),
+        };
+        tokio::task::spawn_blocking(move || work(&entries))
+            .await
+            .map_err(|e| AuthError::CredentialStoreError(e.to_string()))?
+            .map_err(AuthError::CredentialStoreError)
     }
 
     /// Whether tokens for this server and URL are stored.
@@ -64,28 +71,122 @@ impl KeyringStore {
 
     /// Deletes the entry; `false` when there was none.
     pub(crate) async fn delete(&self) -> Result<bool, String> {
-        self.blocking(|entry| match entry.delete_credential() {
+        self.blocking(Entries::delete)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The keyring entries of one server: the main one and its parts.
+struct Entries {
+    user: String,
+}
+
+impl Entries {
+    fn entry(&self, part: usize) -> Result<keyring::Entry, String> {
+        let user = if part == 0 {
+            self.user.clone()
+        } else {
+            format!("{}#{part}", self.user)
+        };
+        keyring::Entry::new(KEYRING_SERVICE, &user).map_err(|e| e.to_string())
+    }
+
+    /// The whole stored text, `None` when there is none.
+    fn read(&self) -> Result<Option<String>, String> {
+        let head = match self.entry(0)?.get_password() {
+            Ok(head) => head,
+            Err(keyring::Error::NoEntry) => return Ok(None),
+            Err(err) => return Err(err.to_string()),
+        };
+        let Some(count) = head.strip_prefix(CHUNKED_PREFIX) else {
+            return Ok(Some(head));
+        };
+        let count: usize = count
+            .parse()
+            .map_err(|_| "corrupt keyring entry".to_owned())?;
+        let mut text = String::new();
+        for part in 1..=count {
+            match self.entry(part)?.get_password() {
+                Ok(chunk) => text.push_str(&chunk),
+                // A part went missing: the tokens are unusable.
+                Err(keyring::Error::NoEntry) => return Ok(None),
+                Err(err) => return Err(err.to_string()),
+            }
+        }
+        Ok(Some(text))
+    }
+
+    /// Stores `text`, split when it is long, and drops parts left over by a
+    /// longer earlier value.
+    fn write(&self, text: &str) -> Result<(), String> {
+        let chunks = split(text, CHUNK_CHARS);
+        if chunks.len() == 1 {
+            self.entry(0)?
+                .set_password(text)
+                .map_err(|e| e.to_string())?;
+        } else {
+            for (i, chunk) in chunks.iter().enumerate() {
+                self.entry(i + 1)?
+                    .set_password(chunk)
+                    .map_err(|e| e.to_string())?;
+            }
+            self.entry(0)?
+                .set_password(&format!("{CHUNKED_PREFIX}{}", chunks.len()))
+                .map_err(|e| e.to_string())?;
+        }
+        let used = if chunks.len() == 1 { 0 } else { chunks.len() };
+        self.delete_parts_after(used);
+        Ok(())
+    }
+
+    /// Deletes the main entry and its parts; `false` when there was none.
+    fn delete(&self) -> Result<bool, String> {
+        self.delete_parts_after(0);
+        match self.entry(0)?.delete_credential() {
             Ok(()) => Ok(true),
             Err(keyring::Error::NoEntry) => Ok(false),
             Err(err) => Err(err.to_string()),
-        })
-        .await
-        .map_err(|e| e.to_string())
+        }
     }
+
+    /// Best effort: deletes parts `last + 1`, `last + 2`… until one is missing.
+    fn delete_parts_after(&self, last: usize) {
+        for part in last + 1.. {
+            match self.entry(part).map(|e| e.delete_credential()) {
+                Ok(Ok(())) => {}
+                _ => break,
+            }
+        }
+    }
+}
+
+/// `text` in pieces of at most `max` characters (one piece when it fits).
+fn split(text: &str, max: usize) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut rest = text;
+    while rest.chars().count() > max {
+        let cut = rest.char_indices().nth(max).map_or(rest.len(), |(i, _)| i);
+        let (chunk, tail) = rest.split_at(cut);
+        chunks.push(chunk);
+        rest = tail;
+    }
+    chunks.push(rest);
+    chunks
 }
 
 #[async_trait]
 impl CredentialStore for KeyringStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
         let url = self.url.clone();
-        self.blocking(move |entry| match entry.get_password() {
-            Ok(json) => Ok(serde_json::from_str::<Entry>(&json)
-                .ok()
-                // Tokens of another URL are not for this server.
-                .filter(|stored| stored.url == url)
-                .map(|stored| stored.credentials)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(err) => Err(err.to_string()),
+        self.blocking(move |entries| {
+            Ok(entries.read()?.and_then(|json| {
+                serde_json::from_str::<Entry>(&json)
+                    .ok()
+                    // Tokens of another URL are not for this server.
+                    .filter(|stored| stored.url == url)
+                    .map(|stored| stored.credentials)
+            }))
         })
         .await
     }
@@ -96,8 +197,7 @@ impl CredentialStore for KeyringStore {
             credentials,
         })
         .map_err(|e| AuthError::CredentialStoreError(e.to_string()))?;
-        self.blocking(move |entry| entry.set_password(&json).map_err(|e| e.to_string()))
-            .await
+        self.blocking(move |entries| entries.write(&json)).await
     }
 
     async fn clear(&self) -> Result<(), AuthError> {
@@ -252,6 +352,18 @@ async fn wait_callback(listener: &TcpListener, port: u16) -> Result<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_entries_split_on_character_boundaries() {
+        assert_eq!(split("short", 10), ["short"]);
+        assert_eq!(split("", 10), [""]);
+        assert_eq!(split("abcdefg", 3), ["abc", "def", "g"]);
+        assert_eq!(split("ñññññ", 2), ["ññ", "ññ", "ñ"]);
+        let long = "x".repeat(2500);
+        let parts = split(&long, CHUNK_CHARS);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.concat(), long);
+    }
 
     #[tokio::test]
     async fn the_callback_is_answered_and_returned() {

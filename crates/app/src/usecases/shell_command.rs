@@ -1,14 +1,15 @@
 //! `/!command`: a shell command the user runs in the workspace.
 //!
-//! The line runs with `sh -c` through the [`ShellPort`] (so pipes and
-//! globs work) without asking for approval: the user typed it. The result
+//! The line runs with the port's [`ShellPort::line_shell`] (`sh -c`, or
+//! PowerShell on Windows, so pipes and globs work) without asking for
+//! approval: the user typed it. The result
 //! is a [`BlockKind::Shell`] for the timeline and a context note that the
 //! front end sends to the model with the next prompt, as Claude Code does
 //! with `!` commands.
 
 use domain::block::BlockKind;
 
-use crate::ports::shell::{RunCommandRequest, ShellPort};
+use crate::ports::shell::ShellPort;
 
 /// Most bytes of each stream kept in the block (the timeline draws it).
 const MAX_SHOWN: usize = 200_000;
@@ -24,10 +25,10 @@ pub struct ShellRun {
     pub context: String,
 }
 
-/// Runs `line` with `sh -c` in the workspace.
+/// Runs `line` with the shell's line shell in the workspace.
 pub async fn run_user_command(shell: &dyn ShellPort, line: &str) -> ShellRun {
     let command = line.trim().to_owned();
-    let request = RunCommandRequest::new("sh", ["-c", command.as_str()]);
+    let request = shell.line_shell().request(&command);
     let (exit_code, stdout, stderr, timed_out, truncated) = match shell.run(request).await {
         Ok(output) => (
             output.status,

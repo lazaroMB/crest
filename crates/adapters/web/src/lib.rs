@@ -89,7 +89,9 @@ impl CurlWeb {
 
     /// Whether curl can be started (`curl --version` succeeds).
     pub async fn curl_available(&self) -> bool {
-        tokio::process::Command::new(&self.program)
+        let mut command = tokio::process::Command::new(&self.program);
+        platform::process::background(command.as_std_mut());
+        command
             .arg("--version")
             .env_clear()
             .envs(self.env.iter().cloned())

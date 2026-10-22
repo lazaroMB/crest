@@ -330,12 +330,11 @@ impl ImplementNode for LoadNode {
 pub(crate) mod tests {
     use std::sync::Arc;
 
-    use domain::workspace::WorkspaceRoot;
     use serde_json::json;
 
     use super::*;
     use crate::ports::shell::CommandOutput;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
 
     /// A plan with tasks `(id, depends_on)`, each with one file and one test.
     pub(crate) fn plan_json(tasks: &[(&str, &[&str])]) -> String {
@@ -358,8 +357,7 @@ pub(crate) mod tests {
     }
 
     fn fs_with(json: &str) -> InMemoryFs {
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
-            .with_file(".crest/specs/0007/plan.json", json)
+        InMemoryFs::new(test_root()).with_file(".crest/specs/0007/plan.json", json)
     }
 
     fn ids(order: &[TaskId]) -> Vec<&str> {

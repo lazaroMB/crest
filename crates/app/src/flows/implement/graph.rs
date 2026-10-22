@@ -81,6 +81,12 @@ pub fn plan_path(root: &Path, target: &str) -> Result<String, TargetError> {
     } else {
         target.strip_prefix("./").unwrap_or(target).to_owned()
     };
+    // Windows paths may use `\`; the plan paths use `/`.
+    let relative = if cfg!(windows) {
+        relative.replace('\\', "/")
+    } else {
+        relative
+    };
     let relative = relative.trim_end_matches('/');
     if relative.is_empty() || relative == "." {
         return Ok(PLAN_FILE.to_owned());
@@ -311,19 +317,23 @@ mod tests {
 
     #[test]
     fn targets_name_the_plan() {
-        let root = Path::new("/ws");
-        let path = |t| plan_path(root, t);
+        let root = crate::testing::fs::test_root();
+        let root = root.as_path();
+        let abs = |rel: &str| root.join(rel).to_string_lossy().into_owned();
+        let path = |t: &str| plan_path(root, t);
         assert_eq!(path("0001-x").unwrap(), ".crest/specs/0001-x/plan.json");
         assert_eq!(
             path(".crest/specs/0001-x/").unwrap(),
             ".crest/specs/0001-x/plan.json"
         );
         assert_eq!(path("./a/b/plan.json").unwrap(), "a/b/plan.json");
-        assert_eq!(path("/ws/specs/p.json").unwrap(), "specs/p.json");
-        assert_eq!(path("/ws").unwrap(), "plan.json");
+        assert_eq!(path(&abs("specs/p.json")).unwrap(), "specs/p.json");
+        assert_eq!(path(&abs("specs/x")).unwrap(), "specs/x/plan.json");
+        assert_eq!(path(&root.to_string_lossy()).unwrap(), "plan.json");
         assert_eq!(path("  "), Err(TargetError::Empty));
+        let other = root.parent().unwrap().join("other").join("plan.json");
         assert!(matches!(
-            path("/other/plan.json"),
+            path(&other.to_string_lossy()),
             Err(TargetError::OutsideWorkspace(_))
         ));
     }

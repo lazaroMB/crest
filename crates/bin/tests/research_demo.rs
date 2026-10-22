@@ -13,7 +13,11 @@
 //! - the critical review rejects a Spec with a claim without evidence and
 //!   sends the flow back to Data, the stage that collects evidence;
 //! - Prototipo is skipped with `/skip`.
+//!
+//! The repository's checks run `sh test.sh`, so the demo needs a POSIX
+//! shell: Unix only.
 
+#![cfg(unix)]
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
 #![allow(clippy::unwrap_used)]
 

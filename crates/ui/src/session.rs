@@ -1612,7 +1612,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use application::ports::events::EventSink;
-    use application::testing::fs::{InMemoryFs, ScriptedShell};
+    use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use application::testing::llm::{ScriptedLlm, ScriptedResponse};
     use application::testing::system::{RecordingSink, RecordingTelemetry};
     use application::tools::files::{FileToolPorts, register_file_tools};
@@ -1623,7 +1623,7 @@ mod tests {
     use domain::conversation::Session as Conversation;
     use domain::model::{ModelPolicy, ModelRole};
     use domain::permission::PermissionPolicy;
-    use domain::workspace::WorkspaceRoot;
+
     use futures::channel::oneshot;
     use gpui::{TestAppContext, VisualTestContext};
     use serde_json::json;
@@ -1800,10 +1800,8 @@ mod tests {
     ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
-        let fs = Arc::new(
-            InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
-                .with_file("src/lib.rs", "pub fn add() {}\n"),
-        );
+        let fs =
+            Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "pub fn add() {}\n"));
         let (sink, events) = RecordingSink::with_channel();
         let sink = Arc::new(sink);
         let (approval, approvals) = UiApproval::channel();

@@ -306,12 +306,12 @@ impl ApprovalPort for DenyAll {
 mod tests {
     use domain::conversation::{ContentPart, Role, Session, StopReason};
     use domain::permission::PermissionMode;
-    use domain::workspace::WorkspaceRoot;
+
     use serde_json::json;
 
     use super::*;
     use crate::ports::llm::LlmRequest;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
     use crate::tools::files::{FileToolPorts, register_file_tools};
@@ -335,7 +335,7 @@ mod tests {
         fn new(script: Vec<ScriptedResponse>) -> Self {
             let llm = Arc::new(ScriptedLlm::new(script));
             let fs = Arc::new(
-                InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+                InMemoryFs::new(test_root())
                     .with_file("src/lib.rs", LIB)
                     .with_file("README.md", "# demo\n"),
             );

@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 application.workspace = true
 async-trait.workspace = true
-dirs.workspace = true
+platform.workspace = true
 domain.workspace = true
 graph-flow.workspace = true
 rusqlite.workspace = true

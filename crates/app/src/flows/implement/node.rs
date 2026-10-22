@@ -416,14 +416,13 @@ pub trait ImplementNode: Send + Sync {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use domain::workspace::WorkspaceRoot;
 
     use super::*;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::system::RecordingSink;
 
     pub(crate) fn deps(sink: &Arc<RecordingSink>) -> ImplementDeps {
-        let fs = InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap());
+        let fs = InMemoryFs::new(test_root());
         ImplementDeps::new(
             Arc::clone(sink) as _,
             Arc::new(fs),

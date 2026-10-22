@@ -238,11 +238,11 @@ pub fn scoped_tools(
 #[cfg(test)]
 mod tests {
     use domain::conversation::{SessionId, ToolUseId, TurnId};
-    use domain::workspace::WorkspaceRoot;
+
     use serde_json::json;
 
     use super::*;
-    use crate::testing::fs::InMemoryFs;
+    use crate::testing::fs::{InMemoryFs, test_root};
     use crate::testing::system::ScriptedApproval;
     use crate::tools::files::{EditFileTool, WriteFileTool};
 
@@ -279,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn files_of_the_task_need_no_extra_approval() {
-        let fs = Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
+        let fs = Arc::new(InMemoryFs::new(test_root()));
         let approval = Arc::new(ScriptedApproval::new());
         let s = scope(&approval);
         let tools = scoped_tools(&registry(&fs), &s).unwrap();
@@ -291,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn other_files_ask_and_are_recorded() {
-        let fs = Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
+        let fs = Arc::new(InMemoryFs::new(test_root()));
         let approval = Arc::new(ScriptedApproval::new());
         approval.push(ApprovalResponse::Deny {
             reason: Some("do not touch that".into()),

@@ -3,7 +3,9 @@
 //! This module is pure: it never touches the file system. The caller (the
 //! fs adapter) canonicalizes the root before building a [`WorkspaceRoot`] and
 //! is responsible for resolving symlinks after joining a [`WorkspacePath`].
-//! Only Unix path semantics are supported.
+//! A [`WorkspacePath`] always uses `/`; on Windows `\` is accepted as a
+//! separator too, and drive (`C:`), UNC and verbatim (`\\?\`) prefixes mark
+//! a path as absolute.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -110,17 +112,33 @@ impl WorkspaceRoot {
         let outside = || PathError::OutsideWorkspace {
             path: input.to_owned(),
         };
-        if !input.starts_with('/') {
+        if !is_absolute_input(input) {
             return WorkspacePath::parse(input);
         }
-        let segments = normalize(input, true).ok_or_else(outside)?;
+        let (prefix, path) = split_prefix(input);
+        let root_prefix = self.0.components().find_map(|c| match c {
+            Component::Prefix(p) => Some(p.as_os_str().to_string_lossy().into_owned()),
+            _ => None,
+        });
+        // A prefix (Windows only) must name the root's drive or share; a
+        // rooted path without one (`\x`) is on the root's drive.
+        if let Some(prefix) = prefix
+            && !root_prefix.is_some_and(|r| prefix_key(&r) == prefix_key(prefix))
+        {
+            return Err(outside());
+        }
+        // `C:x` is relative to the current directory of drive `C:`.
+        if !path.starts_with(is_separator) {
+            return Err(outside());
+        }
+        let segments = normalize(path, true).ok_or_else(outside)?;
         let mut rest = segments.as_slice();
         for component in self.0.components() {
             let Component::Normal(name) = component else {
                 continue;
             };
             match rest.split_first() {
-                Some((first, tail)) if Path::new(first).as_os_str() == name => rest = tail,
+                Some((first, tail)) if same_name(first, &name.to_string_lossy()) => rest = tail,
                 _ => return Err(outside()),
             }
         }
@@ -163,7 +181,7 @@ impl WorkspacePath {
         let outside = || PathError::OutsideWorkspace {
             path: input.to_owned(),
         };
-        if input.starts_with('/') {
+        if is_absolute_input(input) {
             return Err(outside());
         }
         let segments = normalize(input, false).ok_or_else(outside)?;
@@ -325,10 +343,19 @@ impl SensitivePathRules {
     }
 
     /// The first pattern that denies `path`, to explain the refusal.
+    ///
+    /// On file systems that ignore case by default (Windows, macOS) the
+    /// match ignores case too, so `.ENV` is as sensitive as `.env`.
     pub fn matching_pattern(&self, path: &WorkspacePath) -> Option<&str> {
         self.patterns().find(|pattern| {
             let glob = pattern.strip_suffix('/').unwrap_or(pattern);
-            path.components().any(|c| glob_match(glob, c))
+            if CASE_INSENSITIVE_FS {
+                let glob = glob.to_lowercase();
+                path.components()
+                    .any(|c| glob_match(&glob, &c.to_lowercase()))
+            } else {
+                path.components().any(|c| glob_match(glob, c))
+            }
         })
     }
 }
@@ -392,6 +419,69 @@ fn glob_match(pattern: &str, name: &str) -> bool {
         .is_some_and(|rest| rest.iter().all(|c| *c == '*'))
 }
 
+/// Whether the platform's default file systems compare names ignoring case
+/// (NTFS, APFS), so two spellings of a name open the same file.
+const CASE_INSENSITIVE_FS: bool = cfg!(any(windows, target_os = "macos"));
+
+/// Whether `c` separates path components: `/` everywhere, and `\` too on
+/// Windows (on Unix it is an ordinary character of a name).
+fn is_separator(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
+/// Whether two component names denote the same entry on this platform.
+fn same_name(a: &str, b: &str) -> bool {
+    if CASE_INSENSITIVE_FS {
+        a.to_lowercase() == b.to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// A prefix in a comparable form: lowercase, `\` separators, and a verbatim
+/// drive (`\\?\C:`) reduced to the drive (`c:`).
+fn prefix_key(prefix: &str) -> String {
+    let key = prefix.replace('/', "\\").to_lowercase();
+    match key.strip_prefix(r"\\?\") {
+        Some(drive) if drive.len() == 2 && drive.ends_with(':') => drive.to_owned(),
+        _ => key,
+    }
+}
+
+/// Whether `input` is absolute, or at least not relative to the workspace:
+/// a leading separator, and on Windows a drive (`C:`), UNC (`\\host`) or
+/// verbatim (`\\?\`) prefix.
+fn is_absolute_input(input: &str) -> bool {
+    input.starts_with(is_separator) || split_prefix(input).0.is_some()
+}
+
+/// Splits a Windows prefix (drive letter, UNC share or verbatim/device
+/// prefix) off `input`, as [`std::path::Prefix`] would. Always `None` on
+/// other platforms, where `C:` is an ordinary name.
+fn split_prefix(input: &str) -> (Option<&str>, &str) {
+    if !cfg!(windows) {
+        return (None, input);
+    }
+    let bytes = input.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return (Some(&input[..2]), &input[2..]);
+    }
+    let sep = |b: u8| b == b'/' || b == b'\\';
+    if bytes.len() >= 2 && sep(bytes[0]) && sep(bytes[1]) {
+        // `\\host\share`, `\\?\C:`, `\\.\device`: the prefix runs
+        // through the second component after the leading pair.
+        let mut end = 2;
+        for _ in 0..2 {
+            match input[end..].find(is_separator) {
+                Some(i) => end += i + 1,
+                None => return (Some(input), ""),
+            }
+        }
+        return (Some(&input[..end - 1]), &input[end - 1..]);
+    }
+    (None, input)
+}
+
 fn check_input(input: &str) -> Result<(), PathError> {
     if input.is_empty() {
         return Err(InvalidPathReason::Empty.into());
@@ -408,7 +498,7 @@ fn check_input(input: &str) -> Result<(), PathError> {
 /// `..` at the file system root stays there, as the kernel does.
 fn normalize(input: &str, absolute: bool) -> Option<Vec<&str>> {
     let mut stack = Vec::new();
-    for segment in input.split('/') {
+    for segment in input.split(is_separator) {
         match segment {
             "" | "." => {}
             ".." => {
@@ -427,25 +517,29 @@ mod tests {
     use super::*;
 
     fn root() -> WorkspaceRoot {
-        WorkspaceRoot::new("/ws").unwrap()
+        WorkspaceRoot::new(if cfg!(windows) { r"C:\ws" } else { "/ws" }).unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_accepts_absolute_path() {
         assert_eq!(root().as_path(), Path::new("/ws"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_strips_trailing_slash_and_dot_components() {
         let r = WorkspaceRoot::new("/ws/./proj/").unwrap();
         assert_eq!(r.as_path(), Path::new("/ws/proj"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_accepts_filesystem_root() {
         assert_eq!(WorkspaceRoot::new("/").unwrap().as_path(), Path::new("/"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_accepts_unicode() {
         let r = WorkspaceRoot::new("/home/josé/проект").unwrap();
@@ -471,6 +565,7 @@ mod tests {
         assert_eq!(WorkspaceRoot::new(""), Err(InvalidPathReason::Empty.into()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_rejects_parent_components() {
         assert_eq!(
@@ -534,6 +629,7 @@ mod tests {
         assert_eq!(resolve("./"), Ok(".".into()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_accepts_root_itself_as_absolute() {
         assert_eq!(resolve("/ws"), Ok(".".into()));
@@ -541,6 +637,7 @@ mod tests {
         assert!(root().resolve("/ws").unwrap() == WorkspacePath::root());
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_accepts_absolute_path_inside() {
         assert_eq!(resolve("/ws/src/lib.rs"), Ok("src/lib.rs".into()));
@@ -548,6 +645,7 @@ mod tests {
         assert_eq!(resolve("/other/../ws/a"), Ok("a".into()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_rejects_absolute_path_outside() {
         assert_eq!(resolve("/etc/passwd"), outside("/etc/passwd"));
@@ -555,12 +653,14 @@ mod tests {
         assert_eq!(resolve("/ws/../etc"), outside("/ws/../etc"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_rejects_misleading_prefix() {
         assert_eq!(resolve("/ws-other/a"), outside("/ws-other/a"));
         assert_eq!(resolve("/wsx"), outside("/wsx"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_with_nested_root() {
         let r = WorkspaceRoot::new("/home/me/proj").unwrap();
@@ -569,6 +669,7 @@ mod tests {
         assert!(r.resolve("/home/me/project/a").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_with_filesystem_root_accepts_any_absolute_path() {
         let r = WorkspaceRoot::new("/").unwrap();
@@ -583,6 +684,11 @@ mod tests {
             resolve("docs/ñandú/日本.md"),
             Ok("docs/ñandú/日本.md".into())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_compares_unicode_roots_exactly() {
         let r = WorkspaceRoot::new("/home/josé").unwrap();
         assert_eq!(r.resolve("/home/josé/ü").unwrap().as_str(), "ü");
         assert!(r.resolve("/home/jose/ü").is_err());
@@ -612,12 +718,14 @@ mod tests {
         root().resolve(input).unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn join_builds_absolute_path() {
         assert_eq!(root().join(&wp("a/b.rs")), PathBuf::from("/ws/a/b.rs"));
         assert_eq!(root().join(&wp("ü/日本")), PathBuf::from("/ws/ü/日本"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn join_of_root_is_the_root() {
         assert_eq!(root().join(&WorkspacePath::root()), PathBuf::from("/ws"));
@@ -853,5 +961,77 @@ mod tests {
             PathError::NotAbsoluteRoot { path: "ws".into() }.to_string(),
             "workspace root must be an absolute path: ws"
         );
+    }
+
+    #[test]
+    fn rules_ignore_case_where_the_file_system_does() {
+        assert_eq!(denied(".ENV"), CASE_INSENSITIVE_FS);
+        assert_eq!(denied("sub/.Git/config"), CASE_INSENSITIVE_FS);
+        assert_eq!(denied("KEY.PEM"), CASE_INSENSITIVE_FS);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backslashes_and_drive_letters_are_plain_names_on_unix() {
+        assert_eq!(resolve(r"a\b"), Ok(r"a\b".into()));
+        assert_eq!(resolve("C:"), Ok("C:".into()));
+        assert!(!denied(r"sub\.env"), r"`sub\.env` is a single name on Unix");
+    }
+
+    #[cfg(windows)]
+    mod windows {
+        use super::*;
+
+        #[test]
+        fn backslash_separates_components() {
+            assert_eq!(resolve(r"src\main.rs"), Ok("src/main.rs".into()));
+            assert_eq!(resolve(r"a\.\b\..\c"), Ok("a/c".into()));
+            assert_eq!(resolve(r"..\x"), outside(r"..\x"));
+            assert_eq!(wp(r"a\b").components().collect::<Vec<_>>(), ["a", "b"]);
+        }
+
+        #[test]
+        fn sensitive_rules_see_backslash_components() {
+            assert!(denied(r"sub\.env"));
+            assert!(denied(r".git\config"));
+            assert!(denied(r"Sub\.ENV.local"));
+        }
+
+        #[test]
+        fn absolute_paths_on_the_root_drive_resolve() {
+            assert_eq!(resolve(r"C:\ws"), Ok(".".into()));
+            assert_eq!(resolve(r"C:\ws\src\lib.rs"), Ok("src/lib.rs".into()));
+            assert_eq!(resolve(r"c:/WS/src/lib.rs"), Ok("src/lib.rs".into()));
+            assert_eq!(resolve(r"\\?\C:\ws\a"), Ok("a".into()));
+            assert_eq!(resolve(r"\ws\a"), Ok("a".into()));
+        }
+
+        #[test]
+        fn other_drives_shares_and_drive_relative_paths_are_outside() {
+            for input in [
+                r"D:\ws\a",
+                r"C:\other\a",
+                r"C:\ws\..\other",
+                r"C:ws\a",
+                r"\\host\share\ws\a",
+                r"\\?\D:\ws",
+                r"\\.\pipe\x",
+            ] {
+                assert_eq!(resolve(input), outside(input), "{input}");
+            }
+        }
+
+        #[test]
+        fn parse_rejects_prefixed_paths() {
+            for input in [r"C:\x", "C:x", r"\\host\share", r"\x"] {
+                assert!(WorkspacePath::parse(input).is_err(), "{input}");
+            }
+        }
+
+        #[test]
+        fn join_uses_the_native_root() {
+            assert_eq!(root().join(&wp("a/b.rs")), PathBuf::from(r"C:\ws\a/b.rs"));
+            assert_eq!(root().join(&WorkspacePath::root()), PathBuf::from(r"C:\ws"));
+        }
     }
 }

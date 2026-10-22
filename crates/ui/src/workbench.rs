@@ -285,10 +285,10 @@ mod tests {
     use std::sync::Mutex;
 
     use application::ports::events::DomainEvent;
-    use application::testing::fs::InMemoryFs;
+    use application::testing::fs::{InMemoryFs, test_root};
     use application::testing::projects::InMemoryDirs;
     use domain::permission::PermissionMode;
-    use domain::workspace::WorkspaceRoot;
+
     use futures::FutureExt as _;
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -333,7 +333,7 @@ mod tests {
             if dir.ends_with("bad") {
                 return futures::future::ready(Err("the config is broken".into())).boxed();
             }
-            let fs = Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
+            let fs = Arc::new(InMemoryFs::new(test_root()));
             let (_tx, events) = futures::channel::mpsc::unbounded::<DomainEvent>();
             let (_approval, approvals) = UiApproval::channel();
             let mut parts = SessionParts::new(Arc::new(Idle), events, approvals, fs.clone(), fs);

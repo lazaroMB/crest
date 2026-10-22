@@ -1,4 +1,10 @@
 //! `crest`: parses the command line and starts the UI or the headless mode.
+//!
+//! On Windows it is a GUI program, so double-clicking it opens no console
+//! window; started from a terminal it attaches to that terminal's console
+//! for `--help`, the headless modes and warnings.
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -10,6 +16,9 @@ use crest::telemetry::Telemetry;
 use crest::{gui, headless};
 
 fn main() -> ExitCode {
+    // Both do nothing outside Windows.
+    let _ = platform::console::attach_parent_console();
+    let _ = platform::console::enable_ansi();
     let args = Args::parse();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

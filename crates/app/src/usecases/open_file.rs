@@ -313,13 +313,13 @@ fn open_error(root: &str, path: &WorkspacePath, err: FsError) -> OpenError {
 
 #[cfg(test)]
 mod tests {
-    use domain::workspace::{SensitivePathRules, WorkspaceRoot};
+    use domain::workspace::SensitivePathRules;
 
     use super::*;
-    use crate::testing::fs::InMemoryFs;
+    use crate::testing::fs::{InMemoryFs, test_root};
 
     fn fs() -> InMemoryFs {
-        InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap())
+        InMemoryFs::new(test_root())
             .with_file("README.md", "# Hi")
             .with_file("src/main.rs", "fn main() {}\n")
             .with_file("data.json", "{\"a\": 1}")

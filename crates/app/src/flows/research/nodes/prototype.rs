@@ -389,14 +389,13 @@ mod tests {
     use domain::model::ModelPolicy;
     use domain::permission::{PermissionMode, PermissionPolicy};
     use domain::research::ResearchState;
-    use domain::workspace::WorkspaceRoot;
 
     use super::*;
     use crate::flows::research::node::NodeDeps;
     use crate::ports::approval::ApprovalResponse;
     use crate::ports::events::DomainEvent;
     use crate::ports::shell::CommandOutput;
-    use crate::testing::fs::{InMemoryFs, ScriptedShell};
+    use crate::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
     use crate::tools::files::{FileToolPorts, register_file_tools};
@@ -440,7 +439,7 @@ mod tests {
         let llm = Arc::new(ScriptedLlm::new(script));
         let shell = Arc::new(shell);
         let sink = Arc::new(RecordingSink::new());
-        let fs = Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
+        let fs = Arc::new(InMemoryFs::new(test_root()));
         let mut tools = ToolRegistry::new();
         register_file_tools(
             &mut tools,

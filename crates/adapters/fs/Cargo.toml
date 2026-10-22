@@ -10,7 +10,9 @@ publish.workspace = true
 [dependencies]
 application.workspace = true
 async-trait.workspace = true
+dirs.workspace = true
 domain.workspace = true
+dunce.workspace = true
 similar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

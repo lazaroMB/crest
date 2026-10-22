@@ -139,12 +139,16 @@ async fn write_atomic(
     };
     let written = async {
         file.write_all(content).await?;
-        if let Some(permissions) = permissions {
+        // On Windows permissions are only the read-only flag, which would
+        // make the replacing rename fail.
+        if let Some(permissions) = permissions
+            && cfg!(unix)
+        {
             file.set_permissions(permissions).await?;
         }
         file.sync_all().await?;
         drop(file);
-        tokio::fs::rename(&temp, target).await
+        rename_replacing(&temp, target).await
     }
     .await;
     if written.is_err() {
@@ -152,6 +156,29 @@ async fn write_atomic(
         let _ = tokio::fs::remove_file(&temp).await;
     }
     written
+}
+
+/// How many times a rename refused with `PermissionDenied` is retried on
+/// Windows, where an editor, indexer or antivirus briefly holding the target
+/// open makes the replace fail.
+const RENAME_ATTEMPTS: u32 = 5;
+
+/// Renames `from` over `to`, retrying briefly on Windows sharing violations.
+async fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempt = 1;
+    loop {
+        match tokio::fs::rename(from, to).await {
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == ErrorKind::PermissionDenied
+                    && attempt < RENAME_ATTEMPTS =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50 * u64::from(attempt))).await;
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Resolves where a write to `path` lands (see
@@ -212,7 +239,9 @@ pub(crate) fn unified_diff(path: &WorkspacePath, old: Option<&str>, new: &str) -
         .to_string()
 }
 
+// The fixtures build symlinks and permission modes, which are Unix-only.
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::os::unix::fs::symlink;
 

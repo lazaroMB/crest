@@ -145,6 +145,7 @@ async fn check_inside(search: &RipgrepSearch, path: &WorkspacePath) -> Result<()
     let full = search.root.join(path);
     let resolved = tokio::fs::canonicalize(&full)
         .await
+        .map(|p| dunce::simplified(&p).to_path_buf())
         .map_err(|e| SearchError::Io(format!("{path}: {e}")))?;
     if resolved.starts_with(search.root.as_path()) {
         Ok(())
@@ -313,7 +314,9 @@ fn column_range(raw: &[u8], m: &Submatch) -> ColumnRange {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{Workspace, fake_tool, p};
+    #[cfg(unix)]
+    use crate::test_support::fake_tool;
+    use crate::test_support::{Workspace, p};
 
     fn ws() -> Workspace {
         let ws = Workspace::new();
@@ -465,6 +468,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rejects_paths_escaping_through_symlinks() {
         let ws = ws();
@@ -503,6 +507,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn garbage_output_is_a_parse_error() {
         let bin = tempfile::tempdir().unwrap();
