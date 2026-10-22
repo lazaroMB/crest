@@ -47,8 +47,9 @@ flowchart TB
 | Crate (package) | Path | Contents |
 | --- | --- | --- |
 | `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`), the `plan.json` schema and `sysmodel` (the `crest.sysmodel/v1` model, its expression language, lint, the deterministic simulator, traces, the assertion checker, the board layout and its renderer-agnostic 3D scene). No tokio, no I/O. |
-| `application` | `crates/app` | Ports (async traits), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, the keymap parser, cost, the graph-flow workflows and the fakes (`testing`, behind the `testing` feature). |
-| `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, retries and model fallback, the `GET /v1/models` catalog and server tools (web search and fetch). |
+| `application` | `crates/app` | Ports (async traits), retries and model fallback over any provider (`llm_retry`), the router of prefixed model ids (`providers`), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, the keymap parser, cost, the graph-flow workflows and the fakes (`testing`, behind the `testing` feature). |
+| `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, the `GET /v1/models` catalog and server tools (web search and fetch); also the client of OpenCode's Messages endpoint and the keyring entries of every key. |
+| `adapter-openai` | `crates/adapters/openai` | OpenAI Chat Completions and Responses with SSE streaming, and the `GET /models` catalog (OpenCode's GPT, Grok and open models). |
 | `adapter-search` | `crates/adapters/search` | `rg --files`, `rg --json` and `fzf --filter` as processes without a shell. Includes version detection. |
 | `adapter-fs` | `crates/adapters/fs` | Reading and writing through `WorkspaceGuard` (canonicalization and sensitive paths) and diffs with `similar`. |
 | `adapter-shell` | `crates/adapters/shell` | `tokio::process` with a timeout, `cwd` in the workspace and capped output. |

@@ -58,35 +58,67 @@ A mistyped field (for example `app.opt.timeoutlen = "500"`) is dropped on its ow
 
 Changes to `init.lua` are read at startup, so you have to reopen crest for them to take effect.
 
-## Anthropic API key
+## Model providers and API keys
 
-The easiest way: open crest and paste the key in the dialog it shows when there is none, or run `/login` at any time. crest checks the key with Anthropic (`GET /v1/models`), stores it in the system keyring and restarts the agent of the window; a key Anthropic rejects is not stored, and one that cannot be checked (no network) is stored with a warning. `/logout` deletes it. The key goes from that masked field to the keyring: it is not added to the prompt history nor to the timeline.
+crest talks to two model providers, each with its own key:
 
-crest looks for the key in this order:
+| Account | Providers (model id prefix) | Key |
+| --- | --- | --- |
+| Anthropic | `anthropic` (the default: ids without prefix, such as `claude-sonnet-5-5`) | `ANTHROPIC_API_KEY`, pay per token on the Anthropic API |
+| OpenCode | `opencode-go:` (the Go subscription, flat rate) and `opencode-zen:` (Zen, pay as you go) | `OPENCODE_API_KEY`, from the OpenCode console; the same key serves both |
 
-1. The `ANTHROPIC_API_KEY` environment variable, if it is not empty.
-2. The system keyring (the `keyring` crate), under the **service `crest`** and the **entry (user) `ANTHROPIC_API_KEY`**.
+Anthropic does not let third-party apps use a Claude Pro/Max subscription, so the Anthropic provider needs an API key. OpenCode Go is a subscription meant for "OpenCode and other coding agents": crest identifies itself with `User-Agent: crest/<version>` and sends the `x-opencode-session` header OpenCode requires.
 
-The key **never** goes in `init.lua`, and it does not appear in logs or traces.
+The easiest way to give crest a key: open crest and paste it in the dialog it shows when there is none, or run `/login` (`/login opencode` opens it on OpenCode; `Tab` switches the account). crest checks the key with the provider (`GET /v1/models`), stores it in the system keyring and restarts the agent of the window; a key the provider rejects is not stored, and one that cannot be checked (no network) is stored with a warning. `/logout opencode` (or `anthropic`) deletes one key, `/logout` deletes them all. The key goes from that masked field to the keyring: it is not added to the prompt history nor to the timeline.
 
-To store it in the keyring:
+crest looks for each key in this order:
+
+1. The environment variable (`ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`), if it is not empty.
+2. The system keyring (the `keyring` crate), under the **service `crest`** and the **entry (user)** of the same name.
+
+Keys **never** go in `init.lua`, and they do not appear in logs or traces.
+
+To store one in the keyring:
 
 ```bash
 # Linux (libsecret / GNOME Keyring, KWallet via Secret Service)
 secret-tool store --label="crest" service crest username ANTHROPIC_API_KEY
+secret-tool store --label="crest" service crest username OPENCODE_API_KEY
 
 # macOS (Keychain)
 security add-generic-password -s crest -a ANTHROPIC_API_KEY -w
 ```
 
-> The commands above are each system's standard tools. crest only reads the `crest` / `ANTHROPIC_API_KEY` entry through `keyring`, and that read has not been tested in this environment against a real keyring.
+> The commands above are each system's standard tools. crest only reads the `crest` / `<KEY NAME>` entries through `keyring`, and that read has not been tested in this environment against a real keyring.
 
-If there is no key:
+If no provider has a key:
 
-- the window opens anyway, and the first block is the error "the Anthropic API key is missing: export ANTHROPIC_API_KEY or store it in the system keyring (service `crest`, entry `ANTHROPIC_API_KEY`)";
+- the window opens anyway with the `/login` dialog, and the first block is the error "no model provider has an API key: …";
 - headless mode exits with code 2.
 
-The API URL is fixed (`https://api.anthropic.com`): there is no variable to change it.
+With only an OpenCode key, the default roles (Claude ids without prefix) have no provider: a notice says so at startup. Point the roles at OpenCode models (see [Models by role](#models-by-role)), or make OpenCode the default provider.
+
+### Model ids and `app.opt.providers`
+
+A model id is `provider:model` (`opencode-go:glm-5.3`, `opencode-zen:claude-sonnet-5-5`); an id without a known prefix goes to the default provider. Fallback chains may cross providers (`fallbacks = { "opencode-go:glm-5.3" }` after a Claude model).
+
+OpenCode serves each model with the API of its family, and crest picks it from the model name: Claude, MiniMax M and Qwen speak Anthropic Messages (`…/anthropic/v1/messages`); GPT, Grok and Muse speak OpenAI Responses (`…/openai/v1/responses`); GLM, Kimi, DeepSeek, MiMo and the other open models speak Chat Completions (`…/openai/v1/chat/completions`). Gemini models use Google's API, which crest does not speak. When the guess is wrong for a model, say it in `formats`:
+
+```lua
+app.opt.providers = {
+  default = "anthropic",          -- provider of ids without prefix: "anthropic", "opencode-go" or "opencode-zen"
+  opencode = {
+    formats = { ["minimax-m2.7"] = "chat" },   -- "anthropic", "chat" or "responses"
+    -- base_url = "https://opencode.ai/inference",   -- tests only
+  },
+}
+```
+
+`thinking` only reaches Anthropic Messages models (as today) and Responses models (as a reasoning effort: low under 4000 tokens of budget, medium under 16000, high above); Chat Completions models think as their provider decides, and their reasoning shows as thinking.
+
+The models of OpenCode Go cost nothing per token in the cost notices (it is a flat-rate plan) unless `app.opt.pricing` gives them a price; Zen models, like Anthropic ones, have no price unless you configure it.
+
+The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variable to change it.
 
 ## `app.opt` options
 
@@ -196,6 +228,17 @@ Every model call asks for a **role**, and the configuration decides which model 
 
 Builtin aliases: `opus` → `claude-opus-5-5`, `sonnet` → `claude-sonnet-5-5`, `haiku` → `claude-haiku-5-5` and `fable` → `claude-fable-5-1`.
 
+Ids may carry a provider prefix (see [Model ids](#model-ids-and-appoptproviders)). With an OpenCode Go subscription, for example:
+
+```lua
+app.models.aliases = { glm = "opencode-go:glm-5.3", kimi = "opencode-go:kimi-k3" }
+app.models.roles = {
+  main    = { id = "glm", fallbacks = { "kimi" } },
+  explore = "opencode-go:deepseek-v4.1-flash",
+  compact = "opencode-go:deepseek-v4.1-flash",
+}
+```
+
 ### `app.models.roles`
 
 ```lua
@@ -236,7 +279,7 @@ Aliases are merged with the builtin ones (the workspace wins) and appear in the 
 4. Global config, with its plugins.
 5. Builtin values (the table above).
 
-At startup, crest queries `GET /v1/models` and waits at most 5 s. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice "could not validate the configured models: …" appears and nothing is validated.
+At startup, crest queries the model list of every provider with a key (`GET /v1/models`) and waits at most 5 s; models are listed with their prefix, and those of the default provider also without it. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice "could not validate the configured models: …" appears and nothing is validated.
 
 ## Permissions and sensitive paths
 
@@ -358,7 +401,8 @@ Only a plugin whose capabilities were approved can read secrets, and only its ow
 
 | Variable | Effect |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | The API key. Takes priority over the keyring. |
+| `ANTHROPIC_API_KEY` | The Anthropic API key. Takes priority over the keyring. |
+| `OPENCODE_API_KEY` | The OpenCode key (Go and Zen). Takes priority over the keyring. |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Credentials of the decision model (see [Decision model](#decision-model-cloudflare-clef)). Take priority over the keyring. |
 | `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute. |
 | `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute. |

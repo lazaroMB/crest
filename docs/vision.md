@@ -79,7 +79,7 @@ app.pipeline.define{
 *Done when:* the research flow could be rewritten as a Lua pipeline without losing features.
 
 **6. Any model.**
-An OpenAI-compatible adapter (OpenRouter, Ollama, LM Studio, vLLM and others), provider-prefixed model ids (`ollama:qwen3-coder`), and fallback chains across providers. The decision model can send trivial prompts to a local model.
+An OpenAI-compatible adapter (OpenRouter, Ollama, LM Studio, vLLM and others), provider-prefixed model ids (`ollama:qwen3-coder`), and fallback chains across providers. *Started:* prefixed ids, cross-provider fallbacks and the Chat Completions and Responses adapters are in, with OpenCode Go and Zen as the first providers besides Anthropic; local servers are next. The decision model can send trivial prompts to a local model.
 *Why:* usage limits that change without notice and a single provider make an agent fragile; local models make it private and cheap.
 *Done when:* crest runs a whole session on a local model, and falls back to another provider when one fails.
 
