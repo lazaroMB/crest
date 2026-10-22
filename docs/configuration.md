@@ -99,7 +99,16 @@ If no provider has a key:
 - the window opens anyway with the `/login` dialog, and the first block is the error "no model provider has an API key: …";
 - headless mode exits with code 2.
 
-With only an OpenCode key, the default roles (Claude ids without prefix) have no provider: a notice says so at startup. Point the roles at OpenCode models (see [Models by role](#models-by-role)), or make OpenCode the default provider.
+**The default provider** serves model ids without a prefix (the built-in roles are such Claude ids). crest picks it in this order:
+
+1. `app.opt.providers.default`, when `init.lua` sets it;
+2. the account of the last successful `/login` (OpenCode means `opencode-go`), if it still has a key;
+3. the only account with a key;
+4. Anthropic.
+
+So after `/login opencode` with no Anthropic key, OpenCode is the default and the Claude roles are not used. OpenCode has no built-in roles: crest opens the model picker (`/model`, `Ctrl+G m`), which lists every model of your providers' catalogs. `Enter` saves the pick, which then serves every role that `init.lua` does not set. Until a model is picked, a prompt is refused with "no model is selected … Pick one with /model" and nothing is sent. With Anthropic as the default, a saved pick replaces the `main` and `component` models and the other roles keep their Claude defaults.
+
+The last login and the picks (one per default provider) are saved in `preferences.json` in crest's data directory (`~/.local/share/crest/` or `%LOCALAPPDATA%\crest\`).
 
 ### Model ids and `app.opt.providers`
 
@@ -274,14 +283,15 @@ Aliases are merged with the builtin ones (the workspace wins) and appear in the 
 
 ### Resolution order
 
-1. **Turn override**: `--model`, `/model <x>` or the `Ctrl+G m` menu.
+1. **Turn override**: `--model`, `/model <x>`, or `Tab` in the `Ctrl+G m` / `/model` picker.
    - If the value is a **role name** (`plan`), that role's whole spec is used.
    - If it is an alias or an id, it only replaces the `id` and keeps the role's `max_tokens`, `thinking` and `fallbacks`.
    - Aliases are checked before role names.
 2. **Role pinned** by a tool or a workflow (for example, the `task` subagent asks for `explore`, and `app.send(..., { role = "plan" })` asks for `plan`).
 3. Workspace config.
 4. Global config, with its plugins.
-5. Builtin values (the table above).
+5. **The selected model** (`Enter` in the picker, `/model set <id>`): `main` and `component` with Anthropic as the default provider, every role with OpenCode.
+6. Builtin values (the table above), only with Anthropic as the default provider.
 
 At startup, crest queries the model list of every provider with a key (`GET /v1/models`) and waits at most 5 s; models are listed with their prefix, and those of the default provider also without it. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice "could not validate the configured models: …" appears and nothing is validated.
 

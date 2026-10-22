@@ -144,7 +144,7 @@ make deps       # installs what is missing: rg, fzf, the GPUI libraries...
 make install    # the same app install, from your build (make uninstall removes it)
 ```
 
-Then open crest and give it an API key: without one the window asks for it (or run `/login`). It can be an Anthropic key, or an OpenCode key (an OpenCode Go subscription or Zen credits) to use models such as `opencode-go:glm-5.3`; `Tab` switches between them in the dialog. The key is checked with the provider and stored in the system keyring (GNOME Keyring, KWallet, the macOS Keychain or the Windows Credential Manager), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
+Then open crest and give it an API key: without one the window asks for it (or run `/login`). It can be an Anthropic key, or an OpenCode key (an OpenCode Go subscription or Zen credits) to use models such as `opencode-go:glm-5.3`; `Tab` switches between them in the dialog. The account you log in to last serves the chat; with OpenCode, crest then lists the models of your plan and you pick one (`/model` or `Ctrl+G m` changes it later). The key is checked with the provider and stored in the system keyring (GNOME Keyring, KWallet, the macOS Keychain or the Windows Credential Manager), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
 
 ```bash
 secret-tool store --label="crest" service crest username ANTHROPIC_API_KEY   # Linux (OPENCODE_API_KEY likewise)
