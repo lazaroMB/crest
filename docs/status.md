@@ -2,12 +2,13 @@
 
 Where crest is going next: [vision and roadmap](vision.md).
 
-crest is a **work in progress**. Every phase of the original plan is implemented, `make check` passes, and CI runs on Ubuntu 24.04 and macOS 15 on every push; releases (Linux x86_64, macOS arm64 and x86_64) are built by `release.yml` on each `v*` tag. Before relying on crest for real work, keep in mind what has not been tested and what is still missing.
+crest is a **work in progress**. Every phase of the original plan is implemented, `make check` passes, and CI runs on Ubuntu 24.04, macOS 15 and Windows (clippy and tests) on every push; releases (Linux x86_64, macOS arm64 and x86_64, Windows x86_64) are built by `release.yml` on each `v*` tag. Before relying on crest for real work, keep in mind what has not been tested and what is still missing.
 
 ## Unverified
 
 - It has not been tested against the real Anthropic API in the development environment: every test uses scripted models or `wiremock`, and `make test-live` has not been run here. The default model ids (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`) are validated against `GET /v1/models` at startup.
 - macOS has not been tested on a real machine: CI builds and tests there, but nobody has used the window on a Mac.
+- Windows has only been built and tested in CI: nobody has used the window on a Windows machine. Tests that need symlinks or POSIX tools run on Unix only. On Windows a command's child processes are killed with `taskkill /T` while the command is alive; children left behind after it exits are not (Unix kills its whole process group).
 - The decision model (Cloudflare Clef) has only been tested against a mock server, not with a real token.
 - The installer (`scripts/install.sh`) is tested on a temporary prefix with a fake binary on Linux and macOS (CI), but `crest.app` has not been opened on a real Mac, and the app is neither signed nor notarized (the installer removes the quarantine).
 - Reading the API key or plugin secrets from the system keyring has not been tested (the tests use the environment fallback).
@@ -32,4 +33,4 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - Simulation (MVP): flat state machines, FIFO queues and timers as self-messages; no latency percentiles, load generators, fault toggles in the board, GIF/video export or re-simulation inside `board.html` yet, and the board has only a dark theme. See [docs/research/solution-simulator.md](research/solution-simulator.md).
 - Modals draw images, documents, tables, diagrams and 3D models (OBJ, STL, PLY, geometry only) natively, but cannot embed web pages (links open the browser), PDFs or a terminal yet; images larger than the GPU's texture limit (often 8192 or 16384 px) fail to draw. See [docs/research/rich-content-modals.md](research/rich-content-modals.md) for the roadmap.
 - Langfuse export requires building with `--features langfuse`; the `make release` binaries do not include it.
-- The macOS binaries from `release.yml` are not signed or notarized.
+- The macOS binaries from `release.yml` are not signed or notarized, and the Windows `crest.exe` is not signed (SmartScreen may warn).

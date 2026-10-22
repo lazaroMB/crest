@@ -256,9 +256,12 @@ Every non-essential step degrades to a notice: without Lua, without a database o
 | --- | --- | --- |
 | `domain` | no crate of the project | I/O crates |
 | `application` (must be named so) | `domain` | I/O crates, adapters, `ui` |
-| adapters | `application`, `domain` | other adapters, `ui` |
-| `ui` | `application`, `domain` | adapters |
+| adapters | `application`, `domain`, `platform` | other adapters, `ui` |
+| `ui` | `application`, `domain`, `platform` | adapters |
+| `platform` (`crates/platform`) | no crate of the project | everything internal |
 | `bin` | everything | — |
+
+`platform` is the operating-system glue several outer crates need (spawning and killing processes, `PATH` lookup with `PATHEXT`, crest's config and data directories, the Windows console). It only uses `std`, `dirs` and `windows-sys`, and is the one crate allowed `unsafe` (two Win32 console calls).
 
 The I/O crates that `domain` and `application` cannot use (in normal and build dependencies) are:
 

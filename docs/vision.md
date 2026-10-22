@@ -110,11 +110,10 @@ Before loading a new repository's `.crest/init.lua` and its MCP servers, crest a
 - **A worktree per tab**, optional, so parallel tasks on one repository never step on each other; pipelines and implementation flows running side by side.
 - **GitHub**: `/issue <n>` straight into research or implementation, opening pull requests and answering review comments (through `gh`).
 - **Sharing**: export a session or a pipeline run as a self-contained HTML page, as `board.html` does for simulations.
-- **Distribution**: signed and notarized macOS builds, packages for Linux distributions.
+- **Distribution**: signed and notarized macOS builds, a signed Windows installer (MSI), packages for Linux distributions.
 
 ## Out of scope
 
-- **Windows.** crest targets Linux and macOS.
 - A web IDE or a hosted cloud service.
 - Inline autocompletion while you type.
 - Being a code editor: crest works next to the editor you already use.

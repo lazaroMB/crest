@@ -6,12 +6,12 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 
 | What | Path | Notes |
 | --- | --- | --- |
-| Global config | `$XDG_CONFIG_HOME/crest/init.lua`, or `~/.config/crest/init.lua` | A relative `XDG_CONFIG_HOME` is ignored. macOS uses the same path (not `~/Library`). |
+| Global config | `$XDG_CONFIG_HOME/crest/init.lua`, or `~/.config/crest/init.lua` (Windows: `%APPDATA%\crest\init.lua`) | A relative `XDG_CONFIG_HOME` is ignored. macOS uses the same path (not `~/Library`). |
 | Plugins | `<global config dir>/plugins/<name>/init.lua` | Loaded in alphabetical order, followed by those listed in `app.plugins`. |
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
-| Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` | SQLite. Stores the chat sessions and the workflow checkpoints. |
-| Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` | Written with `0600` permissions. |
-| Approved plugin capabilities | `$XDG_DATA_HOME/crest/plugin-trust.json`, or `~/.local/share/crest/plugin-trust.json` | Written with `0600` permissions. See [Plugin capabilities and secrets](#plugin-capabilities-and-secrets). |
+| Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` (Windows: `%LOCALAPPDATA%\crest\sessions.db`) | SQLite. Stores the chat sessions and the workflow checkpoints. |
+| Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions (on Windows the folder's access list, private to the user, applies). |
+| Approved plugin capabilities | `$XDG_DATA_HOME/crest/plugin-trust.json`, or `~/.local/share/crest/plugin-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions. See [Plugin capabilities and secrets](#plugin-capabilities-and-secrets). |
 | Research workflow Specs | `<workspace>/.crest/specs/NNNN-slug/` | See [workflows.md](workflows.md). |
 
 ### Load order and precedence
@@ -87,6 +87,9 @@ secret-tool store --label="crest" service crest username OPENCODE_API_KEY
 
 # macOS (Keychain)
 security add-generic-password -s crest -a ANTHROPIC_API_KEY -w
+
+# Windows (Credential Manager, a generic credential): use /login, or
+cmdkey /generic:ANTHROPIC_API_KEY.crest /user:ANTHROPIC_API_KEY /pass
 ```
 
 > The commands above are each system's standard tools. crest only reads the `crest` / `<KEY NAME>` entries through `keyring`, and that read has not been tested in this environment against a real keyring.
@@ -129,6 +132,7 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the cost shows as `$?`. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
 | `web` | table, see [Web search](#web-search) | DuckDuckGo, 8 results, 20 s, any domain | The `web_search` and `web_fetch` tools: on or off, search backend, limits and domains. |
+| `shell` | program name, or table `{ program, args }` | `sh -c`; on Windows `pwsh` (or `powershell`) `-NoProfile -NonInteractive -Command` | The shell of `/!` commands and of plan checks with shell syntax. See [Shell](#shell). |
 | `theme` | `"dark"` or `"light"` | `"dark"` | The TwoCrest theme of the window ([usage.md](usage.md#the-window)). `"twocrest"` and `"twocrest-light"` are accepted too; any other value is a startup warning and the dark theme is used. |
 
 Any other `app.opt` key is accepted without error and stored, but crest does not use it. There are no font options: the window uses JetBrains Mono at 14 px if installed, otherwise the system monospace font.
@@ -334,6 +338,19 @@ app.opt.privacy = {
 - An invalid table (unknown field, bad regex) shows a notice and every rule stays on.
 - Images in tool results are not inspected. `/open` and `/!` commands show your files and output unmasked: they stay on your machine (the context note of a `/!` command does go to the model).
 
+## Shell
+
+`/!` commands and the checks of a plan that need a shell (pipes, `&&`, globs) run the whole line through one shell. The model's `run_command` never does: it starts programs directly.
+
+```lua
+app.opt.shell = "pwsh"                                -- a known shell by name
+app.opt.shell = { program = "bash", args = { "-lc" } } -- anything else; the line goes last
+```
+
+- Unset: `sh -c` on Linux and macOS; on Windows `pwsh -NoProfile -NonInteractive -Command` when PowerShell 7 is installed, else the bundled Windows PowerShell (`powershell`).
+- A name alone gets its usual arguments: `-NoProfile -NonInteractive -Command` for `pwsh` and `powershell`, `/C` for `cmd`, `-c` for anything else (`bash`, `zsh`, Git Bash's `sh`).
+- A malformed value is a startup warning and the default is used.
+
 ## Compact command output with rtk
 
 [rtk](https://github.com/rtk-ai/rtk) compacts the output of common commands (`git status/log/diff`, `cargo test/build/clippy`, `pytest`, `jest`, `ls`, `docker ps`…) before the model reads it, often by 60-90%. It is off by default:
@@ -443,8 +460,8 @@ Only a plugin whose capabilities were approved can read secrets, and only its ow
 | `ANTHROPIC_API_KEY` | The Anthropic API key. Takes priority over the keyring. |
 | `OPENCODE_API_KEY` | The OpenCode key (Go and Zen). Takes priority over the keyring. |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Credentials of the decision model (see [Decision model](#decision-model-cloudflare-clef)). Take priority over the keyring. |
-| `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute. |
-| `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute. |
+| `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%APPDATA%`. |
+| `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%LOCALAPPDATA%`. |
 | `CREST_PLUGIN_<PLUGIN>_<NAME>` | A plugin secret, read by `app.secret("<name>")` when the keyring has no entry (see [Plugin capabilities and secrets](#plugin-capabilities-and-secrets)). Never passed to the programs crest runs. |
 | `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn`. The log goes to stderr. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Enable trace export to Langfuse, **only in a binary built with `--features langfuse`**. Both are needed: if one is missing, crest shows a notice and does not export. |

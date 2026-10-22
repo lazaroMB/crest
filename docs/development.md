@@ -10,14 +10,14 @@ make doctor     # checks without installing
 make build
 ```
 
-The toolchain is stable Rust (`rust-toolchain.toml`), edition 2024, with `rust-version = 1.99`. If Rust does not come from rustup, `make doctor` warns that `rust-toolchain.toml` will not be applied.
+The toolchain is Rust 1.99 (`rust-toolchain.toml`), edition 2024, with `rust-version = 1.99`. If Rust does not come from rustup, `make doctor` warns that `rust-toolchain.toml` will not be applied.
 
 ### Requirements
 
 | Component | Version | Notes |
 | --- | --- | --- |
-| Linux or macOS | — | Windows is out of scope. |
-| Rust (rustup, rustfmt, clippy) | stable, ≥ 1.99 | Edition 2024. `rust-toolchain.toml` pins `stable`. |
+| Linux, macOS or Windows | — | Windows 10 1809+ (x86_64); see [Windows](#windows). |
+| Rust (rustup, rustfmt, clippy) | ≥ 1.99 | Edition 2024. `rust-toolchain.toml` pins `1.99`. |
 | C compiler, `pkg-config`, `cmake`, `clang` | — | On macOS, the Xcode Command Line Tools. |
 | GPUI libraries on Linux | — | `libxkbcommon`, `libxkbcommon-x11`, `wayland`, `libxcb`, `libx11-xcb`, `fontconfig`, `freetype`. |
 | Vulkan on Linux | — | The loader and a GPU driver (GPUI renders with Vulkan). |
@@ -42,29 +42,52 @@ SQLite is compiled into the binary and TLS uses rustls, so neither `libsqlite3` 
 
 If your distro's `rg` or `fzf` is older than the minimum (Ubuntu 22.04's `fzf` is 0.29), the script downloads the official binaries to `~/.local/bin`. `make deps-dev` is the same as `make deps` with `--dev`.
 
+### Windows
+
+The `make` targets and `scripts/*.sh` are for Linux and macOS; on Windows use cargo directly:
+
+```powershell
+winget install Rustlang.Rustup Git.Git BurntSushi.ripgrep.MSVC junegunn.fzf
+winget install Microsoft.VisualStudio.2022.BuildTools  # "Desktop development with C++": MSVC and the Windows SDK
+cargo build -p crest
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+- GPUI renders with DirectX 11. Release builds compile its shaders with `fxc.exe` from the Windows SDK (set `GPUI_FXC_PATH` if it is not found).
+- `crest.exe` is a GUI program (`windows_subsystem = "windows"`): started from a terminal it attaches to that console, so `--help` and `--headless` print there, but the shell does not wait for it.
+- `crates/platform` holds what differs per OS. Processes run without a console window; a command and its children are killed with `taskkill /T` (process groups on Unix); bare names are looked up with `PATHEXT` (`npx` is `npx.cmd`).
+- Paths: the workspace accepts `\` as a separator and drive paths on its own drive (`C:\ws\src`), and rejects other drives, UNC shares and drive-relative paths (`C:src`); sensitive-path rules ignore case on Windows and macOS.
+- Tests that need symlinks or POSIX tools (`sh`, `sleep`, `cat`) are `#[cfg(unix)]`; in-memory workspaces use `application::testing::fs::test_root()` (`C:\ws` on Windows).
+
 ### Repository layout
 
 ```text
 Cargo.toml              workspace, shared dependencies and lints
 Makefile                build, test and check targets
-rust-toolchain.toml     stable toolchain with rustfmt and clippy
+rust-toolchain.toml     Rust 1.99 with rustfmt and clippy
 crates/
   domain/               pure types and rules
   app/                  `application`: ports, use cases, tools, workflows, fakes
-  adapters/             anthropic, cloudflare, search, fs, shell, web, store, lua, mcp,
-                        telemetry, export
+  adapters/             anthropic, openai, cloudflare, search, fs, shell, web, store,
+                        lua, mcp, telemetry, export
                         (export/vendor/three/ holds the inlined three.js, MIT)
+  platform/             OS glue shared by adapters, UI and bin: spawning and killing
+                        processes, PATH lookup, crest's directories, the Windows console
   ui/                   GPUI views (plus runnable examples/, `showcase` among them)
   bin/                  the `crest` binary and end-to-end integration tests
 scripts/
   install-deps.sh       installs or checks dependencies (Bash 3.2+)
   check-arch.sh         hexagonal architecture rules
   package.sh            builds the release tarball (crest.app on macOS)
+  package.ps1           builds the Windows release zip
   install.sh            installs crest as an app from a release or a tarball (POSIX sh)
+  install.ps1           installs crest on Windows from a release or a zip
   screenshots.sh        takes the README's screenshots from the UI examples
-  icons.sh              renders the app icons from assets/logo.svg
+  icons.sh              renders the app icons from assets/logo.svg (and crest.ico)
 assets/                 logo, icons, .desktop entry, crest-launcher.sh,
-                        macos/Info.plist.in and screenshots/
+                        macos/Info.plist.in, windows/ (crest.ico, crest.rc) and
+                        screenshots/
 examples/plugins/       showcase: a demo Lua plugin with every extension point
 tests/
   arch/                 fixtures and tests for check-arch.sh
@@ -238,8 +261,8 @@ column range. "context" events are attached to the previous hit.
 
 | Workflow | When | What it does |
 | --- | --- | --- |
-| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`, plus `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
+| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
 | `live.yml` | Manual (`workflow_dispatch`) | `make test-live` with the `ANTHROPIC_API_KEY` secret. |
-| `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64-unknown-linux-gnu` (on ubuntu-22.04, because of glibc) and for `aarch64`/`x86_64-apple-darwin`, unsigned. With a tag, it publishes a GitHub Release with checksums. |
+| `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64-unknown-linux-gnu` (on ubuntu-22.04, because of glibc) and for `aarch64`/`x86_64-apple-darwin`, and a zip (`scripts/package.ps1`) for `x86_64-pc-windows-msvc` whose `install.ps1` is tested on the runner, all unsigned. With a tag, it publishes a GitHub Release with checksums. |
 
 Actions are pinned by commit SHA.

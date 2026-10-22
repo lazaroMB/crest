@@ -11,7 +11,7 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
-![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 ![Release](https://img.shields.io/badge/release-v0.11.0-d9604a)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
 
@@ -126,6 +126,14 @@ curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install
 
 It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.11.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
 
+**Windows** (10 1809 or newer, x86_64; no administrator rights), in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
+```
+
+It installs `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, adds it to your user `PATH` and to the Start menu; `install.ps1 -Uninstall` removes it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). The Windows build is new and has only been tested in CI: reports are welcome.
+
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
 **From source** (Rust 1.99+):
@@ -136,7 +144,7 @@ make deps       # installs what is missing: rg, fzf, the GPUI libraries...
 make install    # the same app install, from your build (make uninstall removes it)
 ```
 
-Then open crest and give it an API key: without one the window asks for it (or run `/login`). It can be an Anthropic key, or an OpenCode key (an OpenCode Go subscription or Zen credits) to use models such as `opencode-go:glm-5.3`; `Tab` switches between them in the dialog. The key is checked with the provider and stored in the system keyring (GNOME Keyring, KWallet or the macOS Keychain), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
+Then open crest and give it an API key: without one the window asks for it (or run `/login`). It can be an Anthropic key, or an OpenCode key (an OpenCode Go subscription or Zen credits) to use models such as `opencode-go:glm-5.3`; `Tab` switches between them in the dialog. The key is checked with the provider and stored in the system keyring (GNOME Keyring, KWallet, the macOS Keychain or the Windows Credential Manager), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
 
 ```bash
 secret-tool store --label="crest" service crest username ANTHROPIC_API_KEY   # Linux (OPENCODE_API_KEY likewise)
