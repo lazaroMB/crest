@@ -302,6 +302,7 @@ mod tests {
                 McpTransport::Http {
                     url: "a".into(),
                     headers: BTreeMap::new(),
+                    oauth: None,
                 },
             ));
         });
@@ -319,6 +320,7 @@ mod tests {
                 McpTransport::Http {
                     url: "b".into(),
                     headers: BTreeMap::new(),
+                    oauth: None,
                 },
             ));
         });

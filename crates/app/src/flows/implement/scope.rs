@@ -222,13 +222,13 @@ pub fn scoped_tools(
         .with_budget(tools.budget())
         .with_redactor(tools.redactor().clone());
     for name in tools.names() {
-        let Some(tool) = tools.get(name) else {
+        let Some(tool) = tools.get(&name) else {
             continue;
         };
-        let tool: Arc<dyn Tool> = if SCOPED_TOOLS.contains(&name) {
-            Arc::new(ScopedFileTool::new(Arc::clone(tool), Arc::clone(scope)))
+        let tool: Arc<dyn Tool> = if SCOPED_TOOLS.contains(&name.as_str()) {
+            Arc::new(ScopedFileTool::new(tool, Arc::clone(scope)))
         } else {
-            Arc::clone(tool)
+            tool
         };
         scoped.register(tool)?;
     }

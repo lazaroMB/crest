@@ -179,8 +179,8 @@ impl Data {
             .explore_agent()?
             .tools()
             .names()
+            .into_iter()
             .filter(|name| name.starts_with("mcp__"))
-            .map(str::to_owned)
             .collect();
         let mcp_names: Vec<&str> = mcp.iter().map(String::as_str).collect();
         let answer: Answer = explore_json(

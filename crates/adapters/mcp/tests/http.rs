@@ -20,6 +20,7 @@ async fn lists_and_calls_tools_over_http() {
         McpTransport::Http {
             url,
             headers: BTreeMap::from([("x-crest-test".to_owned(), "1".to_owned())]),
+            oauth: None,
         },
     );
     let manager = McpManager::start(vec![spec]);
@@ -53,6 +54,7 @@ async fn an_unreachable_url_fails() {
             // Port 9 (discard) is not served on the loopback.
             url: "http://127.0.0.1:9/mcp".into(),
             headers: BTreeMap::new(),
+            oauth: None,
         },
     );
     let manager = McpManager::start(vec![spec]);
@@ -68,6 +70,7 @@ async fn invalid_headers_fail_before_connecting() {
         McpTransport::Http {
             url: "http://127.0.0.1:9/mcp".into(),
             headers: BTreeMap::from([("bad header".to_owned(), "x".to_owned())]),
+            oauth: None,
         },
     );
     let manager = McpManager::start(vec![spec]);
@@ -76,4 +79,66 @@ async fn invalid_headers_fail_before_connecting() {
         panic!("not failed");
     };
     assert!(message.contains("invalid header name"), "{message}");
+}
+
+#[tokio::test]
+async fn a_server_that_asks_for_oauth_needs_a_login() {
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let home = std::env::var("HOME").unwrap_or_default();
+    Mock::given(method("POST"))
+        .and(header("x-home", home.as_str()))
+        .respond_with(
+            ResponseTemplate::new(401).insert_header(
+                "www-authenticate",
+                format!(
+                    "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+                    server.uri()
+                )
+                .as_str(),
+            ),
+        )
+        .expect(1..)
+        .mount(&server)
+        .await;
+    let spec = McpServerSpec::new(
+        "linear",
+        McpTransport::Http {
+            url: format!("{}/mcp", server.uri()),
+            headers: BTreeMap::from([("x-home".to_owned(), "${HOME}".to_owned())]),
+            oauth: None,
+        },
+    );
+    let manager = McpManager::start(vec![spec]);
+    manager.wait_ready().await;
+    let McpServerState::NeedsLogin { message } = &manager.servers().await[0].state else {
+        panic!("unexpected {:?}", manager.servers().await[0].state);
+    };
+    assert!(message.contains("/mcp login linear"), "{message}");
+}
+
+#[tokio::test]
+async fn a_missing_variable_fails_before_connecting() {
+    let spec = McpServerSpec::new(
+        "ctx",
+        McpTransport::Http {
+            url: "http://127.0.0.1:9/mcp".into(),
+            headers: BTreeMap::from([(
+                "Authorization".to_owned(),
+                "Bearer ${CREST_TEST_SURELY_UNSET_TOKEN}".to_owned(),
+            )]),
+            oauth: None,
+        },
+    );
+    let manager = McpManager::start(vec![spec]);
+    manager.wait_ready().await;
+    let McpServerState::Failed { message } = &manager.servers().await[0].state else {
+        panic!("not failed");
+    };
+    assert!(
+        message.contains("${CREST_TEST_SURELY_UNSET_TOKEN}"),
+        "{message}"
+    );
 }

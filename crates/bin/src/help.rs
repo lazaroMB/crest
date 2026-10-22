@@ -139,9 +139,10 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "mcp",
-        usage: "/mcp trust <name>",
-        description: "Approve an MCP server of the workspace config (remembered for this \
-                      workspace)",
+        usage: "/mcp [tools|restart|enable|disable|login|logout|trust <name>]",
+        description: "List the MCP servers with their state, or show a server's tools, \
+                      restart, turn on or off, log in or out (OAuth) or approve one of the \
+                      workspace config",
     },
     CommandInfo {
         name: "plugin",
@@ -383,8 +384,20 @@ fn mcp_rows(specs: &[McpServerSpec], statuses: &[McpServerStatus]) -> Vec<McpRow
                     (format!("ready ({tool_count} tool{s})"), None)
                 }
                 Some(McpServerState::Failed { message }) => (format!("failed: {message}"), None),
+                Some(McpServerState::NeedsLogin { .. }) => (
+                    "needs login".to_owned(),
+                    Some(format!("/mcp login {}", spec.name)),
+                ),
                 Some(McpServerState::Starting) => ("starting".to_owned(), None),
                 Some(McpServerState::Stopped) => ("stopped".to_owned(), None),
+                Some(McpServerState::Disabled) => (
+                    "disabled".to_owned(),
+                    Some(format!("/mcp enable {}", spec.name)),
+                ),
+                Some(McpServerState::Untrusted) => (
+                    "held back: the workspace config is not trusted".to_owned(),
+                    Some(format!("/mcp trust {}", spec.name)),
+                ),
                 None if spec.origin == ConfigOrigin::Workspace => (
                     "held back: the workspace config is not trusted".to_owned(),
                     Some(format!("/mcp trust {}", spec.name)),
@@ -589,6 +602,7 @@ mod tests {
                 command: "mcp-git".into(),
                 args: vec!["--x".into()],
                 env: BTreeMap::new(),
+                cwd: None,
             },
         );
         ws.origin = ConfigOrigin::Workspace;
@@ -597,11 +611,13 @@ mod tests {
             McpTransport::Http {
                 url: "http://localhost:1".into(),
                 headers: BTreeMap::new(),
+                oauth: None,
             },
         );
         let statuses = [McpServerStatus {
             name: "echo".into(),
             state: McpServerState::Ready { tool_count: 2 },
+            transport: "stdio: echo".into(),
         }];
         let rows = mcp_rows(&[ws, ready], &statuses);
         assert_eq!(rows[0].trust_command.as_deref(), Some("/mcp trust git"));

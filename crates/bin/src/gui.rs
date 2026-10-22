@@ -46,9 +46,9 @@ use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
 use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::ports::mcp::McpPort as _;
+use application::ports::mcp::{McpPort, McpServerState};
 use application::ports::plugin::{
-    CallbackId, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
+    CallbackId, ConfigOrigin, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
 };
 use application::ports::projects::{BrowseError, DirListing, ProjectBrowserPort, RecentWorkspace};
 use application::ports::search::{
@@ -62,7 +62,7 @@ use application::usecases::run_turn::{SharedPermissions, UserInput};
 use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
 use async_trait::async_trait;
-use domain::block::{Block, BlockKind};
+use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ResolveRequest};
@@ -183,7 +183,7 @@ pub struct UiController {
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
-    mcp: Arc<McpTrust>,
+    mcp: Arc<McpCommands>,
     plugin_trust: Arc<PluginTrust>,
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
@@ -406,23 +406,185 @@ async fn answer_gate(active: &mut Option<ImplementSession>, line: &str, events: 
     }
 }
 
-/// What `/mcp trust <name>` needs.
-struct McpTrust {
+/// Usage of `/mcp`.
+const MCP_USAGE: &str = "usage: /mcp [list] | /mcp tools <name> | /mcp restart|enable|disable \
+                         <name> | /mcp login|logout <name> | /mcp trust <name>";
+
+/// What `/mcp` needs: the declared servers, the approvals store and the
+/// running servers.
+struct McpCommands {
     specs: Vec<McpServerSpec>,
     workspace: PathBuf,
     store: Option<PathBuf>,
+    servers: Option<(Arc<adapter_mcp::McpManager>, Arc<dyn McpPort>)>,
 }
 
-impl McpTrust {
+impl McpCommands {
     /// `/mcp <args>`.
-    fn run(&self, args: &str) -> Reply {
-        let mut words = args.split_whitespace();
-        let (Some("trust"), Some(name), None) = (words.next(), words.next(), words.next()) else {
-            return Reply::Notice(NoticeLevel::Warning, "usage: /mcp trust <name>".into());
+    async fn run(self: Arc<Self>, args: String) -> Reply {
+        let words: Vec<&str> = args.split_whitespace().collect();
+        match words.as_slice() {
+            [] | ["list"] => self.list().await,
+            ["tools", name] => self.tools(name).await,
+            ["trust", name] => self.trust(name).await,
+            [
+                verb @ ("restart" | "enable" | "disable" | "login" | "logout"),
+                name,
+            ] => self.manage(verb, name).await,
+            _ => Reply::Notice(NoticeLevel::Warning, MCP_USAGE.into()),
+        }
+    }
+
+    fn port(&self) -> Option<&Arc<dyn McpPort>> {
+        self.servers.as_ref().map(|(_, port)| port)
+    }
+
+    fn no_servers() -> Reply {
+        Reply::Notice(
+            NoticeLevel::Info,
+            "no MCP server is declared (app.mcp in init.lua)".into(),
+        )
+    }
+
+    /// Every server with its state, transport, origin and what to do next.
+    async fn list(&self) -> Reply {
+        let Some(port) = self.port() else {
+            return Self::no_servers();
         };
-        match crate::mcp::trust_declared(&self.specs, &self.workspace, self.store.as_deref(), name)
-        {
+        let statuses = port.servers().await;
+        let origin = |name: &str| {
+            self.specs
+                .iter()
+                .find(|s| s.name == name)
+                .map_or("", |s| match s.origin {
+                    ConfigOrigin::Global => "global",
+                    ConfigOrigin::Workspace => "workspace",
+                })
+        };
+        let rows = statuses
+            .iter()
+            .map(|status| {
+                let detail = match &status.state {
+                    McpServerState::Untrusted => format!("/mcp trust {}", status.name),
+                    McpServerState::Disabled => format!("/mcp enable {}", status.name),
+                    McpServerState::NeedsLogin { .. } => format!("/mcp login {}", status.name),
+                    McpServerState::Ready { .. } => format!("/mcp tools {}", status.name),
+                    state => state.message().unwrap_or_default().to_owned(),
+                };
+                vec![
+                    Cell::Text(status.name.clone()),
+                    Cell::Text(status.state.label()),
+                    Cell::Text(status.transport.clone()),
+                    Cell::Text(origin(&status.name).to_owned()),
+                    Cell::Text(detail),
+                ]
+            })
+            .collect();
+        Reply::Block(Block::new(BlockKind::Table(TableSpec {
+            columns: ["MCP server", "State", "Transport", "Config", "Detail"]
+                .map(Column::new)
+                .to_vec(),
+            rows,
+        })))
+    }
+
+    /// The tools of `name`, as the model sees them.
+    async fn tools(&self, name: &str) -> Reply {
+        let Some(port) = self.port() else {
+            return Self::no_servers();
+        };
+        let Some(status) = port.servers().await.into_iter().find(|s| s.name == name) else {
+            return Reply::Notice(
+                NoticeLevel::Warning,
+                format!("/mcp: no MCP server `{name}`"),
+            );
+        };
+        if !matches!(status.state, McpServerState::Ready { .. }) {
+            let why = status.state.message().unwrap_or_default();
+            return Reply::Notice(
+                NoticeLevel::Warning,
+                format!(
+                    "MCP server `{name}` is {}{}",
+                    status.state.label(),
+                    if why.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {why}")
+                    }
+                ),
+            );
+        }
+        let tools = port.list_tools().await.unwrap_or_default();
+        let rows: Vec<Vec<Cell>> = tools
+            .into_iter()
+            .filter(|t| t.server == name)
+            .map(|tool| {
+                let summary = tool.description.lines().next().unwrap_or_default();
+                let summary: String = summary.chars().take(160).collect();
+                vec![Cell::Text(tool.qualified_name()), Cell::Text(summary)]
+            })
+            .collect();
+        if rows.is_empty() {
+            return Reply::Notice(
+                NoticeLevel::Info,
+                format!("MCP server `{name}` offers no tools"),
+            );
+        }
+        Reply::Block(Block::new(BlockKind::Table(TableSpec {
+            columns: vec![Column::new("Tool"), Column::new("Description")],
+            rows,
+        })))
+    }
+
+    /// `restart`, `enable`, `disable`, `login` or `logout` of `name`.
+    async fn manage(&self, verb: &str, name: &str) -> Reply {
+        let Some(port) = self.port() else {
+            return Self::no_servers();
+        };
+        let done = match verb {
+            "restart" => port
+                .restart(name)
+                .await
+                .map(|()| format!("MCP server `{name}` restarting")),
+            "enable" => port
+                .set_enabled(name, true)
+                .await
+                .map(|()| format!("MCP server `{name}` enabled")),
+            "disable" => port.set_enabled(name, false).await.map(|()| {
+                format!("MCP server `{name}` disabled for this session (disabled = true in init.lua keeps it off)")
+            }),
+            "login" => port.login(name).await,
+            _ => port.logout(name).await.map(|deleted| {
+                if deleted {
+                    format!("MCP server `{name}`: login tokens deleted")
+                } else {
+                    format!("MCP server `{name}` had no stored login")
+                }
+            }),
+        };
+        match done {
             Ok(message) => Reply::Notice(NoticeLevel::Info, message),
+            Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/mcp {verb}: {err}")),
+        }
+    }
+
+    /// Approves the workspace server `name` and starts it.
+    async fn trust(self: &Arc<Self>, name: &str) -> Reply {
+        // Reads and writes the store file: off the async workers.
+        let this = Arc::clone(self);
+        let owned = name.to_owned();
+        let saved = tokio::task::spawn_blocking(move || {
+            crate::mcp::trust_declared(&this.specs, &this.workspace, this.store.as_deref(), &owned)
+        })
+        .await
+        .unwrap_or_else(|err| Err(err.to_string()));
+        match saved {
+            Ok(message) => {
+                if let Some((manager, _)) = &self.servers {
+                    let _ = manager.trust(name);
+                }
+                Reply::Notice(NoticeLevel::Info, message)
+            }
             Err(message) => Reply::Notice(NoticeLevel::Warning, format!("/mcp trust: {message}")),
         }
     }
@@ -467,10 +629,14 @@ impl UiController {
         let prompt_history = Arc::clone(app.shared_prompt_history());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
-        let mcp = Arc::new(McpTrust {
+        let mcp = Arc::new(McpCommands {
             specs: app.mcp_specs.clone(),
             workspace: app.workspace.as_path().to_path_buf(),
             store: app.mcp_trust_path.clone(),
+            servers: app
+                .mcp
+                .as_ref()
+                .map(|servers| (Arc::clone(&servers.manager), Arc::clone(&servers.port))),
         });
         let plugin_trust = Arc::new(PluginTrust {
             decls: app.plugin_capabilities.clone(),
@@ -1016,19 +1182,7 @@ impl SessionController for UiController {
                 }
                 Some(self.spawn_command("simulate", simulate_command(self.simulator.clone(), spec)))
             }
-            "mcp" => {
-                // Reads and writes the store file: off GPUI's thread.
-                let mcp = Arc::clone(&self.mcp);
-                let task = self.handle.spawn_blocking(move || mcp.run(&args));
-                Some(
-                    task.map(|joined| {
-                        joined.unwrap_or_else(|err| {
-                            Reply::Notice(NoticeLevel::Warning, format!("/mcp: {err}"))
-                        })
-                    })
-                    .boxed(),
-                )
-            }
+            "mcp" => Some(self.spawn_command("mcp", Arc::clone(&self.mcp).run(args))),
             "plugin" => {
                 let task = plugin_command(Arc::clone(&self.plugin_trust), args);
                 Some(self.spawn_command("plugin", task))
@@ -1617,23 +1771,31 @@ mod tests {
                     command: "mcp-git".into(),
                     args: Vec::new(),
                     env: std::collections::BTreeMap::new(),
+                    cwd: None,
                 },
             )
         };
-        let trust = McpTrust {
+        let trust = Arc::new(McpCommands {
             specs: vec![spec],
             workspace: dir.path().to_path_buf(),
             store: Some(dir.path().join("trust.json")),
-        };
+            servers: None,
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let run = |args: &str| runtime.block_on(Arc::clone(&trust).run(args.to_owned()));
         assert!(matches!(
-            trust.run("trust git"),
+            run("trust git"),
             Reply::Notice(NoticeLevel::Info, _)
         ));
         assert!(dir.path().join("trust.json").exists());
-        let Reply::Notice(NoticeLevel::Warning, usage) = trust.run("list") else {
+        let Reply::Notice(NoticeLevel::Warning, usage) = run("frobnicate git") else {
             panic!("a usage warning");
         };
         assert!(usage.contains("/mcp trust"), "{usage}");
+        let Reply::Notice(NoticeLevel::Info, none) = run("list") else {
+            panic!("a notice without servers");
+        };
+        assert!(none.contains("no MCP server"), "{none}");
     }
 
     #[test]

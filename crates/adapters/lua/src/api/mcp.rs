@@ -10,13 +10,22 @@
 //! or, one at a time, `app.mcp.add("git", { command = "mcp-git" })`.
 //!
 //! Each server has either `command` (a child process speaking over stdio,
-//! with optional `args` and `env`) or `url` (streamable HTTP, with optional
-//! `headers`). Both take:
+//! with optional `args`, `env` and `cwd`, which defaults to the workspace)
+//! or `url` (streamable HTTP, with optional `headers` and `oauth`, a
+//! pre-registered client `{ client_id, client_secret, scopes,
+//! callback_port }` for servers without dynamic registration). `${VAR}`
+//! and `${VAR:-default}` in `args`, `env`, `url` and `headers` are read
+//! from the environment when the server starts, so secrets stay out of
+//! the config. Both take:
 //!
 //! - `effect`: what calling its tools does, for the permission policy:
 //!   `"read"`, `"write"`, `"execute"` (the default, so every call asks like
 //!   a command) or `"network"`;
-//! - `timeout`: limit for one tool call, in seconds.
+//! - `timeout`: limit for one tool call, in seconds;
+//! - `startup_timeout`: limit for starting it, in seconds (the first
+//!   `npx -y` downloads the package);
+//! - `disabled`: `true` declares it without starting it (`/mcp enable`);
+//! - `type`: `"stdio"` or `"http"`, optional, checked against the rest.
 //!
 //! Server names become part of tool names (`mcp__<server>__<tool>`), so
 //! they may only have letters, digits, `-` and single `_`.
@@ -25,7 +34,7 @@ use std::collections::BTreeMap;
 
 use std::sync::Arc;
 
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application::ports::plugin::{McpOAuthClient, McpServerSpec, McpTransport};
 use domain::permission::ToolEffect;
 use mlua::{Function, Lua, Table};
 use serde_json::{Map, Value};
@@ -81,8 +90,71 @@ fn string_map(value: &Value, what: &str, problems: &mut Vec<String>) -> BTreeMap
 
 /// Fields a server definition may have.
 const FIELDS: &[&str] = &[
-    "command", "args", "env", "url", "headers", "effect", "timeout",
+    "command",
+    "args",
+    "env",
+    "cwd",
+    "url",
+    "headers",
+    "oauth",
+    "effect",
+    "timeout",
+    "startup_timeout",
+    "disabled",
+    "type",
 ];
+
+/// Fields of `oauth`.
+const OAUTH_FIELDS: &[&str] = &["client_id", "client_secret", "scopes", "callback_port"];
+
+/// The pre-registered OAuth client of `def.oauth`, if any.
+fn oauth(value: &Value, what: &str, problems: &mut Vec<String>) -> Option<McpOAuthClient> {
+    let what = format!("{what}.oauth");
+    let Some(map) = as_map(value) else {
+        problems.push(format!("{what} must be a table"));
+        return None;
+    };
+    for key in map.keys().filter(|k| !OAUTH_FIELDS.contains(&k.as_str())) {
+        problems.push(format!("{what}: unknown field `{key}`"));
+    }
+    let client_id = match text(value, "client_id", &what) {
+        Ok(Some(id)) => id.to_owned(),
+        Ok(None) => {
+            problems.push(format!("{what}.client_id is required"));
+            return None;
+        }
+        Err(e) => {
+            problems.push(e);
+            return None;
+        }
+    };
+    let client_secret = text(value, "client_secret", &what)
+        .unwrap_or_else(|e| {
+            problems.push(e);
+            None
+        })
+        .map(str::to_owned);
+    let scopes = value
+        .get("scopes")
+        .map(|s| strings(s, &format!("{what}.scopes"), problems))
+        .unwrap_or_default();
+    let callback_port = match value.get("callback_port") {
+        None | Some(Value::Null) => None,
+        Some(port) => match port.as_u64().and_then(|p| u16::try_from(p).ok()) {
+            Some(port) if port > 0 => Some(port),
+            _ => {
+                problems.push(format!("{what}.callback_port must be a port number"));
+                None
+            }
+        },
+    };
+    Some(McpOAuthClient {
+        client_id,
+        client_secret,
+        scopes,
+        callback_port,
+    })
+}
 
 /// Why `name` cannot name a server, if it cannot. Tools are offered as
 /// `mcp__<server>__<tool>`, so `__` would make the name ambiguous.
@@ -116,8 +188,8 @@ fn effect(value: &Value, what: &str) -> Result<ToolEffect, String> {
     }
 }
 
-/// `timeout` in seconds, as milliseconds.
-fn timeout_ms(value: &Value, what: &str) -> Result<u64, String> {
+/// A timeout field in seconds, as milliseconds.
+fn timeout_ms(value: &Value, what: &str, field: &str) -> Result<u64, String> {
     match value.as_f64() {
         Some(secs) if secs > 0.0 && secs.is_finite() => {
             // Saturates for absurd values, which is what we want.
@@ -126,7 +198,7 @@ fn timeout_ms(value: &Value, what: &str) -> Result<u64, String> {
             Ok(ms)
         }
         _ => Err(format!(
-            "{what}.timeout must be a positive number of seconds, got {value}"
+            "{what}.{field} must be a positive number of seconds, got {value}"
         )),
     }
 }
@@ -154,6 +226,22 @@ pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Opt
             return None;
         }
     };
+    if let Some(kind) = def.get("type").filter(|v| !v.is_null()) {
+        let expected = if command.is_some() { "stdio" } else { "http" };
+        match kind.as_str() {
+            Some(kind) if kind == expected => {}
+            Some("stdio" | "local") if expected == "stdio" => {}
+            Some("http" | "streamable-http" | "remote") if expected == "http" => {}
+            _ => problems.push(format!(
+                "{what}.type is {kind} but the server has {}",
+                if command.is_some() {
+                    "`command` (stdio)"
+                } else {
+                    "`url` (http)"
+                }
+            )),
+        }
+    }
     let transport = match (command, url) {
         (Some(command), None) => McpTransport::Stdio {
             command: command.to_owned(),
@@ -165,6 +253,12 @@ pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Opt
                 .get("env")
                 .map(|e| string_map(e, &format!("{what}.env"), problems))
                 .unwrap_or_default(),
+            cwd: text(def, "cwd", &what)
+                .unwrap_or_else(|e| {
+                    problems.push(e);
+                    None
+                })
+                .map(str::to_owned),
         },
         (None, Some(url)) => {
             if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -177,6 +271,10 @@ pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Opt
                     .get("headers")
                     .map(|h| string_map(h, &format!("{what}.headers"), problems))
                     .unwrap_or_default(),
+                oauth: def
+                    .get("oauth")
+                    .filter(|o| !o.is_null())
+                    .and_then(|o| oauth(o, &what, problems)),
             }
         }
         (Some(_), Some(_)) => {
@@ -196,10 +294,21 @@ pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Opt
         }
     }
     if let Some(value) = def.get("timeout") {
-        match timeout_ms(value, &what) {
+        match timeout_ms(value, &what, "timeout") {
             Ok(ms) => spec.timeout_ms = Some(ms),
             Err(e) => problems.push(e),
         }
+    }
+    if let Some(value) = def.get("startup_timeout") {
+        match timeout_ms(value, &what, "startup_timeout") {
+            Ok(ms) => spec.startup_timeout_ms = Some(ms),
+            Err(e) => problems.push(e),
+        }
+    }
+    match def.get("disabled") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(disabled)) => spec.disabled = *disabled,
+        Some(_) => problems.push(format!("{what}.disabled must be true or false")),
     }
     Some(spec)
 }
@@ -313,12 +422,61 @@ mod tests {
     fn bad_optional_fields_are_dropped_with_a_problem() {
         let (spec, problems) = read(
             "echo",
-            json!({ "command": "x", "effect": "maybe", "timeout": -1, "cwd": "/" }),
+            json!({ "command": "x", "effect": "maybe", "timeout": -1, "workdir": "/" }),
         );
         let spec = spec.unwrap();
         assert_eq!(spec.effect, ToolEffect::Execute);
         assert_eq!(spec.timeout_ms, None);
         assert_eq!(problems.len(), 3, "{problems:?}");
-        assert!(problems.iter().any(|p| p.contains("unknown field `cwd`")));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("unknown field `workdir`"))
+        );
+    }
+
+    #[test]
+    fn reads_cwd_startup_timeout_disabled_and_oauth() {
+        let (spec, problems) = read(
+            "fs",
+            json!({ "type": "stdio", "command": "npx", "cwd": "/tmp", "startup_timeout": 90, "disabled": true }),
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        let spec = spec.unwrap();
+        assert!(
+            matches!(&spec.transport, McpTransport::Stdio { cwd: Some(cwd), .. } if cwd == "/tmp")
+        );
+        assert_eq!(spec.startup_timeout_ms, Some(90_000));
+        assert!(spec.disabled);
+
+        let (spec, problems) = read(
+            "gh",
+            json!({
+                "type": "http",
+                "url": "https://api.githubcopilot.com/mcp/",
+                "oauth": { "client_id": "Iv1.abc", "scopes": ["repo"], "callback_port": 33418 },
+            }),
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        let McpTransport::Http {
+            oauth: Some(oauth), ..
+        } = spec.unwrap().transport
+        else {
+            panic!("expected an OAuth client")
+        };
+        assert_eq!(oauth.client_id, "Iv1.abc");
+        assert_eq!(oauth.scopes, ["repo"]);
+        assert_eq!(oauth.callback_port, Some(33418));
+
+        let (_, problems) = read("t", json!({ "type": "http", "command": "x" }));
+        assert!(problems.iter().any(|p| p.contains(".type")), "{problems:?}");
+        let (_, problems) = read(
+            "o",
+            json!({ "url": "https://h", "oauth": { "scopes": [] } }),
+        );
+        assert!(
+            problems.iter().any(|p| p.contains("client_id is required")),
+            "{problems:?}"
+        );
     }
 }

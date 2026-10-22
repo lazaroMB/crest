@@ -1381,7 +1381,7 @@ mod tests {
     fn definitions_snapshot() {
         let registry = registry();
         assert_eq!(
-            registry.names().collect::<Vec<_>>(),
+            registry.names(),
             [
                 "edit_file",
                 "find_file",

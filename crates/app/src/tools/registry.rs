@@ -300,11 +300,20 @@ fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+/// Tools that come and go while the session runs (those of MCP servers
+/// that connect, reconnect or change their list). The registry asks for
+/// them on every lookup; a name taken by a registered tool wins.
+pub trait ToolSource: Send + Sync {
+    /// The tools available right now.
+    fn tools(&self) -> Vec<Arc<dyn Tool>>;
+}
+
 /// The tools offered to the model, by name, the redactor their results
 /// go through and the budget they are truncated to.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
+    sources: Vec<Arc<dyn ToolSource>>,
     budget: ResultBudget,
     redactor: Redactor,
 }
@@ -367,6 +376,30 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Adds `source`, whose tools are offered next to the registered ones.
+    pub fn add_source(&mut self, source: Arc<dyn ToolSource>) {
+        self.sources.push(source);
+    }
+
+    /// The tools of the sources that are valid and not shadowed, by name.
+    fn dynamic(&self) -> BTreeMap<String, Arc<dyn Tool>> {
+        let mut out = BTreeMap::new();
+        for tool in self.sources.iter().flat_map(|source| source.tools()) {
+            let name = tool.name().to_owned();
+            if valid_name(&name) && !self.tools.contains_key(&name) {
+                out.entry(name).or_insert(tool);
+            }
+        }
+        out
+    }
+
+    /// Every tool, registered and dynamic, by name.
+    fn all(&self) -> BTreeMap<String, Arc<dyn Tool>> {
+        let mut all = self.dynamic();
+        all.extend(self.tools.iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        all
+    }
+
     /// Adds a typed tool.
     ///
     /// # Errors
@@ -376,34 +409,41 @@ impl ToolRegistry {
         self.register(Arc::new(Typed(tool)))
     }
 
-    /// The tool called `name`.
+    /// The tool called `name`, registered or from a source.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
-        self.tools.get(name)
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        if let Some(tool) = self.tools.get(name) {
+            return Some(Arc::clone(tool));
+        }
+        self.sources
+            .iter()
+            .flat_map(|source| source.tools())
+            .find(|tool| tool.name() == name)
     }
 
-    /// Names of the registered tools, sorted.
-    pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
-        self.tools.keys().map(String::as_str)
+    /// Names of every tool, sorted.
+    #[must_use]
+    pub fn names(&self) -> Vec<String> {
+        self.all().into_keys().collect()
     }
 
-    /// Number of registered tools.
+    /// Number of tools.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.tools.len()
+        self.all().len()
     }
 
-    /// Whether no tool is registered.
+    /// Whether there is no tool.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
+        self.tools.is_empty() && self.dynamic().is_empty()
     }
 
     /// Definitions for [`LlmRequest::tools`](crate::ports::llm::LlmRequest),
     /// sorted by name so the prompt cache sees the same prefix every turn.
     #[must_use]
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
+        self.all()
             .values()
             .map(|tool| ToolDefinition::new(tool.name(), tool.description(), tool.input_schema()))
             .collect()
@@ -447,7 +487,7 @@ impl ToolRegistry {
 impl fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ToolRegistry")
-            .field("tools", &self.tools.keys().collect::<Vec<_>>())
+            .field("tools", &self.names())
             .field("budget", &self.budget)
             .field("redactor", &self.redactor.enabled())
             .finish()
@@ -564,7 +604,7 @@ mod tests {
             registry.register_typed(Echo("bad name")),
             Err(RegisterError::InvalidName("bad name".into()))
         );
-        assert_eq!(registry.names().collect::<Vec<_>>(), ["echo"]);
+        assert_eq!(registry.names(), ["echo"]);
     }
 
     #[tokio::test]

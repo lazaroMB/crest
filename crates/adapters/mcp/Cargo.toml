@@ -11,10 +11,12 @@ publish.workspace = true
 application.workspace = true
 async-trait.workspace = true
 domain.workspace = true
+keyring.workspace = true
 reqwest.workspace = true
-rmcp.workspace = true
+rmcp = { workspace = true, features = ["auth"] }
+serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 tracing.workspace = true
 
 [dev-dependencies]
@@ -24,8 +26,8 @@ hyper.workspace = true
 hyper-util.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars.workspace = true
-serde.workspace = true
 tokio = { workspace = true, features = ["net"] }
+wiremock.workspace = true
 
 [lints]
 workspace = true

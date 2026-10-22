@@ -8,6 +8,7 @@
 mod connect;
 mod convert;
 mod manager;
+mod oauth;
 
 pub use connect::SCRUBBED_ENV_VARS;
-pub use manager::{McpManager, McpOptions};
+pub use manager::{McpEntry, McpManager, McpOptions, ShowLoginUrl};

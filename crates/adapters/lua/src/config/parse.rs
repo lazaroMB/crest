@@ -529,6 +529,7 @@ mod tests {
                     McpTransport::Http {
                         url: "https://example.test/mcp".into(),
                         headers: BTreeMap::new(),
+                        oauth: None,
                     },
                 ),
                 McpServerSpec::new(
@@ -537,6 +538,7 @@ mod tests {
                         command: "mcp-git".into(),
                         args: vec!["--repo".into(), ".".into()],
                         env: BTreeMap::from([("A".into(), "1".into())]),
+                        cwd: None,
                     },
                 ),
             ]

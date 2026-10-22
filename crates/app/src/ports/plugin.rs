@@ -152,6 +152,9 @@ pub enum McpTransport {
         /// Extra environment variables.
         #[serde(default)]
         env: BTreeMap<String, String>,
+        /// Working directory; `None` runs it in the workspace root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     /// A remote server over streamable HTTP.
     Http {
@@ -160,7 +163,28 @@ pub enum McpTransport {
         /// Extra request headers (e.g. authorization).
         #[serde(default)]
         headers: BTreeMap<String, String>,
+        /// A pre-registered OAuth client, for servers without dynamic
+        /// registration; `None` registers crest dynamically when the
+        /// server asks for a login.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<McpOAuthClient>,
     },
+}
+
+/// A pre-registered OAuth client of an MCP server (`oauth = { … }`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct McpOAuthClient {
+    /// Client id issued by the authorization server.
+    pub client_id: String,
+    /// Client secret, for confidential clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    /// Scopes to ask for; empty asks for what the server suggests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    /// Loopback port of the redirect URI the client was registered with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_port: Option<u16>,
 }
 
 /// Config layer an item was declared in.
@@ -189,6 +213,13 @@ pub struct McpServerSpec {
     /// Limit for one tool call, in milliseconds; `None` keeps the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// Limit for starting it (process, handshake and tool list), in
+    /// milliseconds; `None` keeps the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_timeout_ms: Option<u64>,
+    /// Declared but turned off (`disabled = true`).
+    #[serde(default)]
+    pub disabled: bool,
     /// Layer that declared it (the last one, when several did).
     #[serde(default)]
     pub origin: ConfigOrigin,
@@ -203,6 +234,8 @@ impl McpServerSpec {
             transport,
             effect: default_tool_effect(),
             timeout_ms: None,
+            startup_timeout_ms: None,
+            disabled: false,
             origin: ConfigOrigin::Global,
         }
     }
@@ -515,6 +548,7 @@ mod tests {
                         command: "mcp-git".into(),
                         args: Vec::new(),
                         env: BTreeMap::new(),
+                        cwd: None,
                     },
                 )
             }],

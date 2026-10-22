@@ -644,7 +644,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_component_tools(&mut registry).unwrap();
         assert_eq!(
-            registry.names().collect::<Vec<_>>(),
+            registry.names(),
             ["show_chart", "show_markdown", "show_mermaid", "show_table"]
         );
         for name in registry.names() {

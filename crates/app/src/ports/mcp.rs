@@ -117,6 +117,9 @@ pub struct McpServerStatus {
     pub name: String,
     /// Current state.
     pub state: McpServerState,
+    /// How it is reached (`stdio: npx -y …`, `http: https://…`).
+    #[serde(default)]
+    pub transport: String,
 }
 
 /// Lifecycle of an MCP server connection.
@@ -132,11 +135,46 @@ pub enum McpServerState {
     },
     /// Failed to start or lost the connection.
     Failed {
-        /// What went wrong.
+        /// What went wrong (with the last lines the server wrote on
+        /// stderr, for stdio servers).
         message: String,
     },
-    /// Stopped on purpose (disabled in config or shut down).
+    /// The server asks for an OAuth login (`/mcp login <name>`).
+    NeedsLogin {
+        /// What the server said.
+        message: String,
+    },
+    /// Turned off (`disabled = true` in the config or `/mcp disable`).
+    Disabled,
+    /// A workspace server that waits for `/mcp trust <name>`.
+    Untrusted,
+    /// Stopped on purpose (shut down).
     Stopped,
+}
+
+impl McpServerState {
+    /// A short label for lists (`ready · 3 tools`, `failed`, ...).
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Starting => "starting".into(),
+            Self::Ready { tool_count } => format!("ready · {tool_count} tools"),
+            Self::Failed { .. } => "failed".into(),
+            Self::NeedsLogin { .. } => "needs login".into(),
+            Self::Disabled => "disabled".into(),
+            Self::Untrusted => "not trusted".into(),
+            Self::Stopped => "stopped".into(),
+        }
+    }
+
+    /// The error or hint of a failed server or one that needs a login.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Failed { message } | Self::NeedsLogin { message } => Some(message),
+            _ => None,
+        }
+    }
 }
 
 /// Errors of [`McpPort`].
@@ -220,6 +258,44 @@ pub trait McpPort: Send + Sync {
 
     /// State of every configured server, in config order.
     async fn servers(&self) -> Vec<McpServerStatus>;
+
+    /// Closes the session of `server` (if any) and connects again.
+    ///
+    /// The default implementation says the adapter cannot do it.
+    async fn restart(&self, server: &str) -> Result<(), McpError> {
+        Err(unsupported(server))
+    }
+
+    /// Turns `server` off (closing its session) or back on, for this run.
+    ///
+    /// The default implementation says the adapter cannot do it.
+    async fn set_enabled(&self, server: &str, enabled: bool) -> Result<(), McpError> {
+        let _ = enabled;
+        Err(unsupported(server))
+    }
+
+    /// Runs the OAuth login of the HTTP server `server` in the browser,
+    /// stores the tokens and connects again. Returns what to tell the user.
+    ///
+    /// The default implementation says the adapter cannot do it.
+    async fn login(&self, server: &str) -> Result<String, McpError> {
+        Err(unsupported(server))
+    }
+
+    /// Forgets the stored OAuth tokens of `server`; `false` when there were
+    /// none.
+    ///
+    /// The default implementation says the adapter cannot do it.
+    async fn logout(&self, server: &str) -> Result<bool, McpError> {
+        Err(unsupported(server))
+    }
+}
+
+fn unsupported(server: &str) -> McpError {
+    McpError::Unavailable {
+        server: server.to_owned(),
+        message: "this session cannot manage MCP servers".into(),
+    }
 }
 
 #[cfg(test)]
@@ -314,6 +390,7 @@ mod tests {
             vec![McpServerStatus {
                 name: "demo".into(),
                 state: McpServerState::Ready { tool_count: 1 },
+                transport: "stdio: demo".into(),
             }]
         }
     }

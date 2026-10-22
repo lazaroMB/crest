@@ -383,8 +383,10 @@ mod tests {
             ScriptedResponse::text("listo"),
         ]));
         let agent = explore_agent(ports(Arc::clone(&llm), Arc::clone(&fs))).unwrap();
-        let names: Vec<&str> = agent.tools().names().collect();
-        assert!(names.contains(&"run_command") && !names.contains(&"write_file"));
+        let names = agent.tools().names();
+        assert!(
+            names.iter().any(|n| n == "run_command") && !names.iter().any(|n| n == "write_file")
+        );
         let mut session = Session::new("/ws", 0);
         agent
             .run_turn(&mut session, "lee", TurnOptions::new(ModelRole::Explore))

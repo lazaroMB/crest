@@ -82,10 +82,10 @@ pub struct ResearchParts {
 fn read_only_mcp(tools: &ToolRegistry) -> Vec<Arc<dyn application::tools::registry::Tool>> {
     tools
         .names()
+        .into_iter()
         .filter(|name| name.starts_with("mcp__"))
-        .filter_map(|name| tools.get(name))
+        .filter_map(|name| tools.get(&name))
         .filter(|tool| tool.effect(&serde_json::json!({})) == ToolEffect::Read)
-        .cloned()
         .collect()
 }
 

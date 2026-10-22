@@ -34,6 +34,7 @@ pub fn echo_spec(name: &str) -> McpServerSpec {
             command: echo_server_path().display().to_string(),
             args: Vec::new(),
             env: BTreeMap::new(),
+            cwd: None,
         },
     )
 }

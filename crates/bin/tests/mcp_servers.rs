@@ -152,7 +152,7 @@ fn add_script() -> Vec<ScriptedResponse> {
 }
 
 fn tool_names(app: &App) -> Vec<String> {
-    app.service.tools().names().map(str::to_owned).collect()
+    app.service.tools().names()
 }
 
 #[tokio::test]
@@ -205,7 +205,8 @@ async fn a_workspace_server_does_not_start_until_trusted() {
     let fx = fixture("", &echo_decl(), "", &[], Vec::new()).await;
     let names = tool_names(&fx.app);
     assert!(!names.iter().any(|n| n.starts_with("mcp__")), "{names:?}");
-    assert!(fx.app.mcp.is_none());
+    let mcp = fx.app.mcp.as_ref().unwrap();
+    assert_eq!(mcp.statuses[0].state, McpServerState::Untrusted);
     assert_eq!(fx.app.warnings.len(), 1, "{:?}", fx.app.warnings);
     let warning = &fx.app.warnings[0];
     assert!(
@@ -241,4 +242,64 @@ async fn a_failing_server_becomes_a_warning() {
         mcp.statuses[0].state,
         McpServerState::Failed { .. }
     ));
+}
+
+#[tokio::test]
+async fn a_slow_server_offers_its_tools_once_ready() {
+    use application::ports::events::{DomainEvent, EventSink};
+    use application::ports::plugin::{McpServerSpec, McpTransport};
+    use application::tools::registry::ToolRegistry;
+
+    #[derive(Default)]
+    struct Notices(Mutex<Vec<String>>);
+    impl EventSink for Notices {
+        fn emit(&self, event: DomainEvent) {
+            if let DomainEvent::Notice { message, .. } = event {
+                self.0.lock().unwrap().push(message);
+            }
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let spec = McpServerSpec::new(
+        "slow",
+        McpTransport::Stdio {
+            command: echo_server_path().display().to_string(),
+            args: vec!["--delay-ms".into(), "800".into()],
+            env: std::collections::BTreeMap::new(),
+            cwd: None,
+        },
+    );
+    let notices = Arc::new(Notices::default());
+    let mut registry = ToolRegistry::new();
+    let (servers, warnings) = crest::mcp::start(
+        vec![spec],
+        dir.path(),
+        &crest::mcp::TrustOptions::default(),
+        std::time::Duration::from_millis(50),
+        &mut registry,
+        Some(notices.clone()),
+    )
+    .await;
+    assert!(warnings[0].contains("still starting"), "{warnings:?}");
+    assert!(!registry.names().iter().any(|n| n.starts_with("mcp__")));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !registry.names().iter().any(|n| n == "mcp__slow__add") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the tools never arrived"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(
+        notices
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|n| n.contains("`slow` ready (2 tools)")),
+        "{:?}",
+        notices.0.lock().unwrap()
+    );
+    servers.unwrap().manager.shutdown().await;
 }

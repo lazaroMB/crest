@@ -952,6 +952,7 @@ impl McpPort for FakeMcp {
             .map(|server| McpServerStatus {
                 name: server.name.clone(),
                 state: server.state(),
+                transport: "fake".into(),
             })
             .collect()
     }

@@ -10,6 +10,9 @@
 //! cargo run -p adapter-mcp --example echo_server
 //! cargo run -p adapter-mcp --example echo_server -- --http 127.0.0.1:0
 //! ```
+//!
+//! For tests over stdio, `--delay-ms <n>` waits before answering (a slow
+//! `npx` start) and `--crash` writes to stderr and exits.
 
 use std::convert::Infallible;
 use std::io::Write;
@@ -107,6 +110,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         && flag == "--http"
     {
         return serve_http(addr).await;
+    }
+    if args.iter().any(|a| a == "--crash") {
+        eprintln!("echo_server: missing configuration");
+        std::process::exit(1);
+    }
+    if let Some(ms) = args
+        .iter()
+        .position(|a| a == "--delay-ms")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|ms| ms.parse().ok())
+    {
+        eprintln!("echo_server: warming up");
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     }
     let server = EchoServer::new().serve(rmcp::transport::stdio()).await?;
     server.waiting().await?;

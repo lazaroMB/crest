@@ -203,7 +203,7 @@ mod tests {
         let (registry, _, skipped) = registry(fake).await;
         assert!(skipped.is_empty());
         assert_eq!(
-            registry.names().collect::<Vec<_>>(),
+            registry.names(),
             ["mcp__echo__add", "mcp__github__create_issue"]
         );
         let defs = registry.definitions();
@@ -230,7 +230,7 @@ mod tests {
         );
         let again = register_mcp_tools(&mut registry, fake).await.unwrap();
         assert_eq!(again.len(), 2);
-        assert_eq!(registry.names().collect::<Vec<_>>(), ["mcp__s__ok"]);
+        assert_eq!(registry.names(), ["mcp__s__ok"]);
     }
 
     #[tokio::test]

@@ -575,6 +575,7 @@ pub async fn build_app(
         &trust,
         mcp::READY_TIMEOUT,
         &mut tools,
+        Some(Arc::clone(&events)),
     )
     .await;
     warnings.extend(mcp_warnings);
