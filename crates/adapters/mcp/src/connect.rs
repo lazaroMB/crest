@@ -236,7 +236,7 @@ fn mentions(err: &ClientInitializeError, needles: &[&str]) -> bool {
 
 /// The message of a server process that cannot start.
 fn spawn_error(command: &str, err: &std::io::Error) -> String {
-    if err.kind() == std::io::ErrorKind::NotFound && command.contains(std::path::MAIN_SEPARATOR) {
+    if err.kind() == std::io::ErrorKind::NotFound && command.contains(std::path::is_separator) {
         return format!("cannot start `{command}`: it does not exist");
     }
     if err.kind() == std::io::ErrorKind::NotFound {

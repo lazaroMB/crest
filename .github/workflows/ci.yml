@@ -94,7 +94,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace --locked
+        # Every failing test binary at once, not just the first.
+        run: cargo test --workspace --locked --no-fail-fast
 
   install-deps-containers:
     name: install-deps --check (${{ matrix.image }})
