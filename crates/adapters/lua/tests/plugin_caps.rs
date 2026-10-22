@@ -11,8 +11,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use adapter_lua::{HostOptions, LuaHandle, LuaHost};
+#[cfg(unix)]
+use application::ports::plugin::ConfigOrigin;
 use application::ports::plugin::{
-    ConfigOrigin, ConfigSources, LoadedConfig, PluginError, PluginHostPort, PluginOutput,
+    ConfigSources, LoadedConfig, PluginError, PluginHostPort, PluginOutput,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -243,7 +245,6 @@ async fn http_times_out() {
     assert!(start.elapsed() < Duration::from_secs(3));
 }
 
-#[cfg(unix)]
 fn shell_plugin() -> String {
     plugin(&[
         "shell:cat".into(),
