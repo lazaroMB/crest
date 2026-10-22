@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use domain::conversation::{SessionId, ToolUseId, Usage};
-use domain::model::{ModelId, ModelPricing};
+use domain::model::{ModelId, ModelPricing, ProviderId};
 use domain::permission::ToolEffect;
 use serde_json::Value;
 
@@ -73,7 +73,17 @@ pub enum CostConfigError {
     BadCap,
 }
 
-/// Prices per model id or prefix. Empty by default.
+/// Price of the models of a flat-rate plan (`opencode-go:…`): nothing
+/// per token, unless the config says otherwise.
+const PLAN: ModelPricing = ModelPricing {
+    input_per_mtok: 0.0,
+    output_per_mtok: 0.0,
+    cache_read_per_mtok: 0.0,
+    cache_write_per_mtok: 0.0,
+};
+
+/// Prices per model id or prefix. Empty by default, except that the models
+/// of OpenCode Go (a flat-rate subscription) cost nothing per token.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PricingTable {
     prices: BTreeMap<String, ModelPricing>,
@@ -100,17 +110,22 @@ impl PricingTable {
     }
 
     /// The price of `model`: its exact id, or else the longest key that is
-    /// a prefix of it.
+    /// a prefix of it, or else nothing per token for a flat-rate plan.
     #[must_use]
     pub fn get(&self, model: &ModelId) -> Option<&ModelPricing> {
         let id = model.as_str();
-        self.prices.get(id).or_else(|| {
-            self.prices
-                .iter()
-                .filter(|(prefix, _)| id.starts_with(prefix.as_str()))
-                .max_by_key(|(prefix, _)| prefix.len())
-                .map(|(_, pricing)| pricing)
-        })
+        self.prices
+            .get(id)
+            .or_else(|| {
+                self.prices
+                    .iter()
+                    .filter(|(prefix, _)| id.starts_with(prefix.as_str()))
+                    .max_by_key(|(prefix, _)| prefix.len())
+                    .map(|(_, pricing)| pricing)
+            })
+            .or_else(|| {
+                (model.provider().map(|(p, _)| p) == Some(ProviderId::OpencodeGo)).then_some(&PLAN)
+            })
     }
 
     /// Cost in USD of `usage` answered by `model`, when it has a price.
@@ -377,6 +392,16 @@ mod tests {
         assert_eq!(input("gpt"), None);
         let none = PricingTable::new().cost(&ModelId::new("x"), &usage(1, 1));
         assert_eq!(none, None);
+    }
+
+    #[test]
+    fn opencode_go_models_cost_nothing_per_token_unless_priced() {
+        let go = ModelId::new("opencode-go:glm-5.3");
+        assert_eq!(PricingTable::new().cost(&go, &usage(1000, 1000)), Some(0.0));
+        let zen = ModelId::new("opencode-zen:glm-5.3");
+        assert_eq!(PricingTable::new().cost(&zen, &usage(1, 1)), None);
+        let priced = PricingTable::new().with("opencode-go:", price(1.0, 1.0));
+        assert_eq!(priced.get(&go).map(|p| p.input_per_mtok), Some(1.0));
     }
 
     #[test]

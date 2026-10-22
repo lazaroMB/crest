@@ -83,7 +83,132 @@ impl FromStr for ModelRole {
     }
 }
 
-/// A concrete model id as the provider knows it (e.g. `claude-sonnet-5-5`).
+/// Who serves a model, written as the prefix of its id
+/// (`opencode-go:glm-5.3`). An id without a known prefix is served by the
+/// default provider (Anthropic unless configured otherwise).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderId {
+    /// The Anthropic Messages API, with an Anthropic API key.
+    Anthropic,
+    /// OpenCode Go: the flat-rate subscription, with an OpenCode key.
+    OpencodeGo,
+    /// OpenCode Zen: pay as you go, with the same OpenCode key.
+    OpencodeZen,
+}
+
+impl ProviderId {
+    /// Every provider, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Anthropic, Self::OpencodeGo, Self::OpencodeZen];
+
+    /// The prefix used in model ids and config.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpencodeGo => "opencode-go",
+            Self::OpencodeZen => "opencode-zen",
+        }
+    }
+
+    /// The account whose key this provider uses: Go and Zen share one.
+    #[must_use]
+    pub const fn account(self) -> Account {
+        match self {
+            Self::Anthropic => Account::Anthropic,
+            Self::OpencodeGo | Self::OpencodeZen => Account::OpenCode,
+        }
+    }
+}
+
+impl fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProviderId {
+    type Err = UnknownProvider;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|p| p.as_str() == s)
+            .ok_or_else(|| UnknownProvider(s.to_owned()))
+    }
+}
+
+/// Error returned when parsing an unknown provider name.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown provider `{0}`")]
+pub struct UnknownProvider(pub String);
+
+/// An account with its own API key, shared by one or more providers.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum Account {
+    /// Anthropic (`ANTHROPIC_API_KEY`).
+    Anthropic,
+    /// OpenCode, for Go and Zen (`OPENCODE_API_KEY`).
+    OpenCode,
+}
+
+impl Account {
+    /// Every account, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Anthropic, Self::OpenCode];
+
+    /// The name used in `/login` and `/logout`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenCode => "opencode",
+        }
+    }
+
+    /// The name shown to people.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Anthropic => "Anthropic",
+            Self::OpenCode => "OpenCode",
+        }
+    }
+
+    /// The environment variable that holds the key; it is also the name of
+    /// the keyring entry (service `crest`).
+    #[must_use]
+    pub const fn key_name(self) -> &'static str {
+        match self {
+            Self::Anthropic => "ANTHROPIC_API_KEY",
+            Self::OpenCode => "OPENCODE_API_KEY",
+        }
+    }
+}
+
+impl fmt::Display for Account {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Account {
+    type Err = UnknownProvider;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|a| a.as_str() == s)
+            .ok_or_else(|| UnknownProvider(s.to_owned()))
+    }
+}
+
+/// A concrete model id as the provider knows it (e.g. `claude-sonnet-5-5`),
+/// optionally prefixed with its provider (`opencode-go:glm-5.3`).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -101,6 +226,21 @@ impl ModelId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The provider prefix and the id the provider knows, or `None` when
+    /// the id has no known prefix (the default provider serves it).
+    #[must_use]
+    pub fn provider(&self) -> Option<(ProviderId, &str)> {
+        let (prefix, rest) = self.0.split_once(':')?;
+        let provider = prefix.parse().ok()?;
+        (!rest.is_empty()).then_some((provider, rest))
+    }
+
+    /// The id with `provider` as prefix.
+    #[must_use]
+    pub fn with_provider(provider: ProviderId, id: &str) -> Self {
+        Self(format!("{provider}:{id}"))
     }
 }
 
@@ -690,6 +830,26 @@ mod tests {
                 role
             );
         }
+    }
+
+    #[test]
+    fn model_ids_carry_an_optional_provider() {
+        let id = ModelId::from("opencode-go:glm-5.3");
+        assert_eq!(id.provider(), Some((ProviderId::OpencodeGo, "glm-5.3")));
+        assert_eq!(
+            ModelId::with_provider(ProviderId::OpencodeZen, "claude-sonnet-5-5").as_str(),
+            "opencode-zen:claude-sonnet-5-5"
+        );
+        for plain in [
+            "claude-sonnet-5-5",
+            "ollama:qwen3",
+            "opencode-go:",
+            "anthropic",
+        ] {
+            assert_eq!(ModelId::from(plain).provider(), None, "{plain}");
+        }
+        assert_eq!(ProviderId::OpencodeZen.account(), Account::OpenCode);
+        assert_eq!("opencode".parse::<Account>(), Ok(Account::OpenCode));
     }
 
     #[test]

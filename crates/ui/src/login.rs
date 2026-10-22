@@ -1,4 +1,5 @@
-//! The `/login` dialog: a masked field for the Anthropic API key.
+//! The `/login` dialog: a masked field for the API key of one account
+//! (Anthropic or OpenCode); `Tab` switches the account.
 //!
 //! The key goes straight from this field to the controller
 //! ([`SessionController::login`](crate::session::SessionController::login)):
@@ -7,19 +8,25 @@
 //! the controller checks the key the field is read-only, and an error keeps
 //! the dialog open with the reason.
 
+use domain::model::Account;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div, px,
+    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{ActiveTheme as _, v_flex};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 /// What the dialog asks the session to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginEvent {
-    /// Check and store this key.
-    Submit(String),
+    /// Check and store this key for this account.
+    Submit {
+        /// Whose key it is.
+        account: Account,
+        /// The key.
+        key: String,
+    },
     /// The dialog was closed without a key.
     Cancelled,
 }
@@ -27,6 +34,7 @@ pub enum LoginEvent {
 /// The dialog; drawn only while open.
 pub struct LoginView {
     input: Entity<InputState>,
+    account: Account,
     open: bool,
     busy: bool,
     error: Option<String>,
@@ -58,6 +66,7 @@ impl LoginView {
         });
         Self {
             input,
+            account: Account::Anthropic,
             open: false,
             busy: false,
             error: None,
@@ -71,6 +80,11 @@ impl LoginView {
         self.open
     }
 
+    /// The account the key is for.
+    pub fn account(&self) -> Account {
+        self.account
+    }
+
     /// Whether a key is being checked.
     pub fn is_busy(&self) -> bool {
         self.busy
@@ -81,14 +95,29 @@ impl LoginView {
         self.error.as_deref()
     }
 
-    /// Opens the dialog with an empty field and focuses it.
-    pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the dialog for `account` with an empty field and focuses it.
+    pub fn show(&mut self, account: Account, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
+        self.set_account(account, window, cx);
         self.busy = false;
         self.error = None;
         self.input
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Asks for the key of `account` instead.
+    pub fn set_account(&mut self, account: Account, window: &mut Window, cx: &mut Context<Self>) {
+        self.account = account;
+        self.error = None;
+        let placeholder = match account {
+            Account::Anthropic => "sk-ant-…",
+            Account::OpenCode => "OpenCode API key",
+        };
+        self.input.update(cx, |input, cx| {
+            input.set_placeholder(placeholder, window, cx)
+        });
         cx.notify();
     }
 
@@ -121,13 +150,16 @@ impl LoginView {
         }
         let key = self.input.read(cx).value().trim().to_owned();
         if key.is_empty() {
-            self.error = Some("paste your API key (it starts with sk-ant-)".into());
+            self.error = Some(application::usecases::login::key_prompt(self.account).into());
             cx.notify();
             return;
         }
         self.busy = true;
         self.error = None;
-        cx.emit(LoginEvent::Submit(key));
+        cx.emit(LoginEvent::Submit {
+            account: self.account,
+            key,
+        });
         cx.notify();
     }
 
@@ -143,10 +175,24 @@ impl LoginView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.open && !self.busy && event.keystroke.key == "escape" {
-            self.close(window, cx);
-            cx.emit(LoginEvent::Cancelled);
-            cx.stop_propagation();
+        if !self.open || self.busy {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.close(window, cx);
+                cx.emit(LoginEvent::Cancelled);
+                cx.stop_propagation();
+            }
+            "tab" => {
+                let next = match self.account {
+                    Account::Anthropic => Account::OpenCode,
+                    Account::OpenCode => Account::Anthropic,
+                };
+                self.set_account(next, window, cx);
+                cx.stop_propagation();
+            }
+            _ => {}
         }
     }
 }
@@ -163,9 +209,10 @@ impl Render for LoginView {
             return div().id("login").into_any_element();
         }
         let theme = cx.theme();
+        let name = self.account.display_name();
         let status = match (&self.error, self.busy) {
             (_, true) => Some((
-                SharedString::from("Checking the key with Anthropic…"),
+                SharedString::from(format!("Checking the key with {name}…")),
                 theme.muted_foreground,
             )),
             (Some(error), false) => Some((SharedString::from(error.clone()), theme.danger)),
@@ -181,15 +228,37 @@ impl Render for LoginView {
             .border_1()
             .border_color(theme.border)
             .rounded_md()
+            .child(h_flex().gap_3().children(Account::ALL.map(|account| {
+                let active = account == self.account;
+                div()
+                    .font_weight(if active {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(if active {
+                        theme.popover_foreground
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .when(active, |tab| tab.border_b_1().border_color(theme.primary))
+                    .child(format!("{} API key", account.display_name()))
+            })))
             .child(
                 div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child("Anthropic API key"),
+                    .text_color(theme.muted_foreground)
+                    .child(match self.account {
+                        Account::Anthropic => {
+                            "Paste your key (console.anthropic.com → API keys). It is checked with \
+                     Anthropic and stored in the system keyring, never in a file or the history."
+                        }
+                        Account::OpenCode => {
+                            "Paste your key (opencode.ai → console, Go or Zen). Use its models as \
+                     opencode-go:<model> or opencode-zen:<model>. It is stored in the system \
+                     keyring, never in a file or the history."
+                        }
+                    }),
             )
-            .child(div().text_color(theme.muted_foreground).child(
-                "Paste your key (console.anthropic.com → API keys). It is checked with \
-                 Anthropic and stored in the system keyring, never in a file or the history.",
-            ))
             .child(Input::new(&self.input).disabled(self.busy));
         if let Some((text, color)) = status {
             card = card.child(div().text_color(color).child(text));
@@ -197,7 +266,7 @@ impl Render for LoginView {
         card = card.child(
             div()
                 .text_color(theme.muted_foreground)
-                .child("Enter saves · Esc closes · /logout deletes it"),
+                .child("Enter saves · Tab switches account · Esc closes · /logout deletes it"),
         );
         div()
             .id("login")

@@ -1,0 +1,60 @@
+---
+source: crates/adapters/openai/src/responses.rs
+expression: "build(&req, &ModelId::from(\"gpt-6-luna\"))"
+---
+{
+  "model": "gpt-6-luna",
+  "instructions": "Eres crest.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "busca lib"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Lo busco."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_x",
+      "name": "find_file",
+      "arguments": "{\"query\":\"lib\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_x",
+      "output": "src/lib.rs"
+    }
+  ],
+  "max_output_tokens": 8192,
+  "stream": true,
+  "store": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "tools": [
+    {
+      "type": "function",
+      "name": "find_file",
+      "description": "Finds files",
+      "parameters": {
+        "type": "object"
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "function",
+    "name": "find_file"
+  }
+}

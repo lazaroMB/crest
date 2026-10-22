@@ -178,6 +178,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-openai"
+version = "0.10.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "domain",
+ "eventsource-stream",
+ "futures",
+ "insta",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "adapter-search"
 version = "0.10.0"
 dependencies = [
@@ -1576,6 +1594,7 @@ dependencies = [
  "adapter-fs",
  "adapter-lua",
  "adapter-mcp",
+ "adapter-openai",
  "adapter-search",
  "adapter-shell",
  "adapter-store",

@@ -1,0 +1,44 @@
+---
+source: crates/adapters/openai/src/chat.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "glm-5.3",
+        ),
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "El usuario ",
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "saluda.",
+    },
+    BlockStop {
+        index: 0,
+    },
+    TextDelta {
+        index: 1,
+        text: "Hola, ",
+    },
+    TextDelta {
+        index: 1,
+        text: "¿qué tal?",
+    },
+    BlockStop {
+        index: 1,
+    },
+    Usage(
+        Usage {
+            input_tokens: 16,
+            output_tokens: 12,
+            cache_read_input_tokens: 4,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    MessageStop {
+        stop_reason: EndTurn,
+    },
+]

@@ -4,6 +4,7 @@ members = [
     "crates/domain",
     "crates/app",
     "crates/adapters/anthropic",
+    "crates/adapters/openai",
     "crates/adapters/cloudflare",
     "crates/adapters/search",
     "crates/adapters/fs",
@@ -30,6 +31,7 @@ publish = false
 domain = { path = "crates/domain" }
 application = { path = "crates/app" }
 adapter-anthropic = { path = "crates/adapters/anthropic" }
+adapter-openai = { path = "crates/adapters/openai" }
 adapter-cloudflare = { path = "crates/adapters/cloudflare" }
 adapter-search = { path = "crates/adapters/search" }
 adapter-fs = { path = "crates/adapters/fs" }

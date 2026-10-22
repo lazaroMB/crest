@@ -6,12 +6,14 @@
 
 pub mod args;
 pub mod aside;
+pub mod credentials;
 pub mod gui;
 pub mod headless;
 pub mod help;
 pub mod images;
 pub mod keys;
 pub mod mcp;
+pub mod opencode;
 pub mod plugin_trust;
 pub mod research;
 pub mod root;

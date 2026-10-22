@@ -1,0 +1,58 @@
+---
+source: crates/adapters/openai/src/responses.rs
+expression: events
+---
+[
+    MessageStart {
+        model: ModelId(
+            "gpt-6-luna",
+        ),
+    },
+    ThinkingDelta {
+        index: 0,
+        thinking: "Necesito buscar el archivo.",
+    },
+    BlockStop {
+        index: 0,
+    },
+    TextDelta {
+        index: 1,
+        text: "Lo ",
+    },
+    TextDelta {
+        index: 1,
+        text: "busco.",
+    },
+    BlockStop {
+        index: 1,
+    },
+    ToolUseStart {
+        index: 2,
+        id: ToolUseId(
+            "call_x",
+        ),
+        name: "find_file",
+    },
+    ToolInputDelta {
+        index: 2,
+        partial_json: "{\"query\":",
+    },
+    ToolInputDelta {
+        index: 2,
+        partial_json: "\"lib\"}",
+    },
+    BlockStop {
+        index: 2,
+    },
+    Usage(
+        Usage {
+            input_tokens: 70,
+            output_tokens: 25,
+            cache_read_input_tokens: 30,
+            cache_creation_input_tokens: 0,
+        },
+    ),
+    MessageStop {
+        stop_reason: ToolUse,
+    },
+]

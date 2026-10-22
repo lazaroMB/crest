@@ -75,7 +75,7 @@ use domain::block::{Block, BlockId, BlockKind, CustomNode, ImageData, ImageFit};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
-use domain::model::{ModelId, ModelRole};
+use domain::model::{Account, ModelId, ModelRole};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -268,15 +268,17 @@ pub trait SessionController: Send + Sync {
         futures::future::ready(None).boxed()
     }
 
-    /// Checks and stores the API key typed in the `/login` dialog; `Ok`
-    /// says what happened, `Err` why the key was not stored.
-    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
-        let _ = key;
+    /// Checks and stores the API key of `account` typed in the `/login`
+    /// dialog; `Ok` says what happened, `Err` why the key was not stored.
+    fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
+        let _ = (account, key);
         futures::future::ready(Err("this session cannot store API keys".to_owned())).boxed()
     }
 
-    /// `/logout`: deletes the stored API key.
-    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+    /// `/logout [account]`: deletes the stored API key of `account`, or of
+    /// every account.
+    fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
+        let _ = account;
         futures::future::ready(Err("this session cannot store API keys".to_owned())).boxed()
     }
 
@@ -600,7 +602,8 @@ impl Session {
         this.load_commands(window, cx);
         this.refresh_git(cx);
         if needs_login {
-            this.login.update(cx, |login, cx| login.show(window, cx));
+            this.login
+                .update(cx, |login, cx| login.show(Account::Anthropic, window, cx));
         }
         this
     }
@@ -756,12 +759,39 @@ impl Session {
         self.notice(level, message, cx);
     }
 
-    /// `/login`: opens the key dialog, once nothing runs.
-    fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// `/login [account]`: opens the key dialog, once nothing runs.
+    fn open_login(&mut self, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(account) = self.account_arg("/login", arg, cx) else {
+            return;
+        };
         if !self.idle_for("/login", cx) {
             return;
         }
-        self.login.update(cx, |login, cx| login.show(window, cx));
+        let account = account.unwrap_or(Account::Anthropic);
+        self.login
+            .update(cx, |login, cx| login.show(account, window, cx));
+    }
+
+    /// The account named by the argument of `command` (`None` when there
+    /// is none); warns and returns `None` for an unknown one.
+    fn account_arg(
+        &mut self,
+        command: &str,
+        arg: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Option<Account>> {
+        if arg.is_empty() {
+            return Some(None);
+        }
+        match arg.parse::<Account>() {
+            Ok(account) => Some(Some(account)),
+            Err(_) => {
+                let known = Account::ALL.map(Account::as_str).join(", ");
+                let message = format!("{command}: unknown account `{arg}` (known: {known})");
+                self.notice(NoticeLevel::Warning, message, cx);
+                None
+            }
+        }
     }
 
     /// What the key dialog asks.
@@ -774,8 +804,8 @@ impl Session {
     ) {
         match event {
             LoginEvent::Cancelled => self.focus_input(window, cx),
-            LoginEvent::Submit(key) => {
-                let login = self.controller.login(key.clone());
+            LoginEvent::Submit { account, key } => {
+                let login = self.controller.login(*account, key.clone());
                 cx.spawn_in(window, async move |this, cx| {
                     let result = login.await;
                     this.update_in(cx, |this, window, cx| match result {
@@ -794,12 +824,16 @@ impl Session {
         }
     }
 
-    /// `/logout`: deletes the stored key and reopens the workspace.
-    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// `/logout [account]`: deletes the stored key (of every account
+    /// without an argument) and reopens the workspace.
+    fn logout(&mut self, arg: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(account) = self.account_arg("/logout", arg, cx) else {
+            return;
+        };
         if !self.idle_for("/logout", cx) {
             return;
         }
-        let logout = self.controller.logout();
+        let logout = self.controller.logout(account);
         cx.spawn_in(window, async move |this, cx| {
             let result = logout.await;
             this.update(cx, |this, cx| match result {
@@ -1142,8 +1176,8 @@ impl Session {
             },
             "clear" => self.clear(window, cx),
             "project" => self.switch_project(window, cx),
-            "login" => self.open_login(window, cx),
-            "logout" => self.logout(window, cx),
+            "login" => self.open_login(arg, window, cx),
+            "logout" => self.logout(arg, window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
             "modal" if arg == "close" => {
                 let closed = self
@@ -1690,7 +1724,11 @@ mod tests {
         }
 
         /// Only `sk-ant-good` is accepted.
-        fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+        fn login(
+            &self,
+            _account: Account,
+            key: String,
+        ) -> BoxFuture<'static, Result<String, String>> {
             self.logins.lock().unwrap().push(key.clone());
             let result = if key == "sk-ant-good" {
                 Ok("stored".to_owned())
@@ -1700,7 +1738,7 @@ mod tests {
             futures::future::ready(result).boxed()
         }
 
-        fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+        fn logout(&self, _account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
             futures::future::ready(Ok("deleted".to_owned())).boxed()
         }
 
@@ -1939,6 +1977,27 @@ mod tests {
     }
 
     #[gpui::test]
+    fn login_names_the_account_and_tab_switches_it(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/login opencode", cx);
+        cx.run_until_parked();
+        let login = login_view(&h, cx);
+        assert_eq!(
+            login.read_with(cx, |l, _| (l.is_open(), l.account())),
+            (true, Account::OpenCode)
+        );
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+        assert_eq!(login.read_with(cx, |l, _| l.account()), Account::Anthropic);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        send("/login openai", cx);
+        cx.run_until_parked();
+        assert!(!login.read_with(cx, |l, _| l.is_open()), "unknown account");
+    }
+
+    #[gpui::test]
     fn logout_reopens_and_esc_closes_the_dialog(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         send("/logout", cx);
@@ -1951,7 +2010,9 @@ mod tests {
         );
         let login = login_view(&h, cx);
         assert!(!login.read_with(cx, |l, _| l.is_open()));
-        cx.update(|window, cx| login.update(cx, |login, cx| login.show(window, cx)));
+        cx.update(|window, cx| {
+            login.update(cx, |login, cx| login.show(Account::Anthropic, window, cx));
+        });
         cx.run_until_parked();
         cx.simulate_input("sk-ant-typed");
         cx.run_until_parked();

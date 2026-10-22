@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adapter_anthropic::{AnthropicCatalog, AnthropicClient, AnthropicLlm, ApiKey, ClientConfig};
+use adapter_anthropic::{
+    AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig, TokioClock,
+};
 use adapter_export::HtmlExporter;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
@@ -25,6 +27,7 @@ use application::flows::implement::node::{AgentKit, ImplementDeps};
 use application::flows::research::agents::ExplorePorts;
 use application::flows::research::graph::ResearchWorkspace;
 use application::flows::research::session::ResearchSession;
+use application::llm_retry::RetryingLlm;
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::FileSystemPort;
@@ -38,6 +41,7 @@ use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
+use application::providers::{Provider, ProviderRouter, ProvidersOptions};
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
@@ -52,7 +56,7 @@ use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
 use domain::conversation::Session;
-use domain::model::{ModelPolicy, ModelRole};
+use domain::model::{Account, ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -152,17 +156,17 @@ pub struct Overrides {
     pub api_keys: Option<Arc<dyn application::ports::credentials::ApiKeyPort>>,
 }
 
-/// No Anthropic API key in the environment nor in the keyring; the window
-/// then opens the `/login` dialog.
+/// No API key of any provider in the environment nor in the keyring; the
+/// window then opens the `/login` dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MissingApiKey;
 
 impl std::fmt::Display for MissingApiKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(
-            "the Anthropic API key is missing: run /login in the window, export \
-             ANTHROPIC_API_KEY or store it in the system keyring (service `crest`, entry \
-             `ANTHROPIC_API_KEY`)",
+            "no model provider has an API key: run /login in the window, or export \
+             ANTHROPIC_API_KEY or OPENCODE_API_KEY (or store it in the system keyring, service \
+             `crest`, entry of the same name)",
         )
     }
 }
@@ -474,7 +478,7 @@ pub async fn build_app(
     let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
     warnings.extend(search.check_tools().await.problems());
 
-    let (llm, catalog) = model_ports(&overrides).await?;
+    let (llm, catalog) = model_ports(&overrides, &loaded.options, &mut warnings).await?;
     let mut policy = loaded.model_policy();
     if let Some(catalog) = catalog {
         let (checked, model_warnings) =
@@ -771,24 +775,67 @@ pub async fn build_app(
 
 type ModelPorts = (Arc<dyn LlmPort>, Option<Arc<dyn ModelCatalogPort>>);
 
-/// The model and its catalog: the overrides, or the Anthropic API with the
-/// key from the environment or the keyring.
-async fn model_ports(overrides: &Overrides) -> anyhow::Result<ModelPorts> {
+/// The model and its catalog: the overrides, or every provider with a key
+/// in the environment or the keyring (Anthropic; OpenCode Go and Zen),
+/// routed by the prefix of each model id (`app.opt.providers`).
+async fn model_ports(
+    overrides: &Overrides,
+    options: &AppOptions,
+    warnings: &mut Vec<String>,
+) -> anyhow::Result<ModelPorts> {
     if let Some(llm) = &overrides.llm {
         return Ok((Arc::clone(llm), overrides.catalog.clone()));
     }
+    let providers = ProvidersOptions::from_options(options).unwrap_or_else(|err| {
+        warnings.push(format!("{err}; using the default providers"));
+        ProvidersOptions::default()
+    });
     // The keyring may block (D-Bus, Keychain).
-    let key = tokio::task::spawn_blocking(ApiKey::from_env_or_keyring)
-        .await
-        .context("reading the API key")?
-        .map_err(|_| MissingApiKey)?;
-    let client = AnthropicClient::new(&key, ClientConfig::default())
-        .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
+    let (anthropic, opencode) = tokio::task::spawn_blocking(|| {
+        (
+            ApiKey::from_env_or_keyring().ok(),
+            crate::credentials::stored_key(Account::OpenCode),
+        )
+    })
+    .await
+    .context("reading the API keys")?;
+    let mut router = ProviderRouter::new(providers.default);
+    if let Some(key) = anthropic {
+        let client = AnthropicClient::new(&key, ClientConfig::default())
+            .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
+        router = router.with(
+            ProviderId::Anthropic,
+            Provider {
+                backend: Arc::new(AnthropicBackend::new(client.clone())),
+                catalog: Arc::new(AnthropicCatalog::new(client)),
+            },
+        );
+    }
+    if let Some(key) = opencode {
+        for plan in [ProviderId::OpencodeGo, ProviderId::OpencodeZen] {
+            let provider = crate::opencode::provider(&key, plan, &providers)
+                .map_err(|err| anyhow!("cannot create the OpenCode client: {err}"))?;
+            router = router.with(plan, provider);
+        }
+    }
+    if router.is_empty() {
+        return Err(MissingApiKey.into());
+    }
+    if !router.providers().any(|p| p == providers.default) {
+        let account = providers.default.account();
+        warnings.push(format!(
+            "no {} API key, so models without a provider prefix (the defaults) cannot run: \
+             /login {account}, or point app.models.roles at prefixed models \
+             (opencode-go:glm-5.3) or set app.opt.providers.default",
+            account.display_name()
+        ));
+    }
     let catalog = overrides
         .catalog
         .clone()
-        .unwrap_or_else(|| Arc::new(AnthropicCatalog::new(client.clone())));
-    Ok((Arc::new(AnthropicLlm::new(client)), Some(catalog)))
+        .unwrap_or_else(|| Arc::new(router.catalog()));
+    let llm = RetryingLlm::new(Arc::new(router), Arc::new(TokioClock));
+    Ok((Arc::new(llm), Some(catalog)))
 }
 
 fn open_store(path: Option<&Path>) -> Result<SqliteSessionStore, StoreError> {

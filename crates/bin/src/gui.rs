@@ -36,7 +36,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use adapter_anthropic::KeyringCredentials;
 use adapter_fs::LocalProjectBrowser;
 use adapter_search::RipgrepSearch;
 use application::decide::Decider;
@@ -66,7 +65,7 @@ use async_trait::async_trait;
 use domain::block::{Block, BlockKind};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
-use domain::model::{ModelId, ModelPolicy, ResolveRequest};
+use domain::model::{Account, ModelId, ModelPolicy, ResolveRequest};
 use domain::permission::PermissionMode;
 use domain::workspace::WorkspaceRoot;
 use futures::FutureExt as _;
@@ -164,11 +163,15 @@ impl<T: ContentSearchPort + ?Sized + 'static> ContentSearchPort for TokioPort<T>
 /// The models of `policy` for the `<leader>m` menu.
 #[must_use]
 pub fn model_choices(policy: &ModelPolicy) -> Vec<ModelChoice> {
-    policy
+    let mut choices: Vec<ModelChoice> = policy
         .aliases()
         .into_iter()
         .map(|(alias, model)| ModelChoice { alias, model })
-        .collect()
+        .collect();
+    // Grouped by provider: models without a prefix (the default provider)
+    // first, then each prefix.
+    choices.sort_by_key(|choice| choice.model.provider().map(|(provider, _)| provider));
+    choices
 }
 
 /// The UI's input port over the real [`App`].
@@ -502,7 +505,7 @@ impl UiController {
             simulator,
             shell,
             running: Arc::new(Mutex::new(Vec::new())),
-            api_keys: Arc::new(KeyringCredentials::default()),
+            api_keys: Arc::new(crate::credentials::KeyringCredentials::default()),
         }
     }
 }
@@ -1047,12 +1050,12 @@ impl SessionController for UiController {
         !running.is_empty()
     }
 
-    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
-        login_on(&self.handle, Arc::clone(&self.api_keys), key)
+    fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
+        login_on(&self.handle, Arc::clone(&self.api_keys), account, key)
     }
 
-    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
-        logout_on(&self.handle, Arc::clone(&self.api_keys))
+    fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
+        logout_on(&self.handle, Arc::clone(&self.api_keys), account)
     }
 
     fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
@@ -1117,10 +1120,12 @@ impl UnavailableController {
 fn login_on(
     handle: &Handle,
     keys: Arc<dyn ApiKeyPort>,
+    account: Account,
     key: String,
 ) -> BoxFuture<'static, Result<String, String>> {
-    let task =
-        handle.spawn(async move { application::usecases::login::login(keys.as_ref(), &key).await });
+    let task = handle.spawn(async move {
+        application::usecases::login::login(keys.as_ref(), account, &key).await
+    });
     task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
         .boxed()
 }
@@ -1129,9 +1134,15 @@ fn login_on(
 fn logout_on(
     handle: &Handle,
     keys: Arc<dyn ApiKeyPort>,
+    account: Option<Account>,
 ) -> BoxFuture<'static, Result<String, String>> {
-    let task =
-        handle.spawn(async move { application::usecases::login::logout(keys.as_ref()).await });
+    use application::usecases::login::{logout, logout_all};
+    let task = handle.spawn(async move {
+        match account {
+            Some(account) => logout(keys.as_ref(), account).await,
+            None => logout_all(keys.as_ref()).await,
+        }
+    });
     task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
         .boxed()
 }
@@ -1157,16 +1168,16 @@ impl SessionController for UnavailableController {
         futures::future::ready(()).boxed()
     }
 
-    fn login(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+    fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
         match &self.login {
-            Some((handle, keys)) => login_on(handle, Arc::clone(keys), key),
+            Some((handle, keys)) => login_on(handle, Arc::clone(keys), account, key),
             None => futures::future::ready(Err("API keys cannot be stored here".into())).boxed(),
         }
     }
 
-    fn logout(&self) -> BoxFuture<'static, Result<String, String>> {
+    fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
         match &self.login {
-            Some((handle, keys)) => logout_on(handle, Arc::clone(keys)),
+            Some((handle, keys)) => logout_on(handle, Arc::clone(keys), account),
             None => futures::future::ready(Err("API keys cannot be stored here".into())).boxed(),
         }
     }
@@ -1202,7 +1213,7 @@ pub fn session_parts(
     let api_keys: Arc<dyn ApiKeyPort> = overrides
         .api_keys
         .clone()
-        .unwrap_or_else(|| Arc::new(KeyringCredentials::default()));
+        .unwrap_or_else(|| Arc::new(crate::credentials::KeyringCredentials::default()));
     let built = handle.block_on(build_app(config, frontend, overrides));
     let (mut parts, workspace) = match built {
         Ok(app) => {
@@ -1522,18 +1533,25 @@ mod tests {
         let keys = FakeKeys::new(KeyCheck::Valid);
         let controller = UnavailableController::new(MissingApiKey.to_string(), PermissionMode::Ask)
             .with_login(runtime.handle().clone(), Arc::new(keys.clone()));
-        let stored = futures::executor::block_on(controller.login("sk-ant-new".into()));
-        assert_eq!(stored, Ok("API key stored in the system keyring".into()));
+        let stored =
+            futures::executor::block_on(controller.login(Account::Anthropic, "sk-ant-new".into()));
+        assert_eq!(
+            stored,
+            Ok("Anthropic API key stored in the system keyring".into())
+        );
         assert_eq!(keys.stored(), Some("sk-ant-new".into()));
-        let deleted = futures::executor::block_on(controller.logout());
+        let deleted = futures::executor::block_on(controller.logout(Some(Account::Anthropic)));
         assert_eq!(
             deleted,
-            Ok("API key deleted from the system keyring".into())
+            Ok("Anthropic API key deleted from the system keyring".into())
         );
         assert_eq!(keys.stored(), None);
 
         let without = UnavailableController::new("no", PermissionMode::Ask);
-        assert!(futures::executor::block_on(without.login("sk-ant-x".into())).is_err());
+        assert!(
+            futures::executor::block_on(without.login(Account::Anthropic, "sk-ant-x".into()))
+                .is_err()
+        );
     }
 
     #[test]

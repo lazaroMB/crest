@@ -3,15 +3,16 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
+use domain::model::Account;
 
 use crate::ports::credentials::{ApiKeyPort, CredentialError, KeyCheck};
 
-/// Answers every check with the same [`KeyCheck`] and keeps the stored key
+/// Answers every check with the same [`KeyCheck`] and keeps the stored keys
 /// in memory.
 #[derive(Debug, Clone)]
 pub struct FakeKeys {
     check: KeyCheck,
-    stored: Arc<Mutex<Option<String>>>,
+    stored: Arc<Mutex<Vec<(Account, String)>>>,
     env: Option<String>,
     failing: bool,
 }
@@ -42,13 +43,21 @@ impl FakeKeys {
         self
     }
 
-    /// The stored key.
+    /// The stored key of Anthropic.
     #[must_use]
     pub fn stored(&self) -> Option<String> {
+        self.stored_for(Account::Anthropic)
+    }
+
+    /// The stored key of `account`.
+    #[must_use]
+    pub fn stored_for(&self, account: Account) -> Option<String> {
         self.stored
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .iter()
+            .find(|(a, _)| *a == account)
+            .map(|(_, key)| key.clone())
     }
 
     fn fail(&self) -> Result<(), CredentialError> {
@@ -62,27 +71,36 @@ impl FakeKeys {
 
 #[async_trait]
 impl ApiKeyPort for FakeKeys {
-    async fn check(&self, _key: &str) -> KeyCheck {
+    async fn check(&self, _account: Account, _key: &str) -> KeyCheck {
         self.check.clone()
     }
 
-    async fn save(&self, key: &str) -> Result<(), CredentialError> {
+    async fn save(&self, account: Account, key: &str) -> Result<(), CredentialError> {
         self.fail()?;
-        *self.stored.lock().unwrap_or_else(PoisonError::into_inner) = Some(key.to_owned());
+        let mut stored = self.stored.lock().unwrap_or_else(PoisonError::into_inner);
+        stored.retain(|(a, _)| *a != account);
+        stored.push((account, key.to_owned()));
         Ok(())
     }
 
-    async fn delete(&self) -> Result<bool, CredentialError> {
+    async fn delete(&self, account: Account) -> Result<bool, CredentialError> {
         self.fail()?;
-        Ok(self
-            .stored
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-            .is_some())
+        let mut stored = self.stored.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = stored.len();
+        stored.retain(|(a, _)| *a != account);
+        Ok(stored.len() != before)
     }
 
-    fn env_override(&self) -> Option<String> {
+    fn env_override(&self, _account: Account) -> Option<String> {
         self.env.clone()
+    }
+
+    fn configured(&self) -> Vec<Account> {
+        self.stored
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(a, _)| *a)
+            .collect()
     }
 }

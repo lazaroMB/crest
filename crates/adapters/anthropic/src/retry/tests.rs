@@ -1,8 +1,9 @@
 use std::sync::Mutex;
 
-use application::ports::llm::MessageAssembler;
+use application::ports::llm::{LlmEvent, MessageAssembler};
 use domain::conversation::{ContentPart, Message};
 use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
+use futures::StreamExt;
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};

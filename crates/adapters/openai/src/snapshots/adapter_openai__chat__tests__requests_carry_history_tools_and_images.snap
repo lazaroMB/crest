@@ -1,0 +1,66 @@
+---
+source: crates/adapters/openai/src/chat.rs
+expression: "build(&req, &ModelId::from(\"glm-5.3\"))"
+---
+{
+  "model": "glm-5.3",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Eres crest.\n\nHoy."
+    },
+    {
+      "role": "user",
+      "content": "mira esto"
+    },
+    {
+      "role": "assistant",
+      "content": "Busco.",
+      "reasoning_content": "busco",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "find_file",
+            "arguments": "{\"query\":\"lib\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "src/lib.rs"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/png;base64,AAAA"
+          }
+        }
+      ]
+    }
+  ],
+  "max_tokens": 4096,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "find_file",
+        "description": "Finds files",
+        "parameters": {
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

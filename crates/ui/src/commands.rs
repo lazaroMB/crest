@@ -43,13 +43,13 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "login",
-        usage: "/login",
-        description: "Store your Anthropic API key in the system keyring and restart the agent",
+        usage: "/login [anthropic|opencode]",
+        description: "Store an API key (Anthropic or OpenCode) in the system keyring and restart the agent",
     },
     CommandInfo {
         name: "logout",
-        usage: "/logout",
-        description: "Delete the API key from the system keyring",
+        usage: "/logout [anthropic|opencode]",
+        description: "Delete the API key of one account (or of every account) from the system keyring",
     },
     CommandInfo {
         name: "modal",

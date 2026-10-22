@@ -170,6 +170,14 @@ pub struct ClientConfig {
     pub read_timeout: Duration,
     /// Values of the `anthropic-beta` header, if any.
     pub betas: Vec<String>,
+    /// Also send the key as `Authorization: Bearer` (servers that speak the
+    /// Messages API with their own keys, such as OpenCode).
+    pub bearer: bool,
+    /// `User-Agent` of every request, if any.
+    pub user_agent: Option<String>,
+    /// Header that carries the crest session id on each Messages request
+    /// (OpenCode asks for `x-opencode-session`), if any.
+    pub session_header: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -179,6 +187,9 @@ impl Default for ClientConfig {
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(300),
             betas: Vec::new(),
+            bearer: false,
+            user_agent: None,
+            session_header: None,
         }
     }
 }
@@ -189,6 +200,7 @@ pub struct AnthropicClient {
     http: reqwest::Client,
     base_url: String,
     key_source: KeySource,
+    session_header: Option<HeaderName>,
 }
 
 impl AnthropicClient {
@@ -203,6 +215,26 @@ impl AnthropicClient {
         let mut key_value = HeaderValue::from_str(key.expose()).map_err(|_| auth_error())?;
         key_value.set_sensitive(true);
         headers.insert(HeaderName::from_static("x-api-key"), key_value);
+        if config.bearer {
+            let mut bearer = HeaderValue::from_str(&format!("Bearer {}", key.expose()))
+                .map_err(|_| auth_error())?;
+            bearer.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, bearer);
+        }
+        if let Some(agent) = &config.user_agent {
+            let agent = HeaderValue::from_str(agent).map_err(|err| LlmError::InvalidRequest {
+                message: format!("invalid user agent: {err}"),
+            })?;
+            headers.insert(reqwest::header::USER_AGENT, agent);
+        }
+        let session_header = config
+            .session_header
+            .as_deref()
+            .map(HeaderName::try_from)
+            .transpose()
+            .map_err(|err| LlmError::InvalidRequest {
+                message: format!("invalid session header: {err}"),
+            })?;
         headers.insert(
             HeaderName::from_static("anthropic-version"),
             HeaderValue::from_static(ANTHROPIC_VERSION),
@@ -225,6 +257,7 @@ impl AnthropicClient {
             http,
             base_url: config.base_url.trim_end_matches('/').to_owned(),
             key_source: key.source(),
+            session_header,
         })
     }
 
@@ -235,15 +268,27 @@ impl AnthropicClient {
     ///
     /// The typed error of a non-2xx answer, or [`LlmError::Network`].
     pub async fn stream_messages(&self, body: &MessagesRequest) -> Result<LlmStream, LlmError> {
+        self.stream_messages_in(body, None).await
+    }
+
+    /// [`Self::stream_messages`] for the crest session `session`, sent in
+    /// the configured session header when there is one.
+    ///
+    /// # Errors
+    ///
+    /// The typed error of a non-2xx answer, or [`LlmError::Network`].
+    pub async fn stream_messages_in(
+        &self,
+        body: &MessagesRequest,
+        session: Option<&str>,
+    ) -> Result<LlmStream, LlmError> {
         let url = format!("{}/v1/messages", self.base_url);
         tracing::debug!(model = %body.model, stream = body.stream, "POST /v1/messages");
-        let response = self
-            .http
-            .post(url)
-            .json(body)
-            .send()
-            .await
-            .map_err(network_error)?;
+        let mut request = self.http.post(url).json(body);
+        if let (Some(name), Some(session)) = (&self.session_header, session) {
+            request = request.header(name.clone(), session);
+        }
+        let response = request.send().await.map_err(network_error)?;
         let response = check(response, self.key_source).await?;
         let model = ModelId::new(body.model.clone());
         Ok(Box::pin(llm_events(
