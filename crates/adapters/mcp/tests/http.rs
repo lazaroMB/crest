@@ -87,7 +87,9 @@ async fn a_server_that_asks_for_oauth_needs_a_login() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::start().await;
-    let home = std::env::var("HOME").unwrap_or_default();
+    // A variable every CI runner sets (Windows has no HOME).
+    let var = if cfg!(windows) { "USERNAME" } else { "HOME" };
+    let home = std::env::var(var).unwrap_or_default();
     Mock::given(method("POST"))
         .and(header("x-home", home.as_str()))
         .respond_with(
@@ -107,7 +109,7 @@ async fn a_server_that_asks_for_oauth_needs_a_login() {
         "linear",
         McpTransport::Http {
             url: format!("{}/mcp", server.uri()),
-            headers: BTreeMap::from([("x-home".to_owned(), "${HOME}".to_owned())]),
+            headers: BTreeMap::from([("x-home".to_owned(), format!("${{{var}}}"))]),
             oauth: None,
         },
     );
