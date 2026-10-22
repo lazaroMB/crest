@@ -106,7 +106,9 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
-| `/mcp trust <name>` | Approves a workspace MCP server. It starts the next time you open crest. |
+| `/mcp [list]` | A table of the MCP servers with their state, transport and what to do next. See [configuration.md](configuration.md#mcp). |
+| `/mcp tools\|restart\|enable\|disable\|login\|logout <name>` | A server's tools; reconnect it; turn it on or off for the session; OAuth login or logout. |
+| `/mcp trust <name>` | Approves a workspace MCP server and starts it. |
 | `/plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
 | `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
 | `/implement <spec>`, `/implement resume` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
@@ -134,7 +136,7 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | 2 | Keys | The effective keymap: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
 | 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
-| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, or held back because the workspace config is not trusted (with the `/mcp trust` command). |
+| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). |
 | 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn and the permission mode. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
 | 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
@@ -485,7 +487,7 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 
   To trust one:
   - `crest --trust-mcp tickets` approves it and starts it in this same run;
-  - `/mcp trust tickets`, from the window, approves it and it starts the next time you open crest.
+  - `/mcp trust tickets`, from the window, approves it and starts it right away.
 
   The approval is stored in `~/.local/share/crest/mcp-trust.json`, per workspace and with the exact transport (command, arguments, environment, URL, headers). If the repository changes the declaration, it becomes pending again. To revoke it, delete the entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. One that fails or is slow is reported as a notice, and crest carries on without it.

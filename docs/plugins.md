@@ -358,16 +358,22 @@ app.mcp.add("git", { command = "mcp-git", effect = "read", timeout = 30 })
 | Field | For | Notes |
 | --- | --- | --- |
 | `command` | stdio | A child process that speaks MCP over stdin/stdout. |
-| `args` | stdio | List of strings. |
-| `env` | stdio | Table of strings. |
+| `args` | stdio | List of strings. `${VAR}` is read from the environment. |
+| `env` | stdio | Table of strings. `${VAR}` is read from the environment. |
+| `cwd` | stdio | Working directory. Defaults to the workspace root. |
 | `url` | HTTP | Streamable HTTP. Must start with `http://` or `https://`. |
-| `headers` | HTTP | Table of strings. |
+| `headers` | HTTP | Table of strings, e.g. `Authorization = "Bearer ${TOKEN}"`. |
+| `oauth` | HTTP | A pre-registered OAuth client: `{ client_id, client_secret, scopes, callback_port }`. Without it, `/mcp login` registers crest dynamically. |
 | `effect` | both | Same as for plugin tools. Defaults to `"execute"`. Applies to **all** of the server's tools. |
 | `timeout` | both | Seconds (> 0) per call. Defaults to 120. |
+| `startup_timeout` | both | Seconds (> 0) to start: process, handshake and tool list. Defaults to 120. |
+| `disabled` | both | `true` declares it without starting it (`/mcp enable <name>`). |
+| `type` | both | `"stdio"` or `"http"` (also `"local"`, `"remote"`, `"streamable-http"`); optional, checked against `command`/`url`. |
 
 - Each server has `command` **or** `url`, never both.
 - An unknown field produces a diagnostic.
 - The name can only contain letters, digits, and single `-` and `_` (not `__`), because the tools are exposed as `mcp__<server>__<tool>`.
+- Tool names are adapted for every model provider: characters other than letters, digits, `-` and `_` become `_`, and long names are shortened with a hash so `mcp__<server>__<tool>` fits in 64 characters. Input schemas are adapted too (a top-level `anyOf`/`oneOf`/`allOf` is merged into one object and local `$ref`s are inlined). `/mcp tools <name>` shows the names the model sees.
 - If one file uses both forms with the same name, `app.mcp.add` wins.
 
 **Security**:

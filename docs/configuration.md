@@ -354,13 +354,52 @@ They are declared in `app.mcp`, either as a table keyed by name or with `app.mcp
 
 ```lua
 app.mcp.add("docs", { command = "mcp-docs", args = { "--root", "." }, effect = "read", timeout = 30 })
-app.mcp = { tickets = { url = "https://tickets.example.com/mcp", headers = { Authorization = "Bearer …" } } }
+app.mcp.add("fs", { command = "npx", args = { "-y", "@modelcontextprotocol/server-filesystem", "." } })
+-- A server without login, or with a token in a header (read from the environment):
+app.mcp.add("deepwiki", { url = "https://mcp.deepwiki.com/mcp" })
+app.mcp.add("context7", { url = "https://mcp.context7.com/mcp", headers = { Authorization = "Bearer ${CONTEXT7_API_KEY}" } })
+-- A server with an OAuth login (/mcp login linear):
+app.mcp.add("linear", { url = "https://mcp.linear.app/mcp" })
 ```
 
 - Servers from the **global config** (and its plugins) start when crest opens.
-- Those from the **workspace** stay pending, with a notice like "workspace MCP server `x` not started: it would run `…`. If you trust it, start crest with `crest --trust-mcp x` (remembered for this workspace)". They start once you approve them with `crest --trust-mcp <name>` or with `/mcp trust <name>` (the latter takes effect the next time you open crest).
-- The approval is stored per workspace in `mcp-trust.json`, together with the exact transport: if the command, arguments, environment, URL or headers change, crest asks again. To revoke an approval, delete its entry from the file.
-- On startup, crest waits up to 5 s for the servers to be ready. The per-call limit for a tool is `timeout` if you declare it, or 120 s otherwise.
+- Those from the **workspace** stay pending, with a notice like "workspace MCP server `x` not started: it would run `…`. If you trust it, start crest with `crest --trust-mcp x` (remembered for this workspace)". They start once you approve them with `crest --trust-mcp <name>` or with `/mcp trust <name>`, which starts it right away.
+- The approval is stored per workspace in `mcp-trust.json`, together with the exact transport: if the command, arguments, environment, working directory, URL, headers or OAuth client change, crest asks again. To revoke an approval, delete its entry from the file.
+- On startup, crest waits up to 5 s for the servers before the first turn. A slower server (the first `npx -y` downloads its package) keeps starting in the background, for up to `startup_timeout` (120 s by default), and its tools are offered as soon as it is ready; a notice says "MCP server `x` ready (N tools)" or why it failed. The per-call limit for a tool is `timeout` if you declare it, or 120 s otherwise.
+- `${VAR}` and `${VAR:-default}` in `args`, `env`, `url` and `headers` are read from crest's environment when the server starts, so tokens stay out of `init.lua`. A variable that is not set keeps the server from starting, with a message naming it.
+- Stdio servers run in the workspace root (or `cwd`). When one fails, the message includes the last lines it wrote on stderr.
+- A server that sends `tools/list_changed` gets its tools listed again; one whose connection drops is reconnected once.
+
+### `/mcp`
+
+| Command | What it does |
+| --- | --- |
+| `/mcp` | A table of every server: state (starting, ready · N tools, failed, needs login, disabled, not trusted), transport, config layer, and the error or the next command. |
+| `/mcp tools <name>` | The tools of a ready server, with the names the model sees. |
+| `/mcp restart <name>` | Closes the session and connects again (after fixing a token, or a server that crashed). |
+| `/mcp disable <name>`, `/mcp enable <name>` | Turns a server off or on for this session. `disabled = true` in `init.lua` keeps it off. |
+| `/mcp login <name>` | OAuth login of an HTTP server: opens the browser, waits for it on a loopback port, stores the tokens in the system keyring (service `crest`, entry `mcp-oauth:<name>`) and reconnects. Later runs reuse and refresh them. |
+| `/mcp logout <name>` | Deletes the stored tokens. |
+| `/mcp trust <name>` | Approves a workspace server and starts it. |
+
+### OAuth
+
+Most hosted servers (Linear, Notion, Sentry, Atlassian, Supabase, Cloudflare…) ask for a login: their state is "needs login" and `/mcp login <name>` signs in. crest registers itself with the server (dynamic client registration). Servers that do not allow that, such as GitHub's remote server, need a client you register with them, declared in `oauth`:
+
+```lua
+app.mcp.add("github", {
+  url = "https://api.githubcopilot.com/mcp/",
+  oauth = { client_id = "Iv1.…", client_secret = "…", scopes = { "repo" }, callback_port = 33418 },
+})
+```
+
+Register `http://127.0.0.1:<callback_port>/callback` as the redirect URI of that client. Most of these servers also take a personal token in an `Authorization` header instead.
+
+What crest does not support: servers that only speak the old HTTP+SSE transport (URLs ending in `/sse`; crest says so when one answers 405), and Gemini-style or other non-MCP endpoints.
+
+### `npx` from the app menu
+
+An app opened from the desktop gets the PATH of a login shell (`~/.profile`, `~/.zprofile`), not of `~/.zshrc`, where asdf, nvm, fnm or volta usually add `node` and `npx`. If a server fails with "`npx` was not found on PATH", use the absolute path (`command = "/home/you/.nvm/versions/node/v24.0.0/bin/npx"`) or add the line that sets up node to `~/.zprofile` or `~/.profile`.
 
 ## Plugin capabilities and secrets
 
