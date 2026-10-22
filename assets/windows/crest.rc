@@ -1,0 +1,32 @@
+// Windows resources of crest.exe: the icon and the version shown in the
+// file's properties. No manifest here: gpui embeds its own (DPI awareness,
+// common controls) and a second one would not link. CREST_VERSION and
+// CREST_VERSION_NUMBERS come from crates/bin/build.rs.
+#include <winver.h>
+
+1 ICON "crest.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION CREST_VERSION_NUMBERS
+PRODUCTVERSION CREST_VERSION_NUMBERS
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "crest"
+            VALUE "FileVersion", CREST_VERSION
+            VALUE "InternalName", "crest"
+            VALUE "LegalCopyright", "GPL-3.0-or-later"
+            VALUE "OriginalFilename", "crest.exe"
+            VALUE "ProductName", "crest"
+            VALUE "ProductVersion", CREST_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

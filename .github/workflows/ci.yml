@@ -1,4 +1,5 @@
-# crest CI: `make ci` (doctor + check) on Linux and macOS.
+# crest CI: `make ci` (doctor + check) on Linux and macOS, and clippy plus
+# the tests on Windows.
 #
 # Actions pinned by commit SHA (with the version in the comment): a tag can
 # move, a SHA cannot. Dependabot or Renovate can update them.
@@ -12,6 +13,10 @@
 #
 # The GPUI tests use the TestAppContext from `test-support`, which opens no
 # windows: no display (or xvfb-run) is needed on Linux.
+#
+# Windows runs cargo directly: `make ci` and its doctor, architecture and
+# install checks are bash scripts, already covered by the Unix jobs. rg and
+# fzf come from Chocolatey (preinstalled on the image); git is there too.
 
 name: CI
 
@@ -72,6 +77,24 @@ jobs:
 
       - name: make ci
         run: make ci
+
+  windows:
+    name: clippy and tests (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install rg and fzf
+        run: choco install ripgrep fzf --no-progress --yes
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
 
   install-deps-containers:
     name: install-deps --check (${{ matrix.image }})

@@ -7,11 +7,13 @@
 #   adapter  crates/adapters/<x>
 #   ui       crates/ui
 #   bin      crates/bin
+#   platform crates/platform (OS glue: processes, directories, console)
 #
 # Usage: scripts/check-arch.sh [--manifest-path <Cargo.toml>]
 #      (or the CHECK_ARCH_MANIFEST environment variable)
 # Internal dependency rules (path crates inside the workspace):
-#   domain -> none; app -> domain; adapter, ui -> app, domain; bin -> all.
+#   domain -> none; app -> domain; adapter, ui -> app, domain, platform;
+#   platform -> none; bin -> all.
 # domain and app cannot use I/O crates either (see IO_CRATES).
 #
 # Exits 0 if everything complies, 1 on any violation, 2 on a usage error.
@@ -90,6 +92,7 @@ layer_of() {
         crates/adapters/*) echo adapter ;;
         crates/ui) echo ui ;;
         crates/bin) echo bin ;;
+        crates/platform) echo platform ;;
         *) echo unknown ;;
     esac
 }
@@ -114,8 +117,8 @@ EOF
 internal_allowed() {
     case "$1:$2" in
         app:domain) return 0 ;;
-        adapter:app | adapter:domain) return 0 ;;
-        ui:app | ui:domain) return 0 ;;
+        adapter:app | adapter:domain | adapter:platform) return 0 ;;
+        ui:app | ui:domain | ui:platform) return 0 ;;
         bin:*) return 0 ;;
         *) return 1 ;;
     esac

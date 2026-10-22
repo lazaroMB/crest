@@ -1,4 +1,4 @@
-# crest release: tarballs for Linux and macOS.
+# crest release: tarballs for Linux and macOS, a zip for Windows.
 #
 # On a v* tag it builds, packages and publishes a GitHub Release with the
 # tarballs and their checksums. On workflow_dispatch it only leaves the
@@ -18,6 +18,11 @@
 # with `rustup target add`. The binaries are NOT signed or notarized: that
 # needs a Developer ID and repo secrets, and is out of scope. The tarball's
 # README explains how to remove the Gatekeeper quarantine.
+#
+# Windows: built on windows-2025 with MSVC; the release build compiles
+# GPUI's HLSL shaders with fxc.exe from the Windows SDK of the image.
+# scripts/package.ps1 makes the zip; the binary is not signed either, so
+# SmartScreen may warn on first start.
 
 name: Release
 
@@ -55,6 +60,12 @@ jobs:
             os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+    defaults:
+      run:
+        # Git Bash on Windows, so the version step is the same everywhere.
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -73,6 +84,7 @@ jobs:
           fi
 
       - name: Install dependencies
+        if: runner.os != 'Windows'
         run: |
           bash scripts/install-deps.sh --yes
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -97,11 +109,33 @@ jobs:
         run: cargo build --release --locked --target "${{ matrix.target }}" -p crest
 
       - name: Package
+        if: runner.os != 'Windows'
         run: |
           bash scripts/package.sh --target "${{ matrix.target }}" \
             --version "${{ steps.version.outputs.version }}" --out dist
 
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -Target "${{ matrix.target }}" `
+            -Version "${{ steps.version.outputs.version }}" -Out dist
+
+      # The installer, against the zip just built (no network).
+      - name: Install test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist/*.zip | Select-Object -First 1 -ExpandProperty FullName
+          ./scripts/install.ps1 -Zip $zip
+          $exe = Join-Path $env:LOCALAPPDATA "Programs/crest/crest.exe"
+          & $exe --version | Tee-Object -Variable shown
+          if (-not ($shown -match "crest")) { throw "crest --version printed nothing" }
+          ./scripts/install.ps1 -Uninstall
+          if (Test-Path $exe) { throw "uninstall left $exe" }
+
       - name: Checksum
+        if: runner.os != 'Windows'
         working-directory: dist
         run: |
           if command -v sha256sum >/dev/null 2>&1; then
@@ -110,6 +144,12 @@ jobs:
             shasum -a 256 -c ./*.sha256
           fi
           tar -tzvf ./*.tar.gz
+
+      - name: Checksum (Windows)
+        if: runner.os == 'Windows'
+        working-directory: dist
+        run: |
+          sha256sum -c ./*.sha256
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

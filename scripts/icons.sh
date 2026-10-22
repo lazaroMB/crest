@@ -3,6 +3,7 @@
 #
 #   assets/icons/hicolor/<n>x<n>/apps/crest.png   (Linux icon theme layout)
 #   assets/icons/crest.icns                        (macOS, when iconutil exists)
+#   assets/windows/crest.ico                       (Windows, when ImageMagick exists)
 #
 # Needs rsvg-convert (librsvg). The PNGs are committed, so this only runs
 # when the logo changes.
@@ -37,6 +38,27 @@ if command -v iconutil >/dev/null 2>&1; then
         rsvg-convert -w "$double" -h "$double" "$svg" -o "$set_dir/icon_${size}x${size}@2x.png"
     done
     iconutil -c icns "$set_dir" -o "$out/crest.icns"
+fi
+
+# The Windows icon packs the PNGs already rendered (16 to 256 px) as PNG
+# entries, which Windows reads since Vista: a few KB instead of bitmaps.
+if command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$root/assets/windows"
+    python3 - "$out/hicolor" "$root/assets/windows/crest.ico" <<'PY'
+import struct, sys
+src, dest = sys.argv[1], sys.argv[2]
+sizes = [16, 24, 32, 48, 64, 128, 256]
+images = [open(f"{src}/{n}x{n}/apps/crest.png", "rb").read() for n in sizes]
+header = struct.pack("<HHH", 0, 1, len(images))
+offset = len(header) + 16 * len(images)
+entries = b""
+for size, data in zip(sizes, images):
+    side = 0 if size == 256 else size  # 0 means 256
+    entries += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(data), offset)
+    offset += len(data)
+with open(dest, "wb") as out:
+    out.write(header + entries + b"".join(images))
+PY
 fi
 
 echo "icons written to $out"
