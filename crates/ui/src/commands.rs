@@ -24,8 +24,9 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         name: "model",
         usage: "/model [alias|set <id>|clear]",
-        description: "Pick a model from the providers' catalogs (Enter saves it, Tab is for the next turn only); \
-                      `/model <alias>` sets the next turn's model, `set <id>` saves one, `clear` drops the next turn's",
+        description: "Pick one of the models your providers let you use from the popup (Enter saves it, Tab \
+                      completes); `/model <alias>` sent as typed sets the next turn's model, `set <id>` saves one, \
+                      `clear` drops the next turn's",
     },
     CommandInfo {
         name: "mode",

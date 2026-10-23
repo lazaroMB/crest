@@ -45,6 +45,7 @@
 pub mod attachments;
 pub mod cursor;
 pub mod history;
+pub mod model_popup;
 pub mod path_popup;
 pub mod paths;
 pub mod tray;
@@ -69,11 +70,15 @@ use application::ports::search::FileSearchPort;
 use attachments::{ImageMode, PendingImage};
 use domain::conversation::ImageAttachment;
 use history::PromptHistory;
+pub use model_popup::ModelPopup;
+use model_popup::{ModelCompletion, ModelKey, model_key};
 pub use path_popup::PathPopup;
 use path_popup::{PathCompletion, PathKey, path_key};
 use tray::{ImageTray, paste_handler};
 
 use crate::help::CommandRow;
+use crate::session::ModelChoice;
+use domain::model::ModelId;
 
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
 /// last one back into the prompt.
@@ -112,6 +117,9 @@ pub enum InputEvent {
     Action(Action),
     /// A sent line was added to the history, as typed (`/model opus`).
     Recorded(String),
+    /// The `/model ` popup opened for the first time: list the models and
+    /// hand them over with [`InputView::set_models`].
+    ModelsWanted,
 }
 
 /// What a submitted line is.
@@ -283,6 +291,9 @@ pub struct InputView {
     palette_selected: usize,
     palette_hidden: bool,
     paths: PathCompletion,
+    models: ModelCompletion,
+    /// The model the next turn uses, marked in the `/model ` popup.
+    current_model: Option<ModelId>,
     tray: ImageTray,
     history: PromptHistory,
     blink: Blink,
@@ -320,6 +331,9 @@ impl InputView {
                 this.palette_hidden = false;
                 let text = this.text(cx);
                 this.paths.request(&text, cx);
+                if this.models.wants_listing(&text) {
+                    cx.emit(InputEvent::ModelsWanted);
+                }
                 cx.notify();
             }
         });
@@ -333,6 +347,8 @@ impl InputView {
             palette_selected: 0,
             palette_hidden: false,
             paths: PathCompletion::default(),
+            models: ModelCompletion::default(),
+            current_model: None,
             tray: ImageTray::default(),
             history: PromptHistory::default(),
             blink: Blink::default(),
@@ -409,6 +425,26 @@ impl InputView {
             return None;
         }
         self.paths.popup(&self.text(cx))
+    }
+
+    /// Hands the `/model ` popup the models of the providers, or why they
+    /// could not be listed.
+    pub fn set_models(&mut self, models: Result<Vec<ModelChoice>, String>, cx: &mut Context<Self>) {
+        self.models.set(models);
+        cx.notify();
+    }
+
+    /// The model the next turn uses, marked in the `/model ` popup.
+    pub fn set_current_model(&mut self, model: Option<ModelId>) {
+        self.current_model = model;
+    }
+
+    /// What the `/model ` popup shows for the current text, if anything.
+    pub fn model_popup(&self, cx: &App) -> Option<ModelPopup> {
+        if self.palette_hidden {
+            return None;
+        }
+        self.models.popup(&self.text(cx))
     }
 
     /// The images waiting in the tray, in paste order.
@@ -557,6 +593,21 @@ impl InputView {
                 PathKey::Hide => self.palette_hidden = true,
                 PathKey::SetText(text) => self.set_text(&text, window, cx),
                 PathKey::Ignored => return false,
+            }
+            return true;
+        }
+        if let Some(popup) = self.model_popup(cx) {
+            match model_key(key, &popup, self.palette_selected) {
+                ModelKey::Select(ix) => self.palette_selected = ix,
+                ModelKey::Hide => self.palette_hidden = true,
+                ModelKey::SetText(text) => self.set_text(&text, window, cx),
+                ModelKey::Run(line) => {
+                    self.record(&format!("/{line}"), cx);
+                    self.editor
+                        .update(cx, |editor, cx| editor.set_value("", window, cx));
+                    cx.emit(InputEvent::Command(line));
+                }
+                ModelKey::Ignored => return false,
             }
             return true;
         }
@@ -804,7 +855,19 @@ impl Render for InputView {
         let paths = self
             .path_popup(cx)
             .map(|popup| path_popup::render(popup, self.palette_selected, cx));
-        let palette = if paths.is_none() {
+        let models = if paths.is_none() {
+            self.model_popup(cx).map(|popup| {
+                model_popup::render(
+                    popup,
+                    self.palette_selected,
+                    self.current_model.as_ref(),
+                    cx,
+                )
+            })
+        } else {
+            None
+        };
+        let palette = if paths.is_none() && models.is_none() {
             self.render_palette(cx)
         } else {
             None
@@ -865,6 +928,7 @@ impl Render for InputView {
             .track_focus(&self.focus_handle)
             .font_family(theme.mono_font_family.clone())
             .children(paths)
+            .children(models)
             .children(palette)
             .children(tray)
             .child(prompt)

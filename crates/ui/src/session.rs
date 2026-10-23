@@ -1,6 +1,6 @@
 //! The agent session in the main window: wires the timeline, the input, the
-//! status bar, the workspace tree, the pickers, the model menu and the
-//! approval dialog to a [`SessionController`].
+//! status bar, the workspace tree, the pickers and the approval dialog to a
+//! [`SessionController`].
 //!
 //! The UI never touches the agent's adapters: it calls the controller (the
 //! input port, implemented by the binary over the `AgentService`) and shows
@@ -34,9 +34,11 @@
 //! `o`, `t`, `y`), which act on its blocks.
 //! `<C-Tab>` / `<leader>w` cycle the focus prompt → timeline → tree.
 //!
-//! - `<leader>p` cycles the permission mode, `<leader>m` opens the model
-//!   menu: the policy's aliases plus "default"; the choice is the override
-//!   of the **next** turn only.
+//! - `<leader>p` cycles the permission mode; `<leader>m` and `/model` put
+//!   `/model ` in the prompt, whose popup lists the models of the providers
+//!   with a key ([`crate::input::model_popup`]): `Enter` saves the chosen
+//!   one, and `/model <alias>` sent as typed is the model of the **next**
+//!   turn only.
 //! - `<leader>e` shows the tree, `<leader>ff` / `<leader>fg` the pickers.
 //!   Choosing a file inserts `@path ` (or `@path:line ` for a text match)
 //!   at the cursor of the prompt, so it can be referenced in the next
@@ -83,11 +85,9 @@ use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity,
-    Window, div, px,
+    InteractiveElement as _, IntoElement, KeystrokeEvent, Render, Subscription, Task, WeakEntity,
+    Window, div,
 };
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::activity::{ActivityView, WorkKind};
 use crate::app::RootView;
@@ -359,7 +359,7 @@ pub struct SessionParts {
     pub theme: crate::app::ThemeMode,
     /// The agent has no API key: the `/login` dialog opens at once.
     pub needs_login: bool,
-    /// No model is selected for the default provider: the model picker
+    /// No model is selected for the default provider: the `/model` popup
     /// opens at once.
     pub needs_model: bool,
 }
@@ -403,60 +403,7 @@ pub enum SessionEvent {
     },
 }
 
-/// The `<leader>m` and `/model` picker: the aliases, then every model of
-/// the providers' catalogs once they are listed, filtered by what is typed.
-struct ModelMenu {
-    /// `None` is the default row (clears the next-turn model).
-    choices: Vec<Option<ModelChoice>>,
-    /// What is typed to filter the rows.
-    query: String,
-    /// Index into [`ModelMenu::visible`].
-    selected: usize,
-    /// Whether the catalogs are still being listed, or why they could not.
-    catalog: CatalogState,
-}
-
-/// Where the catalog part of the model picker stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CatalogState {
-    Loading,
-    Ready,
-    Failed(String),
-}
-
-impl ModelMenu {
-    /// The rows that match the query (the default row only without one).
-    fn visible(&self) -> Vec<&Option<ModelChoice>> {
-        let query = self.query.to_lowercase();
-        self.choices
-            .iter()
-            .filter(|choice| match choice {
-                None => query.is_empty(),
-                Some(choice) => {
-                    choice.alias.to_lowercase().contains(&query)
-                        || choice.model.as_str().to_lowercase().contains(&query)
-                }
-            })
-            .collect()
-    }
-
-    /// Adds the catalog's models that are not rows yet.
-    fn extend(&mut self, models: Vec<ModelChoice>) {
-        for choice in models {
-            let known = self
-                .choices
-                .iter()
-                .flatten()
-                .any(|c| c.model == choice.model);
-            if !known {
-                self.choices.push(Some(choice));
-            }
-        }
-    }
-}
-
 /// The session: owns the views of the main window and the turn in flight.
-/// It is also the overlay that draws the model menu.
 pub struct Session {
     controller: Arc<dyn SessionController>,
     root: WeakEntity<RootView>,
@@ -476,8 +423,7 @@ pub struct Session {
     turn: Option<Task<()>>,
     queue: VecDeque<Queued>,
     model_override: Option<String>,
-    menu: Option<ModelMenu>,
-    /// The catalogs' models, listed once per session for the picker.
+    /// The catalogs' models, listed once per session for the popup.
     catalog_models: Option<Vec<ModelChoice>>,
     git: Option<Task<()>>,
     _git_timer: Task<()>,
@@ -562,12 +508,13 @@ impl Session {
         status.update(cx, |status, cx| {
             let state = status.state_mut(cx);
             state.set_permission_mode(mode);
-            if let Some(model) = model {
+            if let Some(model) = model.clone() {
                 state.set_model(model);
             }
         });
         let input = cx.new(|cx| {
             let mut input = InputView::with_keymap(keymap, window, cx);
+            input.set_current_model(model);
             input.set_file_search(files.clone());
             input.set_history(prompt_history);
             if let Some(timeoutlen) = timeoutlen {
@@ -656,7 +603,6 @@ impl Session {
             turn: None,
             queue: VecDeque::new(),
             model_override: None,
-            menu: None,
             catalog_models: None,
             git: None,
             _git_timer: Self::git_timer(cx),
@@ -677,7 +623,7 @@ impl Session {
                 "pick the model crest uses with this provider (Enter saves it)",
                 cx,
             );
-            this.open_menu(window, cx);
+            this.open_model_popup(window, cx);
         }
         this
     }
@@ -801,12 +747,11 @@ impl Session {
         }
     }
 
-    /// Whether a picker, the approval dialog, the model menu, a modal or
-    /// the key dialog has the focus. Keys typed there never reach the
+    /// Whether a picker, the approval dialog, a modal or the key dialog has
+    /// the focus. Keys typed there never reach the
     /// prompt (the API key must not land in it).
     fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
-        self.menu.is_some()
-            || self.login.read(cx).is_open()
+        self.login.read(cx).is_open()
             || self.picker.read(cx).is_open()
             || self.approval.focus_handle(cx).contains_focused(window, cx)
             || self.modal.read(cx).is_open()
@@ -1000,11 +945,6 @@ impl Session {
     /// The override of the next turn.
     pub fn model_override(&self) -> Option<&str> {
         self.model_override.as_deref()
-    }
-
-    /// Whether the model menu is open.
-    pub fn is_menu_open(&self) -> bool {
-        self.menu.is_some()
     }
 
     /// Applies an event to the timeline and the status bar.
@@ -1244,7 +1184,7 @@ impl Session {
                 .split_once(' ')
                 .map_or((arg, ""), |(a, b)| (a, b.trim()))
             {
-                ("", _) => self.open_menu(window, cx),
+                ("", _) => self.open_model_popup(window, cx),
                 ("clear", "") => self.set_model_override(None, cx),
                 ("set", "") => self.notice(NoticeLevel::Warning, "usage: /model set <id>", cx),
                 ("set", id) => {
@@ -1481,6 +1421,7 @@ impl Session {
             InputEvent::Command(command) => self.command(command, window, cx),
             InputEvent::Action(action) => self.action(action, window, cx),
             InputEvent::Recorded(line) => self.controller.record_prompt(line.clone()),
+            InputEvent::ModelsWanted => self.load_catalog(window, cx),
         }
     }
 
@@ -1522,7 +1463,7 @@ impl Session {
             QUEUE_EDIT_ACTION => self.edit_queued(window, cx),
             FOCUS_INPUT_ACTION => self.focus_input(window, cx),
             FOCUS_NEXT_ACTION => self.focus_next(window, cx),
-            MODEL_ACTION => self.open_menu(window, cx),
+            MODEL_ACTION => self.open_model_popup(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
             _ => self.notice(
                 NoticeLevel::Info,
@@ -1584,78 +1525,38 @@ impl Session {
         window.focus(&focus, cx);
     }
 
-    /// Opens the model picker with the focus on it, and lists the
-    /// providers' models in the background the first time.
-    pub fn open_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut choices = vec![None];
-        choices.extend(self.controller.models().into_iter().map(Some));
-        let selected = choices
-            .iter()
-            .position(|choice| {
-                choice.as_ref().map(|c| c.alias.as_str()) == self.model_override.as_deref()
-            })
-            .unwrap_or(0);
-        let mut menu = ModelMenu {
-            choices,
-            query: String::new(),
-            selected,
-            catalog: CatalogState::Loading,
-        };
-        match &self.catalog_models {
-            Some(models) => {
-                menu.extend(models.clone());
-                menu.catalog = CatalogState::Ready;
-            }
-            None => self.load_catalog(window, cx),
-        }
-        self.menu = Some(menu);
-        window.focus(&self.focus_handle, cx);
+    /// Puts `/model ` in the prompt, whose popup lists the models (the
+    /// input asks for them with [`InputEvent::ModelsWanted`]).
+    pub fn open_model_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            input.set_text("/model ", window, cx);
+            input.focus(window, cx);
+        });
         cx.notify();
     }
 
+    /// Lists the providers' models once per session and hands them to the
+    /// input's popup, after the aliases whose model a provider serves.
     fn load_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(models) = self.catalog_models.clone() {
+            self.input
+                .update(cx, |input, cx| input.set_models(Ok(models), cx));
+            return;
+        }
         let listing = self.controller.catalog_models();
+        let aliases = self.controller.models();
         cx.spawn_in(window, async move |this, cx| {
-            let result = listing.await;
+            let result = listing.await.map(|catalog| with_aliases(aliases, catalog));
             this.update(cx, |this, cx| {
-                match result {
-                    Ok(models) => {
-                        if let Some(menu) = &mut this.menu {
-                            menu.extend(models.clone());
-                            menu.catalog = CatalogState::Ready;
-                        }
-                        this.catalog_models = Some(models);
-                    }
-                    Err(error) => {
-                        if let Some(menu) = &mut this.menu {
-                            menu.catalog = CatalogState::Failed(error);
-                        }
-                    }
+                if let Ok(models) = &result {
+                    this.catalog_models = Some(models.clone());
                 }
-                cx.notify();
+                this.input
+                    .update(cx, |input, cx| input.set_models(result, cx));
             })
             .ok();
         })
         .detach();
-    }
-
-    /// Closes the picker. `Enter` on a model saves it as the selected
-    /// model and reopens the session; `Tab` (or `Enter` on the default
-    /// row) only sets the model of the next turn.
-    fn close_menu(&mut self, pick: MenuPick, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = self.menu.take() else {
-            return;
-        };
-        self.input.update(cx, |input, cx| input.focus(window, cx));
-        let choice = menu.visible().get(menu.selected).map(|c| (*c).clone());
-        match (pick, choice) {
-            (MenuPick::Cancel, _) | (_, None) => {}
-            (MenuPick::Select, Some(Some(choice))) => self.select_model(choice, window, cx),
-            (MenuPick::NextTurn | MenuPick::Select, Some(choice)) => {
-                self.set_model_override(choice.map(|c| c.alias), cx);
-            }
-        }
-        cx.notify();
     }
 
     /// Saves `choice` as the selected model, then reopens the session so
@@ -1682,141 +1583,25 @@ impl Session {
         })
         .detach();
     }
-
-    fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(menu) = &mut self.menu else {
-            return;
-        };
-        let len = menu.visible().len().max(1);
-        let keystroke = &event.keystroke;
-        match keystroke.key.as_str() {
-            "down" => menu.selected = (menu.selected + 1) % len,
-            "up" => menu.selected = (menu.selected + len - 1) % len,
-            "enter" => self.close_menu(MenuPick::Select, window, cx),
-            "tab" => self.close_menu(MenuPick::NextTurn, window, cx),
-            "escape" => self.close_menu(MenuPick::Cancel, window, cx),
-            "backspace" => {
-                menu.query.pop();
-                menu.selected = 0;
-            }
-            _ => match keystroke.key_char.as_deref() {
-                Some(text)
-                    if !keystroke.modifiers.control
-                        && !keystroke.modifiers.platform
-                        && !text.chars().any(char::is_control) =>
-                {
-                    menu.query.push_str(text);
-                    menu.selected = 0;
-                }
-                _ => return,
-            },
-        }
-        cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn render_menu(&self, menu: &ModelMenu, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let visible = menu.visible();
-        let rows = visible.iter().enumerate().map(|(ix, choice)| {
-            let label = match choice {
-                Some(choice) if choice.alias == choice.model.as_str() => choice.alias.clone(),
-                Some(choice) => format!("{:<10} {}", choice.alias, choice.model),
-                None => "default    (no model for the next turn)".to_owned(),
-            };
-            let mut row = div()
-                .id(ix)
-                .px_2()
-                .child(SharedString::from(label))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(menu) = &mut this.menu {
-                        menu.selected = ix;
-                    }
-                    this.close_menu(MenuPick::Select, window, cx);
-                }));
-            if ix == menu.selected {
-                row = row.bg(theme.list_active);
-            }
-            row
-        });
-        let status = match &menu.catalog {
-            CatalogState::Loading => Some("listing the providers' models…".to_owned()),
-            CatalogState::Ready => None,
-            CatalogState::Failed(error) => Some(format!("could not list models: {error}")),
-        };
-        let query = if menu.query.is_empty() {
-            "type to filter".to_owned()
-        } else {
-            format!("filter: {}", menu.query)
-        };
-        div()
-            .absolute()
-            .inset_0()
-            .flex()
-            .justify_center()
-            .pt(px(80.))
-            .child(
-                v_flex()
-                    .w(px(560.))
-                    .max_w_full()
-                    .max_h(px(520.))
-                    .gap_1()
-                    .p_2()
-                    .bg(theme.popover)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_md()
-                    .child(
-                        h_flex().text_color(theme.muted_foreground).child(
-                            "Model  (Enter: save as your model · Tab: next turn only · Esc)",
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .px_2()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(query)),
-                    )
-                    .children(status.map(|status| {
-                        h_flex()
-                            .px_2()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(status))
-                    }))
-                    .child(
-                        v_flex()
-                            .id("model-menu-rows")
-                            .overflow_y_scroll()
-                            .children(rows),
-                    ),
-            )
-    }
 }
 
-/// How the model picker was closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MenuPick {
-    /// `Enter`: save the model (the default row clears the next turn's).
-    Select,
-    /// `Tab`: the model of the next turn only.
-    NextTurn,
-    /// `Esc`.
-    Cancel,
+/// The aliases whose model is in `catalog` (an alias of a provider without
+/// a key is no choice), then the catalog.
+fn with_aliases(aliases: Vec<ModelChoice>, catalog: Vec<ModelChoice>) -> Vec<ModelChoice> {
+    let served = |model: &ModelId| catalog.iter().any(|c| &c.model == model);
+    let mut models: Vec<ModelChoice> = aliases
+        .into_iter()
+        .filter(|a| a.alias != a.model.as_str() && served(&a.model))
+        .collect();
+    models.extend(catalog);
+    models
 }
 
 impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let menu = self
-            .menu
-            .as_ref()
-            .map(|menu| self.render_menu(menu, cx).into_any_element());
-        div()
-            .id("model-menu")
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::menu_key))
-            .children(menu)
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().id("session").track_focus(&self.focus_handle)
     }
 }
 
@@ -1841,11 +1626,12 @@ mod tests {
     use domain::permission::PermissionPolicy;
 
     use futures::channel::oneshot;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{ParentElement as _, Styled as _, TestAppContext, VisualTestContext};
     use serde_json::json;
 
     use super::*;
     use crate::approval::UiApproval;
+    use crate::input::ModelPopup;
 
     /// A controller over the real `AgentService`, running each turn on its
     /// own thread as the binary runs it on tokio.
@@ -2415,18 +2201,17 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_model_menu_sets_the_override_of_the_next_turn(cx: &mut TestAppContext) {
+    fn leader_m_puts_model_in_the_prompt_and_esc_keeps_it_for_one_turn(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("ok")], cx);
         cx.simulate_keystrokes("ctrl-g m");
-        h.session
-            .read_with(cx, |s, _| assert!(s.is_menu_open(), "the menu is open"));
-        cx.simulate_keystrokes("down tab");
-        let alias = h.session.read_with(cx, |s, _| {
-            assert!(!s.is_menu_open());
-            s.model_override().map(str::to_owned)
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.input().read(cx).text(cx), "/model ");
         });
-        let first = ModelPolicy::default().aliases().into_keys().next();
-        assert_eq!(alias, first);
+        cx.simulate_input("opus");
+        cx.simulate_keystrokes("escape enter");
+        cx.run_until_parked();
+        h.session
+            .read_with(cx, |s, _| assert_eq!(s.model_override(), Some("opus")));
 
         send("hola", cx);
         wait_until(&h, cx, "the turn", |s, _| !s.is_running());
@@ -2434,31 +2219,36 @@ mod tests {
             assert_eq!(s.model_override(), None, "one turn only")
         });
         let model = h.llm.last_request().map(|r| r.model.spec.id);
-        let expected = ModelPolicy::default().expand(&alias.unwrap_or_default());
-        assert_eq!(model, Some(expected));
+        assert_eq!(model, Some(ModelPolicy::default().expand("opus")));
     }
 
     #[gpui::test]
-    fn the_model_picker_lists_the_catalog_filters_and_saves(cx: &mut TestAppContext) {
+    fn the_model_popup_lists_the_catalog_filters_and_saves(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         send("/model", cx);
         cx.run_until_parked();
-        h.session.read_with(cx, |s, _| {
-            let menu = s.menu.as_ref().expect("the picker is open");
-            assert_eq!(menu.catalog, CatalogState::Ready);
+        h.session.read_with(cx, |s, cx| {
+            let input = s.input().read(cx);
+            let Some(ModelPopup::Entries(entries)) = input.model_popup(cx) else {
+                panic!("the popup lists the catalog");
+            };
             assert!(
-                menu.choices
+                entries
                     .iter()
-                    .flatten()
                     .any(|c| c.model.as_str() == "opencode-go:kimi-k3")
+            );
+            // Claude aliases: no provider here serves them.
+            assert!(
+                entries.iter().all(|c| c.model.provider().is_some()),
+                "{entries:?}"
             );
         });
         cx.simulate_input("kimi");
-        h.session.read_with(cx, |s, _| {
-            let menu = s.menu.as_ref().unwrap();
-            assert_eq!(menu.query, "kimi");
-            let shown: Vec<_> = menu.visible().into_iter().flatten().collect();
-            assert_eq!(shown.len(), 1, "{shown:?}");
+        h.session.read_with(cx, |s, cx| {
+            let Some(ModelPopup::Entries(entries)) = s.input().read(cx).model_popup(cx) else {
+                panic!("still entries");
+            };
+            assert_eq!(entries.len(), 1, "{entries:?}");
         });
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
@@ -2473,7 +2263,6 @@ mod tests {
             }]
         );
         h.session.read_with(cx, |s, _| {
-            assert!(!s.is_menu_open());
             assert_eq!(s.model_override(), None, "a saved pick is not an override");
         });
     }

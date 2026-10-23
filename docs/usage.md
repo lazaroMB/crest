@@ -83,7 +83,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Ctrl+G ff` | `picker.files` | File picker (fzf). |
 | `Ctrl+G fg` | `picker.grep` | Text search (rg). |
 | `Ctrl+G e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
-| `Ctrl+G m` | `model.pick` | Opens the model picker (the same as `/model`). |
+| `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
 | `Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command. Also works while a picker or a dialog is open. |
@@ -97,9 +97,9 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | --- | --- |
 | `/q`, `/quit`, `/qa` | Quits crest. |
 | `/help [section\|search]`, `/h` | Opens the [help](#help), on a section (`commands`, `keys`, `tools`, `plugins`, `mcp`, `models`, `cli`, `files`, or its number) or with that search already typed. |
-| `/model` | Opens the model picker over every model of your providers. |
+| `/model` | Opens the model popup over the models your providers let you use. |
 | `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. `/model clear` goes back to the default model. |
-| `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the picker) and reopens the session. |
+| `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the popup) and reopens the session. |
 | `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
@@ -208,19 +208,19 @@ A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` m
 - Clicking a file inserts `@path`.
 - The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
 
-### Model picker (`Ctrl+G m`, `/model`)
+### Model popup (`Ctrl+G m`, `/model`)
 
-Lists `default`, every alias (the builtin `opus`, `sonnet`, `haiku`, `fable` and those in your config) and every model the providers with a key offer (`GET /v1/models`, listed once per session, with their prefix: `opencode-go:glm-5.3`). Typing filters the list.
+`Ctrl+G m` and `/model` put `/model ` in the prompt. While the line is `/model ` (or `/model set `) followed by a word, a popup above the prompt lists, like the `@` one, the models that the providers with a key offer **and your account can use** (`GET /v1/models`, listed once per session, with their prefix: `opencode-zen:glm-5.3`), plus the aliases whose model is among them. The word filters them: ids or aliases that start with it (also after the prefix) come first, then those that contain it. `●` marks the model of the next turn.
 
 | Key | Action |
 | --- | --- |
 | `↓` / `↑` | Move the selection. |
-| typing, `Backspace` | Filter by alias or id. |
-| `Enter` | Save the model as yours for the default provider; the session reopens (and resumes) so every role and workflow uses it. On `default`, clears the next turn's model. |
-| `Tab` | Use the model for the next turn only. |
-| `Esc` | Close. |
+| typing | Filter by alias or id. |
+| `Enter` | Save the model as yours for the default provider (`/model set <id>`); the session reopens (and resumes) so every role and workflow uses it. |
+| `Tab` | Complete the line to `/model set <id>`. |
+| `Esc` | Hide the popup; `Enter` then sends the line as typed (`/model opus`: the next turn only). |
 
-The picker opens by itself when the default provider has no model yet (OpenCode right after `/login opencode`). See [Model providers](configuration.md#model-providers-and-api-keys).
+The popup opens by itself when the default provider has no model yet (OpenCode right after `/login opencode`). See [Model providers](configuration.md#model-providers-and-api-keys).
 
 ### Approvals and permission modes
 
