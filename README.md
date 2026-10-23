@@ -6,12 +6,13 @@
 
 **The coding agent that shows its work.**
 
-A native, GPU-rendered workspace for Claude: it reads, searches and edits your code with your approval,<br>
+A native, GPU-rendered workspace for Claude and the OpenCode models: it reads, searches and edits your code with your approval,<br>
 and answers with charts, tables, diagrams, diffs and 3D models instead of a wall of text.
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
+![Models](https://img.shields.io/badge/models-Claude%20%7C%20OpenCode-8a63d2)
 ![Release](https://img.shields.io/badge/release-v0.13.0-d9604a)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
 
@@ -110,6 +111,57 @@ Plugins run in a sandbox (no files, no network, instruction and memory limits). 
 app.plugins = { "~/path/to/crest/examples/plugins/showcase" }
 ```
 
+## Claude and OpenCode
+
+crest speaks to two model accounts, each with its own key, and can use both at once:
+
+| Account | What you get | Model ids | Key |
+| --- | --- | --- | --- |
+| **Anthropic** | The Claude family, with built-in roles tuned for each job | `claude-sonnet-5-5`, `opus`, `haiku`... (no prefix) | `ANTHROPIC_API_KEY`, pay per token |
+| **OpenCode** | **Go** (flat-rate subscription) and **Zen** (pay as you go): GLM, Kimi, DeepSeek, Qwen, MiniMax, GPT, Claude and more | `opencode-go:glm-5.3`, `opencode-zen:claude-sonnet-5-5` | `OPENCODE_API_KEY`, one key for both |
+
+`/login` opens the key dialog (`Tab` switches the account, `/login opencode` opens it on OpenCode). crest checks the key with the provider and stores it in the system keyring, never in a file; `/logout` deletes it. The account you log in to last becomes the **default provider**, the one that serves model ids without a prefix. `/model` (or `Ctrl+G m`) opens a popup with every model your accounts can use.
+
+### Claude
+
+With an Anthropic key, crest works out of the box: every role has a Claude model and a fallback, so a quick model explores and summarizes while a strong one plans.
+
+| Role | Model | For |
+| --- | --- | --- |
+| `main` | `claude-sonnet-5-5` (falls back to Haiku) | The conversation and the agent loop |
+| `plan` | `claude-opus-5-5` | Plans, design, large refactors and the flows' reasoning |
+| `explore`, `compact` | `claude-haiku-5-5` | Subagents, exploration and summarizing the history |
+| `deep` | `claude-fable-5-1` | Very hard tasks, on demand (`/model deep`, `--model deep`) |
+
+Extended thinking, a budget per role and the aliases `opus`, `sonnet`, `haiku` and `fable` are built in; `app.models.roles` changes any of them. Picking a model in `/model` replaces `main` and `component` and keeps the other roles. Anthropic does not let third-party apps use a Claude Pro/Max subscription, so crest needs an API key ([console.anthropic.com](https://console.anthropic.com/)).
+
+### OpenCode
+
+An [OpenCode](https://opencode.ai/) key gives crest the models of **OpenCode Go** (a flat-rate subscription for coding agents: its tokens cost nothing in the cost notices) and **OpenCode Zen** (pay as you go). On the first start after `/login opencode`, crest asks OpenCode which plans the key may use and lists only those models; after buying a subscription or credits, `/login opencode` again.
+
+OpenCode has no built-in roles: pick a model in the `/model` popup and it serves every role, or set them in `init.lua`. Each model is called with the API of its family (Anthropic Messages, OpenAI Responses or Chat Completions), chosen from its name; Gemini models are not supported yet.
+
+```lua
+-- ~/.config/crest/init.lua
+app.models.aliases = { glm = "opencode-go:glm-5.3", kimi = "opencode-go:kimi-k3" }
+app.models.roles = {
+  main    = { id = "glm", fallbacks = { "kimi" } },
+  explore = "opencode-go:deepseek-v4.1-flash",
+  compact = "opencode-go:deepseek-v4.1-flash",
+}
+```
+
+### Both at once
+
+With both keys, prefixed ids reach either account from anywhere: a role, an alias, `/model`, or a fallback chain that crosses providers, such as Claude first and GLM when Anthropic is overloaded. `app.opt.providers.default` fixes the default provider instead of the last login. [Providers, ids and roles in detail](docs/configuration.md#model-providers-and-api-keys).
+
+```lua
+app.models.roles = {
+  main = { id = "sonnet", fallbacks = { "opencode-go:glm-5.3" } },
+  explore = "opencode-go:deepseek-v4.1-flash",
+}
+```
+
 ## Everything in one place
 
 `F1` (or `/help`) opens one searchable window with every `/` command, the key bindings, the agent's tools and their effects, the plugins and their capabilities, the MCP servers, the models in use, the command-line flags and the paths crest reads.
@@ -144,7 +196,7 @@ make deps       # installs what is missing: rg, fzf, the GPUI libraries...
 make install    # the same app install, from your build (make uninstall removes it)
 ```
 
-Then open crest and give it an API key: without one the window asks for it (or run `/login`). It can be an Anthropic key, or an OpenCode key (an OpenCode Go subscription or Zen credits) to use models such as `opencode-go:glm-5.3`; `Tab` switches between them in the dialog. The account you log in to last serves the chat; with OpenCode, crest then lists the models of your plan and you pick one (`/model` or `Ctrl+G m` changes it later). The key is checked with the provider and stored in the system keyring (GNOME Keyring, KWallet, the macOS Keychain or the Windows Credential Manager), never in a file; `/logout` deletes it. From a terminal you can also store it yourself or use the environment:
+Then open crest and give it an Anthropic or an OpenCode key: without one the window asks for it (or run `/login`; see [Claude and OpenCode](#claude-and-opencode)). The key is stored in the system keyring (GNOME Keyring, KWallet, the macOS Keychain or the Windows Credential Manager). From a terminal you can also store it yourself or use the environment:
 
 ```bash
 secret-tool store --label="crest" service crest username ANTHROPIC_API_KEY   # Linux (OPENCODE_API_KEY likewise)
@@ -176,7 +228,7 @@ Opening crest again in the same directory resumes the last session; `crest --new
 | Guide | What is in it |
 | --- | --- |
 | [Usage](docs/usage.md) | The window, every key and `/` command, approvals, blocks, the CLI, headless mode and sessions. |
-| [Configuration](docs/configuration.md) | API keys, `app.opt`, models by role, the decision model, permissions and a full `init.lua`. |
+| [Configuration](docs/configuration.md) | Claude and OpenCode keys, providers, `app.opt`, models by role, the decision model, permissions and a full `init.lua`. |
 | [Plugins](docs/plugins.md) | Writing Lua plugins: tools, hooks, blocks, modals, MCP and capabilities. |
 | [Workflows](docs/workflows.md) | Research, simulation and implementation, stage by stage. |
 | [Architecture](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, persistence. |
@@ -186,7 +238,7 @@ Opening crest again in the same directory resumes the last session; `crest --new
 
 ## Built with
 
-Rust (edition 2024), [GPUI](https://www.gpui.rs/) and [gpui-component](https://github.com/longbridge/gpui-component) for the native UI, wgpu for the 3D views, Lua 5.4 (mlua) for config and plugins, SQLite for sessions and flows, `rg` and `fzf` for search, and the Anthropic API.
+Rust (edition 2024), [GPUI](https://www.gpui.rs/) and [gpui-component](https://github.com/longbridge/gpui-component) for the native UI, wgpu for the 3D views, Lua 5.4 (mlua) for config and plugins, SQLite for sessions and flows, `rg` and `fzf` for search, the Anthropic API for Claude, and the Anthropic, OpenAI Responses and Chat Completions APIs for OpenCode.
 
 crest follows a hexagonal architecture: the domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, every port has an in-memory fake for the tests, and `make arch` enforces the boundaries.
 
@@ -196,7 +248,7 @@ flowchart TB
     ui["crates/ui<br/>GPUI: timeline, blocks, modals, 3D views"]
     subgraph adapters["crates/adapters"]
         direction LR
-        anthropic["anthropic"] --- cloudflare["cloudflare<br/>Clef"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"] --- web["web<br/>curl"]
+        anthropic["anthropic<br/>Claude, OpenCode"] --- openai["openai<br/>OpenCode"] --- cloudflare["cloudflare<br/>Clef"] --- search["search<br/>rg, fzf"] --- fs["fs"] --- shell["shell"] --- web["web<br/>curl"]
         store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"] --- export["export<br/>board.html"]
     end
     app["crates/app · application<br/>ports, use cases, tools, workflows"]
