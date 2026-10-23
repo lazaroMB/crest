@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-anthropic"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-cloudflare"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-export"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "domain",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-fs"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-lua"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-mcp"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-openai"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-search"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-shell"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-store"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-telemetry"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "base64 0.23.1",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-web"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "application"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "domain",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "crest"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "adapter-anthropic",
  "adapter-cloudflare",
@@ -1928,7 +1928,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "insta",
  "schemars",
@@ -5738,7 +5738,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "platform"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "dirs 7.0.0",
  "tempfile",
@@ -8393,7 +8393,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "application",
  "async-trait",
