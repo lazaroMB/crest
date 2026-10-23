@@ -10,6 +10,11 @@
 //! `x-opencode-session` header OpenCode requires (requests without it are
 //! refused with `MissingSessionID`): the crest session id, or one id per
 //! process for calls outside a session.
+//!
+//! OpenCode lists every model of a plan to any key, but answers 403 to the
+//! ones the account cannot use: Go without a subscription, and Zen's free
+//! models outside OpenCode's own client. [`probe_access`] asks once with a
+//! one-token request, and [`provider`] hides what the answer ruled out.
 
 use std::sync::Arc;
 
@@ -17,11 +22,12 @@ use adapter_anthropic::{AnthropicBackend, AnthropicClient, ApiKey, ClientConfig}
 use adapter_openai::{Api, OpenAiBackend, OpenAiCatalog, OpenAiClient, OpenAiConfig};
 use application::llm_retry::ModelBackend;
 use application::ports::credentials::KeyCheck;
-use application::ports::llm::{LlmError, LlmRequest, LlmStream, ModelCatalogPort};
+use application::ports::llm::{LlmError, LlmRequest, LlmStream, ModelCatalogPort, ModelInfo};
 use application::providers::{Provider, ProvidersOptions, WireFormat};
 use async_trait::async_trait;
-use domain::conversation::SessionId;
-use domain::model::{ModelId, ProviderId};
+use domain::conversation::{Message, SessionId};
+use domain::model::{ModelId, ModelRole, ModelSpec, ProviderId, ResolvedModel, SpecSource};
+use serde::{Deserialize, Serialize};
 
 /// OpenCode's inference base URL.
 pub const BASE_URL: &str = "https://opencode.ai/inference";
@@ -51,7 +57,173 @@ fn openai_config(base: &str) -> OpenAiConfig {
     }
 }
 
-/// The OpenCode provider `plan` (Go or Zen) with `key`.
+/// What an OpenCode key may use, as far as [`probe_access`] found out;
+/// `None` is not known (never asked, or the answer was not a yes or a no).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanAccess {
+    /// The Go plan (a subscription).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go: Option<bool>,
+    /// Zen's paid models (a balance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zen: Option<bool>,
+    /// Zen's free models, which OpenCode keeps to its own client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zen_free: Option<bool>,
+    /// When it was asked, in seconds since the Unix epoch.
+    #[serde(default)]
+    pub checked_at: u64,
+}
+
+impl PlanAccess {
+    /// Whether `plan` may serve anything: only a known no rules it out.
+    #[must_use]
+    pub fn serves(&self, plan: ProviderId) -> bool {
+        match plan {
+            ProviderId::OpencodeGo => self.go != Some(false),
+            ProviderId::OpencodeZen => self.zen != Some(false) || self.zen_free != Some(false),
+            _ => true,
+        }
+    }
+
+    /// Whether every plan answered a yes or a no.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.go.is_some() && self.zen.is_some() && self.zen_free.is_some()
+    }
+
+    /// Whether `plan` is known to serve something: it answered.
+    #[must_use]
+    pub fn works(&self, plan: ProviderId) -> bool {
+        match plan {
+            ProviderId::OpencodeGo => self.go == Some(true),
+            ProviderId::OpencodeZen => self.zen == Some(true) || self.zen_free == Some(true),
+            _ => true,
+        }
+    }
+
+    /// Whether `model` (an id without prefix) of `plan` can be used.
+    #[must_use]
+    pub fn allows(&self, plan: ProviderId, model: &str) -> bool {
+        match plan {
+            ProviderId::OpencodeGo => self.go != Some(false),
+            ProviderId::OpencodeZen if is_free(model) => self.zen_free != Some(false),
+            ProviderId::OpencodeZen => self.zen != Some(false),
+            _ => true,
+        }
+    }
+}
+
+/// Whether `model` is one of Zen's free models. OpenCode does not say so
+/// in the model list: free ids end in `-free`, and `big-pickle` is the
+/// stealth model it offers for free.
+fn is_free(model: &str) -> bool {
+    model.ends_with("-free") || model == "big-pickle"
+}
+
+/// Asks OpenCode with `key` which plans it may use: one request of one
+/// token per plan (to a model of its own list), whose 403 means no. Each
+/// question is cut off after `timeout`, which leaves it unknown.
+pub async fn probe_access(
+    key: &str,
+    options: &ProvidersOptions,
+    timeout: std::time::Duration,
+) -> PlanAccess {
+    let all = PlanAccess::default();
+    let (Ok(go), Ok(zen)) = (
+        provider(key, ProviderId::OpencodeGo, options, all),
+        provider(key, ProviderId::OpencodeZen, options, all),
+    ) else {
+        return all;
+    };
+    let ask = |provider: Provider, pick: fn(&[ModelInfo]) -> Option<ModelId>| async move {
+        let models = tokio::time::timeout(timeout, provider.catalog.list_models())
+            .await
+            .ok()?
+            .ok()?;
+        let model = pick(&models)?;
+        let request = probe_request(&model);
+        match tokio::time::timeout(timeout, provider.backend.open(&request, &model)).await {
+            // Dropping the stream closes the connection.
+            Ok(Ok(_)) => Some(true),
+            Ok(Err(LlmError::NotEntitled { .. })) => Some(false),
+            Ok(Err(_)) | Err(_) => None,
+        }
+    };
+    let (go, zen, zen_free) = futures::join!(
+        ask(go, |models| first_of(models, |id| !is_free(id))),
+        ask(zen.clone(), cheapest_paid),
+        ask(zen, |models| first_of(models, is_free)),
+    );
+    PlanAccess {
+        go,
+        zen,
+        zen_free,
+        checked_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    }
+}
+
+/// The first model of `models` crest can speak to that `keep` accepts.
+fn first_of(models: &[ModelInfo], keep: fn(&str) -> bool) -> Option<ModelId> {
+    models
+        .iter()
+        .map(|m| m.id.as_str())
+        .find(|id| !id.starts_with("gemini-") && keep(id))
+        .map(ModelId::from)
+}
+
+/// A paid Zen model likely to cost least for one token: a small one if
+/// the list has it, else the first paid one.
+fn cheapest_paid(models: &[ModelInfo]) -> Option<ModelId> {
+    let paid = |id: &str| !is_free(id) && id != "test";
+    ["flash", "haiku", "mini", "nano"]
+        .iter()
+        .find_map(|small| {
+            models
+                .iter()
+                .map(|m| m.id.as_str())
+                .find(|id| paid(id) && !id.starts_with("gemini-") && id.contains(small))
+        })
+        .map(ModelId::from)
+        .or_else(|| first_of(models, |id| !is_free(id) && id != "test"))
+}
+
+/// One token of "hi" to `model`.
+fn probe_request(model: &ModelId) -> LlmRequest {
+    let resolved = ResolvedModel {
+        role: ModelRole::Title,
+        spec: ModelSpec::new(model.clone(), 1),
+        source: SpecSource::Default,
+        warnings: vec![],
+    };
+    let mut request = LlmRequest::new(resolved, vec![Message::user_text("hi")]);
+    request.max_tokens = Some(1);
+    request
+}
+
+/// The model list of one plan without the models `access` rules out.
+struct PlanCatalog {
+    inner: OpenAiCatalog,
+    plan: ProviderId,
+    access: PlanAccess,
+}
+
+#[async_trait]
+impl ModelCatalogPort for PlanCatalog {
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+        if !self.access.serves(self.plan) {
+            return Ok(Vec::new());
+        }
+        let mut models = self.inner.list_models().await?;
+        models.retain(|m| self.access.allows(self.plan, m.id.as_str()));
+        Ok(models)
+    }
+}
+
+/// The OpenCode provider `plan` (Go or Zen) with `key`; its catalog leaves
+/// out what `access` rules out.
 ///
 /// # Errors
 ///
@@ -60,6 +232,7 @@ pub fn provider(
     key: &str,
     plan: ProviderId,
     options: &ProvidersOptions,
+    access: PlanAccess,
 ) -> Result<Provider, LlmError> {
     let base = options.opencode_base_url.as_deref().unwrap_or(BASE_URL);
     let base = plan_base(base, plan);
@@ -84,7 +257,11 @@ pub fn provider(
     };
     Ok(Provider {
         backend: Arc::new(backend),
-        catalog: Arc::new(OpenAiCatalog::new(catalog)),
+        catalog: Arc::new(PlanCatalog {
+            inner: OpenAiCatalog::new(catalog),
+            plan,
+            access,
+        }),
     })
 }
 
@@ -170,7 +347,7 @@ mod tests {
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
     use futures::StreamExt;
     use serde_json::json;
-    use wiremock::matchers::{header, header_exists, method, path};
+    use wiremock::matchers::{body_partial_json, header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
@@ -224,7 +401,13 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let provider = provider("oc-key", ProviderId::OpencodeGo, &options(&server)).unwrap();
+        let provider = provider(
+            "oc-key",
+            ProviderId::OpencodeGo,
+            &options(&server),
+            PlanAccess::default(),
+        )
+        .unwrap();
         for model in ["glm-5.3", "claude-haiku-5-5"] {
             let stream = provider
                 .backend
@@ -258,7 +441,13 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let provider = provider("bad", ProviderId::OpencodeZen, &options(&server)).unwrap();
+        let provider = provider(
+            "bad",
+            ProviderId::OpencodeZen,
+            &options(&server),
+            PlanAccess::default(),
+        )
+        .unwrap();
         let Err(LlmError::Auth { message }) = provider
             .backend
             .open(&request("gpt-6-luna"), &ModelId::from("gpt-6-luna"))
@@ -271,5 +460,81 @@ mod tests {
             check_key("bad", &options(&server)).await,
             KeyCheck::Rejected(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn the_probe_rules_out_what_answers_403_and_the_catalog_hides_it() {
+        let server = MockServer::start().await;
+        let list = |ids: &[&str]| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": ids.iter().map(|id| json!({"id": id, "object": "model"})).collect::<Vec<_>>(),
+            }))
+        };
+        let refused = |kind: &str, message: &str| {
+            ResponseTemplate::new(403).set_body_json(json!({
+                "type": "error", "error": { "type": kind, "message": message }
+            }))
+        };
+        let ok = "data: {\"model\":\"x\",\"choices\":[{\"delta\":{\"content\":\"h\"},\
+                  \"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n";
+        Mock::given(method("GET"))
+            .and(path("/go/v1/models"))
+            .respond_with(list(&["glm-5.3"]))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/go/openai/v1/chat/completions"))
+            .respond_with(refused(
+                "Error",
+                "An active OpenCode Go subscription is required to use Go models.",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(list(&["beam-free", "glm-5.3", "glm-5.3-flash"]))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/chat/completions"))
+            .and(body_partial_json(json!({"model": "beam-free"})))
+            .respond_with(refused(
+                "FreeTierError",
+                "free tier can only be used from within OpenCode",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/chat/completions"))
+            .and(body_partial_json(json!({"model": "glm-5.3-flash"})))
+            .respond_with(sse(ok))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let options = options(&server);
+        let access = probe_access("oc-key", &options, std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            (access.go, access.zen, access.zen_free),
+            (Some(false), Some(true), Some(false))
+        );
+        let ids = |plan| {
+            let provider = provider("oc-key", plan, &options, access).unwrap();
+            async move {
+                let models = provider.catalog.list_models().await.unwrap();
+                models
+                    .into_iter()
+                    .map(|m| m.id.as_str().to_owned())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert!(ids(ProviderId::OpencodeGo).await.is_empty());
+        assert_eq!(
+            ids(ProviderId::OpencodeZen).await,
+            ["glm-5.3", "glm-5.3-flash"]
+        );
     }
 }

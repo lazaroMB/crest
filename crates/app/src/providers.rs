@@ -362,9 +362,19 @@ impl ModelCatalogPort for RouterCatalog {
                 .map(|(id, p)| async move { (*id, p.catalog.list_models().await) }),
         )
         .await;
+        // A provider that cannot list (a rejected key) leaves out its own
+        // models only; the listing fails when every provider fails.
         let mut out = Vec::new();
+        let mut failed = None;
         for (id, list) in lists {
-            for model in list? {
+            let list = match list {
+                Ok(list) => list,
+                Err(err) => {
+                    failed.get_or_insert(err);
+                    continue;
+                }
+            };
+            for model in list {
                 if id == self.router.default {
                     out.push(model.clone());
                 }
@@ -374,7 +384,10 @@ impl ModelCatalogPort for RouterCatalog {
                 });
             }
         }
-        Ok(out)
+        match failed {
+            Some(err) if out.is_empty() => Err(err),
+            _ => Ok(out),
+        }
     }
 }
 
@@ -534,6 +547,44 @@ mod tests {
                 "opencode-go:kimi-k3"
             ]
         );
+    }
+
+    /// A catalog whose key is rejected.
+    struct Rejected;
+
+    #[async_trait]
+    impl ModelCatalogPort for Rejected {
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+            Err(LlmError::Auth {
+                message: "401".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_provider_that_cannot_list_leaves_out_only_its_models() {
+        let anthropic = Provider {
+            backend: Echo::new(vec![]),
+            catalog: Arc::new(Rejected),
+        };
+        let router = ProviderRouter::new(ProviderId::OpencodeGo)
+            .with(ProviderId::Anthropic, anthropic.clone())
+            .with(
+                ProviderId::OpencodeGo,
+                provider(&Echo::new(vec!["kimi-k3"])),
+            );
+        let ids: Vec<String> = block_on(router.catalog().list_models())
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id.to_string())
+            .collect();
+        assert_eq!(ids, ["kimi-k3", "opencode-go:kimi-k3"]);
+        let alone =
+            ProviderRouter::new(ProviderId::Anthropic).with(ProviderId::Anthropic, anthropic);
+        assert!(matches!(
+            block_on(alone.catalog().list_models()),
+            Err(LlmError::Auth { .. })
+        ));
     }
 
     #[test]

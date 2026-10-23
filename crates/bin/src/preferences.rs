@@ -1,5 +1,6 @@
 //! Choices the user makes in the window that outlive it: the provider of
-//! the last `/login` and the model picked with `/model` for each provider.
+//! the last `/login`, the model picked with `/model` for each provider and
+//! which OpenCode plans the key may use.
 //!
 //! They live in `preferences.json` in crest's data directory, written
 //! privately like the trust stores. `app.opt.providers.default` and the
@@ -12,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use domain::model::{Account, ModelId, ProviderId};
 use serde::{Deserialize, Serialize};
+
+use crate::opencode::PlanAccess;
 
 /// Name of the file in crest's data directory.
 const FILE: &str = "preferences.json";
@@ -32,6 +35,10 @@ pub struct Preferences {
     /// when it was picked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub models: BTreeMap<ProviderId, ModelId>,
+    /// What the stored OpenCode key may use; `None` until it is asked
+    /// (see [`crate::opencode::probe_access`]), and again after a `/login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_access: Option<PlanAccess>,
 }
 
 impl Preferences {
@@ -65,13 +72,31 @@ impl Preferences {
     }
 
     /// The provider a `/login` to `account` makes the default. OpenCode's
-    /// key serves Go and Zen; Go is its flat-rate plan.
+    /// key serves Go and Zen; Go, its flat-rate plan, until the next start
+    /// asks which plans the key may use (see [`Self::opencode_plan`]).
     #[must_use]
     pub fn provider_of(account: Account) -> ProviderId {
         match account {
             Account::Anthropic => ProviderId::Anthropic,
             Account::OpenCode => ProviderId::OpencodeGo,
         }
+    }
+
+    /// The OpenCode plan to use instead of `preferred` when `access` says
+    /// the other one works and `preferred` is ruled out or not known to
+    /// work: Zen instead of Go without a subscription, and the other way
+    /// round.
+    #[must_use]
+    pub fn opencode_plan(preferred: ProviderId, access: &PlanAccess) -> ProviderId {
+        let other = match preferred {
+            ProviderId::OpencodeGo => ProviderId::OpencodeZen,
+            ProviderId::OpencodeZen => ProviderId::OpencodeGo,
+            other => return other,
+        };
+        let give_way = !access.works(preferred)
+            && access.serves(other)
+            && (access.works(other) || !access.serves(preferred));
+        if give_way { other } else { preferred }
     }
 }
 
@@ -128,6 +153,49 @@ mod tests {
             Preferences::load(&path).unwrap().provider,
             Some(ProviderId::Anthropic)
         );
+    }
+
+    #[test]
+    fn a_plan_the_key_cannot_use_gives_way_to_the_other() {
+        let no_go = PlanAccess {
+            go: Some(false),
+            zen: Some(true),
+            ..PlanAccess::default()
+        };
+        assert_eq!(
+            Preferences::opencode_plan(ProviderId::OpencodeGo, &no_go),
+            ProviderId::OpencodeZen
+        );
+        let nothing = PlanAccess {
+            go: Some(false),
+            zen: Some(false),
+            zen_free: Some(false),
+            ..PlanAccess::default()
+        };
+        assert_eq!(
+            Preferences::opencode_plan(ProviderId::OpencodeGo, &nothing),
+            ProviderId::OpencodeGo
+        );
+        assert_eq!(
+            Preferences::opencode_plan(ProviderId::OpencodeGo, &PlanAccess::default()),
+            ProviderId::OpencodeGo
+        );
+        // Go could not be asked, Zen answered: Zen.
+        let zen_only = PlanAccess {
+            zen: Some(true),
+            zen_free: Some(false),
+            ..PlanAccess::default()
+        };
+        assert_eq!(
+            Preferences::opencode_plan(ProviderId::OpencodeGo, &zen_only),
+            ProviderId::OpencodeZen
+        );
+        // The file of 0.12.1 still loads.
+        let old: Preferences = serde_json::from_str(
+            r#"{"provider":"opencode-go","models":{"opencode-go":"beam-free"}}"#,
+        )
+        .unwrap();
+        assert_eq!(old.opencode_access, None);
     }
 
     #[test]

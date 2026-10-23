@@ -1372,6 +1372,10 @@ fn login_on(
         let saved = tokio::task::spawn_blocking(move || {
             crate::preferences::update(Some(&path), |p| {
                 p.provider = Some(Preferences::provider_of(account));
+                // A new key: the next start asks what it may use.
+                if account == Account::OpenCode {
+                    p.opencode_access = None;
+                }
             })
         })
         .await

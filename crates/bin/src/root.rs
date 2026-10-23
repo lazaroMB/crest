@@ -64,6 +64,7 @@ use ui::timeline::TimelineState;
 use crate::args::Args;
 use crate::images::{ImageGuardSink, SharedGuard};
 use crate::mcp::{self, McpServers, TrustOptions};
+use crate::opencode::PlanAccess;
 use crate::plugin_trust;
 use crate::preferences::{self, Preferences};
 use crate::research;
@@ -508,7 +509,8 @@ pub async fn build_app(
     let (llm, catalog, default_provider) = model_ports(
         &overrides,
         &loaded.options,
-        preferences.provider,
+        &preferences,
+        preferences_path.as_deref(),
         &mut warnings,
     )
     .await?;
@@ -834,10 +836,39 @@ type ModelPorts = (
 /// The model and its catalog: the overrides, or every provider with a key
 /// in the environment or the keyring (Anthropic; OpenCode Go and Zen),
 /// routed by the prefix of each model id (`app.opt.providers`).
+/// Asks OpenCode what `key` may use and saves the answer in the
+/// preferences at `path`, unless nothing could be found out (offline): then
+/// the next start asks again.
+async fn opencode_access(
+    key: &str,
+    providers: &ProvidersOptions,
+    path: Option<&Path>,
+    warnings: &mut Vec<String>,
+) -> PlanAccess {
+    let access = crate::opencode::probe_access(key, providers, CATALOG_TIMEOUT).await;
+    let known = access.go.is_some() || access.zen.is_some() || access.zen_free.is_some();
+    if let (true, Some(path)) = (known, path) {
+        let path = path.to_path_buf();
+        let saved = tokio::task::spawn_blocking(move || {
+            preferences::update(Some(&path), |p| p.opencode_access = Some(access))
+        })
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(|saved| saved);
+        if let Err(err) = saved {
+            warnings.push(format!(
+                "what the OpenCode key may use was not saved: {err}"
+            ));
+        }
+    }
+    access
+}
+
 async fn model_ports(
     overrides: &Overrides,
     options: &AppOptions,
-    preferred: Option<ProviderId>,
+    preferences: &Preferences,
+    preferences_path: Option<&Path>,
     warnings: &mut Vec<String>,
 ) -> anyhow::Result<ModelPorts> {
     let providers = ProvidersOptions::from_options(options).unwrap_or_else(|err| {
@@ -858,14 +889,34 @@ async fn model_ports(
     })
     .await
     .context("reading the API keys")?;
+    // A plan left unknown (offline, a timeout) is asked again at each start.
+    let access = match (&opencode, preferences.opencode_access) {
+        (Some(key), saved) if saved.is_none_or(|a| !a.is_complete()) => {
+            opencode_access(key, &providers, preferences_path, warnings).await
+        }
+        (_, saved) => saved.unwrap_or_default(),
+    };
     let mut with_key = Vec::new();
     if anthropic.is_some() {
         with_key.push(ProviderId::Anthropic);
     }
     if opencode.is_some() {
-        with_key.extend([ProviderId::OpencodeGo, ProviderId::OpencodeZen]);
+        with_key.extend(
+            [ProviderId::OpencodeGo, ProviderId::OpencodeZen]
+                .into_iter()
+                .filter(|plan| access.serves(*plan)),
+        );
     }
+    let preferred = preferences
+        .provider
+        .map(|p| Preferences::opencode_plan(p, &access));
     let default = effective_default(providers.default, preferred, &with_key);
+    if opencode.is_some() && !access.serves(default) {
+        warnings.push(format!(
+            "your OpenCode key cannot use {default} (no subscription or balance); \
+             pick another model with /model or set app.opt.providers.default"
+        ));
+    }
     let mut router = ProviderRouter::new(default);
     if let Some(key) = anthropic {
         let client = AnthropicClient::new(&key, ClientConfig::default())
@@ -880,7 +931,7 @@ async fn model_ports(
     }
     if let Some(key) = opencode {
         for plan in [ProviderId::OpencodeGo, ProviderId::OpencodeZen] {
-            let provider = crate::opencode::provider(&key, plan, &providers)
+            let provider = crate::opencode::provider(&key, plan, &providers, access)
                 .map_err(|err| anyhow!("cannot create the OpenCode client: {err}"))?;
             router = router.with(plan, provider);
         }

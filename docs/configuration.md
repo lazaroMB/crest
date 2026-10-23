@@ -102,13 +102,17 @@ If no provider has a key:
 **The default provider** serves model ids without a prefix (the built-in roles are such Claude ids). crest picks it in this order:
 
 1. `app.opt.providers.default`, when `init.lua` sets it;
-2. the account of the last successful `/login` (OpenCode means `opencode-go`), if it still has a key;
+2. the account of the last successful `/login` (OpenCode means `opencode-go`, or `opencode-zen` when the key has no Go subscription), if it still has a key;
 3. the only account with a key;
 4. Anthropic.
 
-So after `/login opencode` with no Anthropic key, OpenCode is the default and the Claude roles are not used. OpenCode has no built-in roles: crest opens the model picker (`/model`, `Ctrl+G m`), which lists every model of your providers' catalogs. `Enter` saves the pick, which then serves every role that `init.lua` does not set. Until a model is picked, a prompt is refused with "no model is selected … Pick one with /model" and nothing is sent. With Anthropic as the default, a saved pick replaces the `main` and `component` models and the other roles keep their Claude defaults.
+So after `/login opencode` with no Anthropic key, OpenCode is the default and the Claude roles are not used. OpenCode has no built-in roles: crest opens the model popup (`/model`, `Ctrl+G m`), which lists the models of your providers' catalogs that your account can use. `Enter` saves the pick, which then serves every role that `init.lua` does not set. Until a model is picked, a prompt is refused with "no model is selected … Pick one with /model" and nothing is sent. With Anthropic as the default, a saved pick replaces the `main` and `component` models and the other roles keep their Claude defaults.
 
 The last login and the picks (one per default provider) are saved in `preferences.json` in crest's data directory (`~/.local/share/crest/` or `%LOCALAPPDATA%\crest\`).
+
+**What an OpenCode key may use.** OpenCode lists every model of a plan to any key, but answers 403 to the ones the account cannot use: Go models without a Go subscription, and Zen's free models (`*-free`, `big-pickle`) outside OpenCode's own client. So the first start after `/login opencode` asks once: one request of one token to a model of each plan (Go, a small paid Zen model, a free Zen model). A 403 rules that plan out: its models leave the catalog and the popup, and if it was the default (Go), Zen takes its place. Any other answer (no network, a timeout) leaves it unknown: its models stay, a plan that answered is preferred to it, and it is asked again at the next start. The answer is saved in `preferences.json` (`opencode_access`); after buying a subscription or credits, `/login opencode` again so crest asks anew.
+
+A 401 means the key is wrong ("authentication failed … run /login"); a 403 means the key works but the account cannot use that model ("your account cannot use this model: …"). Either is kept in the timeline as an error with what to do.
 
 ### Model ids and `app.opt.providers`
 
@@ -279,18 +283,18 @@ An unknown role or field produces a diagnostic. Aliases are expanded once (not r
 app.models.aliases = { rapido = "claude-haiku-5-5", opus = "claude-opus-5-5" }
 ```
 
-Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `Ctrl+G m` menu.
+Aliases are merged with the builtin ones (the workspace wins) and appear in the window's `/model` popup when a provider serves their model.
 
 ### Resolution order
 
-1. **Turn override**: `--model`, `/model <x>`, or `Tab` in the `Ctrl+G m` / `/model` picker.
+1. **Turn override**: `--model`, or `/model <x>` sent as typed (`Esc` hides the popup first).
    - If the value is a **role name** (`plan`), that role's whole spec is used.
    - If it is an alias or an id, it only replaces the `id` and keeps the role's `max_tokens`, `thinking` and `fallbacks`.
    - Aliases are checked before role names.
 2. **Role pinned** by a tool or a workflow (for example, the `task` subagent asks for `explore`, and `app.send(..., { role = "plan" })` asks for `plan`).
 3. Workspace config.
 4. Global config, with its plugins.
-5. **The selected model** (`Enter` in the picker, `/model set <id>`): `main` and `component` with Anthropic as the default provider, every role with OpenCode.
+5. **The selected model** (`Enter` in the popup, `/model set <id>`): `main` and `component` with Anthropic as the default provider, every role with OpenCode.
 6. Builtin values (the table above), only with Anthropic as the default provider.
 
 At startup, crest queries the model list of every provider with a key (`GET /v1/models`) and waits at most 5 s; models are listed with their prefix, and those of the default provider also without it. If a role points to a model that does not exist, a notice is shown and the first available fallback is used. If the catalog does not respond, the notice "could not validate the configured models: …" appears and nothing is validated.
