@@ -189,8 +189,14 @@ pub fn from_status(
 ) -> LlmError {
     let message = error_message(text);
     match status {
-        401 | 403 => LlmError::Auth {
+        401 => LlmError::Auth {
             message: format!("{provider} rejected the API key ({status}): {message}"),
+        },
+        403 if is_key_error(&message) => LlmError::Auth {
+            message: format!("{provider} rejected the API key ({status}): {message}"),
+        },
+        403 => LlmError::NotEntitled {
+            message: format!("{provider} refused the request ({status}): {message}"),
         },
         429 => LlmError::RateLimited { retry_after_ms },
         529 => LlmError::Overloaded,
@@ -226,6 +232,21 @@ pub fn from_stream_error(error: &Value) -> LlmError {
             message,
         },
     }
+}
+
+/// Whether a 403 is about the key itself rather than what the account may
+/// use (OpenCode answers 403 to a missing subscription or a free tier used
+/// outside its own client).
+fn is_key_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "api key is invalid",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }
 
 fn is_context_error(message: &str) -> bool {
@@ -285,6 +306,30 @@ mod tests {
             }
         );
         assert!(from_status(503, "", None, "x").triggers_fallback());
+    }
+
+    #[test]
+    fn a_403_is_the_plan_unless_it_names_the_key() {
+        // Bodies OpenCode sent to a valid key.
+        let free = r#"{"type":"error","error":{"type":"FreeTierError","message":"OpenCode's free tier can only be used from within OpenCode."}}"#;
+        assert!(matches!(
+            from_status(403, free, None, "OpenCode"),
+            LlmError::NotEntitled { message } if message.contains("free tier")
+        ));
+        let go = r#"{"error":{"message":"Upstream request failed: An active OpenCode Go subscription is required to use Go models."}}"#;
+        assert!(matches!(
+            from_status(403, go, None, "OpenCode"),
+            LlmError::NotEntitled { message } if message.contains("subscription")
+        ));
+        assert!(matches!(
+            from_status(
+                403,
+                r#"{"error":{"message":"Invalid API key"}}"#,
+                None,
+                "OpenCode"
+            ),
+            LlmError::Auth { .. }
+        ));
     }
 
     #[test]

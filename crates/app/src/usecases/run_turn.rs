@@ -220,6 +220,25 @@ pub enum TurnError {
     },
 }
 
+/// What to do about a failed turn, when there is something to do.
+fn failure_hint(err: &TurnError) -> Option<&'static str> {
+    let TurnError::Llm(err) = err else {
+        return None;
+    };
+    let err = match err {
+        LlmError::AllModelsFailed { last } => last.as_ref(),
+        other => other,
+    };
+    match err {
+        LlmError::Auth { .. } => Some("run /login to store a valid key"),
+        LlmError::NotEntitled { .. } => {
+            Some("the key works, but not for this model: pick another one with /model")
+        }
+        LlmError::InvalidRequest { .. } => Some("pick another model with /model"),
+        _ => None,
+    }
+}
+
 /// What the user sends in a turn: the prompt and the images pasted with
 /// it, which go to the model in the same message, after the text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -551,6 +570,15 @@ impl AgentService {
                 })
             }
             Err(err) => {
+                // The status bar only flashes it: the timeline keeps it.
+                if !matches!(err, TurnError::Llm(LlmError::Cancelled)) {
+                    self.emit(DomainEvent::BlockAdded {
+                        block: Block::new(BlockKind::Error {
+                            message: err.to_string(),
+                            hint: failure_hint(&err).map(str::to_owned),
+                        }),
+                    });
+                }
                 self.emit(DomainEvent::TurnFailed {
                     turn_id,
                     error: err.to_string(),

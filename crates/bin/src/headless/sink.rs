@@ -18,6 +18,8 @@ struct SinkState {
     thinking: Vec<BlockId>,
     /// Usage of the session after the last model call.
     usage: Option<(Usage, Option<f64>)>,
+    /// An error block was printed in this turn (its `TurnFailed` repeats it).
+    error_shown: bool,
 }
 
 /// Prints events legibly: streamed text as it comes, thinking collapsed
@@ -48,9 +50,11 @@ impl HeadlessSink {
     fn print(&self, state: &mut SinkState, w: &mut Writer<'_>, event: DomainEvent) {
         match event {
             DomainEvent::TurnStarted { model, role, .. } => {
+                state.error_shown = false;
                 w.line(Some(Style::Dim), &format!("● {model} ({role})"));
             }
             DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                state.error_shown |= matches!(block.kind, BlockKind::Error { .. });
                 print_block(state, w, &block);
             }
             DomainEvent::TextDelta { text, .. } => w.raw(&text),
@@ -93,7 +97,9 @@ impl HeadlessSink {
                 }
             }
             DomainEvent::TurnFailed { error, .. } => {
-                w.line(Some(Style::Red), &format!("error: {error}"));
+                if !std::mem::take(&mut state.error_shown) {
+                    w.line(Some(Style::Red), &format!("error: {error}"));
+                }
             }
             DomainEvent::ModalOpened { spec } => {
                 w.line(

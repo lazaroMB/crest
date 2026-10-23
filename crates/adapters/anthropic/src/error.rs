@@ -21,9 +21,7 @@ pub fn from_api(status: Option<u16>, error: &ApiError, retry_after_ms: Option<u6
         "authentication_error" => LlmError::Auth {
             message: AUTH_HINT.to_owned(),
         },
-        "permission_error" => LlmError::Auth {
-            message: format!("permission denied for this API key: {message}"),
-        },
+        "permission_error" => LlmError::NotEntitled { message },
         "rate_limit_error" => LlmError::RateLimited { retry_after_ms },
         "overloaded_error" => LlmError::Overloaded,
         "api_error" => LlmError::Server {
@@ -51,9 +49,7 @@ pub fn from_status(status: u16, message: String, retry_after_ms: Option<u64>) ->
         401 => LlmError::Auth {
             message: AUTH_HINT.to_owned(),
         },
-        403 => LlmError::Auth {
-            message: format!("permission denied for this API key: {message}"),
-        },
+        403 => LlmError::NotEntitled { message },
         429 => LlmError::RateLimited { retry_after_ms },
         529 => LlmError::Overloaded,
         500.. => LlmError::Server { status, message },

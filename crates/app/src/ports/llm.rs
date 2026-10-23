@@ -326,10 +326,17 @@ pub struct Citation {
 /// the API key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LlmError {
-    /// The API key is missing, invalid or lacks permission (401/403).
+    /// The API key is missing or invalid (401).
     #[error("authentication failed: {message}")]
     Auth {
         /// What to fix, e.g. "set ANTHROPIC_API_KEY".
+        message: String,
+    },
+    /// The key is valid but the account cannot use this model (403): no
+    /// subscription, a free tier limited to another client, no balance.
+    #[error("your account cannot use this model: {message}")]
+    NotEntitled {
+        /// The provider's reason.
         message: String,
     },
     /// Too many requests (429).
@@ -387,6 +394,7 @@ impl LlmError {
             Self::RateLimited { .. } | Self::Overloaded | Self::Network(_) => true,
             Self::Server { status, .. } => *status >= 500,
             Self::Auth { .. }
+            | Self::NotEntitled { .. }
             | Self::InvalidRequest { .. }
             | Self::Decode(_)
             | Self::ContextTooLong
