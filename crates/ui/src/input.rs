@@ -1019,7 +1019,15 @@ mod tests {
         let (view, cx, events) = input(cx);
         cx.simulate_input("/model opus");
         cx.simulate_keystrokes("enter");
-        assert_eq!(take(&events), [InputEvent::Command("model opus".into())]);
+        // `/model ` asks for the models of its popup; with none listed,
+        // Enter sends the line.
+        assert_eq!(
+            take(&events),
+            [
+                InputEvent::ModelsWanted,
+                InputEvent::Command("model opus".into())
+            ]
+        );
         cx.simulate_input("//etc/hosts");
         cx.simulate_keystrokes("enter");
         assert_eq!(take(&events), [InputEvent::Submit("/etc/hosts".into())]);

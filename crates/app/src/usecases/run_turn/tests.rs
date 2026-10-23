@@ -393,7 +393,8 @@ async fn model_failure_fails_the_turn() {
     let mut h = Harness::new(vec![ScriptedResponse::open_error(LlmError::Overloaded)]);
     let err = h.run("hola").await.unwrap_err();
     assert_eq!(err, TurnError::Llm(LlmError::Overloaded));
-    assert_eq!(h.trace(), ["turn_started", "turn_failed"]);
+    // The timeline keeps the failure, not only the status bar.
+    assert_eq!(h.trace(), ["turn_started", "added:error", "turn_failed"]);
     assert_eq!(h.session.turns[0].messages.len(), 1);
     let records = h.telemetry.records();
     assert!(matches!(
