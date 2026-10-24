@@ -12,9 +12,10 @@
 #
 # - Linux: the binary, crest-launcher and share/ with the .desktop entry
 #   and the hicolor icons;
-# - macOS: crest.app (Contents/MacOS/crest is the launcher, crest-bin the
-#   binary, Resources/crest.icns built with iconutil from the hicolor PNGs
-#   when iconutil exists).
+# - macOS: crest.app (Contents/MacOS/crest is the binary, which loads the
+#   login shell's environment itself; Resources/crest.icns built with
+#   iconutil from the hicolor PNGs when iconutil exists). With --sign,
+#   scripts/sign-macos.sh signs, notarizes and staples it before the tar.
 #
 # Compatible with Bash 3.2 (macOS).
 
@@ -24,6 +25,7 @@ BIN=crest
 target=""
 version=""
 out="dist"
+sign=0
 
 usage() {
     cat <<'EOF'
@@ -33,6 +35,8 @@ Usage: scripts/package.sh [--target <triple>] [--version <v>] [--out <dir>]
              without it, target/release/crest and the host triple (rustc -vV).
   --version  Version in the file name (default: the crest package version).
   --out      Output directory (default: dist).
+  --sign     macOS: sign and notarize crest.app (scripts/sign-macos.sh; needs
+             its APPLE_* variables).
 EOF
 }
 
@@ -46,6 +50,7 @@ while [ $# -gt 0 ]; do
         --target) [ $# -ge 2 ] || die "--target needs a value"; target="$2"; shift 2 ;;
         --version) [ $# -ge 2 ] || die "--version needs a value"; version="$2"; shift 2 ;;
         --out) [ $# -ge 2 ] || die "--out needs a value"; out="$2"; shift 2 ;;
+        --sign) sign=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) usage >&2; die "unknown argument: $1" ;;
     esac
@@ -109,8 +114,7 @@ case "$target" in
     *-apple-darwin)
         app="$staging/$name/crest.app/Contents"
         mkdir -p "$app/MacOS" "$app/Resources"
-        cp "$bin_path" "$app/MacOS/crest-bin"
-        cp assets/crest-launcher.sh "$app/MacOS/crest"
+        cp "$bin_path" "$app/MacOS/crest"
         chmod 755 "$app/MacOS/crest"
         sed "s/@VERSION@/$version/g" assets/macos/Info.plist.in >"$app/Info.plist"
         printf 'APPL????' >"$app/PkgInfo"
@@ -119,8 +123,13 @@ case "$target" in
         else
             echo "package.sh: iconutil not found; crest.app has no icon" >&2
         fi
+        if [ "$sign" = 1 ]; then
+            bash scripts/sign-macos.sh "$staging/$name/crest.app"
+        fi
         ;;
     *)
+        [ "$sign" = 0 ] || die "--sign is only for macOS targets"
+
         cp "$bin_path" "$staging/$name/$BIN"
         cp assets/crest-launcher.sh "$staging/$name/crest-launcher"
         chmod 755 "$staging/$name/crest-launcher"
@@ -136,9 +145,7 @@ case "$target" in
 -----
 - ./install.sh copies crest.app to ~/Applications (Launchpad, Spotlight,
   Dock) and links ~/.local/bin/crest to it.
-- The app is neither signed nor notarized; install.sh removes the
-  Gatekeeper quarantine. By hand:
-    xattr -dr com.apple.quarantine crest.app
+- Release builds are signed with a Developer ID and notarized by Apple.
 - rg and fzf: brew install ripgrep fzf"
         ;;
     *)
