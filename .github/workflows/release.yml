@@ -1,8 +1,18 @@
 # crest release: tarballs for Linux and macOS, a zip for Windows.
 #
 # On a v* tag it builds, packages and publishes a GitHub Release with the
-# tarballs and their checksums. On workflow_dispatch it only leaves the
-# artifacts on the run (no release), handy to test the pipeline.
+# tarballs and their checksums, then updates the Homebrew tap and winget
+# (not for prereleases). On workflow_dispatch it only leaves the artifacts
+# on the run (no release), handy to test the pipeline.
+#
+# Signing and publishing need repository secrets; each step that uses one
+# is skipped while it is missing, so the pipeline works without them:
+# - APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_API_KEY_JSON: sign
+#   and notarize crest.app (scripts/sign-macos.sh).
+# - SIGNPATH_API_TOKEN, SIGNPATH_ORGANIZATION_ID: sign crest.exe with
+#   SignPath Foundation (release-signing on tags, test-signing otherwise).
+# - PACKAGES_TOKEN: a classic token with public_repo, to push the cask to
+#   lazaroMB/homebrew-tap and open winget-pkgs pull requests.
 #
 # Same conventions as ci.yml: actions pinned by commit SHA (with the version
 # in the comment), rust-cache and scripts/install-deps.sh.
@@ -12,17 +22,17 @@
 # Fedora 36+, RHEL 9 and derivatives) than 24.04's 2.39. install-deps.sh
 # already supports 22.04 (it downloads the official rg and fzf because the
 # distro ones are too old). When GitHub retires that image, move to the next
-# LTS and update the minimum glibc in scripts/package.sh.
+# LTS and update the minimum glibc in scripts/package.sh. aarch64 builds
+# natively on ubuntu-22.04-arm (same glibc).
 #
 # macOS: both binaries come from macos-15 (arm64); x86_64 is cross-compiled
-# with `rustup target add`. The binaries are NOT signed or notarized: that
-# needs a Developer ID and repo secrets, and is out of scope. The tarball's
-# README explains how to remove the Gatekeeper quarantine.
+# with `rustup target add`. crest.app is signed with a Developer ID,
+# notarized and stapled inside scripts/package.sh --sign.
 #
 # Windows: built on windows-2025 with MSVC; the release build compiles
 # GPUI's HLSL shaders with fxc.exe from the Windows SDK of the image.
-# scripts/package.ps1 makes the zip; the binary is not signed either, so
-# SmartScreen may warn on first start.
+# crest.exe goes to SignPath as an artifact and comes back signed before
+# scripts/package.ps1 makes the zip.
 
 name: Release
 
@@ -56,12 +66,21 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
           - target: aarch64-apple-darwin
             os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15
           - target: x86_64-pc-windows-msvc
             os: windows-2025
+    permissions:
+      contents: read
+      # SignPath reads the unsigned artifact and the run to check its origin.
+      actions: read
+    env:
+      SIGN_MACOS: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+      SIGN_WINDOWS: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
     defaults:
       run:
         # Git Bash on Windows, so the version step is the same everywhere.
@@ -108,11 +127,64 @@ jobs:
       - name: cargo build --release
         run: cargo build --release --locked --target "${{ matrix.target }}" -p crest
 
+      - name: Upload the unsigned crest.exe
+        id: unsigned
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/crest.exe
+          if-no-files-found: error
+
+      - name: Sign crest.exe (SignPath)
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: crest
+          signing-policy-slug: ${{ github.ref_type == 'tag' && 'release-signing' || 'test-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      # The signed binary replaces the built one, so package.ps1 zips it.
+      - name: Check the signature (Windows)
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        run: |
+          $signed = "signed/crest.exe"
+          $sig = Get-AuthenticodeSignature $signed
+          Write-Output "$($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ('${{ github.ref_type }}' -eq 'tag' -and $sig.Status -ne 'Valid') {
+            throw "crest.exe is not validly signed: $($sig.Status)"
+          }
+          Copy-Item -Force $signed "target/${{ matrix.target }}/release/crest.exe"
+
       - name: Package
         if: runner.os != 'Windows'
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
         run: |
+          set --
+          if [ "${{ runner.os }}" = macOS ] && [ "$SIGN_MACOS" = true ]; then
+            set -- --sign
+          fi
           bash scripts/package.sh --target "${{ matrix.target }}" \
-            --version "${{ steps.version.outputs.version }}" --out dist
+            --version "${{ steps.version.outputs.version }}" --out dist "$@"
+
+      # What a user gets: Gatekeeper must accept the app from the tarball.
+      - name: Check the signature (macOS)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/check"
+          app=$(find "$RUNNER_TEMP/check" -maxdepth 2 -name crest.app)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          xcrun stapler validate "$app"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -188,3 +260,60 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --title "crest $GITHUB_REF_NAME" \
             --generate-notes --verify-tag "$@"
+
+  # brew install --cask lazaromb/tap/crest
+  homebrew:
+    name: Homebrew tap
+    if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: crest-*-apple-darwin
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the cask
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo "::notice::PACKAGES_TOKEN is not set; the tap is not updated"
+            exit 0
+          fi
+          bash scripts/publish-homebrew.sh "$GITHUB_REF_NAME" dist
+
+  # winget install LazaroMB.Crest. The first version was sent by hand
+  # (packaging/winget/README.md); Komac updates it, pinned by SHA-256.
+  winget:
+    name: winget
+    if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      KOMAC_VERSION: "2.16.0"
+      KOMAC_SHA256: 7d2707fa6210f2789a3702de49fbd150b736dbf426ee0b9bc8e098736f9fd82d
+    steps:
+      - name: Submit the update
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo "::notice::PACKAGES_TOKEN is not set; winget is not updated"
+            exit 0
+          fi
+          archive="komac-$KOMAC_VERSION-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/russellbanks/Komac/releases/download/v$KOMAC_VERSION/$archive"
+          echo "$KOMAC_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" komac
+          version="${GITHUB_REF_NAME#v}"
+          "$RUNNER_TEMP/komac" update LazaroMB.Crest --version "$version" \
+            --urls "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/crest-$version-x86_64-pc-windows-msvc.zip" \
+            --release-notes-url "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            --submit --token "$PACKAGES_TOKEN"

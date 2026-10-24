@@ -5,7 +5,7 @@
 #
 # Produces <Out>/crest-<version>-<target>.zip and its checksum <file>.sha256
 # in the `sha256sum -c` format (lowercase hash, two spaces, LF), like
-# scripts/package.sh does for Linux and macOS. The zip holds a directory with
+# scripts/package.sh does for Linux and macOS. The zip holds, at its root,
 # crest.exe, install.ps1 (scripts/install.ps1), README.txt with the runtime
 # requirements, LICENSE and THIRD-PARTY.md.
 
@@ -68,7 +68,9 @@ Windows PowerShell); app.opt.shell changes it.
 $zip = "$name.zip"
 $zipPath = Join-Path $Out $zip
 if (Test-Path $zipPath) { Remove-Item $zipPath }
-Compress-Archive -Path $dir -DestinationPath $zipPath
+# The files at the root of the zip, no folder: winget's manifest names
+# crest.exe by its path inside the zip, which must not change per version.
+Compress-Archive -Path (Join-Path $dir "*") -DestinationPath $zipPath
 Remove-Item -Recurse -Force $staging
 
 $hash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
