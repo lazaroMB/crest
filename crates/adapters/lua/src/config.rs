@@ -489,6 +489,27 @@ end)
     }
 
     #[test]
+    fn themes_defined_in_config_and_color_overrides() {
+        let fx = Fixture::new();
+        fx.global(
+            r##"app.theme.define{ name = "mine", ui = { accent = color.alpha("#7aa2f7", 0.5) } }
+                app.theme.define{ ui = {} }
+                app.opt.colors = { ui = { carret = "#ff0000" } }"##,
+        )
+        .workspace(r#"app.theme.define{ name = "mine", appearance = "light" }"#);
+        let (_vm, config) = fx.load();
+        let messages: Vec<&str> = config.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(messages[0].contains("a theme needs a `name`"), "{messages:?}");
+        assert!(messages[1].contains("ui.carret: unknown token"), "{messages:?}");
+        // Global first, the workspace last: the catalog keeps the last.
+        assert_eq!(config.themes.len(), 2);
+        assert_eq!(config.themes[0]["ui"]["accent"], "#7aa2f780");
+        assert_eq!(config.themes[1]["appearance"], "light");
+        assert!(config.options.extra.contains_key("colors"));
+    }
+
+    #[test]
     fn a_malformed_window_is_dropped() {
         let fx = Fixture::new();
         fx.global(r#"app.opt.window = "kiosk""#);

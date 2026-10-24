@@ -12,5 +12,6 @@ pub(crate) mod hooks;
 pub(crate) mod keymap;
 pub(crate) mod mcp;
 pub(crate) mod modal;
+pub(crate) mod theme;
 pub(crate) mod tools;
 pub(crate) mod ui;

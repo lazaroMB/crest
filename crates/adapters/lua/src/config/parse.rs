@@ -11,6 +11,7 @@ use application::ports::plugin::{AppOptions, McpServerSpec, PluginDiagnostic};
 use application::privacy::{PRIVACY_OPTION, PrivacyOptions};
 use application::rtk::{RTK_OPTION, RtkOptions};
 use application::shell;
+use application::theme;
 use application::web::{WEB_OPTION, WebOptions};
 use application::window;
 use domain::model::{ModelId, ModelRole, ModelSpecPatch, RoleConfig, ThinkingConfig};
@@ -208,6 +209,15 @@ fn options(value: Value, report: &mut Report<'_>) -> AppOptions {
                 }
                 Err(e) => report.push(e.to_string()),
             },
+            // Kept in `extra` for `theme::overrides_from_options`; what is
+            // malformed in it is skipped when the theme resolves.
+            theme::COLORS_OPTION => {
+                let (_, problems) = theme::parse_overrides(v);
+                for problem in problems {
+                    report.push(problem);
+                }
+                out.extra.insert(key.clone(), v.clone());
+            }
             // Kept in `extra` for `window::from_options`, once valid.
             window::WINDOW_OPTION => match window::from_json(v) {
                 Ok(_) => {

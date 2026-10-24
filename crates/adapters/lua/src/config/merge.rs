@@ -136,6 +136,8 @@ pub(crate) fn merge(
         for tool in collected.tools {
             upsert(&mut tools, tool, |t| t.spec.name.clone());
         }
+        // In precedence order: the catalog keeps the last of a name.
+        config.themes.extend(collected.themes);
         // `app.mcp.add` runs while the file runs, the table form is read
         // after it, but an explicit `add` is the more deliberate one.
         let origin = if is_workspace {
