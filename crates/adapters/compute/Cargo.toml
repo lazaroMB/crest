@@ -1,0 +1,19 @@
+[package]
+name = "adapter-compute"
+description = "ComputePort adapter: the crest-stats engine (descriptives, tests, OLS, correlation)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+blake3.workspace = true
+domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+statrs.workspace = true
+
+[lints]
+workspace = true

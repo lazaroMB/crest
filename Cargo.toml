@@ -15,6 +15,7 @@ members = [
     "crates/adapters/mcp",
     "crates/adapters/telemetry",
     "crates/adapters/export",
+    "crates/adapters/compute",
     "crates/platform",
     "crates/ui",
     "crates/bin",
@@ -43,6 +44,7 @@ adapter-lua = { path = "crates/adapters/lua" }
 adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
 adapter-export = { path = "crates/adapters/export" }
+adapter-compute = { path = "crates/adapters/compute" }
 ui = { path = "crates/ui" }
 platform = { path = "crates/platform" }
 
@@ -89,6 +91,11 @@ opentelemetry = { version = "0.33.1", default-features = false, features = ["tra
 opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace", "rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
 opentelemetry-langfuse = "0.7.0"
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
+
+# Statistics engine (adapter-compute): distributions and special functions;
+# BLAKE3 hashes of the input data in the Computed envelope.
+statrs = { version = "0.19.1", default-features = false }
+blake3 = "1.8.7"
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
