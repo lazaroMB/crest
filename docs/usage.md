@@ -314,7 +314,7 @@ The board is black with graphite chips: the top of each chip glows with the colo
 The bar shows the accumulated cost of the session:
 
 - `$0.00` before the first reply;
-- `$?` if the model used has no configured price; crest ships no prices, so this is the usual value until you set `app.opt.pricing`;
+- the session's tokens (`48.2k tok`) if the model used has no configured price, with a notice the first time naming the model; crest ships no prices, so this is the usual value until you set `app.opt.pricing`;
 - otherwise the amount, with 4 decimals below 1 USD and 2 from then on.
 
 See [configuration.md](configuration.md#cost-and-spending-cap).

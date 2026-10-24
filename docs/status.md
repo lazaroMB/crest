@@ -20,7 +20,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - `Ctrl+C` stops a running workflow step in the window; the workflow stays saved at its last checkpoint and `/research resume` or `/implement resume` runs the step again. In headless mode it kills the process (the same resume applies).
 - At workflow gates, an empty line counts as an approval (`yes` / `continue`). In the implementation workflow that can commit with failing criteria or close the workflow.
 - In the implementation workflow, only `edit_file` and `write_file` are restricted to the task's files: `run_command` can touch others (although the commit only includes the task's files).
-- crest ships no model prices: until you set `app.opt.pricing`, the cost shows as `$?`. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
+- crest ships no model prices: until you set `app.opt.pricing`, the cost segment shows the session's tokens (`48.2k tok`) instead. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
 
 ## Not available yet
 

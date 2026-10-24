@@ -142,7 +142,7 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 | --- | --- | --- | --- |
 | `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
-| `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the cost shows as `$?`. |
+| `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the status bar shows the session's tokens instead of the cost. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
 | `web` | table, see [Web search](#web-search) | DuckDuckGo, 8 results, 20 s, any domain | The `web_search` and `web_fetch` tools: on or off, search backend, limits and domains. |
 | `shell` | program name, or table `{ program, args }` | `sh -c`; on Windows `pwsh` (or `powershell`) `-NoProfile -NonInteractive -Command` | The shell of `/!` commands and of plan checks with shell syntax. See [Shell](#shell). |
@@ -161,7 +161,7 @@ app.opt.max_session_cost = 5
 ```
 
 - The numbers are only an example: crest ships no built-in prices, so use the provider's current ones. All four fields are required, must be numbers ≥ 0, and no other fields are allowed.
-- Cost is added per response, including compaction summaries. It shows in the status bar: `$0.00` before the model is used, `$?` if a model without a price was used, and otherwise the running total (four decimals below 1 USD).
+- Cost is added per response, including compaction summaries. It shows in the status bar: `$0.00` before the model is used, the session's tokens (`48.2k tok`) if a model without a price was used, and otherwise the running total (four decimals below 1 USD).
 - When the cap is reached, crest asks "The session spent $X of $Y; continue?" through the approval dialog (in headless mode, on stdin):
   - **approve** raises the cap by the same amount again;
   - **always** removes the cap for the session;
