@@ -99,6 +99,20 @@ const MAX_ROWS: usize = 8;
 /// Rows of the command palette.
 const PALETTE_ROWS: usize = 8;
 
+/// First visible row of a scrolling popup of `len` entries with entry
+/// `selected` chosen, given the one shown so far: the window moves only
+/// to keep `selected` in it.
+fn palette_top(selected: usize, top: usize, len: usize) -> usize {
+    let top = if selected < top {
+        selected
+    } else if selected >= top + PALETTE_ROWS {
+        selected + 1 - PALETTE_ROWS
+    } else {
+        top
+    };
+    top.min(len.saturating_sub(PALETTE_ROWS))
+}
+
 /// What the input asks the rest of the UI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputEvent {
@@ -297,6 +311,8 @@ pub struct InputView {
     queued: bool,
     commands: Vec<CommandRow>,
     palette_selected: usize,
+    /// First visible row of the `/model ` popup, which scrolls.
+    palette_top: usize,
     palette_hidden: bool,
     paths: PathCompletion,
     models: ModelCompletion,
@@ -336,6 +352,7 @@ impl InputView {
         let changes = cx.subscribe(&editor, |this, _, event, cx| {
             if matches!(event, EditorEvent::Change) {
                 this.palette_selected = 0;
+                this.palette_top = 0;
                 this.palette_hidden = false;
                 let text = this.text(cx);
                 this.paths.request(&text, cx);
@@ -353,6 +370,7 @@ impl InputView {
             queued: false,
             commands: Vec::new(),
             palette_selected: 0,
+            palette_top: 0,
             palette_hidden: false,
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
@@ -606,7 +624,12 @@ impl InputView {
         }
         if let Some(popup) = self.model_popup(cx) {
             match model_key(key, &popup, self.palette_selected) {
-                ModelKey::Select(ix) => self.palette_selected = ix,
+                ModelKey::Select(ix) => {
+                    if let ModelPopup::Entries(entries) = &popup {
+                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                    }
+                    self.palette_selected = ix;
+                }
                 ModelKey::Hide => self.palette_hidden = true,
                 ModelKey::SetText(text) => self.set_text(&text, window, cx),
                 ModelKey::Run(line) => {
@@ -886,9 +909,15 @@ impl Render for InputView {
             .map(|popup| path_popup::render(popup, self.palette_selected, cx));
         let models = if paths.is_none() {
             self.model_popup(cx).map(|popup| {
+                // The list may have arrived or shrunk since the last key.
+                if let ModelPopup::Entries(entries) = &popup {
+                    let selected = self.palette_selected.min(entries.len() - 1);
+                    self.palette_top = palette_top(selected, self.palette_top, entries.len());
+                }
                 model_popup::render(
                     popup,
                     self.palette_selected,
+                    self.palette_top,
                     self.current_model.as_ref(),
                     cx,
                 )
@@ -1306,6 +1335,32 @@ mod tests {
         assert_eq!(copied.as_deref(), Some("copiame"));
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "copiame"));
         assert!(take(&events).is_empty());
+    }
+
+    #[gpui::test]
+    fn arrows_reach_every_model_without_typing(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        let models: Vec<ModelChoice> = (0..12)
+            .map(|i| ModelChoice {
+                alias: format!("anthropic:m{i}"),
+                model: ModelId::new(format!("anthropic:m{i}")),
+            })
+            .collect();
+        view.update(cx, |view, cx| view.set_models(Ok(models), cx));
+        cx.simulate_input("/model ");
+        cx.simulate_keystrokes(&["down"; 11].join(" "));
+        view.read_with(cx, |view, _| assert_eq!(view.palette_top, 4, "scrolled"));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Command("model set anthropic:m11".into())]
+        );
+        cx.simulate_input("/model ");
+        cx.simulate_keystrokes("up enter");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Command("model set anthropic:m11".into())]
+        );
     }
 
     #[gpui::test]
