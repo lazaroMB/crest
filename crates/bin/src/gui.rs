@@ -1606,8 +1606,17 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
         Overrides::default(),
         handle.clone(),
     ));
+    // The window opens before the project: only the global config sets it.
+    let (global, global_warnings) = crate::startup::global_config(handle);
+    let (window, window_warning) = crate::startup::window(&global.options);
+    for warning in global_warnings.iter().chain(&window_warning) {
+        eprintln!("warning: {warning}");
+    }
     if args.wants_picker() {
-        let opts = ui::app::UiOptions::default();
+        let opts = ui::app::UiOptions {
+            window,
+            ..ui::app::UiOptions::default()
+        };
         return window_exit(ui::app::run_with(opts, move |window, cx| {
             Workbench::new_picker(launcher, window, cx)
         }));
@@ -1629,6 +1638,7 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
     let opts = ui::app::UiOptions {
         workspace_label: parts.workspace_label.clone(),
         theme: parts.theme,
+        window,
         ..ui::app::UiOptions::default()
     };
     let dir = parts.workspace_dir.clone().unwrap_or(config.workspace);

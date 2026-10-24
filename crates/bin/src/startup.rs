@@ -127,6 +127,33 @@ pub fn rtk(
     }
 }
 
+/// Loads only the global `init.lua` (and its plugins), for what is needed
+/// before a project is open: the window mode and the theme of the project
+/// picker. Problems come back as warnings.
+pub fn global_config(handle: &tokio::runtime::Handle) -> (LoadedConfig, Vec<String>) {
+    let host = match adapter_lua::LuaHost::spawn(adapter_lua::HostOptions::default()) {
+        Ok(host) => host,
+        Err(err) => return (LoadedConfig::default(), vec![format!("Lua unavailable: {err}")]),
+    };
+    let sources = ConfigSources {
+        global: platform::dirs::config_dir().map(|dir| dir.join("init.lua")),
+        workspace: None,
+    };
+    let (config, mut warnings) = handle.block_on(load_config(Some(&host), sources));
+    warnings.extend(config.errors.iter().map(diagnostic));
+    (config, warnings)
+}
+
+/// The window mode of `app.opt.window`, or the platform default (with a
+/// warning when the option is broken).
+pub fn window(options: &AppOptions) -> (application::window::WindowMode, Option<String>) {
+    use application::window::{WindowMode, from_options};
+    match from_options(options) {
+        Ok(mode) => (mode.unwrap_or_default(), None),
+        Err(err) => (WindowMode::default(), Some(err.to_string())),
+    }
+}
+
 /// The shell for whole command lines: `app.opt.shell` when set and valid;
 /// else `sh -c` on Unix and, on Windows, `pwsh` when it is on `PATH` or the
 /// bundled `powershell`. A broken option is a warning.

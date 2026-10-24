@@ -1,11 +1,12 @@
 //! Application entry point: boots GPUI, opens the main window and owns the
 //! app-wide key bindings.
 //!
-//! The window opens in fullscreen (`WindowBounds::Fullscreen`), which GPUI
-//! implements on macOS, X11 and Wayland (on X11 it is requested after the
+//! The window opens as `app.opt.window` says ([`WindowMode`]): fullscreen
+//! by default (maximized on Windows), which GPUI implements on macOS, X11
+//! and Wayland (on X11 fullscreen and maximized are requested after the
 //! first frame; see `open_main_window`). A compositor that refuses the
 //! request leaves the window at its restore bounds, centered on the primary
-//! display.
+//! display. `F11` toggles fullscreen.
 
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable,
@@ -14,10 +15,9 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
-actions!(crest, [Quit]);
+pub use application::window::WindowMode;
 
-/// Size the window returns to when it leaves fullscreen.
-const RESTORE_SIZE: (f32, f32) = (1280.0, 800.0);
+actions!(crest, [Quit, ToggleFullscreen]);
 
 /// Monospace family used when the options name none.
 pub const DEFAULT_FONT_FAMILY: &str = "JetBrains Mono";
@@ -56,6 +56,8 @@ pub struct UiOptions {
     pub font_size: f32,
     /// Color scheme (`app.opt.theme`), in the TwoCrest palette.
     pub theme: ThemeMode,
+    /// How the main window opens (`app.opt.window`).
+    pub window: WindowMode,
 }
 
 impl Default for UiOptions {
@@ -65,6 +67,7 @@ impl Default for UiOptions {
             font_family: DEFAULT_FONT_FAMILY.to_owned(),
             font_size: DEFAULT_FONT_SIZE,
             theme: ThemeMode::default(),
+            window: WindowMode::default(),
         }
     }
 }
@@ -128,7 +131,7 @@ where
         gpui_component::init(cx);
         apply_theme(&opts, cx);
         bind_app_keys(cx);
-        if let Err(err) = open_main_window(title, build_root, cx) {
+        if let Err(err) = open_main_window(title, opts.window, build_root, cx) {
             *failure_in_app.borrow_mut() = Some(err);
             cx.quit();
             return;
@@ -186,12 +189,22 @@ pub fn set_theme_mode(mode: ThemeMode, cx: &mut App) {
 
 /// App-wide key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 fn app_key_bindings() -> Vec<KeyBinding> {
-    vec![KeyBinding::new("secondary-q", Quit, None)]
+    vec![
+        KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new("f11", ToggleFullscreen, None),
+    ]
 }
 
 fn bind_app_keys(cx: &mut App) {
     cx.bind_keys(app_key_bindings());
     cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &ToggleFullscreen, cx| {
+        if let Some(window) = cx.active_window() {
+            window
+                .update(cx, |_, window, _| window.toggle_fullscreen())
+                .ok();
+        }
+    });
     // macOS keeps apps alive without windows; crest has a single window.
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
@@ -201,23 +214,52 @@ fn bind_app_keys(cx: &mut App) {
     .detach();
 }
 
-fn open_main_window<F, V>(title: String, build_root: F, cx: &mut App) -> Result<(), UiError>
+/// What the main window asks the platform for: the bounds to open with,
+/// and what to request after the first frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAs {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+/// How to open a window in `mode`: `(at open, after the first frame)`.
+///
+/// X11 window managers ignore the fullscreen and maximize requests GPUI
+/// sends before the window is mapped, so on X11 the window opens windowed
+/// and asks once it has drawn its first frame.
+fn open_plan(mode: WindowMode, x11: bool) -> (OpenAs, Option<OpenAs>) {
+    let wanted = match mode {
+        WindowMode::Fullscreen { .. } => OpenAs::Fullscreen,
+        WindowMode::Maximized { .. } => OpenAs::Maximized,
+        WindowMode::Windowed { .. } => OpenAs::Windowed,
+    };
+    if x11 && wanted != OpenAs::Windowed {
+        (OpenAs::Windowed, Some(wanted))
+    } else {
+        (wanted, None)
+    }
+}
+
+fn open_main_window<F, V>(
+    title: String,
+    mode: WindowMode,
+    build_root: F,
+    cx: &mut App,
+) -> Result<(), UiError>
 where
     F: FnOnce(&mut Window, &mut App) -> Entity<V>,
     V: Render + Focusable,
 {
-    let restore = Bounds::centered(None, size(px(RESTORE_SIZE.0), px(RESTORE_SIZE.1)), cx);
-    // GPUI asks X11 window managers for fullscreen before mapping the
-    // window, and they ignore that request; on X11 the window opens
-    // windowed and asks again once it has drawn its first frame.
-    // On Windows fullscreen would hide the taskbar: open maximized.
-    let x11 = cx.compositor_name() == "X11";
-    let window_bounds = if cfg!(windows) {
-        WindowBounds::Maximized(restore)
-    } else if x11 {
-        WindowBounds::Windowed(restore)
-    } else {
-        WindowBounds::Fullscreen(restore)
+    let (width, height) = mode.size();
+    // Pixel sizes are small whole numbers: exact in f32.
+    #[allow(clippy::cast_precision_loss)]
+    let restore = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
+    let (at_open, later) = open_plan(mode, cx.compositor_name() == "X11");
+    let window_bounds = match at_open {
+        OpenAs::Windowed => WindowBounds::Windowed(restore),
+        OpenAs::Maximized => WindowBounds::Maximized(restore),
+        OpenAs::Fullscreen => WindowBounds::Fullscreen(restore),
     };
     let options = WindowOptions {
         window_bounds: Some(window_bounds),
@@ -233,8 +275,10 @@ where
         if window.focused(cx).is_none() {
             window.focus(&view.focus_handle(cx), cx);
         }
-        if x11 {
-            window.on_next_frame(|window, _| window.toggle_fullscreen());
+        match later {
+            Some(OpenAs::Fullscreen) => window.on_next_frame(|window, _| window.toggle_fullscreen()),
+            Some(OpenAs::Maximized) => window.on_next_frame(|window, _| window.zoom_window()),
+            Some(OpenAs::Windowed) | None => {}
         }
         cx.new(|cx| Root::new(view, window, cx))
     })
@@ -404,6 +448,35 @@ mod tests {
         cx.simulate_keystrokes(window.into(), "secondary-q");
 
         assert_eq!(quits.get(), 1);
+    }
+
+    #[test]
+    fn x11_asks_for_fullscreen_and_maximized_after_the_first_frame() {
+        let size = (1280, 800);
+        let full = WindowMode::Fullscreen {
+            width: size.0,
+            height: size.1,
+        };
+        let max = WindowMode::Maximized {
+            width: size.0,
+            height: size.1,
+        };
+        let windowed = WindowMode::Windowed {
+            width: size.0,
+            height: size.1,
+        };
+        assert_eq!(open_plan(full, false), (OpenAs::Fullscreen, None));
+        assert_eq!(open_plan(max, false), (OpenAs::Maximized, None));
+        assert_eq!(open_plan(windowed, false), (OpenAs::Windowed, None));
+        assert_eq!(
+            open_plan(full, true),
+            (OpenAs::Windowed, Some(OpenAs::Fullscreen))
+        );
+        assert_eq!(
+            open_plan(max, true),
+            (OpenAs::Windowed, Some(OpenAs::Maximized))
+        );
+        assert_eq!(open_plan(windowed, true), (OpenAs::Windowed, None));
     }
 
     #[test]
