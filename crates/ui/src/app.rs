@@ -24,24 +24,8 @@ pub const DEFAULT_FONT_FAMILY: &str = "JetBrains Mono";
 /// Base font size in pixels.
 pub const DEFAULT_FONT_SIZE: f32 = 14.0;
 
-/// Color scheme of the UI.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ThemeMode {
-    /// Dark theme (default).
-    #[default]
-    Dark,
-    /// Light theme.
-    Light,
-}
-
-impl From<ThemeMode> for gpui_component::ThemeMode {
-    fn from(mode: ThemeMode) -> Self {
-        match mode {
-            ThemeMode::Dark => Self::Dark,
-            ThemeMode::Light => Self::Light,
-        }
-    }
-}
+/// A resolved color theme (`app.opt.theme`).
+pub type ColorTheme = std::sync::Arc<domain::theme::Theme>;
 
 /// Startup options of the UI.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,8 +38,8 @@ pub struct UiOptions {
     pub font_family: String,
     /// Base font size in pixels.
     pub font_size: f32,
-    /// Color scheme (`app.opt.theme`), in the TwoCrest palette.
-    pub theme: ThemeMode,
+    /// Color theme (`app.opt.theme`), TwoCrest dark by default.
+    pub theme: ColorTheme,
     /// How the main window opens (`app.opt.window`).
     pub window: WindowMode,
 }
@@ -66,7 +50,7 @@ impl Default for UiOptions {
             workspace_label: String::new(),
             font_family: DEFAULT_FONT_FAMILY.to_owned(),
             font_size: DEFAULT_FONT_SIZE,
-            theme: ThemeMode::default(),
+            theme: crate::theme::default_theme(),
             window: WindowMode::default(),
         }
     }
@@ -148,8 +132,8 @@ where
 fn apply_theme(opts: &UiOptions, cx: &mut App) {
     // `change` loads the mode's theme and resolves its default monospace
     // family to one that is installed, which becomes our fallback.
-    Theme::change(opts.theme, None, cx);
-    crate::theme::apply(opts.theme, cx);
+    Theme::change(crate::theme::mode(opts.theme.appearance), None, cx);
+    crate::theme::apply(&opts.theme, cx);
     let installed = cx.text_system().all_font_names();
     let fallback = Theme::global(cx).mono_font_family.clone();
     let family = SharedString::from(resolve_font_family(
@@ -166,9 +150,9 @@ fn apply_theme(opts: &UiOptions, cx: &mut App) {
     });
 }
 
-/// Switches the color scheme (the project's `app.opt.theme`, once it is
-/// open), keeping the fonts already chosen.
-pub fn set_theme_mode(mode: ThemeMode, cx: &mut App) {
+/// Switches the color theme (the project's `app.opt.theme` once it is
+/// open, or a `/theme` preview), keeping the fonts already chosen.
+pub fn set_theme(theme_data: &ColorTheme, cx: &mut App) {
     let theme = Theme::global(cx);
     let (family, mono, size, mono_size) = (
         theme.font_family.clone(),
@@ -176,8 +160,8 @@ pub fn set_theme_mode(mode: ThemeMode, cx: &mut App) {
         theme.font_size,
         theme.mono_font_size,
     );
-    Theme::change(mode, None, cx);
-    crate::theme::apply(mode, cx);
+    Theme::change(crate::theme::mode(theme_data.appearance), None, cx);
+    crate::theme::apply(theme_data, cx);
     Theme::update(cx, |theme| {
         theme.font_family = family;
         theme.mono_font_family = mono;
@@ -511,7 +495,7 @@ mod tests {
     #[test]
     fn default_options_are_dark_and_mono() {
         let opts = UiOptions::default();
-        assert_eq!(opts.theme, ThemeMode::Dark);
+        assert_eq!(opts.theme.name, "twocrest");
         assert_eq!(opts.font_family, DEFAULT_FONT_FAMILY);
         assert!(opts.font_size > 0.0);
     }

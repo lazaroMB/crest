@@ -5,7 +5,7 @@
 //! flattens it once into [`Diagram`]: every primitive becomes a path or a
 //! label in diagram coordinates, with group transforms, markers and style
 //! defaults already resolved, so painting a frame is only a coordinate
-//! mapping. Colors come from the TwoCrest palette ([`crest_theme`]): the
+//! mapping. Colors come from the color theme ([`crest_theme`]): the
 //! diagram is always painted on the ink background. Parsing never panics: a panic inside the parser is caught and
 //! reported like a parse error, and a diagram with nothing to draw is an
 //! error too.
@@ -13,9 +13,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::wrap;
-use crate::theme::palette::{
-    ACCENT, AMBER, INK, LINE, LINE_2, MUTED, PAPER, SURFACE, SURFACE_2, TEXT_2, TEXT_3,
-};
+use domain::theme::{Appearance, Theme as ColorTheme};
 use gpui::Rgba;
 use rusty_mermaid_core::{
     Color, FontWeight, MarkerPath, MarkerType, PathSegment, Point, Primitive, Style, TextAnchor,
@@ -123,61 +121,68 @@ pub struct Diagram {
     pub shapes: Vec<Shape>,
 }
 
-/// The Mermaid theme in the TwoCrest palette: ink background, surface
-/// nodes with a coral edge, paper text and amber notes.
-pub fn crest_theme() -> Theme {
+/// The Mermaid theme of a color theme: nodes on the muted surface with an
+/// accent edge, notes edged in the warning color.
+pub fn crest_theme(colors: &ColorTheme) -> Theme {
+    let c = |path: &str| color(colors.color(path));
+    let base = match colors.appearance {
+        Appearance::Dark => Theme::dark(),
+        Appearance::Light => Theme::default(),
+    };
     Theme {
-        node_fill: hex(SURFACE),
-        node_stroke: hex(ACCENT),
-        node_text: hex(PAPER),
-        edge_stroke: hex(TEXT_2),
-        edge_label_text: hex(TEXT_3),
-        edge_label_bg: hex(INK),
-        start_fill: hex(ACCENT),
-        end_inner_fill: hex(ACCENT),
-        composite_fill: hex(SURFACE_2),
-        composite_stroke: hex(LINE_2),
-        composite_label: hex(TEXT_3),
-        note_fill: hex(SURFACE_2),
-        note_stroke: hex(AMBER),
-        note_text: hex(PAPER),
-        subgraph_fill: hex(SURFACE_2),
-        subgraph_stroke: hex(LINE_2),
-        subgraph_label: hex(TEXT_3),
-        divider_stroke: hex(LINE_2),
-        region_stroke: hex(LINE_2),
-        lifeline_stroke: hex(MUTED),
-        activation_fill: hex(SURFACE),
-        activation_stroke: hex(ACCENT),
-        grid_stroke: hex(LINE),
-        muted_text: hex(MUTED),
-        face_fill: hex(AMBER),
-        detail_stroke: hex(INK),
-        background: hex(INK),
-        ..Theme::dark()
+        node_fill: c("muted.bg"),
+        node_stroke: c("accent.bg"),
+        node_text: c("foreground"),
+        edge_stroke: c("muted.fg"),
+        edge_label_text: c("button.fg"),
+        edge_label_bg: c("canvas.bg"),
+        start_fill: c("accent.bg"),
+        end_inner_fill: c("accent.bg"),
+        composite_fill: c("popover.bg"),
+        composite_stroke: c("input.border"),
+        composite_label: c("button.fg"),
+        note_fill: c("popover.bg"),
+        note_stroke: c("warning.bg"),
+        note_text: c("foreground"),
+        subgraph_fill: c("popover.bg"),
+        subgraph_stroke: c("input.border"),
+        subgraph_label: c("button.fg"),
+        divider_stroke: c("input.border"),
+        region_stroke: c("input.border"),
+        lifeline_stroke: c("muted.fg"),
+        activation_fill: c("muted.bg"),
+        activation_stroke: c("accent.bg"),
+        grid_stroke: c("border"),
+        muted_text: c("muted.fg"),
+        face_fill: c("warning.bg"),
+        detail_stroke: c("canvas.bg"),
+        background: c("canvas.bg"),
+        ..base
     }
 }
 
-/// A `#rrggbb` palette color; the palette is static and tested, so a bad
-/// value only falls back to black.
-fn hex(color: &str) -> Color {
-    let channel = |i: usize| {
-        color
-            .get(1 + i * 2..3 + i * 2)
-            .and_then(|c| u8::from_str_radix(c, 16).ok())
-            .unwrap_or(0)
-    };
-    Color::rgb(channel(0), channel(1), channel(2))
+/// A theme color as a Mermaid color.
+fn color(color: domain::theme::Color) -> Color {
+    Color::rgba(color.r, color.g, color.b, color.a)
 }
 
-/// Parses and lays out `source` with the [`crest_theme`].
+/// Parses and lays out `source` in the built-in dark theme.
+///
+/// # Errors
+///
+/// As [`parse_with`].
+pub fn parse(source: &str) -> Result<Diagram, String> {
+    parse_with(source, &crate::theme::default_theme())
+}
+
+/// Parses and lays out `source` with the [`crest_theme`] of `colors`.
 ///
 /// # Errors
 ///
 /// The parser's message when the source is not a diagram rusty-mermaid
 /// understands, when it panics, or when the result is empty.
-pub fn parse(source: &str) -> Result<Diagram, String> {
-    let theme = crest_theme();
+pub fn parse_with(source: &str, colors: &ColorTheme) -> Result<Diagram, String> {
+    let theme = crest_theme(colors);
     let source = wrap::wrap_labels(source, wrap::LABEL_COLUMNS);
     let scene = catch_unwind(AssertUnwindSafe(|| rusty_mermaid::render(&source, &theme)))
         .map_err(|_| "the Mermaid parser crashed on this input".to_owned())?
@@ -723,15 +728,15 @@ mod tests {
     }
 
     #[test]
-    fn the_diagram_uses_the_twocrest_palette() {
+    fn the_diagram_uses_the_theme_colors() {
+        let theme = crate::theme::default_theme();
         let diagram = parse(FLOWCHART).unwrap_or_else(|err| panic!("{err}"));
-        assert_eq!(diagram.background, rgba(hex(INK), 1.0));
-        let coral = rgba(hex(ACCENT), 1.0);
+        assert_eq!(diagram.background, rgba(color(theme.color("canvas.bg")), 1.0));
+        let coral = rgba(color(theme.color("accent.bg")), 1.0);
         let coral_edge = diagram.shapes.iter().any(|shape| {
             matches!(shape, Shape::Path { stroke: Some(Stroke { color, .. }), .. } if *color == coral)
         });
-        assert!(coral_edge, "nodes are outlined in coral");
-        assert_eq!(hex("#d9604a"), Color::rgb(0xd9, 0x60, 0x4a));
+        assert!(coral_edge, "nodes are outlined in the accent");
     }
 
     #[test]
@@ -795,7 +800,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no label"));
         assert_eq!(label.lines.len(), 3, "{:?}", label.lines);
         assert_eq!(label.lines.join(" "), long);
-        let theme = crest_theme();
+        let theme = crest_theme(&crate::theme::default_theme());
         let unwrapped =
             rusty_mermaid::render(&source, &theme).unwrap_or_else(|err| panic!("{err}"));
         assert!(

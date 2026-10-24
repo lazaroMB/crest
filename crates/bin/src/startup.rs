@@ -154,6 +154,39 @@ pub fn window(options: &AppOptions) -> (application::window::WindowMode, Option<
     }
 }
 
+/// The theme catalog: the theme files next to the global config
+/// (`<config dir>/themes/*.lua`) and the themes `init.lua` defined.
+pub fn theme_catalog(
+    global_config: Option<&std::path::Path>,
+    defined: &[serde_json::Value],
+) -> (application::theme::ThemeCatalog, Vec<String>) {
+    let mut catalog = application::theme::ThemeCatalog::new();
+    if let Some(dir) = global_config.and_then(std::path::Path::parent) {
+        let source = adapter_lua::LuaThemeSource::new(dir.join(adapter_lua::THEMES_DIR));
+        catalog = catalog.with_files(Arc::new(source));
+    }
+    catalog.with_defined(defined)
+}
+
+/// The color theme: `app.opt.theme` when set, else the theme `picked`
+/// with `/theme`, else TwoCrest; `app.opt.colors` goes over it. A theme
+/// that cannot be resolved falls back to TwoCrest with a warning.
+pub fn theme(
+    options: &AppOptions,
+    catalog: &application::theme::ThemeCatalog,
+    picked: Option<&str>,
+) -> (Arc<domain::theme::Theme>, Vec<String>) {
+    // Problems of `app.opt.colors` were reported when the config loaded.
+    let (overrides, _) = application::theme::overrides_from_options(options);
+    let name = options
+        .theme
+        .as_deref()
+        .or(picked)
+        .unwrap_or(application::theme::TWOCREST);
+    let resolved = catalog.resolve_or_default(name, overrides.as_ref());
+    (resolved.theme, resolved.warnings)
+}
+
 /// The shell for whole command lines: `app.opt.shell` when set and valid;
 /// else `sh -c` on Unix and, on Windows, `pwsh` when it is on `PATH` or the
 /// bundled `powershell`. A broken option is a warning.

@@ -1505,19 +1505,15 @@ pub fn session_parts(
                 app.warn(warning);
             }
             let timeoutlen = crate::keys::timeoutlen(&app.options);
-            let theme = match app
-                .options
-                .theme
+            let picked = preferences_path
                 .as_deref()
-                .map(ui::app::ThemeMode::from_name)
-            {
-                Some(Ok(theme)) => theme,
-                Some(Err(warning)) => {
-                    app.warn(warning);
-                    ui::app::ThemeMode::default()
-                }
-                None => ui::app::ThemeMode::default(),
-            };
+                .and_then(|path| Preferences::load(path).ok())
+                .and_then(|preferences| preferences.theme);
+            let (theme, theme_warnings) =
+                crate::startup::theme(&app.options, &app.themes, picked.as_deref());
+            for warning in theme_warnings {
+                app.warn(warning);
+            }
             let history = app.timeline_blocks();
             let prompt_history = app.prompt_history().clone();
             let needs_model = app.model_policy().needs_selection();
@@ -1613,8 +1609,16 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
         eprintln!("warning: {warning}");
     }
     if args.wants_picker() {
+        // No project yet: the theme of the global config (or `/theme`).
+        let global_init = platform::dirs::config_dir().map(|dir| dir.join("init.lua"));
+        let (catalog, _) = crate::startup::theme_catalog(global_init.as_deref(), &global.themes);
+        let picked = crate::preferences::default_path()
+            .and_then(|path| Preferences::load(&path).ok())
+            .and_then(|preferences| preferences.theme);
+        let (theme, _) = crate::startup::theme(&global.options, &catalog, picked.as_deref());
         let opts = ui::app::UiOptions {
             window,
+            theme,
             ..ui::app::UiOptions::default()
         };
         return window_exit(ui::app::run_with(opts, move |window, cx| {
@@ -1637,7 +1641,7 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
     };
     let opts = ui::app::UiOptions {
         workspace_label: parts.workspace_label.clone(),
-        theme: parts.theme,
+        theme: std::sync::Arc::clone(&parts.theme),
         window,
         ..ui::app::UiOptions::default()
     };

@@ -15,7 +15,7 @@ const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The final image: BGRA, as GPUI's images are, sRGB-encoded by the GPU.
 const OUT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-/// The background around the board: the TwoCrest ink (`#0b0b0c`), linear.
+/// The default background: the TwoCrest ink (`#0b0b0c`), linear.
 const CLEAR: wgpu::Color = wgpu::Color {
     r: 0.0033,
     g: 0.0033,
@@ -92,6 +92,8 @@ pub struct Gpu {
     uploaded: Option<u64>,
     targets: Option<Targets>,
     error: Arc<Mutex<Option<String>>>,
+    /// The background, linear.
+    clear: wgpu::Color,
 }
 
 fn texture(
@@ -357,6 +359,7 @@ impl Gpu {
             uploaded: None,
             targets: None,
             error,
+            clear: CLEAR,
         };
         gpu.take_error()?;
         Ok(gpu)
@@ -366,6 +369,24 @@ impl Gpu {
     #[must_use]
     pub fn samples(&self) -> u32 {
         self.samples
+    }
+
+    /// Sets the background, an opaque sRGB color.
+    pub fn set_background(&mut self, srgb: [u8; 3]) {
+        let linear = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.040_45 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        self.clear = wgpu::Color {
+            r: linear(srgb[0]),
+            g: linear(srgb[1]),
+            b: linear(srgb[2]),
+            a: 1.0,
+        };
     }
 
     fn take_error(&self) -> Result<(), RenderError> {
@@ -615,7 +636,7 @@ impl Gpu {
                         depth_slice: None,
                         resolve_target: color_resolve,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(CLEAR),
+                            load: wgpu::LoadOp::Clear(self.clear),
                             store,
                         },
                     }),

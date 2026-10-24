@@ -357,8 +357,8 @@ pub struct SessionParts {
     pub history: Vec<Block>,
     /// Lines sent from the prompt of a resumed session, oldest first.
     pub prompt_history: Vec<String>,
-    /// Color scheme (`app.opt.theme`), applied before the window opens.
-    pub theme: crate::app::ThemeMode,
+    /// Color theme (`app.opt.theme`), applied before the window opens.
+    pub theme: crate::app::ColorTheme,
     /// The agent has no API key: the `/login` dialog opens at once.
     pub needs_login: bool,
     /// No model is selected for the default provider: the `/model` popup
@@ -388,7 +388,7 @@ impl SessionParts {
             timeoutlen: None,
             history: Vec::new(),
             prompt_history: Vec::new(),
-            theme: crate::app::ThemeMode::default(),
+            theme: crate::theme::default_theme(),
             needs_login: false,
             needs_model: false,
         }

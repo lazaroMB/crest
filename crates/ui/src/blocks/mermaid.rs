@@ -19,14 +19,14 @@ use std::rc::Rc;
 
 use domain::block::{BlockKind, MermaidSpec};
 use gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
+    AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
-    Pixels, Render, Rgba, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
+    Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window, canvas, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use crate::theme::palette::{ACCENT, INK, TEXT_2};
+use crate::theme::token;
 use crate::timeline::TimelineEntry;
 use diagram::Diagram;
 use paint::Camera;
@@ -34,10 +34,6 @@ use paint::Camera;
 /// Viewport height limits.
 const MIN_HEIGHT: f32 = 140.0;
 const MAX_HEIGHT: f32 = 640.0;
-/// The coral of the buttons under the pointer (`primary.hover` of the theme).
-const ACCENT_HOVER: &str = "#e2745f";
-/// Ink at 70 %, behind the zoom level.
-const INK_CHIP: &str = "#0b0b0cb3";
 /// Zoom step of the keys, the buttons and one wheel notch.
 const ZOOM_STEP: f32 = 1.25;
 /// Characters of a source shown in the error view; garbage can be huge.
@@ -47,6 +43,8 @@ const MAX_SOURCE_CHARS: usize = 8_000;
 pub struct MermaidView {
     source: String,
     diagram: Result<Rc<Diagram>, String>,
+    /// The color theme the diagram was laid out with.
+    colors: crate::app::ColorTheme,
     show_source: bool,
     camera: Camera,
     /// Last mouse position of a drag in progress.
@@ -58,9 +56,11 @@ pub struct MermaidView {
 
 impl MermaidView {
     fn new(source: &str, cx: &mut Context<Self>) -> Self {
+        let colors = crate::theme::crest_theme(cx);
         Self {
             source: source.to_owned(),
-            diagram: diagram::parse(source).map(Rc::new),
+            diagram: diagram::parse_with(source, &colors).map(Rc::new),
+            colors,
             show_source: false,
             camera: Camera::default(),
             drag: None,
@@ -74,8 +74,15 @@ impl MermaidView {
     fn sync(&mut self, source: &str, show_source: bool, cx: &mut Context<Self>) {
         if self.source != source {
             self.source = source.to_owned();
-            self.diagram = diagram::parse(source).map(Rc::new);
+            self.diagram = diagram::parse_with(source, &self.colors).map(Rc::new);
             self.camera = Camera::default();
+            cx.notify();
+        }
+        // Another theme (a `/theme` preview): lay it out in its colors.
+        let colors = crate::theme::crest_theme(cx);
+        if !std::sync::Arc::ptr_eq(&colors, &self.colors) {
+            self.diagram = diagram::parse_with(&self.source, &colors).map(Rc::new);
+            self.colors = colors;
             cx.notify();
         }
         if self.show_source != show_source {
@@ -193,14 +200,19 @@ impl MermaidView {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (accent, accent_hover, accent_fg) = (
+            token(cx, "accent.bg"),
+            token(cx, "accent.hover.bg"),
+            token(cx, "accent.fg"),
+        );
         let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
                 .px_1p5()
                 .rounded_sm()
-                .bg(palette_color(ACCENT))
-                .hover(|style| style.bg(palette_color(ACCENT_HOVER)))
-                .text_color(palette_color(INK))
+                .bg(accent)
+                .hover(move |style| style.bg(accent_hover))
+                .text_color(accent_fg)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(label)
         };
@@ -214,8 +226,8 @@ impl MermaidView {
                 div()
                     .px_1()
                     .rounded_sm()
-                    .bg(palette_color(INK_CHIP))
-                    .text_color(palette_color(TEXT_2))
+                    .bg(token(cx, "overlay"))
+                    .text_color(token(cx, "button.fg"))
                     .child(format!("{:.0}%", self.camera.zoom * 100.0)),
             )
             .child(
@@ -272,9 +284,9 @@ impl MermaidView {
             .h(px(height))
             .overflow_hidden()
             .rounded(radius)
-            .bg(palette_color(INK))
+            .bg(token(cx, "canvas.bg"))
             .border_1()
-            .border_color(palette_color(ACCENT))
+            .border_color(token(cx, "accent.bg"))
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
@@ -333,12 +345,6 @@ pub fn mermaid_view(
         view.sync(&spec.source, entry.alt_view, cx);
     });
     view
-}
-
-/// A `#rrggbb` or `#rrggbbaa` color of the TwoCrest palette; the values are
-/// static, so a bad one only falls back to transparent.
-pub(crate) fn palette_color(hex: &str) -> Hsla {
-    Rgba::try_from(hex).map(Hsla::from).unwrap_or_default()
 }
 
 /// Draws the block held by `entry`.
@@ -468,13 +474,6 @@ mod tests {
             let mermaid = view_of(cx, block.id, source);
             let error = mermaid.read_with(cx, |m, _| m.error().map(str::to_owned));
             assert_eq!(error.is_none(), ix < 2, "block {ix}: {error:?}");
-        }
-    }
-
-    #[test]
-    fn palette_colors_parse() {
-        for hex in [ACCENT, ACCENT_HOVER, INK, INK_CHIP, TEXT_2] {
-            assert!(Rgba::try_from(hex).is_ok(), "{hex}");
         }
     }
 
