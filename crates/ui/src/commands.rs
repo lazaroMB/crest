@@ -29,6 +29,12 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
                       `clear` drops the next turn's",
     },
     CommandInfo {
+        name: "theme",
+        usage: "/theme [set] [name]",
+        description: "Pick a color theme from the popup: moving previews it, Enter saves it, Esc goes back; \
+                      `/theme <name>` saves one directly",
+    },
+    CommandInfo {
         name: "mode",
         usage: "/mode <ask|auto-edit|plan>",
         description: "Change the permission mode",

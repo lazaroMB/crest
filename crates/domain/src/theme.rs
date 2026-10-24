@@ -459,7 +459,7 @@ pub struct TextStyle {
 }
 
 /// A theme with every token and syntax style set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Theme {
     /// Its name.
     pub name: String,

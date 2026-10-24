@@ -227,6 +227,11 @@ pub struct UiController {
     default_provider: ProviderId,
     /// The models of the providers with a key, for the `/model` picker.
     catalog: Option<Arc<dyn ModelCatalogPort>>,
+    /// The themes `/theme` offers.
+    themes: application::theme::ThemeCatalog,
+    /// `app.opt` of the config: its `theme` wins at start, its `colors`
+    /// go over every theme.
+    theme_options: application::ports::plugin::AppOptions,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -680,6 +685,8 @@ impl UiController {
         let preferences_path = app.preferences_path.clone();
         let default_provider = app.default_provider;
         let catalog = app.catalog.clone();
+        let themes = app.themes.clone();
+        let theme_options = app.options.clone();
         let commands = app
             .commands
             .iter()
@@ -707,6 +714,8 @@ impl UiController {
             preferences_path,
             default_provider,
             catalog,
+            themes,
+            theme_options,
         }
     }
 }
@@ -1282,6 +1291,49 @@ impl SessionController for UiController {
             .boxed()
     }
 
+    fn themes(&self) -> BoxFuture<'static, Result<Vec<ui::session::ThemeChoice>, String>> {
+        let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
+        let task = self
+            .handle
+            .spawn_blocking(move || theme_choices(&catalog, &options));
+        task.map(|joined| joined.map_err(|err| err.to_string()))
+            .boxed()
+    }
+
+    fn save_theme(&self, name: String) -> BoxFuture<'static, Result<ui::session::SavedTheme, String>> {
+        let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
+        let path = self.preferences_path.clone();
+        let task = self.handle.spawn_blocking(move || {
+            let (overrides, _) = application::theme::overrides_from_options(&options);
+            let resolved = catalog
+                .resolve(&name, overrides.as_ref())
+                .map_err(|err| err.to_string())?;
+            let name = resolved.theme.name.clone();
+            let mut notice = match &path {
+                Some(path) => {
+                    crate::preferences::update(Some(path), |p| p.theme = Some(name.clone()))?;
+                    format!("theme `{name}` saved")
+                }
+                None => format!("theme `{name}` for this window (preferences cannot be saved)"),
+            };
+            if let Some(fixed) = options.theme.as_deref() {
+                notice.push_str(&format!(
+                    "; init.lua sets app.opt.theme = \"{fixed}\", which wins when crest starts"
+                ));
+            }
+            for warning in resolved.warnings.iter().take(3) {
+                notice.push('\n');
+                notice.push_str(warning);
+            }
+            Ok(ui::session::SavedTheme {
+                theme: resolved.theme,
+                notice,
+            })
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
     fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
         logout_on(&self.handle, Arc::clone(&self.api_keys), account)
     }
@@ -1766,6 +1818,34 @@ fn cancelled(err: &tokio::task::JoinError) -> BrowseError {
         path: String::new(),
         reason: err.to_string(),
     }
+}
+
+
+/// Every theme of `catalog`, resolved with `app.opt.colors` over it; a
+/// theme that does not resolve (a broken file) is left out.
+fn theme_choices(
+    catalog: &application::theme::ThemeCatalog,
+    options: &application::ports::plugin::AppOptions,
+) -> Vec<ui::session::ThemeChoice> {
+    use application::theme::ThemeOrigin;
+    let (overrides, _) = application::theme::overrides_from_options(options);
+    catalog
+        .entries()
+        .into_iter()
+        .filter_map(|entry| {
+            let resolved = catalog.resolve(&entry.name, overrides.as_ref()).ok()?;
+            let origin = match entry.origin {
+                ThemeOrigin::Builtin => "built in",
+                ThemeOrigin::File => "file",
+                ThemeOrigin::Config => "init.lua",
+            };
+            Some(ui::session::ThemeChoice {
+                name: entry.name,
+                origin: origin.to_owned(),
+                theme: resolved.theme,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
