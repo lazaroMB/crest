@@ -7,6 +7,7 @@
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod chart;
+pub mod computed;
 pub mod custom;
 pub mod diff;
 pub mod image;
@@ -49,9 +50,9 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::StageHeader { .. } => stage::render(entry, window, cx),
         BlockKind::Table(_) => table::render(entry, window, cx),
         BlockKind::Thinking { .. } => thinking::render(entry, window, cx),
+        BlockKind::Computed { .. } => computed::render(entry, window, cx),
         // Phase 1 chat blocks; each gets its own renderer in a later piece.
-        BlockKind::Computed { .. }
-        | BlockKind::Form(_)
+        BlockKind::Form(_)
         | BlockKind::Plot(_)
         | BlockKind::TestReport(_)
         | BlockKind::Findings(_)
@@ -101,6 +102,16 @@ pub(crate) fn block_state<T: 'static>(
         .0
         .insert(key, entity.clone().into_any());
     entity
+}
+
+/// The `T` entity of block `id`, if one was created.
+pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Option<Entity<T>> {
+    let key = (id, TypeId::of::<T>());
+    cx.default_global::<BlockStates>()
+        .0
+        .get(&key)
+        .cloned()
+        .and_then(|any| any.downcast::<T>().ok())
 }
 
 #[cfg(test)]

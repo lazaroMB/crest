@@ -57,6 +57,7 @@
 //!   (commands of `init.lua`, `/mcp`, `/plugin`, `/implement`, `/research`,
 //!   `/simulate`, `/!cmd`); a name with a dot runs that builtin action
 //!   (`/picker.files`).
+//! - Recompute on a statistics card runs [`SessionController::recompute`].
 //! - A mapping to a Lua function runs [`SessionController::run_callback`].
 //!   What it answers ([`Reply`]) is shown or run here: `app.cmd(name)` as a
 //!   `/` command and `app.send(text, { role })` as a prompt with that role.
@@ -279,6 +280,15 @@ pub trait SessionController: Send + Sync {
             "no plugins are loaded".into(),
         ))
         .boxed()
+    }
+
+    /// Re-runs the envelope of the computed `block` (Recompute on a
+    /// statistics card), re-reading its data file; the new version comes
+    /// back as a `BlockUpdated` event with `verification` filled in.
+    /// `Err` says why it could not run.
+    fn recompute(&self, block: Block) -> BoxFuture<'static, Result<(), String>> {
+        let _ = block;
+        futures::future::ready(Err("this session cannot recompute".to_owned())).boxed()
     }
 
     /// Adds `images` to the chat as image blocks (after `caption`, when not
@@ -620,6 +630,7 @@ impl Session {
                     media_type,
                     data,
                 } => this.inspect_image(*block, media_type, data, window, cx),
+                BlockEvent::Recompute { block } => this.recompute(*block, cx),
                 BlockEvent::OpenUrl { .. } => {}
             },
         ));
@@ -1423,6 +1434,37 @@ impl Session {
     }
 
     /// Shows the picture of the image block `block` in a modal.
+    /// Recompute on a statistics card: the controller re-runs the
+    /// envelope and sends the new version as a `BlockUpdated`; a failure
+    /// is shown on the card and as a notice.
+    fn recompute(&mut self, id: BlockId, cx: &mut Context<Self>) {
+        let block = {
+            let state = self.timeline.read(cx).state();
+            state
+                .position(id)
+                .and_then(|ix| state.get(ix))
+                .map(|entry| entry.block.clone())
+        };
+        let Some(block) = block else {
+            return;
+        };
+        let task = self.controller.recompute(block);
+        cx.spawn(async move |this, cx| {
+            if let Err(message) = task.await {
+                this.update(cx, |this, cx| {
+                    crate::blocks::computed::recompute_failed(id, message.clone(), cx);
+                    this.notice(
+                        NoticeLevel::Warning,
+                        format!("Recompute failed: {message}"),
+                        cx,
+                    );
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn inspect_image(
         &mut self,
         block: BlockId,

@@ -35,6 +35,12 @@ pub enum BlockEvent {
         /// Its bytes or file.
         data: ImageData,
     },
+    /// Re-run the envelope of the computed block `block` and compare its
+    /// values (the card's Recompute button).
+    Recompute {
+        /// The block.
+        block: BlockId,
+    },
 }
 
 /// The emitter of every [`BlockEvent`].
