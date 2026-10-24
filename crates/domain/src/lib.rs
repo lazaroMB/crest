@@ -4,6 +4,7 @@
 //! tokio or any I/O.
 
 pub mod block;
+pub mod computed;
 pub mod conversation;
 pub mod decision;
 pub mod git;
