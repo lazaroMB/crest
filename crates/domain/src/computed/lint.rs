@@ -6,7 +6,10 @@
 //! mark them as unverified. It is a cheap guard, not a parser, and it errs
 //! on the side of not flagging. It skips:
 //!
-//! - slots, code fences, inline code, link targets and bare URLs;
+//! - slots, code fences, inline code, TeX math (`$..$`, `$$..$$`), link
+//!   targets and bare URLs;
+//! - small unsigned integers up to 10, which are counts and steps far more
+//!   often than results ("3 files", "step 2");
 //! - years 1900–2100 and ISO dates (`2026-10-24`);
 //! - ordinals (`2nd`), list markers (`1.`, `2)` at the start of a line),
 //!   `2D`/`3D`, hex and binary literals (`0x1F`);
@@ -91,6 +94,7 @@ fn mask(text: &str) -> Vec<bool> {
         }
     }
     mask_inline_code(text, &mut mask);
+    mask_math(text, &mut mask);
     for slot in parse_slots(text) {
         mask[slot.range].fill(true);
     }
@@ -143,6 +147,53 @@ fn mask_inline_code(text: &str, mask: &mut [bool]) {
                 i = end;
             }
             None => i += open,
+        }
+    }
+}
+
+/// Masks TeX math: `$$..$$` (across lines) and then `$..$` within a line,
+/// with pandoc's rule that the opening `$` is followed by a non-space and
+/// the closing one preceded by a non-space and not followed by a digit, so
+/// prices (`$5 and $10`) stay prose.
+fn mask_math(text: &str, mask: &mut [bool]) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while let Some(open) = text[i..].find("$$").map(|o| o + i) {
+        if mask[open] {
+            i = open + 2;
+            continue;
+        }
+        let Some(close) = text[open + 2..].find("$$").map(|c| c + open + 2) else {
+            break;
+        };
+        mask[open..close + 2].fill(true);
+        i = close + 2;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' || mask[i] || bytes.get(i + 1).is_none_or(u8::is_ascii_whitespace) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let mut close = None;
+        while j < bytes.len() && bytes[j] != b'\n' {
+            if bytes[j] == b'$'
+                && !mask[j]
+                && !bytes[j - 1].is_ascii_whitespace()
+                && !bytes.get(j + 1).is_some_and(u8::is_ascii_digit)
+            {
+                close = Some(j);
+                break;
+            }
+            j += 1;
+        }
+        match close {
+            Some(end) => {
+                mask[i..=end].fill(true);
+                i = end + 1;
+            }
+            None => i += 1,
         }
     }
 }
@@ -243,6 +294,10 @@ fn scan(text: &str, mask: &[bool]) -> Vec<Token> {
                 start = i - sign.len_utf8();
             }
         }
+        // Small counts: an unsigned integer up to 10.
+        if start == i && integer && number.parse::<u32>().is_ok_and(|n| n <= 10) {
+            allowed = true;
+        }
         tokens.push(Token {
             range: start..j,
             text: text[start..j].to_owned(),
@@ -314,8 +369,8 @@ mod tests {
             ["3.4", "-1.48", ".03", "1,234"]
         );
         assert_eq!(
-            flagged("took 10ms, ratio 45% and −2e-3"),
-            ["10", "45", "−2e-3"]
+            flagged("took 12ms, ratio 45% and −2e-3"),
+            ["12", "45", "−2e-3"]
         );
     }
 
@@ -340,7 +395,7 @@ mod tests {
     fn whitelists_versions_identifiers_and_hashes() {
         let text = "crest 0.14.0, v2.0, x1, H2O, sha256, #42, 9c1e3a, 0x1F, snake_2 and @3";
         assert!(flagged(text).is_empty(), "{:?}", flagged(text));
-        assert_eq!(flagged("range a-1 to 5"), ["1", "5"]);
+        assert_eq!(flagged("range a-11 to 15"), ["11", "15"]);
     }
 
     #[test]
@@ -351,20 +406,29 @@ mod tests {
                     ``a ` 9 ``";
         assert!(flagged(text).is_empty(), "{:?}", flagged(text));
         // An unclosed backtick is not code.
-        assert_eq!(flagged("a ` 9"), ["9"]);
+        assert_eq!(flagged("a ` 19"), ["19"]);
         // An unclosed fence masks to the end.
         assert!(flagged("~~~\n5\n").is_empty());
     }
 
     #[test]
     fn numbers_from_user_text_are_allowed() {
-        let text = "You said 1,500 users and 0.25; I think 7.";
+        let text = "You said 1,500 users and 0.25; I think 17.";
         assert_eq!(
             lint_numbers(text, &["we have 1500 users at a 0.25 rate"])
                 .into_iter()
                 .map(|n| n.text)
                 .collect::<Vec<_>>(),
-            ["7"]
+            ["17"]
         );
+    }
+
+    #[test]
+    fn small_counts_and_math_are_not_flagged() {
+        assert!(flagged("3 files in 2 steps, 10 runs").is_empty());
+        assert_eq!(flagged("a drop of -3 and 11 runs"), ["-3", "11"]);
+        let text = "where $x = 4.5$ and $$\\sigma = 12.3$$ but $5 and $20 stay";
+        assert_eq!(flagged(text), ["20"]);
+        assert_eq!(flagged("cost $12 and $13"), ["12", "13"]);
     }
 }

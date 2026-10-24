@@ -10,7 +10,8 @@
 //! cites them in its prose through number slots ([`slots`]). The
 //! [`ComputedBody`] holds what each card draws (tables, matrices, sheet
 //! lines); the envelope's `values` hold the headline numbers that slots and
-//! the APA line ([`apa`]) refer to. [`lint`] finds numbers in prose that did
+//! the APA line ([`apa`]) refer to; [`narrative`] fills the sentence and
+//! APA line templates the engine names. [`lint`] finds numbers in prose that did
 //! not come from an engine.
 //!
 //! See `docs/research/chat-blocks-for-technical-work.md`, "The `Computed`
@@ -18,6 +19,7 @@
 
 pub mod apa;
 pub mod lint;
+pub mod narrative;
 pub mod slots;
 
 use std::collections::BTreeMap;
