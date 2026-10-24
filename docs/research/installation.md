@@ -35,7 +35,9 @@ distribute itself on Linux, macOS and Windows, and what was built from it.
 - **SignPath Foundation signs OSS for free**: OSI license without a
   commercial dual license, no proprietary parts, active, already released,
   built from the public repository. The certificate is the Foundation's,
-  so Windows shows "SignPath Foundation" as the publisher.
+  so Windows shows "SignPath Foundation" as the publisher. The
+  application also asks for proof of reputation (downloads, media, community
+  use), which a new project does not have yet: deferred until it does.
   ([signpath.org](https://signpath.org/), [terms](https://signpath.org/terms))
 - **Azure Artifact Signing** (formerly Trusted Signing) is the paid
   alternative with one's own identity: Basic 9.99 USD/month, 5,000
@@ -61,7 +63,7 @@ distribute itself on Linux, macOS and Windows, and what was built from it.
 | Platform | One step | Signing |
 | --- | --- | --- |
 | macOS | `brew install --cask lazaromb/tap/crest` | Developer ID + notarization (`scripts/sign-macos.sh`, rcodesign 0.29.0) |
-| Windows | `winget install LazaroMB.Crest` | SignPath Foundation |
+| Windows | `winget install LazaroMB.Crest` or `irm … \| iex` | none yet (SignPath steps wired, skipped without secrets) |
 | Linux | `curl … install.sh \| sh`, now also aarch64 | checksums only |
 
 - crest.app's executable is the binary itself (a shell script as the main
@@ -73,8 +75,13 @@ distribute itself on Linux, macOS and Windows, and what was built from it.
   entry with icon and uninstaller, `crest` on the PATH, in-place upgrades.
   winget and `install.ps1` both run it; the zip stays as the portable
   build. The uninstaller Inno writes at install time is not signed.
-- Manual, once: Apple Developer account and secrets, the SignPath
-  application, the `lazaroMB/homebrew-tap` repository, the first winget
+- Unsigned on Windows, the paths without SmartScreen are winget and the
+  PowerShell command: SmartScreen checks files carrying the browser's
+  Mark of the Web, and what `Invoke-WebRequest` or winget downloads has
+  none. Smart App Control (Windows 11, fresh installs) still blocks
+  unsigned apps. A downloader `.exe` would not help: it would be an
+  unsigned download itself.
+- Manual, once: Apple Developer account and secrets, the `lazaroMB/homebrew-tap` repository, the first winget
   submission (`packaging/winget/README.md`), the `PACKAGES_TOKEN` secret.
 
 ## Later

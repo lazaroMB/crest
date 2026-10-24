@@ -178,13 +178,21 @@ brew install --cask lazaromb/tap/crest
 
 It installs `crest.app` in `/Applications`, the `crest` command, and `rg` and `fzf`. `brew upgrade` updates it. The app is signed and notarized by Apple.
 
-**Windows** (10 1809 or newer, x86_64):
+**Windows** (10 1809 or newer, x86_64; no administrator rights):
 
 ```powershell
 winget install LazaroMB.Crest
 ```
 
-It installs crest as an app (Start menu, Settings > Apps) with the `crest` command; `winget upgrade` updates it. Without winget, download `crest-<version>-x86_64-pc-windows-msvc-setup.exe` from the [latest release](https://github.com/lazaroMB/crest/releases/latest) and run it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). `crest.exe` is signed through [SignPath Foundation](https://signpath.org), so Windows shows it as the publisher.
+Or, without winget, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
+```
+
+Both install crest as an app: `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, an entry in the Start menu and in Settings > Apps (uninstall it there, or with `install.ps1 -Uninstall`), and the `crest` command on your user `PATH`. `winget upgrade` or the same command again updates it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`).
+
+You can also download `crest-<version>-x86_64-pc-windows-msvc-setup.exe` from the [latest release](https://github.com/lazaroMB/crest/releases/latest) and run it. crest is not code-signed yet, so Windows SmartScreen warns about a setup downloaded with a browser: choose **More info → Run anyway**. (winget and the PowerShell command do not trigger it.) The Windows build is new and has only been tested in CI: reports are welcome.
 
 **Linux** (x86_64 or aarch64, glibc 2.35+; no sudo), and macOS without Homebrew:
 
@@ -193,14 +201,6 @@ curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install
 ```
 
 It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.13.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`.
-
-**Windows without winget** (no administrator rights), in PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
-```
-
-It runs the same setup silently: `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, the Start menu, Settings > Apps and your user `PATH`; uninstall it from Settings > Apps or with `install.ps1 -Uninstall`. The Windows build is new and has only been tested in CI: reports are welcome.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
