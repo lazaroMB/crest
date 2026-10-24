@@ -1330,7 +1330,8 @@ mod tests {
     fn ctrl_c_copies_the_selection(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
         cx.simulate_input("copiame");
-        cx.simulate_keystrokes("ctrl-a ctrl-c");
+        // Select all is Cmd+A on macOS (Ctrl+A goes to the line start).
+        cx.simulate_keystrokes("secondary-a ctrl-c");
         let copied = cx.read_from_clipboard().and_then(|item| item.text());
         assert_eq!(copied.as_deref(), Some("copiame"));
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "copiame"));
