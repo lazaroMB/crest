@@ -1,9 +1,10 @@
 # crest on winget
 
-`winget install LazaroMB.Crest` installs the release zip as a *portable*
-package: winget extracts `crest.exe`, adds the `crest` alias to the `PATH`
-and `winget upgrade` updates it. It adds no Start menu entry (the
-PowerShell installer, `scripts/install.ps1`, does).
+`winget install LazaroMB.Crest` runs the release's Inno Setup installer
+(`crest-<version>-x86_64-pc-windows-msvc-setup.exe`, from
+`packaging/windows/crest.iss`) silently, per user: crest gets its Start
+menu entry, its place in Settings > Apps and the `crest` command on the
+`PATH`, and `winget upgrade` installs the next setup over it.
 
 The `winget` job of `.github/workflows/release.yml` sends each new release
 with [Komac](https://github.com/russellbanks/Komac), pinned by version and
@@ -19,7 +20,7 @@ is sent by hand**, once:
 
    ```sh
    komac new LazaroMB.Crest --version 0.14.0 \
-     --urls https://github.com/lazaroMB/crest/releases/download/v0.14.0/crest-0.14.0-x86_64-pc-windows-msvc.zip \
+     --urls https://github.com/lazaroMB/crest/releases/download/v0.14.0/crest-0.14.0-x86_64-pc-windows-msvc-setup.exe \
      --token "$PACKAGES_TOKEN"
    ```
 
@@ -33,15 +34,15 @@ is sent by hand**, once:
    | License | `GPL-3.0-or-later` |
    | ShortDescription | `Desktop coding agent for Claude and OpenCode models` |
    | PackageUrl | `https://github.com/lazaroMB/crest` |
-   | InstallerType | `zip` |
-   | NestedInstallerType | `portable` |
-   | NestedInstallerFiles | `crest.exe`, alias `crest` (the zip has no folder) |
+   | InstallerType | `inno` (Komac detects it) |
+   | Scope | `user` |
+   | UpgradeBehavior | `install` |
    | Dependencies | `BurntSushi.ripgrep.MSVC`, `junegunn.fzf`, `Git.Git` |
 
 3. Komac opens the pull request. Microsoft's bots validate it and a
    moderator merges it (a few days the first time).
 
 From then on, a `v*` tag that is not a prerelease updates the package:
-`komac update LazaroMB.Crest --version <v> --urls <zip> --submit`. Each
+`komac update LazaroMB.Crest --version <v> --urls <setup.exe> --submit`. Each
 update is still a pull request reviewed by Microsoft. Without the
 `PACKAGES_TOKEN` secret the job is skipped.

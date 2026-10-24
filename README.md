@@ -184,7 +184,7 @@ It installs `crest.app` in `/Applications`, the `crest` command, and `rg` and `f
 winget install LazaroMB.Crest
 ```
 
-It installs the `crest` command; `winget upgrade` updates it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). `crest.exe` is signed through [SignPath Foundation](https://signpath.org), so Windows shows it as the publisher.
+It installs crest as an app (Start menu, Settings > Apps) with the `crest` command; `winget upgrade` updates it. Without winget, download `crest-<version>-x86_64-pc-windows-msvc-setup.exe` from the [latest release](https://github.com/lazaroMB/crest/releases/latest) and run it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). `crest.exe` is signed through [SignPath Foundation](https://signpath.org), so Windows shows it as the publisher.
 
 **Linux** (x86_64 or aarch64, glibc 2.35+; no sudo), and macOS without Homebrew:
 
@@ -200,7 +200,7 @@ It downloads the [latest release](https://github.com/lazaroMB/crest/releases/lat
 irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
 ```
 
-It installs `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, adds it to your user `PATH` and to the Start menu; `install.ps1 -Uninstall` removes it. The Windows build is new and has only been tested in CI: reports are welcome.
+It runs the same setup silently: `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, the Start menu, Settings > Apps and your user `PATH`; uninstall it from Settings > Apps or with `install.ps1 -Uninstall`. The Windows build is new and has only been tested in CI: reports are welcome.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 

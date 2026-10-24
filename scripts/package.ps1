@@ -8,11 +8,16 @@
 # scripts/package.sh does for Linux and macOS. The zip holds, at its root,
 # crest.exe, install.ps1 (scripts/install.ps1), README.txt with the runtime
 # requirements, LICENSE and THIRD-PARTY.md.
+#
+# With -Installer it also builds <Out>/crest-<version>-<target>-setup.exe
+# (and its .sha256) from the same files with Inno Setup 6
+# (packaging/windows/crest.iss; ISCC.exe from the Inno Setup folder or PATH).
 
 param(
     [Parameter(Mandatory = $true)][string]$Target,
     [Parameter(Mandatory = $true)][string]$Version,
-    [string]$Out = "dist"
+    [string]$Out = "dist",
+    [switch]$Installer
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,12 +73,35 @@ Windows PowerShell); app.opt.shell changes it.
 $zip = "$name.zip"
 $zipPath = Join-Path $Out $zip
 if (Test-Path $zipPath) { Remove-Item $zipPath }
-# The files at the root of the zip, no folder: winget's manifest names
-# crest.exe by its path inside the zip, which must not change per version.
+# The files at the root of the zip, no folder: the portable build is just
+# crest.exe and its notes.
 Compress-Archive -Path (Join-Path $dir "*") -DestinationPath $zipPath
+
+function Write-Checksum([string]$File) {
+    $hash = (Get-FileHash -Algorithm SHA256 $File).Hash.ToLowerInvariant()
+    $leaf = Split-Path -Leaf $File
+    [System.IO.File]::WriteAllText("$File.sha256", "$hash  $leaf`n")
+}
+Write-Checksum $zipPath
+
+if ($Installer) {
+    $iscc = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+        (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if (-not $iscc) { throw "package.ps1: ISCC.exe (Inno Setup 6) not found" }
+    # VERSIONINFO wants four numbers: 1.2.3-rc.1 -> 1.2.3.0.
+    $numbers = @($Version -split '[.+-]' | Select-Object -First 3 | ForEach-Object {
+        $n = 0; if ([int]::TryParse($_, [ref]$n)) { $n } else { 0 } })
+    while ($numbers.Count -lt 4) { $numbers += 0 }
+    $setupName = "$name-setup"
+    & $iscc /Qp "/DAppVersion=$Version" "/DAppVersionNumbers=$($numbers -join '.')" `
+        "/DSourceDir=$dir" "/DOutDir=$((Resolve-Path $Out).Path)" "/DOutputName=$setupName" `
+        (Join-Path $root "packaging/windows/crest.iss")
+    if ($LASTEXITCODE -ne 0) { throw "package.ps1: ISCC failed ($LASTEXITCODE)" }
+    Write-Checksum (Join-Path $Out "$setupName.exe")
+}
+
 Remove-Item -Recurse -Force $staging
-
-$hash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
-[System.IO.File]::WriteAllText((Join-Path $Out "$zip.sha256"), "$hash  $zip`n")
-
 Write-Output $zipPath

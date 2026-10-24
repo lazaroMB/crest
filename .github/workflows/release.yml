@@ -32,7 +32,8 @@
 # Windows: built on windows-2025 with MSVC; the release build compiles
 # GPUI's HLSL shaders with fxc.exe from the Windows SDK of the image.
 # crest.exe goes to SignPath as an artifact and comes back signed before
-# scripts/package.ps1 makes the zip.
+# scripts/package.ps1 makes the zip and the Inno Setup installer (Inno
+# Setup 6 comes with the image); the installer is signed the same way.
 
 name: Release
 
@@ -191,18 +192,76 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package.ps1 -Target "${{ matrix.target }}" `
-            -Version "${{ steps.version.outputs.version }}" -Out dist
+            -Version "${{ steps.version.outputs.version }}" -Out dist -Installer
 
-      # The installer, against the zip just built (no network).
+      - name: Upload the unsigned setup
+        id: unsigned-setup
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-setup-${{ matrix.target }}
+          path: dist/*-setup.exe
+          if-no-files-found: error
+
+      - name: Sign the setup (SignPath)
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: crest
+          signing-policy-slug: ${{ github.ref_type == 'tag' && 'release-signing' || 'test-signing' }}
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-setup
+
+      # The signed setup replaces the built one; its checksum changes.
+      - name: Use the signed setup
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist/*-setup.exe | Select-Object -First 1
+          $signed = Join-Path signed-setup $setup.Name
+          $sig = Get-AuthenticodeSignature $signed
+          Write-Output "$($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ('${{ github.ref_type }}' -eq 'tag' -and $sig.Status -ne 'Valid') {
+            throw "$($setup.Name) is not validly signed: $($sig.Status)"
+          }
+          Copy-Item -Force $signed $setup.FullName
+          $hash = (Get-FileHash -Algorithm SHA256 $setup.FullName).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$($setup.FullName).sha256", "$hash  $($setup.Name)`n")
+
+      # Both installers, against the files just built (no network): the
+      # setup must leave an app (Start menu, Settings > Apps, PATH) and
+      # take it all away again.
       - name: Install test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $zip = Get-ChildItem dist/*.zip | Select-Object -First 1 -ExpandProperty FullName
-          ./scripts/install.ps1 -Zip $zip
           $exe = Join-Path $env:LOCALAPPDATA "Programs/crest/crest.exe"
+          $dir = Split-Path $exe
+          $entry = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{9C1A9DD2-A2E2-4F50-BA98-5C1E587342BE}_is1"
+          $shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "crest.lnk"
+          function User-Path { "$([Environment]::GetEnvironmentVariable('Path', 'User'))".Split(";") }
+
+          $setup = Get-ChildItem dist/*-setup.exe | Select-Object -First 1 -ExpandProperty FullName
+          ./scripts/install.ps1 -Setup $setup
           & $exe --version | Tee-Object -Variable shown
           if (-not ($shown -match "crest")) { throw "crest --version printed nothing" }
+          if (-not (Test-Path $shortcut)) { throw "no Start menu entry $shortcut" }
+          $app = Get-ItemProperty $entry
+          Write-Output "$($app.DisplayName) $($app.DisplayVersion) $($app.Publisher) $($app.DisplayIcon)"
+          if ($app.DisplayVersion -ne "${{ steps.version.outputs.version }}") { throw "Settings > Apps shows $($app.DisplayVersion)" }
+          if (-not ((User-Path) -contains $dir)) { throw "$dir is not on the user PATH" }
+          ./scripts/install.ps1 -Uninstall
+          foreach ($left in $exe, $shortcut, $entry) {
+            if (Test-Path $left) { throw "uninstall left $left" }
+          }
+          if ((User-Path) -contains $dir) { throw "uninstall left $dir on the PATH" }
+
+          $zip = Get-ChildItem dist/*.zip | Select-Object -First 1 -ExpandProperty FullName
+          ./scripts/install.ps1 -Zip $zip
+          & $exe --version | Out-Null
           ./scripts/install.ps1 -Uninstall
           if (Test-Path $exe) { throw "uninstall left $exe" }
 
@@ -314,6 +373,6 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" komac
           version="${GITHUB_REF_NAME#v}"
           "$RUNNER_TEMP/komac" update LazaroMB.Crest --version "$version" \
-            --urls "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/crest-$version-x86_64-pc-windows-msvc.zip" \
+            --urls "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/crest-$version-x86_64-pc-windows-msvc-setup.exe" \
             --release-notes-url "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
             --submit --token "$PACKAGES_TOKEN"

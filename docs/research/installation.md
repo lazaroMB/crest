@@ -67,16 +67,20 @@ distribute itself on Linux, macOS and Windows, and what was built from it.
 - crest.app's executable is the binary itself (a shell script as the main
   executable does not notarize well); it re-executes through the login
   shell when LaunchServices opens it (`crates/platform/src/login_shell.rs`).
-- The Windows zip has its files at the root, so winget's
-  `NestedInstallerFiles` (`crest.exe`) does not change per version.
+- Windows gets an Inno Setup installer (`packaging/windows/crest.iss`,
+  Inno Setup 6 ships with the windows-2025 runner): per user without
+  admin rights, Start menu entry, optional desktop icon, Settings > Apps
+  entry with icon and uninstaller, `crest` on the PATH, in-place upgrades.
+  winget and `install.ps1` both run it; the zip stays as the portable
+  build. The uninstaller Inno writes at install time is not signed.
 - Manual, once: Apple Developer account and secrets, the SignPath
   application, the `lazaroMB/homebrew-tap` repository, the first winget
   submission (`packaging/winget/README.md`), the `PACKAGES_TOKEN` secret.
 
 ## Later
 
-- **Phase 2, native installers**: .dmg, NSIS or MSI, .deb and AppImage with
-  cargo-packager, signed by the same steps.
+- **Phase 2, native installers**: .dmg, .deb and AppImage (cargo-packager
+  or by hand), signed by the same steps. Windows already has its setup.
 - **Phase 3, updates**: package managers already update; for script
   installs, an in-app check against GitHub Releases (cargo-packager-updater
   or our own, since axoupdater needs dist receipts).
