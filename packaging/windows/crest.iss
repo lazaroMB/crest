@@ -13,7 +13,9 @@
 ; Settings > Apps with the icon, the version and the uninstaller. "Install
 ; for all users" (the dialog or /ALLUSERS) uses Program Files and the
 ; system PATH instead. A newer setup upgrades over the same AppId, closing
-; a running crest first. The config and data folders stay on uninstall.
+; a running crest first. A commented init.lua and the example themes go
+; into %APPDATA%\crest when missing there. The config and data folders
+; stay on uninstall.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -73,6 +75,10 @@ Source: "{#SourceDir}\crest.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD-PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+; A commented init.lua and the example color themes, only where missing:
+; what the user edited is never replaced, and uninstalling keeps them.
+Source: "{#SourceDir}\config\init.lua"; DestDir: "{userappdata}\crest"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#SourceDir}\config\themes\*.lua"; DestDir: "{userappdata}\crest\themes"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{autoprograms}\crest"; Filename: "{app}\crest.exe"; WorkingDir: "{%USERPROFILE}"; Comment: "crest, a coding agent"

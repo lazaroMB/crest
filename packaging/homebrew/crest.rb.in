@@ -23,6 +23,17 @@ cask "crest" do
   app "crest-#{version}-#{arch}-apple-darwin/crest.app"
   binary "#{appdir}/crest.app/Contents/MacOS/crest"
 
+  # Homebrew does not write in your home: the commented init.lua and the
+  # example color themes of the tarball stay in the Caskroom.
+  caveats <<~EOS
+    A commented init.lua and example color themes are in
+      #{staged_path}/crest-#{version}-#{arch}-apple-darwin/config
+    To copy them into crest's config folder without replacing your files:
+      mkdir -p ~/.config/crest/themes
+      cp -n #{staged_path}/crest-#{version}-#{arch}-apple-darwin/config/init.lua ~/.config/crest/
+      cp -n #{staged_path}/crest-#{version}-#{arch}-apple-darwin/config/themes/*.lua ~/.config/crest/themes/
+  EOS
+
   zap trash: [
     "~/.config/crest",
     "~/.local/share/crest",

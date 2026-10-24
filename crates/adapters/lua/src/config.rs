@@ -510,6 +510,29 @@ end)
     }
 
     #[test]
+    fn the_installed_init_lua_loads_cleanly_as_is_and_uncommented() {
+        let template = include_str!("../../../../assets/init.lua");
+        let fx = Fixture::new();
+        fx.global(template);
+        let (_vm, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}", config.errors);
+        assert_eq!(config.options, application::ports::plugin::AppOptions::default());
+
+        // Each one-line option, uncommented, is valid too.
+        let options: String = template
+            .lines()
+            .filter_map(|line| line.strip_prefix("-- app.opt."))
+            .filter(|rest| !rest.trim_end().ends_with('{'))
+            .map(|rest| format!("app.opt.{rest}\n"))
+            .collect();
+        let fx = Fixture::new();
+        fx.global(&options);
+        let (_vm, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}\n{options}", config.errors);
+        assert!(config.options.extra.contains_key("window"));
+    }
+
+    #[test]
     fn a_malformed_window_is_dropped() {
         let fx = Fixture::new();
         fx.global(r#"app.opt.window = "kiosk""#);

@@ -39,6 +39,12 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Copy-Item $exe $dir
 Copy-Item scripts/install.ps1 $dir
 Copy-Item LICENSE, THIRD-PARTY.md $dir
+# What install.ps1 and the setup copy into the config folder when it is
+# missing there.
+$themes = Join-Path $dir "config\themes"
+New-Item -ItemType Directory -Force -Path $themes | Out-Null
+Copy-Item assets/init.lua (Join-Path $dir "config\init.lua")
+Copy-Item examples/themes/*.lua $themes
 
 $readme = @"
 crest $Version ($Target)
@@ -51,8 +57,10 @@ It puts crest in %LOCALAPPDATA%\Programs\crest, adds that folder to your
 user PATH and creates a Start menu shortcut; install.ps1 -Uninstall removes
 them. Or run crest.exe from anywhere.
 
-crest keeps its config in %APPDATA%\crest (init.lua, plugins) and its data
-in %LOCALAPPDATA%\crest; XDG_CONFIG_HOME and XDG_DATA_HOME override them.
+crest keeps its config in %APPDATA%\crest (init.lua, plugins, themes) and
+its data in %LOCALAPPDATA%\crest; XDG_CONFIG_HOME and XDG_DATA_HOME override
+them. The installer copies config\ (a commented init.lua and the example
+color themes) there, skipping every file that already exists.
 Keep ANTHROPIC_API_KEY in the Windows Credential Manager (/login in crest)
 or in your user environment variables.
 

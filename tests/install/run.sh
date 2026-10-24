@@ -66,13 +66,30 @@ linux_tar=$(package x86_64-unknown-linux-gnu)
 check "linux tarball" test -f "$linux_tar"
 listing=$(tar -tzf "$linux_tar")
 for f in install.sh crest crest-launcher README.txt share/applications/crest.desktop \
-    share/icons/hicolor/scalable/apps/crest.svg; do
+    share/icons/hicolor/scalable/apps/crest.svg config/init.lua config/themes/tokyonight-night.lua; do
     check "linux tarball has $f" contains "$listing" "crest-0.0.0-x86_64-unknown-linux-gnu/$f"
 done
 
 P="$TMP/linux/.local"
-linux() { HOME="$TMP/linux" CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 sh "$INSTALL" "$@"; }
+linux() { HOME="$TMP/linux" XDG_CONFIG_HOME= CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 sh "$INSTALL" "$@"; }
 check "linux install" linux --tarball "$linux_tar" --prefix "$P" >/dev/null 2>&1
+
+# The config folder gets init.lua and the themes, and keeps what you edit.
+C="$TMP/linux/.config/crest"
+check "init.lua created" test -f "$C/init.lua"
+check "init.lua is the template" contains "$(cat "$C/init.lua")" "-- app.opt.window"
+check "themes copied" test -f "$C/themes/catppuccin-mocha.lua"
+echo 'app.opt.theme = "nord"' >"$C/init.lua"
+echo '-- mine' >"$C/themes/nord.lua"
+rm "$C/themes/dracula.lua"
+check "linux reinstall" linux --tarball "$linux_tar" --prefix "$P" >/dev/null 2>&1
+check "an edited init.lua is kept" eq "$(cat "$C/init.lua")" 'app.opt.theme = "nord"'
+check "an edited theme is kept" eq "$(cat "$C/themes/nord.lua")" '-- mine'
+check "a missing theme comes back" test -f "$C/themes/dracula.lua"
+XC="$TMP/xdg"
+HOME="$TMP/linux" XDG_CONFIG_HOME="$XC" CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 \
+    sh "$INSTALL" --tarball "$linux_tar" --prefix "$P" >/dev/null 2>&1
+check "XDG_CONFIG_HOME is honoured" test -f "$XC/crest/themes/nord.lua"
 check "binary" test -x "$P/bin/crest"
 check "launcher" test -x "$P/lib/crest/crest-launcher"
 desktop="$P/share/applications/crest.desktop"
@@ -93,7 +110,7 @@ check "non-POSIX shells fall back to sh" contains "$out" "args:x"
 mkdir -p "$TMP/extract"
 tar -xzf "$linux_tar" -C "$TMP/extract"
 rm -rf "$P"
-HOME="$TMP/linux" CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 \
+HOME="$TMP/linux" XDG_CONFIG_HOME= CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 \
     sh "$TMP/extract/crest-0.0.0-x86_64-unknown-linux-gnu/install.sh" --prefix "$P" >/dev/null 2>&1
 check "extracted install" test -x "$P/bin/crest"
 
@@ -102,6 +119,7 @@ check "no binary left" not test -e "$P/bin/crest"
 check "no launcher left" not test -e "$P/lib/crest"
 check "no desktop entry left" not test -e "$desktop"
 check "no icons left" eq "$(find "$P/share/icons" -name 'crest.*' | wc -l | tr -d ' ')" 0
+check "uninstall keeps the config" test -f "$C/init.lua"
 
 # --- macOS -----------------------------------------------------------------
 mac_tar=$(package aarch64-apple-darwin)
@@ -115,7 +133,7 @@ check "mac tarball has no loose binary" not grep -qx "crest-0.0.0-aarch64-apple-
 M="$TMP/mac/.local"
 APPS="$TMP/mac/Applications"
 mac() {
-    HOME="$TMP/mac" CREST_INSTALL_UNAME_S=Darwin CREST_INSTALL_UNAME_M=arm64 \
+    HOME="$TMP/mac" XDG_CONFIG_HOME= CREST_INSTALL_UNAME_S=Darwin CREST_INSTALL_UNAME_M=arm64 \
         CREST_INSTALL_APPS_DIR="$APPS" sh "$INSTALL" "$@"
 }
 check "mac install" mac --tarball "$mac_tar" --prefix "$M" >/dev/null 2>&1
@@ -130,6 +148,7 @@ fi
 if command -v iconutil >/dev/null 2>&1; then
     check "icns" test -s "$app/Resources/crest.icns"
 fi
+check "mac config seeded" test -f "$TMP/mac/.config/crest/themes/rose-pine.lua"
 check "command links into the app" eq "$(readlink "$M/bin/crest")" "$app/MacOS/crest"
 out=$("$app/MacOS/crest" --pick)
 check "the app runs the binary" contains "$out" "args:--pick"

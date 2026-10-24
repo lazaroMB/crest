@@ -91,6 +91,10 @@ for license in LICENSE* THIRD-PARTY.md; do
         cp "$license" "$staging/$name/"
     fi
 done
+# What install.sh copies into the config folder when it is missing there.
+mkdir -p "$staging/$name/config/themes"
+cp assets/init.lua "$staging/$name/config/init.lua"
+cp examples/themes/*.lua "$staging/$name/config/themes/"
 
 # crest.icns from the committed PNGs: each @2x is the next size up, and
 # 512@2x is the 512 one scaled with sips.
@@ -166,6 +170,8 @@ crest $version ($target)
 Installation: run ./install.sh (no sudo). It puts \`crest\` in ~/.local/bin
 and the app in the app menu (Linux) or ~/Applications (macOS);
 ./install.sh --uninstall removes it. --prefix <dir> changes ~/.local.
+It also copies config/ (a commented init.lua and the example color themes)
+into ~/.config/crest, skipping every file that is already there.
 
 Started from the app menu, the Dock or Launchpad, crest gets the PATH of
 your login shell (~/.zprofile, ~/.profile, ~/.bash_profile), not the one of

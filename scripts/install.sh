@@ -17,7 +17,10 @@
 # entry in PREFIX/share/applications (with absolute paths, so it works
 # even when PREFIX/bin is not in the desktop session's PATH) and the
 # hicolor icons. macOS: ~/Applications/crest.app and PREFIX/bin/crest
-# linked to its binary.
+# linked to its binary. Both: the tarball's config/ (a commented init.lua
+# and the example color themes) is copied into the config folder,
+# $XDG_CONFIG_HOME/crest or ~/.config/crest, file by file and only where
+# the file is missing, so what you edited is never overwritten.
 #
 # POSIX sh (it runs through `curl | sh`); tested with dash and Bash 3.2.
 
@@ -140,6 +143,39 @@ sha256_check() { # dir with <file> and <file>.sha256, file
     fi
 }
 
+# crest's config folder, as crest finds it: $XDG_CONFIG_HOME/crest when
+# it is absolute, else ~/.config/crest (also on macOS).
+config_dir() {
+    case "${XDG_CONFIG_HOME:-}" in
+        /*) printf '%s/crest\n' "$XDG_CONFIG_HOME" ;;
+        *) printf '%s/.config/crest\n' "$HOME" ;;
+    esac
+}
+
+# Copies the tarball's config/ into the config folder, never replacing a
+# file that exists. Tarballs before v0.15.0 have no config/: nothing to do.
+seed_config() { # extracted dir
+    [ -d "$1/config" ] || return 0
+    dir="$(config_dir)"
+    mkdir -p "$dir/themes"
+    added=0
+    if [ -f "$1/config/init.lua" ] && [ ! -e "$dir/init.lua" ]; then
+        cp "$1/config/init.lua" "$dir/init.lua"
+        say "created $dir/init.lua (every option commented out)"
+    fi
+    for theme in "$1"/config/themes/*.lua; do
+        [ -f "$theme" ] || continue
+        target="$dir/themes/$(basename "$theme")"
+        if [ ! -e "$target" ]; then
+            cp "$theme" "$target"
+            added=$((added + 1))
+        fi
+    done
+    if [ "$added" -gt 0 ]; then
+        say "added $added color themes to $dir/themes (pick one with /theme)"
+    fi
+}
+
 install_linux() { # extracted dir
     src="$1"
     # Checked before copying anything, so a bad tarball leaves no half install.
@@ -164,6 +200,7 @@ install_linux() { # extracted dir
     chmod 644 "$prefix/share/applications/crest.desktop"
     refresh_linux_caches
     say "installed crest to $prefix/bin/crest and the app menu ($prefix/share/applications/crest.desktop)"
+    seed_config "$src"
 }
 
 install_macos() { # extracted dir
@@ -186,6 +223,7 @@ install_macos() { # extracted dir
     [ -x "$app/Contents/MacOS/crest-bin" ] && bin="$app/Contents/MacOS/crest-bin"
     ln -sf "$bin" "$prefix/bin/crest"
     say "installed crest.app to $apps (Launchpad, Spotlight) and the command $prefix/bin/crest"
+    seed_config "$src"
 }
 
 hints() { # target

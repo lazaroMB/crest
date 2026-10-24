@@ -253,15 +253,26 @@ jobs:
           Write-Output "$($app.DisplayName) $($app.DisplayVersion) $($app.Publisher) $($app.DisplayIcon)"
           if ($app.DisplayVersion -ne "${{ steps.version.outputs.version }}") { throw "Settings > Apps shows $($app.DisplayVersion)" }
           if (-not ((User-Path) -contains $dir)) { throw "$dir is not on the user PATH" }
+          # The config seed: a commented init.lua and the themes, kept when edited.
+          $config = Join-Path $env:APPDATA "crest"
+          foreach ($seeded in "init.lua", "themes/tokyonight-night.lua") {
+            if (-not (Test-Path (Join-Path $config $seeded))) { throw "the setup did not create $seeded in $config" }
+          }
+          Set-Content (Join-Path $config "init.lua") 'app.opt.theme = "nord"'
+          ./scripts/install.ps1 -Setup $setup
+          if ((Get-Content (Join-Path $config "init.lua")) -ne 'app.opt.theme = "nord"') { throw "the setup replaced an edited init.lua" }
           ./scripts/install.ps1 -Uninstall
           foreach ($left in $exe, $shortcut, $entry) {
             if (Test-Path $left) { throw "uninstall left $left" }
           }
           if ((User-Path) -contains $dir) { throw "uninstall left $dir on the PATH" }
+          if (-not (Test-Path (Join-Path $config "init.lua"))) { throw "uninstall removed the config" }
 
+          Remove-Item -Recurse -Force $config
           $zip = Get-ChildItem dist/*.zip | Select-Object -First 1 -ExpandProperty FullName
           ./scripts/install.ps1 -Zip $zip
           & $exe --version | Out-Null
+          if (-not (Test-Path (Join-Path $config "themes/nord.lua"))) { throw "install.ps1 -Zip did not copy the themes" }
           ./scripts/install.ps1 -Uninstall
           if (Test-Path $exe) { throw "uninstall left $exe" }
 
