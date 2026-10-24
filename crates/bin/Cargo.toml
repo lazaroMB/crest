@@ -30,6 +30,7 @@ adapter-fs.workspace = true
 adapter-shell.workspace = true
 adapter-web.workspace = true
 adapter-store.workspace = true
+adapter-compute.workspace = true
 adapter-lua.workspace = true
 adapter-mcp.workspace = true
 adapter-telemetry.workspace = true

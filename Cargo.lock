@@ -1640,6 +1640,7 @@ version = "0.14.0"
 dependencies = [
  "adapter-anthropic",
  "adapter-cloudflare",
+ "adapter-compute",
  "adapter-export",
  "adapter-fs",
  "adapter-lua",
