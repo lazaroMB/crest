@@ -26,6 +26,9 @@
 //! - `Up` on the first line of the prompt brings back the line sent before
 //!   ([`history`]), and `Down` on the last line the one after, then the
 //!   text that was being written; elsewhere they move the cursor.
+//! - `Ctrl+C` ([`CANCEL_ACTION`]) copies the selected text; with none it
+//!   clears the prompt into the history (`Up` brings it back), and in an
+//!   empty prompt it asks to interrupt the turn.
 //!
 //! It looks like a terminal prompt: a `❯`, the text in the monospace font
 //! with no field around it, and a blinking block cursor ([`cursor`]).
@@ -57,7 +60,7 @@ use application::keymap::{
 };
 use gpui::canvas;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, Task, Window, div,
 };
@@ -77,7 +80,7 @@ use path_popup::{PathCompletion, PathKey, path_key};
 use tray::{ImageTray, paste_handler};
 
 use crate::help::CommandRow;
-use crate::session::ModelChoice;
+use crate::session::{INTERRUPT_ACTION, ModelChoice};
 use domain::model::ModelId;
 
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
@@ -87,11 +90,28 @@ pub const QUEUE_EDIT_ACTION: &str = "queue.edit";
 pub const FOCUS_INPUT_ACTION: &str = "focus.input";
 /// Action of `<leader>i`: switches what `Enter` does with the pasted images.
 pub const IMAGE_MODE_ACTION: &str = "image.mode";
+/// Action of `<C-c>`: copies the selection, else clears the prompt (`Up`
+/// brings it back), else asks to interrupt the turn (`turn.interrupt`).
+pub const CANCEL_ACTION: &str = "input.cancel";
 
 /// Rows of the editor before it starts scrolling.
 const MAX_ROWS: usize = 8;
 /// Rows of the command palette.
 const PALETTE_ROWS: usize = 8;
+
+/// First visible row of a scrolling popup of `len` entries with entry
+/// `selected` chosen, given the one shown so far: the window moves only
+/// to keep `selected` in it.
+fn palette_top(selected: usize, top: usize, len: usize) -> usize {
+    let top = if selected < top {
+        selected
+    } else if selected >= top + PALETTE_ROWS {
+        selected + 1 - PALETTE_ROWS
+    } else {
+        top
+    };
+    top.min(len.saturating_sub(PALETTE_ROWS))
+}
 
 /// What the input asks the rest of the UI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +137,8 @@ pub enum InputEvent {
     Action(Action),
     /// A sent line was added to the history, as typed (`/model opus`).
     Recorded(String),
+    /// `Ctrl+C` cleared the prompt; `Up` brings the text back.
+    Cleared,
     /// The `/model ` popup opened for the first time: list the models and
     /// hand them over with [`InputView::set_models`].
     ModelsWanted,
@@ -289,6 +311,8 @@ pub struct InputView {
     queued: bool,
     commands: Vec<CommandRow>,
     palette_selected: usize,
+    /// First visible row of the `/model ` popup, which scrolls.
+    palette_top: usize,
     palette_hidden: bool,
     paths: PathCompletion,
     models: ModelCompletion,
@@ -328,6 +352,7 @@ impl InputView {
         let changes = cx.subscribe(&editor, |this, _, event, cx| {
             if matches!(event, EditorEvent::Change) {
                 this.palette_selected = 0;
+                this.palette_top = 0;
                 this.palette_hidden = false;
                 let text = this.text(cx);
                 this.paths.request(&text, cx);
@@ -345,6 +370,7 @@ impl InputView {
             queued: false,
             commands: Vec::new(),
             palette_selected: 0,
+            palette_top: 0,
             palette_hidden: false,
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
@@ -598,7 +624,12 @@ impl InputView {
         }
         if let Some(popup) = self.model_popup(cx) {
             match model_key(key, &popup, self.palette_selected) {
-                ModelKey::Select(ix) => self.palette_selected = ix,
+                ModelKey::Select(ix) => {
+                    if let ModelPopup::Entries(entries) = &popup {
+                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                    }
+                    self.palette_selected = ix;
+                }
                 ModelKey::Hide => self.palette_hidden = true,
                 ModelKey::SetText(text) => self.set_text(&text, window, cx),
                 ModelKey::Run(line) => {
@@ -736,8 +767,29 @@ impl InputView {
                 .update(cx, |editor, cx| editor.insert("\n", window, cx)),
             FOCUS_INPUT_ACTION if self.owns_focus(window, cx) => self.palette_hidden = true,
             IMAGE_MODE_ACTION => self.toggle_image_mode(cx),
+            CANCEL_ACTION => self.cancel(window, cx),
             _ => cx.emit(InputEvent::Action(action)),
         }
+    }
+
+    /// `Ctrl+C`: copies the selected text, else clears the prompt into the
+    /// history (not saved with the session) so `Up` brings it back, else
+    /// asks to interrupt the turn. The images in the tray stay.
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.text(cx);
+        let selected = self.editor.read(cx).selected_range();
+        if let Some(selection) = text.get(selected).filter(|s| !s.is_empty()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(selection.to_owned()));
+            return;
+        }
+        if text.is_empty() {
+            cx.emit(InputEvent::Action(Action::builtin(INTERRUPT_ACTION)));
+            return;
+        }
+        self.history.push(&text);
+        self.editor
+            .update(cx, |editor, cx| editor.set_value("", window, cx));
+        cx.emit(InputEvent::Cleared);
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -857,9 +909,15 @@ impl Render for InputView {
             .map(|popup| path_popup::render(popup, self.palette_selected, cx));
         let models = if paths.is_none() {
             self.model_popup(cx).map(|popup| {
+                // The list may have arrived or shrunk since the last key.
+                if let ModelPopup::Entries(entries) = &popup {
+                    let selected = self.palette_selected.min(entries.len() - 1);
+                    self.palette_top = palette_top(selected, self.palette_top, entries.len());
+                }
                 model_popup::render(
                     popup,
                     self.palette_selected,
+                    self.palette_top,
                     self.current_model.as_ref(),
                     cx,
                 )
@@ -1248,6 +1306,62 @@ mod tests {
             ]
         );
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
+    }
+
+    #[gpui::test]
+    fn ctrl_c_clears_the_prompt_and_up_brings_it_back(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        let text = |cx: &mut VisualTestContext| view.read_with(cx, |view, cx| view.text(cx));
+        cx.simulate_input("a medio escribir");
+        cx.simulate_keystrokes("ctrl-c");
+        assert_eq!(text(cx), "");
+        assert_eq!(take_all(&events), [InputEvent::Cleared], "not recorded");
+        cx.simulate_keystrokes("up");
+        assert_eq!(text(cx), "a medio escribir");
+        cx.simulate_keystrokes("ctrl-c ctrl-c");
+        assert_eq!(text(cx), "");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Cleared, action("turn.interrupt")]
+        );
+    }
+
+    #[gpui::test]
+    fn ctrl_c_copies_the_selection(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        cx.simulate_input("copiame");
+        // Select all is Cmd+A on macOS (Ctrl+A goes to the line start).
+        cx.simulate_keystrokes("secondary-a ctrl-c");
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some("copiame"));
+        view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "copiame"));
+        assert!(take(&events).is_empty());
+    }
+
+    #[gpui::test]
+    fn arrows_reach_every_model_without_typing(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        let models: Vec<ModelChoice> = (0..12)
+            .map(|i| ModelChoice {
+                alias: format!("anthropic:m{i}"),
+                model: ModelId::new(format!("anthropic:m{i}")),
+            })
+            .collect();
+        view.update(cx, |view, cx| view.set_models(Ok(models), cx));
+        cx.simulate_input("/model ");
+        cx.simulate_keystrokes(&["down"; 11].join(" "));
+        view.read_with(cx, |view, _| assert_eq!(view.palette_top, 4, "scrolled"));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Command("model set anthropic:m11".into())]
+        );
+        cx.simulate_input("/model ");
+        cx.simulate_keystrokes("up enter");
+        assert_eq!(
+            take(&events),
+            [InputEvent::Command("model set anthropic:m11".into())]
+        );
     }
 
     #[gpui::test]

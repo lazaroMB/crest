@@ -299,7 +299,10 @@ const WELCOME_KEYS: &[(&str, &str)] = &[
     ),
     ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
     ("Esc", "back to the prompt"),
-    ("Ctrl+C", "interrupt the running turn or command"),
+    (
+        "Ctrl+C",
+        "copy the selection, clear the prompt, or interrupt",
+    ),
 ];
 
 /// The empty timeline: the crest mark and the keys to start with.

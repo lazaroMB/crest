@@ -36,7 +36,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
 
 ### Typing, commands and shortcuts
 
@@ -86,7 +86,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
-| `Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command. Also works while a picker or a dialog is open. |
+| `Ctrl+C` | `input.cancel` | In order: copies the text selected in the prompt; clears the prompt (`Up` brings the text back); interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. While a picker or a dialog is open it only interrupts. |
 | `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
 
 You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetkeys-action)). A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning.
@@ -314,7 +314,7 @@ The board is black with graphite chips: the top of each chip glows with the colo
 The bar shows the accumulated cost of the session:
 
 - `$0.00` before the first reply;
-- `$?` if the model used has no configured price; crest ships no prices, so this is the usual value until you set `app.opt.pricing`;
+- the session's tokens (`48.2k tok`) if the model used has no configured price, with a notice the first time naming the model; crest ships no prices, so this is the usual value until you set `app.opt.pricing`;
 - otherwise the amount, with 4 decimals below 1 USD and 2 from then on.
 
 See [configuration.md](configuration.md#cost-and-spending-cap).

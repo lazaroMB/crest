@@ -241,7 +241,7 @@ fn wire_input(
             }
         }
         // The example keeps no sessions.
-        InputEvent::Recorded(_) | InputEvent::ModelsWanted => {}
+        InputEvent::Recorded(_) | InputEvent::ModelsWanted | InputEvent::Cleared => {}
     })
     .detach();
 }

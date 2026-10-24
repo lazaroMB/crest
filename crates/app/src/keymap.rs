@@ -570,8 +570,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("<Esc>", "focus.input", "Go back to the prompt"),
     (
         "<C-c>",
-        "turn.interrupt",
-        "Interrupt the running turn or command",
+        "input.cancel",
+        "Copy the selection, clear the prompt, or interrupt the turn",
     ),
     ("<F1>", "help.open", "Open the help"),
     ("<leader>h", "help.open", "Open the help"),
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(get("<C-g>k"), b("block.prev"));
         assert_eq!(get("<C-g>gg"), b("block.first"));
         assert_eq!(get("<C-g>G"), b("block.last"));
-        assert_eq!(get("<C-c>"), b("turn.interrupt"));
+        assert_eq!(get("<C-c>"), b("input.cancel"));
         assert_eq!(get("<F1>"), b("help.open"));
     }
 

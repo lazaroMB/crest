@@ -16,6 +16,9 @@ use crest::telemetry::Telemetry;
 use crest::{gui, headless};
 
 fn main() -> ExitCode {
+    // Opened from the Dock or Launchpad, crest.app restarts through the
+    // login shell to get its PATH; nothing elsewhere.
+    platform::login_shell::reexec_from_app();
     // Both do nothing outside Windows.
     let _ = platform::console::attach_parent_console();
     let _ = platform::console::enable_ansi();

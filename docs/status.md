@@ -10,7 +10,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - macOS has not been tested on a real machine: CI builds and tests there, but nobody has used the window on a Mac.
 - Windows has only been built and tested in CI: nobody has used the window on a Windows machine. Tests that need symlinks or POSIX tools run on Unix only. On Windows a command's child processes are killed with `taskkill /T` while the command is alive; children left behind after it exits are not (Unix kills its whole process group).
 - The decision model (Cloudflare Clef) has only been tested against a mock server, not with a real token.
-- The installer (`scripts/install.sh`) is tested on a temporary prefix with a fake binary on Linux and macOS (CI), but `crest.app` has not been opened on a real Mac, and the app is neither signed nor notarized (the installer removes the quarantine).
+- The installer (`scripts/install.sh`) is tested on a temporary prefix with a fake binary on Linux and macOS (CI), but `crest.app` has not been opened on a real Mac. Signing (Developer ID + notarization; SignPath on Windows), the Homebrew tap and winget are wired in `release.yml` but have not run yet: they need the repository secrets. Windows stays unsigned until SignPath accepts the project (it asks for proof of reputation), so a setup downloaded with a browser gets a SmartScreen warning; winget and `install.ps1` do not. crest.app now re-executes itself through the login shell (`platform::login_shell`) instead of a launcher script; not tried on a Mac.
 - Reading the API key or plugin secrets from the system keyring has not been tested (the tests use the environment fallback).
 - The rtk integration (`app.opt.rtk`) has only been tested with a fake `rtk` script that follows the `rtk rewrite` exit-code contract, not with the real binary.
 - The privacy layer works by patterns: it catches well-known key formats and validated personal data, not every secret (a password with only letters, a custom token format). Add `app.opt.privacy.patterns` for your own formats.
@@ -20,7 +20,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - `Ctrl+C` stops a running workflow step in the window; the workflow stays saved at its last checkpoint and `/research resume` or `/implement resume` runs the step again. In headless mode it kills the process (the same resume applies).
 - At workflow gates, an empty line counts as an approval (`yes` / `continue`). In the implementation workflow that can commit with failing criteria or close the workflow.
 - In the implementation workflow, only `edit_file` and `write_file` are restricted to the task's files: `run_command` can touch others (although the commit only includes the task's files).
-- crest ships no model prices: until you set `app.opt.pricing`, the cost shows as `$?`. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
+- crest ships no model prices: until you set `app.opt.pricing`, the cost segment shows the session's tokens (`48.2k tok`) instead. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
 
 ## Not available yet
 
@@ -33,4 +33,4 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - Simulation (MVP): flat state machines, FIFO queues and timers as self-messages; no latency percentiles, load generators, fault toggles in the board, GIF/video export or re-simulation inside `board.html` yet, and the board has only a dark theme. See [docs/research/solution-simulator.md](research/solution-simulator.md).
 - Modals draw images, documents, tables, diagrams and 3D models (OBJ, STL, PLY, geometry only) natively, but cannot embed web pages (links open the browser), PDFs or a terminal yet; images larger than the GPU's texture limit (often 8192 or 16384 px) fail to draw. See [docs/research/rich-content-modals.md](research/rich-content-modals.md) for the roadmap.
 - Langfuse export requires building with `--features langfuse`; the `make release` binaries do not include it.
-- The macOS binaries from `release.yml` are not signed or notarized, and the Windows `crest.exe` is not signed (SmartScreen may warn).
+- No native installers on macOS and Linux (.dmg, .deb, AppImage) and no in-app updates: `brew upgrade`, `winget upgrade` or the install script again. See [docs/research/installation.md](research/installation.md).

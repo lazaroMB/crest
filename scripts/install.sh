@@ -60,6 +60,7 @@ detect_target() {
     arch="${CREST_INSTALL_UNAME_M:-$(uname -m)}"
     case "$os/$arch" in
         Linux/x86_64 | Linux/amd64) echo x86_64-unknown-linux-gnu ;;
+        Linux/aarch64 | Linux/arm64) echo aarch64-unknown-linux-gnu ;;
         Darwin/arm64 | Darwin/aarch64) echo aarch64-apple-darwin ;;
         Darwin/x86_64) echo x86_64-apple-darwin ;;
         *) return 1 ;;
@@ -173,11 +174,17 @@ install_macos() { # extracted dir
     app="$apps/$APP_NAME.app"
     rm -rf "$app"
     cp -R "$src/crest.app" "$app"
+    # Releases from v0.14.0 on are signed and notarized, and a download by
+    # curl is not quarantined anyway; this is for older, unsigned ones.
     if command -v xattr >/dev/null 2>&1; then
         xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
     fi
     lsregister -f "$app"
-    ln -sf "$app/Contents/MacOS/crest-bin" "$prefix/bin/crest"
+    # Before v0.14.0 the app's executable was a launcher script next to
+    # crest-bin; now it is the binary itself.
+    bin="$app/Contents/MacOS/crest"
+    [ -x "$app/Contents/MacOS/crest-bin" ] && bin="$app/Contents/MacOS/crest-bin"
+    ln -sf "$bin" "$prefix/bin/crest"
     say "installed crest.app to $apps (Launchpad, Spotlight) and the command $prefix/bin/crest"
 }
 
@@ -204,7 +211,7 @@ hints() { # target
 }
 
 main() {
-    target=$(detect_target) || die "no crest build for $(uname -s) $(uname -m) (Linux x86_64 and macOS only)"
+    target=$(detect_target) || die "no crest build for $(uname -s) $(uname -m) (Linux x86_64 or aarch64 and macOS only)"
     if [ "$uninstall" = 1 ]; then
         do_uninstall "$target"
         return

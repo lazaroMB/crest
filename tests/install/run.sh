@@ -36,7 +36,7 @@ trap 'rm -rf "$TMP"' EXIT
 # The fake crest prints its arguments and a variable only the fake login
 # shell sets.
 export CARGO_TARGET_DIR="$TMP/target"
-for target in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin; do
     mkdir -p "$CARGO_TARGET_DIR/$target/release"
     printf '#!/bin/sh\necho "args:$*"\necho "marker:${CREST_TEST_MARKER:-none}"\n' \
         >"$CARGO_TARGET_DIR/$target/release/crest"
@@ -106,10 +106,10 @@ check "no icons left" eq "$(find "$P/share/icons" -name 'crest.*' | wc -l | tr -
 # --- macOS -----------------------------------------------------------------
 mac_tar=$(package aarch64-apple-darwin)
 listing=$(tar -tzf "$mac_tar")
-for f in install.sh crest.app/Contents/Info.plist crest.app/Contents/MacOS/crest \
-    crest.app/Contents/MacOS/crest-bin; do
+for f in install.sh crest.app/Contents/Info.plist crest.app/Contents/MacOS/crest; do
     check "mac tarball has $f" contains "$listing" "crest-0.0.0-aarch64-apple-darwin/$f"
 done
+check "mac tarball has no launcher script" not contains "$listing" "crest-bin" 2>/dev/null
 check "mac tarball has no loose binary" not grep -qx "crest-0.0.0-aarch64-apple-darwin/crest" <<<"$listing"
 
 M="$TMP/mac/.local"
@@ -130,10 +130,9 @@ fi
 if command -v iconutil >/dev/null 2>&1; then
     check "icns" test -s "$app/Resources/crest.icns"
 fi
-check "command links into the app" eq "$(readlink "$M/bin/crest")" "$app/MacOS/crest-bin"
-out=$(SHELL="$TMP/shell/zsh" "$app/MacOS/crest" --pick)
-check "app launcher passes the arguments" contains "$out" "args:--pick"
-check "app launcher uses the login shell" contains "$out" "marker:login"
+check "command links into the app" eq "$(readlink "$M/bin/crest")" "$app/MacOS/crest"
+out=$("$app/MacOS/crest" --pick)
+check "the app runs the binary" contains "$out" "args:--pick"
 check "mac uninstall" mac --uninstall --prefix "$M" >/dev/null 2>&1
 check "no app left" not test -e "$APPS/crest.app"
 check "no link left" not test -L "$M/bin/crest"
@@ -147,10 +146,13 @@ check "an old tarball is refused" contains "$err" "releases before v0.8.0"
 check "and leaves nothing behind" not test -e "$TMP/old/.local/bin/crest"
 
 # --- Platforms -------------------------------------------------------------
-check "linux arm64 is refused" not env CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=aarch64 \
-    sh "$INSTALL" --tarball /nonexistent >/dev/null 2>&1
+arm_tar=$(package aarch64-unknown-linux-gnu)
+A="$TMP/arm/.local"
+check "linux aarch64 install" env HOME="$TMP/arm" CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=aarch64 \
+    sh "$INSTALL" --tarball "$arm_tar" --prefix "$A" >/dev/null 2>&1
+check "linux aarch64 binary" test -x "$A/bin/crest"
 err=$(CREST_INSTALL_UNAME_S=FreeBSD CREST_INSTALL_UNAME_M=amd64 sh "$INSTALL" 2>&1)
-check "unsupported platforms say so" contains "$err" "Linux x86_64 and macOS only"
+check "unsupported platforms say so" contains "$err" "Linux x86_64 or aarch64 and macOS only"
 check "a missing tarball is an error" not env CREST_INSTALL_UNAME_S=Linux CREST_INSTALL_UNAME_M=x86_64 \
     HOME="$TMP/linux" sh "$INSTALL" --tarball "$TMP/none.tar.gz" --prefix "$P" >/dev/null 2>&1
 

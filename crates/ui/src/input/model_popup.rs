@@ -4,6 +4,10 @@
 //! it the models once it has listed them ([`ModelCompletion::set`]); the
 //! [`InputView`] feeds it the text and the keys and applies the result.
 //!
+//! It shows [`PALETTE_ROWS`] models at a time: `Up`/`Down` walk all the
+//! matches (wrapping around) and the list scrolls to keep the chosen one
+//! in view, so no model needs typing to be reached.
+//!
 //! `Enter` saves the chosen model (`/model set <id>`), `Tab` completes the
 //! line to it, and `Esc` hides the popup, after which `Enter` sends the line
 //! as typed (`/model opus`: the model of the next turn only).
@@ -158,7 +162,7 @@ pub fn model_key(key: &application::keymap::Key, popup: &ModelPopup, selected: u
         ModelPopup::Message(_) if key.code == KeyCode::Esc => return ModelKey::Hide,
         ModelPopup::Message(_) => return ModelKey::Ignored,
     };
-    let len = entries.len().min(PALETTE_ROWS);
+    let len = entries.len();
     let selected = selected.min(len - 1);
     let id = entries[selected].model.as_str();
     match key.code {
@@ -171,23 +175,28 @@ pub fn model_key(key: &application::keymap::Key, popup: &ModelPopup, selected: u
     }
 }
 
-/// Draws `popup` with entry `selected` highlighted; `current` is the model
-/// the next turn uses, marked in the list.
+/// Draws `popup` from entry `top` on, with entry `selected` highlighted;
+/// `current` is the model the next turn uses, marked in the list.
 pub fn render(
     popup: ModelPopup,
     selected: usize,
+    top: usize,
     current: Option<&ModelId>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (rows, more) = match popup {
+    let (rows, position) = match popup {
         ModelPopup::Entries(entries) => {
-            let selected = selected.min(entries.len().min(PALETTE_ROWS) - 1);
-            let more = entries.len().saturating_sub(PALETTE_ROWS);
+            let total = entries.len();
+            let selected = selected.min(total - 1);
+            let shown = PALETTE_ROWS.min(total - top);
+            let position = (total > PALETTE_ROWS)
+                .then(|| format!(" · {}–{} of {total}", top + 1, top + shown));
             let rows: Vec<_> = entries
                 .into_iter()
-                .take(PALETTE_ROWS)
                 .enumerate()
+                .skip(top)
+                .take(PALETTE_ROWS)
                 .map(|(ix, choice)| {
                     let marker = if current == Some(&choice.model) {
                         "●"
@@ -226,7 +235,7 @@ pub fn render(
                     row.into_any_element()
                 })
                 .collect();
-            (rows, more)
+            (rows, position)
         }
         ModelPopup::Message(message) => (
             vec![
@@ -236,14 +245,14 @@ pub fn render(
                     .child(SharedString::from(message))
                     .into_any_element(),
             ],
-            0,
+            None,
         ),
     };
     let mut footer =
         "↑↓ choose · Enter save as your model · Tab complete · Esc hide (Enter: next turn only)"
             .to_owned();
-    if more > 0 {
-        footer.push_str(&format!(" · {more} more, keep typing"));
+    if let Some(position) = position {
+        footer.push_str(&position);
     }
     v_flex()
         .id("model-palette")
@@ -349,5 +358,42 @@ mod tests {
             ModelKey::Ignored
         );
         assert_eq!(model_key(&key(KeyCode::Esc), &message, 0), ModelKey::Hide);
+    }
+
+    #[test]
+    fn arrows_walk_past_the_visible_rows_and_wrap() {
+        let ids: Vec<String> = (0..12).map(|i| format!("anthropic:m{i}")).collect();
+        let popup = ModelPopup::Entries(ids.iter().map(|id| choice(id)).collect());
+        let key = |code| Key::plain(code);
+        assert_eq!(
+            model_key(&key(KeyCode::Down), &popup, 7),
+            ModelKey::Select(8)
+        );
+        assert_eq!(
+            model_key(&key(KeyCode::Down), &popup, 11),
+            ModelKey::Select(0)
+        );
+        assert_eq!(
+            model_key(&key(KeyCode::Up), &popup, 0),
+            ModelKey::Select(11)
+        );
+        assert_eq!(
+            model_key(&key(KeyCode::Enter), &popup, 10),
+            ModelKey::Run("model set anthropic:m10".into())
+        );
+    }
+
+    #[test]
+    fn the_window_moves_only_to_keep_the_choice_in_view() {
+        use super::super::palette_top;
+        assert_eq!(palette_top(3, 0, 12), 0, "inside the window");
+        assert_eq!(palette_top(8, 0, 12), 1, "down past the bottom");
+        assert_eq!(palette_top(9, 1, 12), 2);
+        assert_eq!(palette_top(4, 2, 12), 2, "up inside the window");
+        assert_eq!(palette_top(1, 2, 12), 1, "up past the top");
+        assert_eq!(palette_top(11, 0, 12), 4, "wrapped to the last");
+        assert_eq!(palette_top(0, 4, 12), 0, "wrapped to the first");
+        assert_eq!(palette_top(2, 0, 5), 0, "fewer than the rows");
+        assert_eq!(palette_top(3, 4, 10), 2, "a shrunken list fills the window");
     }
 }

@@ -37,6 +37,20 @@ pub fn format_cost(usd: f64) -> String {
     format!("${text}")
 }
 
+/// Formats a token count for the cost segment of a model without a price:
+/// `512 tok`, `48.2k tok`, `1.3M tok`.
+pub fn format_tokens(tokens: u64) -> String {
+    #[allow(clippy::cast_precision_loss)] // A rounded count is shown.
+    let n = tokens as f64;
+    if tokens < 1_000 {
+        format!("{tokens} tok")
+    } else if tokens < 1_000_000 {
+        format!("{:.1}k tok", n / 1e3)
+    } else {
+        format!("{:.1}M tok", n / 1e6)
+    }
+}
+
 /// A message shown for a while in the status bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notice {
@@ -57,6 +71,9 @@ pub struct StatusState {
     git: Option<GitStatus>,
     cost_usd: Option<f64>,
     session_usage: Option<Usage>,
+    /// The last model warned about having no price, so the notice comes
+    /// once per model.
+    unpriced: Option<ModelId>,
     busy: bool,
     notice: Option<Notice>,
 }
@@ -72,6 +89,7 @@ impl StatusState {
             git: None,
             cost_usd: None,
             session_usage: None,
+            unpriced: None,
             busy: false,
             notice: None,
         }
@@ -160,6 +178,14 @@ impl StatusState {
                 self.session_usage = Some(*session);
                 if cost_usd.is_some() {
                     self.cost_usd = *cost_usd;
+                } else if self.model.is_some() && self.unpriced != self.model {
+                    self.unpriced.clone_from(&self.model);
+                    let model = self.model.as_ref().map_or("", ModelId::as_str);
+                    self.show(
+                        NoticeLevel::Info,
+                        format!("no price for {model}; set app.opt.pricing in init.lua"),
+                        now,
+                    );
                 }
             }
             DomainEvent::Notice { level, message } => self.show(*level, message.clone(), now),
@@ -192,12 +218,17 @@ impl StatusState {
         });
     }
 
-    /// Cost label: the session cost, `$0.00` before any usage and `$?`
-    /// when usage arrived without pricing.
+    /// Cost label: the session cost, `$0.00` before any usage and the
+    /// session's tokens when usage arrived without pricing.
     pub fn cost_label(&self) -> String {
         match (self.cost_usd, self.session_usage) {
             (Some(cost), _) => format_cost(cost),
-            (None, Some(_)) => "$?".to_owned(),
+            (None, Some(usage)) => format_tokens(
+                usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_input_tokens
+                    + usage.cache_creation_input_tokens,
+            ),
             (None, None) => format_cost(0.0),
         }
     }
@@ -401,14 +432,53 @@ mod tests {
     }
 
     #[test]
-    fn usage_without_pricing_keeps_last_cost() {
+    fn tokens_are_compact() {
+        assert_eq!(format_tokens(0), "0 tok");
+        assert_eq!(format_tokens(512), "512 tok");
+        assert_eq!(format_tokens(48_230), "48.2k tok");
+        assert_eq!(format_tokens(1_250_000), "1.2M tok");
+    }
+
+    #[test]
+    fn usage_without_pricing_shows_tokens_and_keeps_last_cost() {
         let now = Instant::now();
         let mut state = StatusState::new("w");
-        state.apply(&usage(None), now);
-        assert_eq!(state.cost_label(), "$?");
+        state.apply(
+            &DomainEvent::UsageUpdated {
+                turn: Usage::default(),
+                session: Usage {
+                    input_tokens: 40_000,
+                    output_tokens: 2_000,
+                    cache_read_input_tokens: 6_000,
+                    cache_creation_input_tokens: 230,
+                },
+                cost_usd: None,
+            },
+            now,
+        );
+        assert_eq!(state.cost_label(), "48.2k tok");
         state.apply(&usage(Some(0.5)), now);
         state.apply(&usage(None), now);
         assert_eq!(state.cost_label(), "$0.50");
+    }
+
+    #[test]
+    fn a_model_without_price_is_noticed_once() {
+        let now = Instant::now();
+        let mut state = StatusState::new("w");
+        state.apply(&started("opencode-zen:glm-5.3"), now);
+        state.apply(&usage(None), now);
+        let notice = state.notice(now).map(|n| n.message.clone());
+        assert_eq!(
+            notice.as_deref(),
+            Some("no price for opencode-zen:glm-5.3; set app.opt.pricing in init.lua")
+        );
+        let later = now + NOTICE_TTL * 2;
+        state.apply(&usage(None), later);
+        assert!(state.notice(later).is_none(), "once per model");
+        state.apply(&started("anthropic:claude-fable-5"), later);
+        state.apply(&usage(None), later);
+        assert!(state.notice(later).is_some(), "again for another model");
     }
 
     #[test]

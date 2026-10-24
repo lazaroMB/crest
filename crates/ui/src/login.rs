@@ -1,5 +1,5 @@
 //! The `/login` dialog: a masked field for the API key of one account
-//! (Anthropic or OpenCode); `Tab` switches the account.
+//! (Anthropic or OpenCode); `Tab` or a click on its tab switches the account.
 //!
 //! The key goes straight from this field to the controller
 //! ([`SessionController::login`](crate::session::SessionController::login)):
@@ -12,7 +12,8 @@ use domain::model::Account;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -169,6 +170,16 @@ impl LoginView {
             .update(cx, |input, cx| input.set_value(key, window, cx));
     }
 
+    /// A click on the tab of `account`: ask for its key, keeping the field
+    /// focused so the key can be pasted right away.
+    fn switch_to(&mut self, account: Account, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open || self.busy {
+            return;
+        }
+        self.set_account(account, window, cx);
+        self.focus(window, cx);
+    }
+
     fn on_keystroke(
         &mut self,
         event: &KeystrokeEvent,
@@ -231,6 +242,12 @@ impl Render for LoginView {
             .child(h_flex().gap_3().children(Account::ALL.map(|account| {
                 let active = account == self.account;
                 div()
+                    .id(account.as_str())
+                    .debug_selector(move || format!("login-tab-{account}"))
+                    .when(!self.busy, |tab| tab.cursor_pointer())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.switch_to(account, window, cx);
+                    }))
                     .font_weight(if active {
                         gpui::FontWeight::BOLD
                     } else {
@@ -263,11 +280,9 @@ impl Render for LoginView {
         if let Some((text, color)) = status {
             card = card.child(div().text_color(color).child(text));
         }
-        card = card.child(
-            div()
-                .text_color(theme.muted_foreground)
-                .child("Enter saves · Tab switches account · Esc closes · /logout deletes it"),
-        );
+        card = card.child(div().text_color(theme.muted_foreground).child(
+            "Enter saves · Tab or click switches account · Esc closes · /logout deletes it",
+        ));
         div()
             .id("login")
             .track_focus(&self.focus_handle)

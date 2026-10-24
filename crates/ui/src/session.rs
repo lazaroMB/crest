@@ -16,8 +16,10 @@
 //! the input stays usable, the [`ActivityView`] above it lists what waits,
 //! and the prompts are sent one by one once the session is free. `Up` in an
 //! empty prompt takes the last queued one back to edit it. `Ctrl+C`
-//! (`turn.interrupt`, wherever the focus is) cancels the [`CancelToken`] of
-//! the running turn, or asks the controller to stop the running commands
+//! (`input.cancel`, wherever the focus is) copies the prompt's selection,
+//! or else clears the prompt (`Up` brings it back); in an empty prompt it
+//! is `turn.interrupt`, which cancels the [`CancelToken`] of the running
+//! turn, or asks the controller to stop the running commands
 //! ([`SessionController::interrupt_commands`]), and drops the queue.
 //!
 //! While busy, the activity line says what goes on (spinner, stage, tool,
@@ -1422,6 +1424,9 @@ impl Session {
             InputEvent::Action(action) => self.action(action, window, cx),
             InputEvent::Recorded(line) => self.controller.record_prompt(line.clone()),
             InputEvent::ModelsWanted => self.load_catalog(window, cx),
+            InputEvent::Cleared => {
+                self.notice(NoticeLevel::Info, "prompt cleared · ↑ restores", cx)
+            }
         }
     }
 
@@ -1456,7 +1461,7 @@ impl Session {
         match name {
             INTERRUPT_ACTION => {
                 if !self.interrupt(cx) {
-                    self.notice(NoticeLevel::Info, "no turn is running", cx);
+                    self.notice(NoticeLevel::Info, "nothing to interrupt", cx);
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
@@ -2015,6 +2020,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn login_tabs_switch_the_account_on_click(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/login", cx);
+        cx.run_until_parked();
+        let login = login_view(&h, cx);
+        assert_eq!(login.read_with(cx, |l, _| l.account()), Account::Anthropic);
+
+        let tab = cx
+            .debug_bounds("login-tab-opencode")
+            .expect("OpenCode tab drawn");
+        cx.simulate_click(tab.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(login.read_with(cx, |l, _| l.account()), Account::OpenCode);
+
+        cx.simulate_input("oc-typed");
+        cx.run_until_parked();
+        login.update(cx, |l, cx| l.submit(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            *h.logins.lock().unwrap(),
+            ["oc-typed"],
+            "the field kept the focus"
+        );
+    }
+
+    #[gpui::test]
     fn logout_reopens_and_esc_closes_the_dialog(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         send("/logout", cx);
@@ -2104,6 +2135,18 @@ mod tests {
         });
         h.session
             .read_with(cx, |s, _| assert!(s.is_running(), "the model hangs"));
+
+        cx.simulate_input("borrador");
+        cx.simulate_keystrokes("ctrl-c");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(
+                s.input().read(cx).text(cx),
+                "",
+                "the first clears the prompt"
+            );
+            assert!(s.is_running(), "and leaves the turn alone");
+        });
 
         cx.simulate_keystrokes("ctrl-c");
         wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());

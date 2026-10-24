@@ -23,6 +23,14 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 > [!WARNING]
 > **crest is a work in progress.** It is usable day to day, but it is young: expect rough edges, missing features and breaking changes between releases. Some parts have only been tested with mocks (see [what is verified](docs/status.md)). Feedback and bug reports are very welcome.
 
+**Contents**
+
+- [Why crest](#why-crest)
+- Features: [a timeline, not a transcript](#a-timeline-not-a-transcript) · [from a problem to a reviewed commit](#from-a-problem-to-a-reviewed-commit) · [you approve every change](#you-approve-every-change) · [simulate before you build](#simulate-before-you-build) · [open anything](#open-anything) · [smart routing, smaller bills](#smart-routing-smaller-bills) · [make it yours](#make-it-yours) · [everything in one place](#everything-in-one-place)
+- [Claude and OpenCode](#claude-and-opencode): [Claude](#claude) · [OpenCode](#opencode) · [both at once](#both-at-once)
+- [Install](#install) · [Quick start](#quick-start) · [Documentation](#documentation)
+- [Built with](#built-with) · [Vision and roadmap](#vision-and-roadmap) · [Status and license](#status-and-license)
+
 ## Why crest
 
 <table>
@@ -170,21 +178,37 @@ app.models.roles = {
 
 ## Install
 
-**One line** (Linux x86_64, macOS Apple Silicon or Intel; no sudo):
+**macOS** (11 or newer, Apple Silicon or Intel), with [Homebrew](https://brew.sh):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
+brew install --cask lazaromb/tap/crest
 ```
 
-It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.13.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
+It installs `crest.app` in `/Applications`, the `crest` command, and `rg` and `fzf`. `brew upgrade` updates it. The app is signed and notarized by Apple.
 
-**Windows** (10 1809 or newer, x86_64; no administrator rights), in PowerShell:
+**Windows** (10 1809 or newer, x86_64; no administrator rights):
+
+```powershell
+winget install LazaroMB.Crest
+```
+
+Or, without winget, in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
 ```
 
-It installs `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, adds it to your user `PATH` and to the Start menu; `install.ps1 -Uninstall` removes it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). The Windows build is new and has only been tested in CI: reports are welcome.
+Both install crest as an app: `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, an entry in the Start menu and in Settings > Apps (uninstall it there, or with `install.ps1 -Uninstall`), and the `crest` command on your user `PATH`. `winget upgrade` or the same command again updates it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`).
+
+You can also download `crest-<version>-x86_64-pc-windows-msvc-setup.exe` from the [latest release](https://github.com/lazaroMB/crest/releases/latest) and run it. crest is not code-signed yet, so Windows SmartScreen warns about a setup downloaded with a browser: choose **More info → Run anyway**. (winget and the PowerShell command do not trigger it.) The Windows build is new and has only been tested in CI: reports are welcome.
+
+**Linux** (x86_64 or aarch64, glibc 2.35+; no sudo), and macOS without Homebrew:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
+```
+
+It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.13.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
