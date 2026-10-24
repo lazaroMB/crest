@@ -2,6 +2,7 @@
 
 pub mod budget;
 pub mod components;
+pub mod compute;
 pub mod files;
 pub mod mcp;
 pub mod plugin;

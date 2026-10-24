@@ -3,6 +3,7 @@
 pub mod approval;
 pub mod cancel;
 pub mod compact;
+pub mod compute;
 pub mod evidence;
 pub mod git_status;
 pub mod login;

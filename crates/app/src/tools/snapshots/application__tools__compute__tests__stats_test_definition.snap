@@ -1,0 +1,256 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsTestTool::new(ports.clone()))"
+---
+{
+  "name": "stats_test",
+  "description": "Runs a hypothesis test with crest's deterministic engine: Welch, Student, paired or one-sample t, Mann-Whitney, Wilcoxon, χ² or Fisher's exact test. With `test: auto` the engine picks the test from the data and its assumption checks (normality, equal variances, expected counts) and says why. Shapes: numeric `y` split by a two-level `group`; `y` and `y2` (with `paired` for repeated measures); `y` alone against `mu`; two categorical columns `y` and `group`, or a count `table`, for χ²/Fisher. The user sees a card with assumptions, effect size and the APA line; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "test": {
+        "$ref": "#/$defs/TestChoice",
+        "description": "The test; `auto` chooses one.",
+        "default": "auto"
+      },
+      "y": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Outcome column (numeric), or the row variable of a contingency\ntable (categorical)."
+      },
+      "group": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Grouping column with two levels, or the column variable of a\ncontingency table."
+      },
+      "y2": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Second numeric column: the other sample, or the second measurement\nwhen paired."
+      },
+      "paired": {
+        "type": "boolean",
+        "description": "Whether `y` and `y2` are paired measurements of the same units.",
+        "default": false
+      },
+      "levels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Order of the two groups (first − second); sorted levels when empty."
+      },
+      "mu": {
+        "type": "number",
+        "format": "double",
+        "description": "Null value of the mean (one-sample) or mean difference (paired).",
+        "default": 0.0
+      },
+      "table": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "description": "Counts of a contingency table, rows × columns."
+      },
+      "alternative": {
+        "$ref": "#/$defs/Alternative",
+        "description": "Direction of the alternative hypothesis.",
+        "default": "two_sided"
+      },
+      "conf_level": {
+        "type": "number",
+        "format": "double",
+        "description": "Confidence level of the intervals (default 0.95).",
+        "default": 0.95
+      },
+      "correct": {
+        "type": "boolean",
+        "description": "Continuity correction for the normal approximations of the rank\ntests and for χ² on 2×2 tables (default true, as in R).",
+        "default": true
+      },
+      "exact": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "description": "Exact p-values for the rank tests; by default exact when n < 50 and\nthere are no ties (R's rule)."
+      }
+    },
+    "description": "Input of `test`: one hypothesis test.\n\nShapes:\n- two groups: numeric `y` split by a two-level `group` column, or two\n  numeric columns `y` and `y2`;\n- paired: `y` and `y2` with `paired = true` (or `test = paired_t`);\n- one sample: `y` alone, against `mu`;\n- contingency (χ², Fisher): two categorical columns `y` and `group`, or\n  the counts in `table`.",
+    "title": "TestRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "Alternative": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "two_sided",
+            "description": "Different in either direction."
+          },
+          {
+            "type": "string",
+            "const": "less",
+            "description": "First less than second."
+          },
+          {
+            "type": "string",
+            "const": "greater",
+            "description": "First greater than second."
+          }
+        ],
+        "description": "Alternative hypothesis."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      },
+      "TestChoice": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "auto",
+            "description": "Let the engine choose from the data and the assumption checks, and\nsay why in `method.why`."
+          },
+          {
+            "type": "string",
+            "const": "welch_t",
+            "description": "Welch two-sample t-test."
+          },
+          {
+            "type": "string",
+            "const": "student_t",
+            "description": "Student two-sample t-test (equal variances)."
+          },
+          {
+            "type": "string",
+            "const": "paired_t",
+            "description": "Paired t-test."
+          },
+          {
+            "type": "string",
+            "const": "one_sample_t",
+            "description": "One-sample t-test against `mu`."
+          },
+          {
+            "type": "string",
+            "const": "mann_whitney",
+            "description": "Mann-Whitney U (Wilcoxon rank-sum)."
+          },
+          {
+            "type": "string",
+            "const": "wilcoxon",
+            "description": "Wilcoxon signed-rank (one sample or paired)."
+          },
+          {
+            "type": "string",
+            "const": "chi_square",
+            "description": "Pearson χ² test of independence."
+          },
+          {
+            "type": "string",
+            "const": "fisher",
+            "description": "Fisher's exact test (2×2)."
+          }
+        ],
+        "description": "Which hypothesis test to run."
+      }
+    }
+  }
+}
