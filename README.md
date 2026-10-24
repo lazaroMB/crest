@@ -23,6 +23,14 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 > [!WARNING]
 > **crest is a work in progress.** It is usable day to day, but it is young: expect rough edges, missing features and breaking changes between releases. Some parts have only been tested with mocks (see [what is verified](docs/status.md)). Feedback and bug reports are very welcome.
 
+**Contents**
+
+- [Why crest](#why-crest)
+- Features: [a timeline, not a transcript](#a-timeline-not-a-transcript) · [from a problem to a reviewed commit](#from-a-problem-to-a-reviewed-commit) · [you approve every change](#you-approve-every-change) · [simulate before you build](#simulate-before-you-build) · [open anything](#open-anything) · [smart routing, smaller bills](#smart-routing-smaller-bills) · [make it yours](#make-it-yours) · [everything in one place](#everything-in-one-place)
+- [Claude and OpenCode](#claude-and-opencode): [Claude](#claude) · [OpenCode](#opencode) · [both at once](#both-at-once)
+- [Install](#install) · [Quick start](#quick-start) · [Documentation](#documentation)
+- [Built with](#built-with) · [Vision and roadmap](#vision-and-roadmap) · [Status and license](#status-and-license)
+
 ## Why crest
 
 <table>
