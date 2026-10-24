@@ -284,6 +284,9 @@ pub struct LoadedConfig {
     /// entry per file that declared any; inactive until granted with
     /// [`PluginHostPort::grant_capabilities`].
     pub plugin_capabilities: Vec<PluginCapabilities>,
+    /// Themes defined with `app.theme.define{...}`, as JSON tables, in
+    /// load order (a later one with the same name wins).
+    pub themes: Vec<Value>,
     /// Problems found while loading; empty when everything loaded.
     pub errors: Vec<PluginDiagnostic>,
 }
