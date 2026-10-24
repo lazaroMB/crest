@@ -32,6 +32,14 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::StageHeader { .. } => "stage_header",
         BlockKind::Shell { .. } => "shell",
         BlockKind::Error { .. } => "error",
+        BlockKind::Computed { .. } => "computed",
+        BlockKind::Form(_) => "form",
+        BlockKind::Plot(_) => "plot",
+        BlockKind::TestReport(_) => "test_report",
+        BlockKind::Findings(_) => "findings",
+        BlockKind::Dataset(_) => "dataset",
+        BlockKind::Molecule(_) => "molecule",
+        BlockKind::Plate(_) => "plate",
     }
 }
 

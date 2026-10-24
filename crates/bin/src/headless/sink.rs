@@ -194,6 +194,24 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             );
         }
         BlockKind::Sources { sources } => print_web_sources(w, sources),
+        BlockKind::Computed { envelope, .. } => w.line(
+            Some(Style::Dim),
+            &format!("[computed: {}]", envelope.method.name),
+        ),
+        BlockKind::Form(form) => w.line(Some(Style::Dim), &format!("[form: {}]", form.title)),
+        BlockKind::Plot(_) => w.line(Some(Style::Dim), "[plot]"),
+        BlockKind::TestReport(_) => w.line(Some(Style::Dim), "[test report]"),
+        BlockKind::Findings(_) => w.line(Some(Style::Dim), "[findings]"),
+        BlockKind::Dataset(dataset) => {
+            w.line(Some(Style::Dim), &format!("[dataset: {}]", dataset.path));
+        }
+        BlockKind::Molecule(molecule) => {
+            w.line(
+                Some(Style::Dim),
+                &format!("[molecule: {}]", molecule.smiles),
+            );
+        }
+        BlockKind::Plate(_) => w.line(Some(Style::Dim), "[plate]"),
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
     }
 }

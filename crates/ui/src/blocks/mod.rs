@@ -49,6 +49,15 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::StageHeader { .. } => stage::render(entry, window, cx),
         BlockKind::Table(_) => table::render(entry, window, cx),
         BlockKind::Thinking { .. } => thinking::render(entry, window, cx),
+        // Phase 1 chat blocks; each gets its own renderer in a later piece.
+        BlockKind::Computed { .. }
+        | BlockKind::Form(_)
+        | BlockKind::Plot(_)
+        | BlockKind::TestReport(_)
+        | BlockKind::Findings(_)
+        | BlockKind::Dataset(_)
+        | BlockKind::Molecule(_)
+        | BlockKind::Plate(_) => placeholder(entry, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

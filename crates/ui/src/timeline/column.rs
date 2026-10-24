@@ -43,14 +43,22 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Mermaid(_)
         | BlockKind::Custom { .. }
         | BlockKind::Image { .. }
-        | BlockKind::Shell { .. } => BlockWidth::Wide,
+        | BlockKind::Shell { .. }
+        | BlockKind::Computed { .. }
+        | BlockKind::Plot(_)
+        | BlockKind::TestReport(_)
+        | BlockKind::Findings(_)
+        | BlockKind::Dataset(_)
+        | BlockKind::Plate(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }
         | BlockKind::Error { .. }
         | BlockKind::Markdown { .. }
         | BlockKind::Sources { .. }
-        | BlockKind::StageHeader { .. } => BlockWidth::Prose,
+        | BlockKind::StageHeader { .. }
+        | BlockKind::Form(_)
+        | BlockKind::Molecule(_) => BlockWidth::Prose,
     }
 }
 
