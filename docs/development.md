@@ -263,6 +263,6 @@ column range. "context" events are attached to the previous hit.
 | --- | --- | --- |
 | `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
 | `live.yml` | Manual (`workflow_dispatch`) | `make test-live` with the `ANTHROPIC_API_KEY` secret. |
-| `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64-unknown-linux-gnu` (on ubuntu-22.04, because of glibc) and for `aarch64`/`x86_64-apple-darwin`, and a zip (`scripts/package.ps1`) for `x86_64-pc-windows-msvc` whose `install.ps1` is tested on the runner, all unsigned. With a tag, it publishes a GitHub Release with checksums. |
+| `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64`/`aarch64-unknown-linux-gnu` (on ubuntu-22.04 and 22.04-arm, because of glibc) and for `aarch64`/`x86_64-apple-darwin` (signed and notarized by `scripts/sign-macos.sh`), and a zip (`scripts/package.ps1`) for `x86_64-pc-windows-msvc` (signed by SignPath) whose `install.ps1` is tested on the runner. With a tag, it publishes a GitHub Release with checksums, then the Homebrew cask (`scripts/publish-homebrew.sh`) and the winget update (Komac). Each signing or publishing step is skipped without its secret (see the workflow's header). |
 
 Actions are pinned by commit SHA.

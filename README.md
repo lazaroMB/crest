@@ -170,21 +170,37 @@ app.models.roles = {
 
 ## Install
 
-**One line** (Linux x86_64, macOS Apple Silicon or Intel; no sudo):
+**macOS** (11 or newer, Apple Silicon or Intel), with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask lazaromb/tap/crest
+```
+
+It installs `crest.app` in `/Applications`, the `crest` command, and `rg` and `fzf`. `brew upgrade` updates it. The app is signed and notarized by Apple.
+
+**Windows** (10 1809 or newer, x86_64):
+
+```powershell
+winget install LazaroMB.Crest
+```
+
+It installs the `crest` command; `winget upgrade` updates it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). `crest.exe` is signed through [SignPath Foundation](https://signpath.org), so Windows shows it as the publisher.
+
+**Linux** (x86_64 or aarch64, glibc 2.35+; no sudo), and macOS without Homebrew:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
 ```
 
-It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.13.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`. The macOS app is not signed yet; the installer removes the Gatekeeper quarantine.
+It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.13.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`.
 
-**Windows** (10 1809 or newer, x86_64; no administrator rights), in PowerShell:
+**Windows without winget** (no administrator rights), in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.ps1 | iex
 ```
 
-It installs `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, adds it to your user `PATH` and to the Start menu; `install.ps1 -Uninstall` removes it. Install `rg`, `fzf` and `git` too (`winget install BurntSushi.ripgrep.MSVC junegunn.fzf Git.Git`). The Windows build is new and has only been tested in CI: reports are welcome.
+It installs `crest.exe` in `%LOCALAPPDATA%\Programs\crest`, adds it to your user `PATH` and to the Start menu; `install.ps1 -Uninstall` removes it. The Windows build is new and has only been tested in CI: reports are welcome.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
