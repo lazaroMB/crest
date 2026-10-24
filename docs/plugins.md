@@ -114,6 +114,7 @@ A keymap replaces any other with the same keys, builtin ones included. These are
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |
 | `permission.cycle` | Cycles the permission mode. |
+| `input.cancel` | Copies the prompt's selection, else clears the prompt, else interrupts (`Ctrl+C`). |
 | `turn.interrupt` | Interrupts the turn or the running command. |
 | `help.open` | Opens the help modal. |
 

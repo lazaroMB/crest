@@ -16,8 +16,10 @@
 //! the input stays usable, the [`ActivityView`] above it lists what waits,
 //! and the prompts are sent one by one once the session is free. `Up` in an
 //! empty prompt takes the last queued one back to edit it. `Ctrl+C`
-//! (`turn.interrupt`, wherever the focus is) cancels the [`CancelToken`] of
-//! the running turn, or asks the controller to stop the running commands
+//! (`input.cancel`, wherever the focus is) copies the prompt's selection,
+//! or else clears the prompt (`Up` brings it back); in an empty prompt it
+//! is `turn.interrupt`, which cancels the [`CancelToken`] of the running
+//! turn, or asks the controller to stop the running commands
 //! ([`SessionController::interrupt_commands`]), and drops the queue.
 //!
 //! While busy, the activity line says what goes on (spinner, stage, tool,
@@ -1422,6 +1424,9 @@ impl Session {
             InputEvent::Action(action) => self.action(action, window, cx),
             InputEvent::Recorded(line) => self.controller.record_prompt(line.clone()),
             InputEvent::ModelsWanted => self.load_catalog(window, cx),
+            InputEvent::Cleared => {
+                self.notice(NoticeLevel::Info, "prompt cleared · ↑ restores", cx)
+            }
         }
     }
 
@@ -1456,7 +1461,7 @@ impl Session {
         match name {
             INTERRUPT_ACTION => {
                 if !self.interrupt(cx) {
-                    self.notice(NoticeLevel::Info, "no turn is running", cx);
+                    self.notice(NoticeLevel::Info, "nothing to interrupt", cx);
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
@@ -2104,6 +2109,18 @@ mod tests {
         });
         h.session
             .read_with(cx, |s, _| assert!(s.is_running(), "the model hangs"));
+
+        cx.simulate_input("borrador");
+        cx.simulate_keystrokes("ctrl-c");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(
+                s.input().read(cx).text(cx),
+                "",
+                "the first clears the prompt"
+            );
+            assert!(s.is_running(), "and leaves the turn alone");
+        });
 
         cx.simulate_keystrokes("ctrl-c");
         wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
