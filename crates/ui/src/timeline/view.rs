@@ -348,7 +348,7 @@ impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
         let edge = if focused {
-            cx.theme().primary
+            crate::theme::token(cx, "list.focused.border")
         } else {
             gpui::transparent_black()
         };

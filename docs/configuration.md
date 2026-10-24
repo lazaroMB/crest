@@ -9,6 +9,7 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 | Global config | `$XDG_CONFIG_HOME/crest/init.lua`, or `~/.config/crest/init.lua` (Windows: `%APPDATA%\crest\init.lua`) | A relative `XDG_CONFIG_HOME` is ignored. macOS uses the same path (not `~/Library`). |
 | Plugins | `<global config dir>/plugins/<name>/init.lua` | Loaded in alphabetical order, followed by those listed in `app.plugins`. |
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
+| Theme files | `<global config dir>/themes/<name>.lua` | One theme per file, picked with `app.opt.theme` or `/theme`. The installers copy the [example themes](../examples/themes/) and a commented `init.lua` here when they are missing. See [themes.md](themes.md). |
 | Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` (Windows: `%LOCALAPPDATA%\crest\sessions.db`) | SQLite. Stores the chat sessions and the workflow checkpoints. |
 | Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions (on Windows the folder's access list, private to the user, applies). |
 | Approved plugin capabilities | `$XDG_DATA_HOME/crest/plugin-trust.json`, or `~/.local/share/crest/plugin-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions. See [Plugin capabilities and secrets](#plugin-capabilities-and-secrets). |
@@ -36,6 +37,8 @@ When the layers are combined, precedence from lowest to highest is: plugins, glo
 | Hooks | All are kept, in the order the files ran (global, plugins, workspace). |
 | `app.permissions.sensitive_paths` | The global config (or a plugin) can **replace** the default list. The workspace can only **add** patterns, so a cloned repository cannot remove the protection. |
 | `app.plugins` | Only read in the global config. In the workspace it is ignored with a notice. |
+| `app.opt.window` | Only read in the global config (the window opens before any project). In the workspace it is ignored with a notice. |
+| `app.theme.define` | By theme name: the highest-precedence layer wins. |
 
 > The workspace config is Lua code from the repository: it runs in the same sandbox as the rest (see [plugins.md](plugins.md#the-sandbox)) and can register tools, hooks, keymaps and commands. The MCP servers it declares do not start until you approve them (see [MCP servers](#mcp-servers)).
 
@@ -146,7 +149,9 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
 | `web` | table, see [Web search](#web-search) | DuckDuckGo, 8 results, 20 s, any domain | The `web_search` and `web_fetch` tools: on or off, search backend, limits and domains. |
 | `shell` | program name, or table `{ program, args }` | `sh -c`; on Windows `pwsh` (or `powershell`) `-NoProfile -NonInteractive -Command` | The shell of `/!` commands and of plan checks with shell syntax. See [Shell](#shell). |
-| `theme` | `"dark"` or `"light"` | `"dark"` | The TwoCrest theme of the window ([usage.md](usage.md#the-window)). `"twocrest"` and `"twocrest-light"` are accepted too; any other value is a startup warning and the dark theme is used. |
+| `theme` | theme name | `"twocrest"` | The color theme of the window: `"twocrest"` (also `"dark"`), `"twocrest-light"` (also `"light"`), a theme file of `<config dir>/themes/` by its name without `.lua`, or one defined with `app.theme.define`. It wins over the pick of `/theme`. An unknown or broken theme is a startup warning and TwoCrest dark is used. See [themes.md](themes.md). |
+| `colors` | table `{ ui = {...}, syntax = {...}, palette = {...} }` | none | Colors over the chosen theme, with the format of a theme file ([themes.md](themes.md#overriding-a-theme-from-initlua)). A bad token or color is a warning and the rest applies. The workspace replaces the global table as a whole. |
+| `window` | `"fullscreen"`, `"maximized"`, `"windowed"`, or `{ mode, width, height }` | `"fullscreen"` (Windows: `"maximized"`) | How the window opens; the size (at least 400 px, 1280×800 by default) is the windowed one, also the size full screen and maximized return to. **Global config only**: a workspace `app.opt.window` is ignored with a notice. See [themes.md](themes.md#window-mode). |
 
 Any other `app.opt` key is accepted without error and stored, but crest does not use it. There are no font options: the window uses JetBrains Mono at 14 px if installed, otherwise the system monospace font.
 
@@ -509,6 +514,11 @@ local app = require("app")
 -- Keys -------------------------------------------------------------------
 app.opt.leader = "<C-g>" -- <leader> for the keymaps in this file
 app.opt.timeoutlen = 600    -- ms to wait between the keys of a sequence
+
+-- Look -------------------------------------------------------------------
+app.opt.window = { mode = "windowed", width = 1440, height = 900 }
+app.opt.theme = "twocrest"  -- or a file of ~/.config/crest/themes/, by name
+app.opt.colors = { ui = { caret = "#ffae42" } }
 
 -- Cost (USD per million tokens; an example, use current prices) ---------
 app.opt.pricing = {

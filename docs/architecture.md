@@ -77,9 +77,12 @@ flowchart TB
 | `EventSink` | `ports/events.rs` | `emit(DomainEvent)` | `crest::gui::ChannelSink`, `crest::headless::HeadlessSink`. Both are wrapped in a `TimelineSink` (bin), which records the timeline that gets saved. | `system::RecordingSink` |
 | `SessionStorePort` | `ports/store.rs` | `save`, `load`, `latest_for_workspace`, `list`, `delete` | `adapter_store::SqliteSessionStore` | `system::InMemorySessionStore` |
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
+| `ThemeSourcePort` | `ports/theme.rs` | `list`, `load(name)` (sync; theme files are small and local) | `adapter_lua::LuaThemeSource` (`<config dir>/themes/*.lua`, each in a fresh sandbox) | `theme::FakeThemes` |
 | `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |
 | `SessionStorage` (graph-flow trait) | — | — | `adapter_store::SqliteFlowStorage` | graph-flow's in-memory storage |
+
+Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
 The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback` and `run_command`. The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
 

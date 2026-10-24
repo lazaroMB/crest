@@ -78,13 +78,13 @@ fn approval_color(state: ApprovalState, cx: &App) -> Hsla {
 }
 
 fn line_color(kind: DiffLineKind, cx: &App) -> Hsla {
-    let theme = cx.theme();
+    let token = |path| crate::theme::token(cx, path);
     match kind {
-        DiffLineKind::FileHeader => theme.muted_foreground,
-        DiffLineKind::Hunk => theme.info,
-        DiffLineKind::Added => theme.success,
-        DiffLineKind::Removed => theme.danger,
-        DiffLineKind::Context => theme.foreground,
+        DiffLineKind::FileHeader => token("diff.header.fg"),
+        DiffLineKind::Hunk => token("diff.hunk.fg"),
+        DiffLineKind::Added => token("diff.added.fg"),
+        DiffLineKind::Removed => token("diff.removed.fg"),
+        DiffLineKind::Context => cx.theme().foreground,
     }
 }
 
@@ -98,8 +98,8 @@ pub fn render_unified(unified: &str, cx: &App) -> AnyElement {
             .child("(no changes)")
             .into_any_element();
     }
-    let added_bg = theme.success.opacity(0.12);
-    let removed_bg = theme.danger.opacity(0.12);
+    let added_bg = crate::theme::token(cx, "diff.added.bg");
+    let removed_bg = crate::theme::token(cx, "diff.removed.bg");
     v_flex()
         .font_family(theme.mono_font_family.clone())
         .children(unified.lines().map(|line| {

@@ -379,8 +379,10 @@ impl InputView {
                 if this.themes.wants_listing(&text) {
                     cx.emit(InputEvent::ThemesWanted);
                 }
-                if this.theme_previewing && theme_query(&text).is_none() {
+                if theme_query(&text).is_none() {
                     this.end_theme_preview(cx);
+                    // Theme files may change: list them again next time.
+                    this.themes.forget();
                 }
                 cx.notify();
             }

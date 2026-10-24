@@ -10,7 +10,7 @@ crest .               # workspace = current directory
 crest                 # no project yet: the project picker (also --pick)
 ```
 
-The window opens full screen. On X11 it opens as a normal window and requests full screen after the first frame; if the compositor refuses, it stays centered at 1280×800. The title is `crest — <directory>`. It uses the TwoCrest theme (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber), dark by default and light with `app.opt.theme = "light"`, and a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
+The window opens full screen (maximized on Windows); `app.opt.window` in the global `init.lua` makes it open maximized or as a window of a given size ([themes.md](themes.md#window-mode)), and `F11` toggles full screen at any time. On X11 it opens as a normal window and requests full screen (or maximized) after the first frame; if the compositor refuses, it stays centered at 1280×800 (or the size you set). The title is `crest — <directory>`. The colors come from a **theme**: TwoCrest (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber) dark by default, TwoCrest light, or any theme in the `themes/` folder of your config, such as the Neovim favourites the installers put there. `/theme` previews them as you move through the list and saves your pick; `app.opt.theme` fixes one ([themes.md](themes.md)). The window uses a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
 
 ```text
 ┌──────────────┬───────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest; `F11` toggles full screen.
 
 ### Typing, commands and shortcuts
 
@@ -97,6 +97,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | --- | --- |
 | `/q`, `/quit`, `/qa` | Quits crest. |
 | `/help [section\|search]`, `/h` | Opens the [help](#help), on a section (`commands`, `keys`, `tools`, `plugins`, `mcp`, `models`, `cli`, `files`, or its number) or with that search already typed. |
+| `/theme` | Opens the theme popup: `Up`/`Down` preview each theme in the window, `Enter` saves it (in `preferences.json`), `Tab` completes, `Esc` goes back to the theme in use. `/theme <name>` (or `/theme set <name>`) saves one directly. A theme set in `init.lua` still wins when crest starts. |
 | `/model` | Opens the model popup over the models your providers let you use. |
 | `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. `/model clear` goes back to the default model. |
 | `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the popup) and reopens the session. |

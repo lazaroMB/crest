@@ -119,6 +119,18 @@ Plugins run in a sandbox (no files, no network, instruction and memory limits). 
 app.plugins = { "~/path/to/crest/examples/plugins/showcase" }
 ```
 
+### Themes
+
+crest ships 14 themes ported from the most used Neovim colorschemes (catppuccin, tokyonight, kanagawa, rose-pine, gruvbox, nightfox, onedark, dracula, nord, everforest), and the installers copy them into your config folder. Type `/theme` and move through the list to see each one in the window, `Enter` to keep it. A theme is a Lua file that colors every element of the window in each of its states (hover, pressed, focused, selected, disabled) and every kind of code token, and anything it leaves out is derived from the rest:
+
+```lua
+app.opt.theme  = "catppuccin-mocha"
+app.opt.window = "maximized"   -- or "fullscreen", "windowed", { width = 1440, height = 900 }
+app.opt.colors = { ui = { caret = "#fab387" } }   -- tweak any theme
+```
+
+**[Create your own theme](docs/themes.md)**, port one from Vim, or start from the [example themes](examples/themes/).
+
 ## Claude and OpenCode
 
 crest speaks to two model accounts, each with its own key, and can use both at once:
@@ -253,6 +265,7 @@ Opening crest again in the same directory resumes the last session; `crest --new
 | --- | --- |
 | [Usage](docs/usage.md) | The window, every key and `/` command, approvals, blocks, the CLI, headless mode and sessions. |
 | [Configuration](docs/configuration.md) | Claude and OpenCode keys, providers, `app.opt`, models by role, the decision model, permissions and a full `init.lua`. |
+| [Themes](docs/themes.md) | Using, creating and porting color themes; how the window opens. |
 | [Plugins](docs/plugins.md) | Writing Lua plugins: tools, hooks, blocks, modals, MCP and capabilities. |
 | [Workflows](docs/workflows.md) | Research, simulation and implementation, stage by stage. |
 | [Architecture](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, persistence. |
