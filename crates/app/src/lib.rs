@@ -10,9 +10,9 @@ pub mod privacy;
 pub mod providers;
 pub mod rtk;
 pub mod shell;
-pub mod theme;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod theme;
 pub mod tools;
 pub mod usecases;
 pub mod web;

@@ -181,9 +181,13 @@ fn flatten(
 ) {
     let shown = |path: &str| format!("ui.{path}");
     if let Some(color) = color_ref(value) {
-        let path = [prefix.to_owned(), format!("{prefix}.bg"), format!("{prefix}.fg")]
-            .into_iter()
-            .find(|path| token_spec(path).is_some());
+        let path = [
+            prefix.to_owned(),
+            format!("{prefix}.bg"),
+            format!("{prefix}.fg"),
+        ]
+        .into_iter()
+        .find(|path| token_spec(path).is_some());
         match (path, color) {
             (Some(path), Ok(color)) => {
                 out.insert(path, color);
@@ -342,7 +346,10 @@ mod tests {
         assert_eq!(spec.colors["chart.1"], hex("#aaaaaa"));
         assert_eq!(spec.colors["chart.2"], ColorRef::Name("blue".into()));
         assert_eq!(spec.syntax["comment"].italic, Some(true));
-        assert_eq!(spec.syntax["keyword"].fg, Some(ColorRef::Name("blue".into())));
+        assert_eq!(
+            spec.syntax["keyword"].fg,
+            Some(ColorRef::Name("blue".into()))
+        );
     }
 
     #[test]
@@ -379,7 +386,10 @@ mod tests {
         let (spec, messages) =
             parse_overrides(&json!({ "name": "x", "ui": { "caret": "#ff0000" } }));
         assert_eq!(spec.colors["caret"], hex("#ff0000"));
-        assert_eq!(messages, ["app.opt.colors: name is ignored here; set it in a theme"]);
+        assert_eq!(
+            messages,
+            ["app.opt.colors: name is ignored here; set it in a theme"]
+        );
     }
 
     #[test]

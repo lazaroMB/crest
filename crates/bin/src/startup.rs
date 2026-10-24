@@ -133,7 +133,12 @@ pub fn rtk(
 pub fn global_config(handle: &tokio::runtime::Handle) -> (LoadedConfig, Vec<String>) {
     let host = match adapter_lua::LuaHost::spawn(adapter_lua::HostOptions::default()) {
         Ok(host) => host,
-        Err(err) => return (LoadedConfig::default(), vec![format!("Lua unavailable: {err}")]),
+        Err(err) => {
+            return (
+                LoadedConfig::default(),
+                vec![format!("Lua unavailable: {err}")],
+            );
+        }
     };
     let sources = ConfigSources {
         global: platform::dirs::config_dir().map(|dir| dir.join("init.lua")),

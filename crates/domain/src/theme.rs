@@ -235,9 +235,21 @@ use Rule::{Alpha, Contrast, Fixed, Mix, Ref};
 /// Every color token, each after the tokens its rule reads.
 pub const TOKENS: &[TokenSpec] = &[
     // Core.
-    token("background", Fixed("#0b0b0c", "#f4f1ec"), "the window background"),
-    token("foreground", Fixed("#f4f1ec", "#3d3a35"), "the default text"),
-    token("accent.bg", Fixed("#d9604a", "#ae3a25"), "primary buttons, focus, highlights"),
+    token(
+        "background",
+        Fixed("#0b0b0c", "#f4f1ec"),
+        "the window background",
+    ),
+    token(
+        "foreground",
+        Fixed("#f4f1ec", "#3d3a35"),
+        "the default text",
+    ),
+    token(
+        "accent.bg",
+        Fixed("#d9604a", "#ae3a25"),
+        "primary buttons, focus, highlights",
+    ),
     // Terminal colors, the base of the status and syntax defaults.
     token("ansi.red", Fixed("#f0524a", "#c0392b"), "red"),
     token("ansi.green", Fixed("#8fc27a", "#3f7d3a"), "green"),
@@ -246,42 +258,122 @@ pub const TOKENS: &[TokenSpec] = &[
     token("ansi.magenta", Fixed("#d9604a", "#ae3a25"), "magenta"),
     token("ansi.cyan", Fixed("#d6d2cb", "#3d3a35"), "cyan"),
     // Surfaces and text.
-    token("border", Mix("background", "foreground", 0.15), "borders and rules"),
-    token("muted.bg", Mix("background", "foreground", 0.06), "cards, chips, code"),
-    token("muted.fg", Mix("foreground", "background", 0.42), "secondary text: hints, labels, timestamps"),
+    token(
+        "border",
+        Mix("background", "foreground", 0.15),
+        "borders and rules",
+    ),
+    token(
+        "muted.bg",
+        Mix("background", "foreground", 0.06),
+        "cards, chips, code",
+    ),
+    token(
+        "muted.fg",
+        Mix("foreground", "background", 0.42),
+        "secondary text: hints, labels, timestamps",
+    ),
     token("selection", Alpha("accent.bg", 0.3), "selected text"),
     token("caret", Ref("accent.bg"), "the text cursor"),
-    token("overlay", Alpha("background", 0.7), "the shade behind dialogs"),
-    token("canvas.bg", Ref("background"), "the background of diagrams and 3D views"),
+    token(
+        "overlay",
+        Alpha("background", 0.7),
+        "the shade behind dialogs",
+    ),
+    token(
+        "canvas.bg",
+        Ref("background"),
+        "the background of diagrams and 3D views",
+    ),
     // Accent (primary buttons).
     token("accent.fg", Contrast("accent.bg"), "text on the accent"),
-    token("accent.hover.bg", Mix("accent.bg", "foreground", 0.15), "the accent under the mouse"),
-    token("accent.active.bg", Mix("accent.bg", "background", 0.25), "the accent while pressed"),
+    token(
+        "accent.hover.bg",
+        Mix("accent.bg", "foreground", 0.15),
+        "the accent under the mouse",
+    ),
+    token(
+        "accent.active.bg",
+        Mix("accent.bg", "background", 0.25),
+        "the accent while pressed",
+    ),
     // Buttons (secondary).
     token("button.bg", Ref("muted.bg"), "buttons"),
     token("button.fg", Ref("foreground"), "button labels"),
-    token("button.hover.bg", Mix("button.bg", "foreground", 0.08), "a button under the mouse; menu items too"),
-    token("button.hover.fg", Ref("foreground"), "a button label under the mouse"),
-    token("button.active.bg", Mix("button.bg", "foreground", 0.15), "a button while pressed"),
-    token("button.disabled.fg", Alpha("foreground", 0.4), "the label of a disabled button"),
+    token(
+        "button.hover.bg",
+        Mix("button.bg", "foreground", 0.08),
+        "a button under the mouse; menu items too",
+    ),
+    token(
+        "button.hover.fg",
+        Ref("foreground"),
+        "a button label under the mouse",
+    ),
+    token(
+        "button.active.bg",
+        Mix("button.bg", "foreground", 0.15),
+        "a button while pressed",
+    ),
+    token(
+        "button.disabled.fg",
+        Alpha("foreground", 0.4),
+        "the label of a disabled button",
+    ),
     // Inputs.
     token("input.bg", Ref("background"), "the prompt and text fields"),
     token("input.fg", Ref("foreground"), "typed text"),
     token("input.border", Ref("border"), "text field borders"),
-    token("input.focused.border", Ref("accent.bg"), "the border (ring) of the focused field"),
-    token("input.disabled.fg", Alpha("foreground", 0.4), "text of a disabled field and placeholders"),
+    token(
+        "input.focused.border",
+        Ref("accent.bg"),
+        "the border (ring) of the focused field",
+    ),
+    token(
+        "input.disabled.fg",
+        Alpha("foreground", 0.4),
+        "text of a disabled field and placeholders",
+    ),
     // Lists, tables and timeline rows.
     token("list.bg", Ref("background"), "lists and tables"),
-    token("list.even.bg", Mix("background", "foreground", 0.02), "every other row"),
-    token("list.header.bg", Mix("background", "foreground", 0.04), "table headers"),
+    token(
+        "list.even.bg",
+        Mix("background", "foreground", 0.02),
+        "every other row",
+    ),
+    token(
+        "list.header.bg",
+        Mix("background", "foreground", 0.04),
+        "table headers",
+    ),
     token("list.header.fg", Ref("foreground"), "table header text"),
     token("list.hover.bg", Ref("muted.bg"), "a row under the mouse"),
-    token("list.selected.bg", Alpha("accent.bg", 0.15), "the selected row or timeline block"),
-    token("list.selected.fg", Ref("foreground"), "text of the selected row"),
-    token("list.selected.border", Ref("accent.bg"), "the edge of the selected row or block"),
-    token("list.focused.border", Ref("accent.bg"), "the edge of the focused timeline block"),
+    token(
+        "list.selected.bg",
+        Alpha("accent.bg", 0.15),
+        "the selected row or timeline block",
+    ),
+    token(
+        "list.selected.fg",
+        Ref("foreground"),
+        "text of the selected row",
+    ),
+    token(
+        "list.selected.border",
+        Ref("accent.bg"),
+        "the edge of the selected row or block",
+    ),
+    token(
+        "list.focused.border",
+        Ref("accent.bg"),
+        "the edge of the focused timeline block",
+    ),
     // Popovers and menus.
-    token("popover.bg", Mix("background", "foreground", 0.03), "popups, menus, dialogs"),
+    token(
+        "popover.bg",
+        Mix("background", "foreground", 0.03),
+        "popups, menus, dialogs",
+    ),
     token("popover.fg", Ref("foreground"), "popup text"),
     token("popover.border", Ref("border"), "popup borders"),
     // Window chrome.
@@ -293,26 +385,66 @@ pub const TOKENS: &[TokenSpec] = &[
     token("sidebar.bg", Ref("popover.bg"), "the side panel"),
     token("sidebar.fg", Ref("foreground"), "side panel text"),
     token("sidebar.border", Ref("border"), "the side panel border"),
-    token("sidebar.hover.bg", Ref("muted.bg"), "a side panel item under the mouse"),
+    token(
+        "sidebar.hover.bg",
+        Ref("muted.bg"),
+        "a side panel item under the mouse",
+    ),
     token("sidebar.hover.fg", Ref("foreground"), "its text"),
-    token("sidebar.selected.bg", Ref("accent.bg"), "the selected side panel item"),
+    token(
+        "sidebar.selected.bg",
+        Ref("accent.bg"),
+        "the selected side panel item",
+    ),
     token("sidebar.selected.fg", Ref("accent.fg"), "its text"),
     token("tab.bar.bg", Ref("popover.bg"), "the tab bar"),
     token("tab.bg", Ref("background"), "tabs"),
     token("tab.fg", Ref("muted.fg"), "tab labels"),
     token("tab.selected.bg", Ref("muted.bg"), "the current tab"),
-    token("tab.selected.fg", Ref("foreground"), "the current tab label"),
-    token("scrollbar.bg", Fixed("#00000000", "#00000000"), "the scrollbar track"),
-    token("scrollbar.thumb.bg", Mix("border", "foreground", 0.1), "the scrollbar thumb"),
-    token("scrollbar.thumb.hover.bg", Ref("muted.fg"), "the thumb under the mouse"),
+    token(
+        "tab.selected.fg",
+        Ref("foreground"),
+        "the current tab label",
+    ),
+    token(
+        "scrollbar.bg",
+        Fixed("#00000000", "#00000000"),
+        "the scrollbar track",
+    ),
+    token(
+        "scrollbar.thumb.bg",
+        Mix("border", "foreground", 0.1),
+        "the scrollbar thumb",
+    ),
+    token(
+        "scrollbar.thumb.hover.bg",
+        Ref("muted.fg"),
+        "the thumb under the mouse",
+    ),
     // Links.
     token("link.fg", Ref("accent.bg"), "links"),
-    token("link.hover.fg", Ref("accent.hover.bg"), "a link under the mouse"),
-    token("link.active.fg", Ref("accent.active.bg"), "a link while pressed"),
+    token(
+        "link.hover.fg",
+        Ref("accent.hover.bg"),
+        "a link under the mouse",
+    ),
+    token(
+        "link.active.fg",
+        Ref("accent.active.bg"),
+        "a link while pressed",
+    ),
     // Status.
-    token("info.bg", Ref("ansi.blue"), "information: notices, running tools"),
+    token(
+        "info.bg",
+        Ref("ansi.blue"),
+        "information: notices, running tools",
+    ),
     token("info.fg", Contrast("info.bg"), "text on it"),
-    token("success.bg", Ref("ansi.green"), "success: finished tools, approvals"),
+    token(
+        "success.bg",
+        Ref("ansi.green"),
+        "success: finished tools, approvals",
+    ),
     token("success.fg", Contrast("success.bg"), "text on it"),
     token("warning.bg", Ref("ansi.yellow"), "warnings"),
     token("warning.fg", Contrast("warning.bg"), "text on it"),
@@ -320,15 +452,31 @@ pub const TOKENS: &[TokenSpec] = &[
     token("error.fg", Contrast("error.bg"), "text on it"),
     // Diffs.
     token("diff.added.fg", Ref("success.bg"), "added lines"),
-    token("diff.added.bg", Alpha("diff.added.fg", 0.12), "the background of added lines"),
+    token(
+        "diff.added.bg",
+        Alpha("diff.added.fg", 0.12),
+        "the background of added lines",
+    ),
     token("diff.removed.fg", Ref("error.bg"), "removed lines"),
-    token("diff.removed.bg", Alpha("diff.removed.fg", 0.12), "the background of removed lines"),
+    token(
+        "diff.removed.bg",
+        Alpha("diff.removed.fg", 0.12),
+        "the background of removed lines",
+    ),
     token("diff.hunk.fg", Ref("info.bg"), "hunk headers (`@@ ... @@`)"),
     token("diff.header.fg", Ref("muted.fg"), "file headers"),
     // Code editor.
-    token("editor.active_line.bg", Ref("muted.bg"), "the line of the cursor in code views"),
+    token(
+        "editor.active_line.bg",
+        Ref("muted.bg"),
+        "the line of the cursor in code views",
+    ),
     token("editor.line_number.fg", Ref("muted.fg"), "line numbers"),
-    token("editor.active_line_number.fg", Ref("foreground"), "the line number of the cursor"),
+    token(
+        "editor.active_line_number.fg",
+        Ref("foreground"),
+        "the line number of the cursor",
+    ),
     // Charts.
     token("chart.1", Ref("accent.bg"), "the first series"),
     token("chart.2", Ref("warning.bg"), "the second series"),
@@ -541,7 +689,9 @@ impl Theme {
 
     /// Every syntax style, in [`SYNTAX`] order.
     pub fn syntax_styles(&self) -> impl Iterator<Item = (&'static str, TextStyle)> + '_ {
-        SYNTAX.iter().filter_map(|spec| Some((spec.name, self.syntax(spec.name)?)))
+        SYNTAX
+            .iter()
+            .filter_map(|spec| Some((spec.name, self.syntax(spec.name)?)))
     }
 }
 
@@ -627,7 +777,11 @@ mod tests {
                 }
             };
             for read in reads {
-                assert!(seen.contains(read), "{} reads {read} before it is set", spec.path);
+                assert!(
+                    seen.contains(read),
+                    "{} reads {read} before it is set",
+                    spec.path
+                );
             }
             assert!(!seen.contains(&spec.path), "{} listed twice", spec.path);
             seen.push(spec.path);
@@ -665,7 +819,10 @@ mod tests {
         let escape = theme.syntax("string.escape").unwrap();
         assert_eq!(escape.fg, Some(hex("#9ece6a")));
         assert!(escape.italic);
-        assert_eq!(theme.syntax("comment").unwrap().fg, Some(theme.color("muted.fg")));
+        assert_eq!(
+            theme.syntax("comment").unwrap().fg,
+            Some(theme.color("muted.fg"))
+        );
         assert_eq!(theme.colors().count(), TOKENS.len());
     }
 
@@ -675,7 +832,16 @@ mod tests {
         let dark = Theme::derive("d", Appearance::Dark, &empty, &BTreeMap::new());
         let light = Theme::derive("l", Appearance::Light, &empty, &BTreeMap::new());
         assert!(dark.color("background").luminance() < light.color("background").luminance());
-        assert!(dark.color("foreground").contrast_ratio(dark.color("background")) > 4.5);
-        assert!(light.color("foreground").contrast_ratio(light.color("background")) > 4.5);
+        assert!(
+            dark.color("foreground")
+                .contrast_ratio(dark.color("background"))
+                > 4.5
+        );
+        assert!(
+            light
+                .color("foreground")
+                .contrast_ratio(light.color("background"))
+                > 4.5
+        );
     }
 }

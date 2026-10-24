@@ -95,7 +95,9 @@ impl ThemeCompletion {
     pub fn popup(&self, text: &str) -> Option<ThemePopup> {
         let query = theme_query(text)?.to_lowercase();
         Some(match &self.listing {
-            Listing::NotAsked | Listing::Loading => ThemePopup::Message("loading the themes…".into()),
+            Listing::NotAsked | Listing::Loading => {
+                ThemePopup::Message("loading the themes…".into())
+            }
             Listing::Failed(error) => ThemePopup::Message(format!("cannot list themes: {error}")),
             Listing::Ready(themes) => {
                 let (mut starts, mut contains): (Vec<_>, Vec<_>) = themes
@@ -167,35 +169,34 @@ pub fn render(
                             .rounded_sm()
                             .bg(crate::theme::hsla(choice.theme.color(path)))
                     };
-                    let mut row = h_flex()
-                        .id(("theme", ix))
-                        .gap_2()
-                        .px_2()
-                        .child(div().text_color(theme.primary).child(marker))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(swatch("background"))
-                                .child(swatch("accent.bg"))
-                                .child(swatch("foreground")),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(theme.foreground)
-                                .child(SharedString::from(choice.name.clone())),
-                        )
-                        .child(
-                            div()
-                                .text_color(theme.muted_foreground)
-                                .child(SharedString::from(format!(
+                    let mut row =
+                        h_flex()
+                            .id(("theme", ix))
+                            .gap_2()
+                            .px_2()
+                            .child(div().text_color(theme.primary).child(marker))
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(swatch("background"))
+                                    .child(swatch("accent.bg"))
+                                    .child(swatch("foreground")),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.foreground)
+                                    .child(SharedString::from(choice.name.clone())),
+                            )
+                            .child(div().text_color(theme.muted_foreground).child(
+                                SharedString::from(format!(
                                     "{} · {}",
                                     choice.theme.appearance.name(),
                                     choice.origin
-                                ))),
-                        );
+                                )),
+                            ));
                     if ix == selected {
                         row = row.bg(theme.list_active).rounded_sm();
                     }
@@ -275,7 +276,12 @@ mod tests {
 
     #[test]
     fn matches_start_before_they_contain() {
-        let themes = ready(&["catppuccin-mocha", "rose-pine", "tokyonight-night", "nightfox"]);
+        let themes = ready(&[
+            "catppuccin-mocha",
+            "rose-pine",
+            "tokyonight-night",
+            "nightfox",
+        ]);
         let Some(ThemePopup::Entries(entries)) = themes.popup("/theme night") else {
             panic!("expected entries");
         };
@@ -291,8 +297,14 @@ mod tests {
     fn keys_preview_complete_and_save() {
         let popup = ThemePopup::Entries(vec![choice("a"), choice("b")]);
         let key = |code| Key::plain(code);
-        assert_eq!(theme_key(&key(KeyCode::Down), &popup, 0), ThemeKey::Preview(1));
-        assert_eq!(theme_key(&key(KeyCode::Up), &popup, 0), ThemeKey::Preview(1));
+        assert_eq!(
+            theme_key(&key(KeyCode::Down), &popup, 0),
+            ThemeKey::Preview(1)
+        );
+        assert_eq!(
+            theme_key(&key(KeyCode::Up), &popup, 0),
+            ThemeKey::Preview(1)
+        );
         assert_eq!(
             theme_key(&key(KeyCode::Tab), &popup, 1),
             ThemeKey::SetText("/theme set b".into())

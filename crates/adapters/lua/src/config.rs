@@ -478,7 +478,11 @@ end)
             .workspace(r#"app.opt.window = "fullscreen""#);
         let (_vm, config) = fx.load();
         assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
-        assert!(config.errors[0].message.contains("app.opt.window is ignored"));
+        assert!(
+            config.errors[0]
+                .message
+                .contains("app.opt.window is ignored")
+        );
         assert_eq!(
             application::window::from_options(&config.options),
             Ok(Some(application::window::WindowMode::Windowed {
@@ -500,8 +504,14 @@ end)
         let (_vm, config) = fx.load();
         let messages: Vec<&str> = config.errors.iter().map(|e| e.message.as_str()).collect();
         assert_eq!(messages.len(), 2, "{messages:?}");
-        assert!(messages[0].contains("a theme needs a `name`"), "{messages:?}");
-        assert!(messages[1].contains("ui.carret: unknown token"), "{messages:?}");
+        assert!(
+            messages[0].contains("a theme needs a `name`"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1].contains("ui.carret: unknown token"),
+            "{messages:?}"
+        );
         // Global first, the workspace last: the catalog keeps the last.
         assert_eq!(config.themes.len(), 2);
         assert_eq!(config.themes[0]["ui"]["accent"], "#7aa2f780");
@@ -516,7 +526,10 @@ end)
         fx.global(template);
         let (_vm, config) = fx.load();
         assert!(config.errors.is_empty(), "{:?}", config.errors);
-        assert_eq!(config.options, application::ports::plugin::AppOptions::default());
+        assert_eq!(
+            config.options,
+            application::ports::plugin::AppOptions::default()
+        );
 
         // Each one-line option, uncommented, is valid too.
         let options: String = template

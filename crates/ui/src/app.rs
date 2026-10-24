@@ -260,7 +260,9 @@ where
             window.focus(&view.focus_handle(cx), cx);
         }
         match later {
-            Some(OpenAs::Fullscreen) => window.on_next_frame(|window, _| window.toggle_fullscreen()),
+            Some(OpenAs::Fullscreen) => {
+                window.on_next_frame(|window, _| window.toggle_fullscreen())
+            }
             Some(OpenAs::Maximized) => window.on_next_frame(|window, _| window.zoom_window()),
             Some(OpenAs::Windowed) | None => {}
         }

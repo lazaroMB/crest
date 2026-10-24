@@ -31,10 +31,16 @@ fn every_example_theme_resolves_cleanly_and_reads_well() {
         assert_eq!(&theme.name, name);
         let (bg, fg) = (theme.color("background"), theme.color("foreground"));
         let ratio = fg.contrast_ratio(bg);
-        assert!(ratio >= 4.5, "{name}: foreground on background is {ratio:.2}");
+        assert!(
+            ratio >= 4.5,
+            "{name}: foreground on background is {ratio:.2}"
+        );
         let accent = theme.color("accent.bg");
         let on_accent = theme.color("accent.fg").contrast_ratio(accent);
-        assert!(on_accent >= 3.0, "{name}: text on the accent is {on_accent:.2}");
+        assert!(
+            on_accent >= 3.0,
+            "{name}: text on the accent is {on_accent:.2}"
+        );
     }
     let file_themes = catalog
         .entries()

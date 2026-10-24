@@ -198,6 +198,10 @@ mod tests {
 
     #[test]
     fn a_missing_directory_lists_nothing() {
-        assert!(LuaThemeSource::new("/nonexistent/crest/themes").list().is_empty());
+        assert!(
+            LuaThemeSource::new("/nonexistent/crest/themes")
+                .list()
+                .is_empty()
+        );
     }
 }

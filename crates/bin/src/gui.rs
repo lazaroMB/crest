@@ -1300,7 +1300,10 @@ impl SessionController for UiController {
             .boxed()
     }
 
-    fn save_theme(&self, name: String) -> BoxFuture<'static, Result<ui::session::SavedTheme, String>> {
+    fn save_theme(
+        &self,
+        name: String,
+    ) -> BoxFuture<'static, Result<ui::session::SavedTheme, String>> {
         let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
         let path = self.preferences_path.clone();
         let task = self.handle.spawn_blocking(move || {
@@ -1819,7 +1822,6 @@ fn cancelled(err: &tokio::task::JoinError) -> BrowseError {
         reason: err.to_string(),
     }
 }
-
 
 /// Every theme of `catalog`, resolved with `app.opt.colors` over it; a
 /// theme that does not resolve (a broken file) is left out.

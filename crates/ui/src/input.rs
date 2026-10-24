@@ -49,9 +49,9 @@ pub mod attachments;
 pub mod cursor;
 pub mod history;
 pub mod model_popup;
-pub mod theme_popup;
 pub mod path_popup;
 pub mod paths;
+pub mod theme_popup;
 pub mod tray;
 
 use std::sync::Arc;
@@ -76,10 +76,10 @@ use domain::conversation::ImageAttachment;
 use history::PromptHistory;
 pub use model_popup::ModelPopup;
 use model_popup::{ModelCompletion, ModelKey, model_key};
-pub use theme_popup::ThemePopup;
-use theme_popup::{ThemeCompletion, ThemeKey, theme_key, theme_query};
 pub use path_popup::PathPopup;
 use path_popup::{PathCompletion, PathKey, path_key};
+pub use theme_popup::ThemePopup;
+use theme_popup::{ThemeCompletion, ThemeKey, theme_key, theme_query};
 use tray::{ImageTray, paste_handler};
 
 use crate::help::CommandRow;

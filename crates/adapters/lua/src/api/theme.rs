@@ -100,7 +100,9 @@ mod tests {
     #[test]
     fn color_helpers() {
         let lua = sandbox::new_lua(None).unwrap();
-        lua.globals().set("color", color_table(&lua).unwrap()).unwrap();
+        lua.globals()
+            .set("color", color_table(&lua).unwrap())
+            .unwrap();
         let eval = |code: &str| -> String { lua.load(code).eval().unwrap() };
         assert_eq!(eval(r##"return color.alpha("#7aa2f7", 0.2)"##), "#7aa2f733");
         assert_eq!(

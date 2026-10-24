@@ -731,7 +731,10 @@ mod tests {
     fn the_diagram_uses_the_theme_colors() {
         let theme = crate::theme::default_theme();
         let diagram = parse(FLOWCHART).unwrap_or_else(|err| panic!("{err}"));
-        assert_eq!(diagram.background, rgba(color(theme.color("canvas.bg")), 1.0));
+        assert_eq!(
+            diagram.background,
+            rgba(color(theme.color("canvas.bg")), 1.0)
+        );
         let coral = rgba(color(theme.color("accent.bg")), 1.0);
         let coral_edge = diagram.shapes.iter().any(|shape| {
             matches!(shape, Shape::Path { stroke: Some(Stroke { color, .. }), .. } if *color == coral)

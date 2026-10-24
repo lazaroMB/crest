@@ -1614,7 +1614,8 @@ impl Session {
                 if let Ok(themes) = &result {
                     this.theme_choices.clone_from(themes);
                 }
-                this.input.update(cx, |input, cx| input.set_themes(result, cx));
+                this.input
+                    .update(cx, |input, cx| input.set_themes(result, cx));
             })
             .ok();
         })
@@ -1632,7 +1633,8 @@ impl Session {
                     this.theme = saved.theme;
                     crate::app::set_theme(&this.theme, cx);
                     let name = this.theme.name.clone();
-                    this.input.update(cx, |input, _| input.set_current_theme(&name));
+                    this.input
+                        .update(cx, |input, _| input.set_current_theme(&name));
                     this.notice(NoticeLevel::Info, saved.notice, cx);
                 }
                 Err(error) => {

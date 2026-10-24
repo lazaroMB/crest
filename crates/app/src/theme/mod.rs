@@ -346,7 +346,10 @@ mod tests {
             )
             .with("loop-a", json!({ "extends": "loop-b" }))
             .with("loop-b", json!({ "extends": "loop-a" }))
-            .with("typo", json!({ "ui": { "accent": "bleu", "carret": "#000000" } }));
+            .with(
+                "typo",
+                json!({ "ui": { "accent": "bleu", "carret": "#000000" } }),
+            );
         ThemeCatalog::new().with_files(Arc::new(files))
     }
 

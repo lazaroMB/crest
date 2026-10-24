@@ -21,8 +21,8 @@ use domain::block::{BlockKind, MermaidSpec};
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
-    Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, canvas, div, px,
+    Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, canvas, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 

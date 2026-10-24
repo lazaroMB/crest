@@ -77,7 +77,10 @@ const KEYS: &[(&str, &str)] = &[
     ("tab_bar.background", "tab.bar.bg"),
     ("scrollbar.background", "scrollbar.bg"),
     ("scrollbar.thumb.background", "scrollbar.thumb.bg"),
-    ("scrollbar.thumb.hover.background", "scrollbar.thumb.hover.bg"),
+    (
+        "scrollbar.thumb.hover.background",
+        "scrollbar.thumb.hover.bg",
+    ),
     ("info.background", "info.bg"),
     ("info.foreground", "info.fg"),
     ("success.background", "success.bg"),

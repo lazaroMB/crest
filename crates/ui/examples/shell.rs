@@ -242,11 +242,11 @@ fn wire_input(
         }
         // The example keeps no sessions.
         InputEvent::Recorded(_)
-            | InputEvent::ModelsWanted
-            | InputEvent::ThemesWanted
-            | InputEvent::ThemePreview(_)
-            | InputEvent::ThemePreviewEnd
-            | InputEvent::Cleared => {}
+        | InputEvent::ModelsWanted
+        | InputEvent::ThemesWanted
+        | InputEvent::ThemePreview(_)
+        | InputEvent::ThemePreviewEnd
+        | InputEvent::Cleared => {}
     })
     .detach();
 }
