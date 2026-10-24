@@ -61,6 +61,7 @@ pub fn run_sized(
 
 fn apply_theme(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);
+    ui::theme::apply(&ui::theme::default_theme(), cx);
     let installed = cx.text_system().all_font_names();
     let fallback = Theme::global(cx).mono_font_family.clone();
     let family = SharedString::from(ui::app::resolve_font_family(

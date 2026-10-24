@@ -111,6 +111,11 @@ impl Renderer3d {
         self.gpu.samples()
     }
 
+    /// Sets the background around the scene (`canvas.bg` of the theme).
+    pub fn set_background(&mut self, color: domain::theme::Color) {
+        self.gpu.set_background([color.r, color.g, color.b]);
+    }
+
     /// Renders `frame` of `scene` through `camera` at `size` device pixels,
     /// with `selected` highlighted.
     ///

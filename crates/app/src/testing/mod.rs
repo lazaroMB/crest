@@ -7,4 +7,5 @@ pub mod llm;
 pub mod projects;
 pub mod sim;
 pub mod system;
+pub mod theme;
 pub mod web;

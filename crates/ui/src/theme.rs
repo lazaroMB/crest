@@ -1,286 +1,257 @@
-//! The TwoCrest look: the palette of <https://twocrest.mx> (warm ink and
-//! paper, a coral accent and an amber highlight) applied to the
-//! gpui-component theme, in a dark and a light variant.
+//! Applies a resolved [`domain::theme::Theme`] to the window.
 //!
-//! The palette is written as a gpui-component theme config and applied
-//! with [`Theme::apply_config`], so the component tokens derived from it
-//! (buttons, lists, scrollbars) follow too.
+//! The tokens become a gpui-component theme config (applied with
+//! [`Theme::apply_config`], so the component tokens derived from it —
+//! buttons, lists, scrollbars — follow too) plus its syntax highlight
+//! styles. The theme itself is also kept as a global ([`CrestTheme`]) for
+//! the tokens gpui-component has no field for: diff rows, the focused
+//! block edge, diagrams and the 3D views.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
-use gpui::App;
+use application::theme::ThemeCatalog;
+use domain::theme::{Appearance, Color, TextStyle, Theme as CrestThemeData};
+use gpui::{App, Global, Hsla, Rgba};
 use gpui_component::{Theme, ThemeConfig};
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
-use crate::app::ThemeMode;
-use palette::*;
+/// gpui-component keys and the token each one takes.
+const KEYS: &[(&str, &str)] = &[
+    ("background", "background"),
+    ("foreground", "foreground"),
+    ("border", "border"),
+    ("window.border", "border"),
+    ("input.border", "input.border"),
+    ("ring", "input.focused.border"),
+    ("caret", "caret"),
+    ("selection.background", "selection"),
+    ("muted.background", "muted.bg"),
+    ("muted.foreground", "muted.fg"),
+    ("primary.background", "accent.bg"),
+    ("primary.foreground", "accent.fg"),
+    ("primary.hover.background", "accent.hover.bg"),
+    ("primary.active.background", "accent.active.bg"),
+    ("drag.border", "accent.bg"),
+    ("secondary.background", "button.bg"),
+    ("secondary.foreground", "button.fg"),
+    ("secondary.hover.background", "button.hover.bg"),
+    ("secondary.active.background", "button.active.bg"),
+    ("accent.background", "button.hover.bg"),
+    ("accent.foreground", "button.hover.fg"),
+    ("popover.background", "popover.bg"),
+    ("popover.foreground", "popover.fg"),
+    ("overlay", "overlay"),
+    ("list.background", "list.bg"),
+    ("list.even.background", "list.even.bg"),
+    ("list.hover.background", "list.hover.bg"),
+    ("list.active.background", "list.selected.bg"),
+    ("list.active.border", "list.selected.border"),
+    ("list.head.background", "list.header.bg"),
+    ("table.background", "list.bg"),
+    ("table.even.background", "list.even.bg"),
+    ("table.head.background", "list.header.bg"),
+    ("table.head.foreground", "list.header.fg"),
+    ("table.hover.background", "list.hover.bg"),
+    ("table.active.background", "list.selected.bg"),
+    ("table.active.border", "list.selected.border"),
+    ("table.row.border", "border"),
+    ("link", "link.fg"),
+    ("link.hover", "link.hover.fg"),
+    ("link.active", "link.active.fg"),
+    ("sidebar.background", "sidebar.bg"),
+    ("sidebar.foreground", "sidebar.fg"),
+    ("sidebar.border", "sidebar.border"),
+    ("sidebar.primary.background", "sidebar.selected.bg"),
+    ("sidebar.primary.foreground", "sidebar.selected.fg"),
+    ("sidebar.accent.background", "sidebar.hover.bg"),
+    ("sidebar.accent.foreground", "sidebar.hover.fg"),
+    ("title_bar.background", "title_bar.bg"),
+    ("title_bar.border", "title_bar.border"),
+    ("status_bar.background", "status_bar.bg"),
+    ("status_bar.border", "status_bar.border"),
+    ("tab.background", "tab.bg"),
+    ("tab.foreground", "tab.fg"),
+    ("tab.active.background", "tab.selected.bg"),
+    ("tab.active.foreground", "tab.selected.fg"),
+    ("tab_bar.background", "tab.bar.bg"),
+    ("scrollbar.background", "scrollbar.bg"),
+    ("scrollbar.thumb.background", "scrollbar.thumb.bg"),
+    (
+        "scrollbar.thumb.hover.background",
+        "scrollbar.thumb.hover.bg",
+    ),
+    ("info.background", "info.bg"),
+    ("info.foreground", "info.fg"),
+    ("success.background", "success.bg"),
+    ("success.foreground", "success.fg"),
+    ("warning.background", "warning.bg"),
+    ("warning.foreground", "warning.fg"),
+    ("danger.background", "error.bg"),
+    ("danger.foreground", "error.fg"),
+    ("chart.1", "chart.1"),
+    ("chart.2", "chart.2"),
+    ("chart.3", "chart.3"),
+    ("chart.4", "chart.4"),
+    ("chart.5", "chart.5"),
+    ("chart.grid", "chart.grid"),
+    ("chart.bullish", "success.bg"),
+    ("chart.bearish", "error.bg"),
+    ("base.red", "ansi.red"),
+    ("base.green", "ansi.green"),
+    ("base.yellow", "ansi.yellow"),
+    ("base.blue", "ansi.blue"),
+    ("base.magenta", "ansi.magenta"),
+    ("base.cyan", "ansi.cyan"),
+];
 
-/// The brand colors of twocrest.mx, by the names of its CSS variables.
-pub mod palette {
-    /// `--ink`: the dark background.
-    pub const INK: &str = "#0b0b0c";
-    /// `--surface`: cards on the dark background.
-    pub const SURFACE: &str = "#161618";
-    /// `--surface-2`: panels on the dark background.
-    pub const SURFACE_2: &str = "#111113";
-    /// `--line`: borders on the dark background.
-    pub const LINE: &str = "#2a2a2d";
-    /// `--line-2`: stronger borders on the dark background.
-    pub const LINE_2: &str = "#3a3a3e";
-    /// `--paper`: text on the dark background, and the light background.
-    pub const PAPER: &str = "#f4f1ec";
-    /// `--text-2`: secondary text on the dark background.
-    pub const TEXT_2: &str = "#b9b5ae";
-    /// `--text-3`: tertiary text on the dark background.
-    pub const TEXT_3: &str = "#d6d2cb";
-    /// `--muted`: muted text on the dark background.
-    pub const MUTED: &str = "#8e8a84";
-    /// `--accent`: the coral of the logo.
-    pub const ACCENT: &str = "#d9604a";
-    /// `--accent-ink`: the accent on paper, and pressed.
-    pub const ACCENT_INK: &str = "#ae3a25";
-    /// `--amber`: highlights and warnings.
-    pub const AMBER: &str = "#ffae42";
-    /// `--paper-chip`: chips on paper.
-    pub const PAPER_CHIP: &str = "#ece7df";
-    /// `--paper-rule`: rules on paper.
-    pub const PAPER_RULE: &str = "#e6e1d8";
-    /// `--paper-line`: borders on paper.
-    pub const PAPER_LINE: &str = "#ddd8cf";
-    /// `--paper-text`: text on paper.
-    pub const PAPER_TEXT: &str = "#3d3a35";
-    /// `--paper-muted`: muted text on paper.
-    pub const PAPER_MUTED: &str = "#57534c";
+/// The highlight keys of the code editor and the token each one takes.
+const EDITOR_KEYS: &[(&str, &str)] = &[
+    ("editor.background", "background"),
+    ("editor.foreground", "foreground"),
+    ("editor.active_line.background", "editor.active_line.bg"),
+    ("editor.line_number", "editor.line_number.fg"),
+    ("editor.active_line_number", "editor.active_line_number.fg"),
+    ("error", "error.bg"),
+    ("warning", "warning.bg"),
+    ("info", "info.bg"),
+    ("success", "success.bg"),
+    ("hint", "muted.fg"),
+];
+
+/// The theme shown in the window, for the tokens gpui-component has no
+/// field for. Read it with [`crest_theme`].
+#[derive(Debug, Clone)]
+pub struct CrestTheme(pub Arc<CrestThemeData>);
+
+impl Global for CrestTheme {}
+
+/// The theme in use (the built-in dark one before any is applied).
+#[must_use]
+pub fn crest_theme(cx: &App) -> Arc<CrestThemeData> {
+    cx.try_global::<CrestTheme>()
+        .map_or_else(default_theme, |theme| Arc::clone(&theme.0))
 }
 
-impl ThemeMode {
-    /// The mode `app.opt.theme` names: `dark` (or `twocrest`) and `light`
-    /// (or `twocrest-light`).
-    ///
-    /// # Errors
-    ///
-    /// A message naming the accepted values.
-    pub fn from_name(name: &str) -> Result<Self, String> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "dark" | "twocrest" | "twocrest-dark" => Ok(Self::Dark),
-            "light" | "twocrest-light" => Ok(Self::Light),
-            other => Err(format!(
-                "unknown app.opt.theme `{other}`; use \"dark\" or \"light\""
-            )),
-        }
+/// A token of the theme in use, as a GPUI color.
+#[must_use]
+pub fn token(cx: &App, path: &str) -> Hsla {
+    hsla(crest_theme(cx).color(path))
+}
+
+/// The built-in dark theme.
+#[must_use]
+pub fn default_theme() -> Arc<CrestThemeData> {
+    ThemeCatalog::new()
+        .resolve_or_default(application::theme::TWOCREST, None)
+        .theme
+}
+
+/// A theme color as a GPUI color.
+#[must_use]
+pub fn hsla(color: Color) -> Hsla {
+    Rgba {
+        r: f32::from(color.r) / 255.0,
+        g: f32::from(color.g) / 255.0,
+        b: f32::from(color.b) / 255.0,
+        a: f32::from(color.a) / 255.0,
+    }
+    .into()
+}
+
+/// The gpui-component mode of an appearance.
+#[must_use]
+pub fn mode(appearance: Appearance) -> gpui_component::ThemeMode {
+    match appearance {
+        Appearance::Dark => gpui_component::ThemeMode::Dark,
+        Appearance::Light => gpui_component::ThemeMode::Light,
     }
 }
 
-/// The dark variant: ink background, paper text, coral accent.
-const DARK: &[(&str, &str)] = &[
-    ("background", INK),
-    ("foreground", PAPER),
-    ("border", LINE),
-    ("input.border", LINE_2),
-    ("ring", ACCENT),
-    ("caret", ACCENT),
-    ("selection.background", "#d9604a59"),
-    ("muted.background", SURFACE),
-    ("muted.foreground", MUTED),
-    ("primary.background", ACCENT),
-    ("primary.foreground", INK),
-    ("primary.hover.background", "#e2745f"),
-    ("primary.active.background", ACCENT_INK),
-    ("secondary.background", SURFACE),
-    ("secondary.foreground", TEXT_3),
-    ("secondary.hover.background", "#1d1d20"),
-    ("secondary.active.background", LINE),
-    ("accent.background", "#1d1d20"),
-    ("accent.foreground", PAPER),
-    ("popover.background", SURFACE_2),
-    ("popover.foreground", PAPER),
-    ("overlay", "#0b0b0cb3"),
-    ("list.background", INK),
-    ("list.even.background", "#0e0e10"),
-    ("list.hover.background", SURFACE),
-    ("list.active.background", "#d9604a26"),
-    ("list.active.border", ACCENT),
-    ("list.head.background", SURFACE_2),
-    ("table.background", INK),
-    ("table.head.background", SURFACE_2),
-    ("table.head.foreground", TEXT_3),
-    ("table.hover.background", SURFACE),
-    ("table.active.background", "#d9604a26"),
-    ("table.active.border", ACCENT),
-    ("table.row.border", LINE),
-    ("link", ACCENT),
-    ("link.hover", AMBER),
-    ("link.active", ACCENT_INK),
-    ("sidebar.background", SURFACE_2),
-    ("sidebar.foreground", TEXT_3),
-    ("sidebar.border", LINE),
-    ("sidebar.primary.background", ACCENT),
-    ("sidebar.primary.foreground", INK),
-    ("sidebar.accent.background", SURFACE),
-    ("sidebar.accent.foreground", PAPER),
-    ("title_bar.background", INK),
-    ("title_bar.border", LINE),
-    ("status_bar.background", SURFACE_2),
-    ("status_bar.border", LINE),
-    ("tab.background", INK),
-    ("tab.foreground", MUTED),
-    ("tab.active.background", SURFACE),
-    ("tab.active.foreground", PAPER),
-    ("tab_bar.background", SURFACE_2),
-    ("scrollbar.background", "#00000000"),
-    ("scrollbar.thumb.background", LINE_2),
-    ("scrollbar.thumb.hover.background", PAPER_MUTED),
-    ("info.background", TEXT_2),
-    ("info.foreground", INK),
-    ("success.background", "#8fc27a"),
-    ("success.foreground", INK),
-    ("warning.background", AMBER),
-    ("warning.foreground", INK),
-    ("danger.background", "#f0524a"),
-    ("danger.foreground", PAPER),
-    ("chart.1", ACCENT),
-    ("chart.2", AMBER),
-    ("chart.3", TEXT_3),
-    ("chart.4", ACCENT_INK),
-    ("chart.5", MUTED),
-    ("chart.grid", LINE),
-    ("chart.bullish", "#8fc27a"),
-    ("chart.bearish", "#f0524a"),
-    ("drag.border", ACCENT),
-    ("window.border", LINE),
-    ("base.red", "#f0524a"),
-    ("base.green", "#8fc27a"),
-    ("base.yellow", AMBER),
-    ("base.blue", TEXT_2),
-    ("base.magenta", ACCENT),
-    ("base.cyan", TEXT_3),
-];
+fn style_json(style: TextStyle) -> Value {
+    let mut out = Map::new();
+    if let Some(fg) = style.fg {
+        out.insert("color".into(), json!(fg.to_hex()));
+    }
+    if style.italic {
+        out.insert("font_style".into(), json!("italic"));
+    }
+    if style.bold {
+        out.insert("font_weight".into(), json!(700));
+    }
+    Value::Object(out)
+}
 
-/// The light variant: paper background, ink text, the accent darkened for contrast.
-const LIGHT: &[(&str, &str)] = &[
-    ("background", PAPER),
-    ("foreground", PAPER_TEXT),
-    ("border", PAPER_LINE),
-    ("input.border", PAPER_LINE),
-    ("ring", ACCENT),
-    ("caret", ACCENT_INK),
-    ("selection.background", "#d9604a40"),
-    ("muted.background", PAPER_CHIP),
-    ("muted.foreground", PAPER_MUTED),
-    ("primary.background", ACCENT_INK),
-    ("primary.foreground", PAPER),
-    ("primary.hover.background", ACCENT),
-    ("primary.active.background", "#8f2e1c"),
-    ("secondary.background", PAPER_CHIP),
-    ("secondary.foreground", PAPER_TEXT),
-    ("secondary.hover.background", PAPER_RULE),
-    ("secondary.active.background", PAPER_LINE),
-    ("accent.background", PAPER_RULE),
-    ("accent.foreground", INK),
-    ("popover.background", "#ffffff"),
-    ("popover.foreground", PAPER_TEXT),
-    ("overlay", "#0b0b0c40"),
-    ("list.background", PAPER),
-    ("list.even.background", "#f0ece5"),
-    ("list.hover.background", PAPER_CHIP),
-    ("list.active.background", "#d9604a22"),
-    ("list.active.border", ACCENT_INK),
-    ("list.head.background", PAPER_CHIP),
-    ("table.background", PAPER),
-    ("table.head.background", PAPER_CHIP),
-    ("table.head.foreground", PAPER_TEXT),
-    ("table.hover.background", PAPER_CHIP),
-    ("table.active.background", "#d9604a22"),
-    ("table.active.border", ACCENT_INK),
-    ("table.row.border", PAPER_RULE),
-    ("link", ACCENT_INK),
-    ("link.hover", ACCENT),
-    ("link.active", "#8f2e1c"),
-    ("sidebar.background", PAPER_CHIP),
-    ("sidebar.foreground", PAPER_TEXT),
-    ("sidebar.border", PAPER_LINE),
-    ("sidebar.primary.background", ACCENT_INK),
-    ("sidebar.primary.foreground", PAPER),
-    ("sidebar.accent.background", PAPER_RULE),
-    ("sidebar.accent.foreground", INK),
-    ("title_bar.background", PAPER),
-    ("title_bar.border", PAPER_LINE),
-    ("status_bar.background", PAPER_CHIP),
-    ("status_bar.border", PAPER_LINE),
-    ("tab.background", PAPER),
-    ("tab.foreground", PAPER_MUTED),
-    ("tab.active.background", PAPER_CHIP),
-    ("tab.active.foreground", INK),
-    ("tab_bar.background", PAPER_CHIP),
-    ("scrollbar.background", "#00000000"),
-    ("scrollbar.thumb.background", PAPER_LINE),
-    ("scrollbar.thumb.hover.background", PAPER_MUTED),
-    ("info.background", PAPER_MUTED),
-    ("info.foreground", PAPER),
-    ("success.background", "#3f7d3a"),
-    ("success.foreground", PAPER),
-    ("warning.background", "#b8740c"),
-    ("warning.foreground", PAPER),
-    ("danger.background", "#c0392b"),
-    ("danger.foreground", PAPER),
-    ("chart.1", ACCENT),
-    ("chart.2", "#d08a1a"),
-    ("chart.3", PAPER_TEXT),
-    ("chart.4", ACCENT_INK),
-    ("chart.5", PAPER_MUTED),
-    ("chart.grid", PAPER_RULE),
-    ("chart.bullish", "#3f7d3a"),
-    ("chart.bearish", "#c0392b"),
-    ("drag.border", ACCENT_INK),
-    ("window.border", PAPER_LINE),
-    ("base.red", "#c0392b"),
-    ("base.green", "#3f7d3a"),
-    ("base.yellow", "#b8740c"),
-    ("base.blue", PAPER_MUTED),
-    ("base.magenta", ACCENT_INK),
-    ("base.cyan", PAPER_TEXT),
-];
-
-/// The theme config of `mode` in the TwoCrest palette.
-pub fn config(mode: ThemeMode) -> ThemeConfig {
-    let (name, mode_name, colors) = match mode {
-        ThemeMode::Dark => ("TwoCrest", "dark", DARK),
-        ThemeMode::Light => ("TwoCrest Light", "light", LIGHT),
-    };
-    let colors: serde_json::Map<String, serde_json::Value> = colors
+/// The gpui-component theme config of `theme`.
+#[must_use]
+pub fn config(theme: &CrestThemeData) -> ThemeConfig {
+    let hex = |path: &str| json!(theme.color(path).to_hex());
+    let colors: Map<String, Value> = KEYS
         .iter()
-        .map(|(key, value)| ((*key).to_owned(), json!(value)))
+        .map(|(key, path)| ((*key).to_owned(), hex(path)))
         .collect();
-    let value = json!({ "name": name, "mode": mode_name, "colors": colors });
-    // The tables above are static and covered by a test.
+    let mut highlight: Map<String, Value> = EDITOR_KEYS
+        .iter()
+        .map(|(key, path)| ((*key).to_owned(), hex(path)))
+        .collect();
+    let syntax: Map<String, Value> = theme
+        .syntax_styles()
+        .map(|(name, style)| (name.to_owned(), style_json(style)))
+        .collect();
+    highlight.insert("syntax".into(), Value::Object(syntax));
+    let value = json!({
+        "name": theme.name,
+        "mode": theme.appearance.name(),
+        "colors": colors,
+        "highlight": highlight,
+    });
+    // Every value above is a valid hex color or style; covered by a test.
     serde_json::from_value(value).unwrap_or_default()
 }
 
-/// Applies the TwoCrest palette of `mode` to the global theme (after
-/// `Theme::change` loaded that mode).
-pub fn apply(mode: ThemeMode, cx: &mut App) {
-    let config = Rc::new(config(mode));
-    Theme::update(cx, |theme| theme.apply_config(&config));
+/// Applies `theme` to the global gpui-component theme (after
+/// `Theme::change` loaded its mode) and keeps it as [`CrestTheme`].
+pub fn apply(theme: &Arc<CrestThemeData>, cx: &mut App) {
+    let config = Rc::new(config(theme));
+    Theme::update(cx, |gpui_theme| gpui_theme.apply_config(&config));
+    cx.set_global(CrestTheme(Arc::clone(theme)));
 }
 
 #[cfg(test)]
 mod tests {
+    use domain::theme::token_spec;
+
     use super::*;
 
     #[test]
-    fn both_configs_parse_with_the_brand_accent() {
-        for mode in [ThemeMode::Dark, ThemeMode::Light] {
-            let config = config(mode);
-            assert!(config.name.starts_with("TwoCrest"), "{mode:?}");
-            assert_eq!(config.mode.is_dark(), mode == ThemeMode::Dark);
+    fn every_key_takes_a_known_token() {
+        for (key, path) in KEYS.iter().chain(EDITOR_KEYS) {
+            assert!(token_spec(path).is_some(), "{key} takes unknown {path}");
         }
     }
 
     #[test]
-    fn theme_names() {
-        assert_eq!(ThemeMode::from_name("dark"), Ok(ThemeMode::Dark));
-        assert_eq!(ThemeMode::from_name(" TwoCrest "), Ok(ThemeMode::Dark));
-        assert_eq!(ThemeMode::from_name("light"), Ok(ThemeMode::Light));
-        assert!(ThemeMode::from_name("tokyonight").is_err());
+    fn the_config_parses_with_every_color_and_highlight() {
+        let theme = default_theme();
+        let config = config(&theme);
+        assert_eq!(config.name, "twocrest");
+        assert!(config.mode.is_dark());
+        let background = config.colors.background.expect("background");
+        assert_eq!(background.as_ref(), theme.color("background").to_hex());
+        let highlight = config.highlight.expect("highlight");
+        assert!(highlight.syntax.style("keyword").is_some());
+        assert!(highlight.syntax.style("string.escape").is_some());
+        assert_eq!(
+            highlight.editor_background,
+            Some(hsla(theme.color("background")))
+        );
+    }
+
+    #[test]
+    fn hsla_round_trips_hex() {
+        let color = Color::parse_hex("#d9604a").unwrap();
+        let rgba: Rgba = hsla(color).into();
+        assert!((rgba.r - f32::from(0xd9_u8) / 255.0).abs() < 0.01);
+        assert!((rgba.a - 1.0).abs() < f32::EPSILON);
     }
 }

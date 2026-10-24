@@ -14,4 +14,5 @@ pub mod permission;
 pub mod plan;
 pub mod research;
 pub mod sysmodel;
+pub mod theme;
 pub mod workspace;

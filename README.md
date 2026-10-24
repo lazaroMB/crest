@@ -26,7 +26,8 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 **Contents**
 
 - [Why crest](#why-crest)
-- Features: [a timeline, not a transcript](#a-timeline-not-a-transcript) · [from a problem to a reviewed commit](#from-a-problem-to-a-reviewed-commit) · [you approve every change](#you-approve-every-change) · [simulate before you build](#simulate-before-you-build) · [open anything](#open-anything) · [smart routing, smaller bills](#smart-routing-smaller-bills) · [make it yours](#make-it-yours) · [everything in one place](#everything-in-one-place)
+- Features: [a timeline, not a transcript](#a-timeline-not-a-transcript) · [you approve every change](#you-approve-every-change) · [open anything](#open-anything) · [smart routing, smaller bills](#smart-routing-smaller-bills) · [everything in one place](#everything-in-one-place)
+- Extend it: [connect any MCP server](#connect-any-mcp-server) · [make it yours](#make-it-yours) · [write a plugin](#write-a-plugin) · [themes](#themes)
 - [Claude and OpenCode](#claude-and-opencode): [Claude](#claude) · [OpenCode](#opencode) · [both at once](#both-at-once)
 - [Install](#install) · [Quick start](#quick-start) · [Documentation](#documentation)
 - [Built with](#built-with) · [Vision and roadmap](#vision-and-roadmap) · [Status and license](#status-and-license)
@@ -36,13 +37,13 @@ and answers with charts, tables, diagrams, diffs and 3D models instead of a wall
 <table>
 <tr>
 <td width="33%" valign="top"><b>A timeline, not a transcript</b><br>Every reply, tool call, diff, chart, table and diagram is a block you can expand, sort, zoom and copy.</td>
-<td width="33%" valign="top"><b>From a problem to a reviewed commit</b><br>A 14-stage research flow turns a problem into a Spec, and an implementation flow ships it task by task.</td>
-<td width="33%" valign="top"><b>Simulate before you build</b><br>Run a Spec's scenarios on a 3D circuit board and see where the design fails before writing code.</td>
+<td width="33%" valign="top"><b>You approve every change</b><br>Edits and commands wait for you, with the exact diff or command line. Allow once, always, or never.</td>
+<td width="33%" valign="top"><b>Open anything</b><br>Code, markdown, JSON, diffs, pictures and 3D models (OBJ, STL, PLY) open in a modal with <code>/open @path</code>.</td>
 </tr>
 <tr>
-<td valign="top"><b>You approve every change</b><br>Edits and commands wait for you, with the exact diff or command line. Allow once, always, or never.</td>
 <td valign="top"><b>Smart routing, smaller bills</b><br>An optional decision model (Cloudflare Clef) picks the tools and the model of each prompt in milliseconds.</td>
-<td valign="top"><b>Make it yours</b><br>Lua config and plugins: tools, commands, hooks, keymaps, blocks and modals, in a sandbox with explicit capabilities.</td>
+<td valign="top"><b>Connect any MCP server</b><br>Local or hosted, with a token or an OAuth login. Workspace servers wait until you trust them.</td>
+<td valign="top"><b>Make it yours</b><br>Lua plugins add tools, commands, hooks, keymaps, blocks and modals, in a sandbox with explicit capabilities.</td>
 </tr>
 </table>
 
@@ -52,12 +53,6 @@ The agent answers with real components, drawn natively on the GPU: bar, line, ar
 
 <img src="assets/screenshots/blocks.png" alt="A chart and a table in the timeline" width="900">
 
-## From a problem to a reviewed commit
-
-`/research <problem>` runs a guided investigation: it observes the code, gathers evidence, forms and ranks hypotheses, writes a measurable definition and a Spec with its plan. It stops at gates for your answer, and resumes where it left off. `/implement <spec>` then runs the plan one task at a time, with one commit per task and a final report.
-
-<img src="assets/screenshots/research.png" alt="The research flow at work: stages, evidence and a diagram" width="900">
-
 ## You approve every change
 
 Nothing touches your files or runs a command without asking (unless you choose `auto-edit`). The dialog shows the exact diff or command line; `y` approves, `a` always approves that file or command, `n` rejects. A `plan` mode lets the agent read but never write.
@@ -65,12 +60,6 @@ Nothing touches your files or runs a command without asking (unless you choose `
 Secrets and personal data never leave your machine by accident: API keys, tokens, private keys, passwords, emails, cards, IBANs and national ids in tool results and in your prompts are masked as `[REDACTED:kind]` before the model, the timeline or the saved session see them. [What is masked](docs/configuration.md#privacy-secrets-and-personal-data).
 
 <img src="assets/screenshots/approval.png" alt="An edit waiting for approval with its diff" width="900">
-
-## Simulate before you build
-
-`/simulate <spec>` turns a Spec into an executable model: assertions first, from its test protocol, then the model from its diagrams. It runs every scenario deterministically and opens a 3D board where messages travel between components, with a timeline, failure markers and a state inspector. The verdicts go back into the Spec, and `board.html` shares the replay with anyone.
-
-<img src="assets/screenshots/board.png" alt="The simulation board of a small API" width="900">
 
 ## Open anything
 
@@ -88,8 +77,7 @@ Secrets and personal data never leave your machine by accident: API keys, tokens
 With Cloudflare credentials, a small **decision model** ([Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/)) answers typed questions in milliseconds for a fraction of a cent:
 
 - **which tools** each prompt needs, so the model gets a shorter, cheaper request;
-- **which model** answers it: a quick one for a greeting, a strong one for a redesign;
-- **what you meant** at the flows' gates ("looks good, go on"), and whether a problem definition is measurable.
+- **which model** answers it: a quick one for a greeting, a strong one for a redesign.
 
 Without credentials crest works exactly as before. [How to turn it on](docs/configuration.md#decision-model-cloudflare-clef).
 
@@ -97,27 +85,94 @@ With [rtk](https://github.com/rtk-ai/rtk) installed, `app.opt.rtk = true` compac
 
 <img src="assets/screenshots/routing.png" alt="A sequence diagram of how a prompt is routed" width="900">
 
-## Make it yours
+## Connect any MCP server
 
-Configuration and plugins are Lua, with Neovim-style key notation. A plugin can add tools for the model, `/` commands, hooks around every tool call, keymaps, timeline blocks and modal windows:
+Give the agent your issue tracker, your docs or your database: any server that speaks the [Model Context Protocol](https://modelcontextprotocol.io/), local or hosted, is a few lines of `~/.config/crest/init.lua`:
 
 ```lua
-local app = require("app")
-
-app.commands.register("standup", function()
-  app.send("Summarize what changed since yesterday from `git log`.", { role = "plan" })
-end, { desc = "Draft my standup" })
-
-app.keymap.set("<leader>s", function() app.cmd("standup") end)
+-- A local server, started with npx
+app.mcp.add("fs", { command = "npx", args = { "-y", "@modelcontextprotocol/server-filesystem", "." } })
+-- A hosted server with a token in a header, read from the environment
+app.mcp.add("context7", { url = "https://mcp.context7.com/mcp", headers = { Authorization = "Bearer ${CONTEXT7_API_KEY}" } })
+-- A hosted server with an OAuth login: run /mcp login linear once
+app.mcp.add("linear", { url = "https://mcp.linear.app/mcp" })
 ```
 
-Plugins run in a sandbox (no files, no network, instruction and memory limits). The ones that need an API or a program declare `network:` or `shell:` capabilities, which stay off until you approve them.
+- `/mcp` shows every server, its state and the next step; `/mcp tools <name>` lists what the model sees, `/mcp login <name>` signs in through the browser and keeps the tokens in the system keyring.
+- Their tools go through the same approvals as the builtin ones: `effect = "read"` lets a server run without asking.
+- Servers declared in a workspace's `.crest/init.lua` do not start until you approve them with `/mcp trust <name>`, and ask again if their command or URL changes.
+- Tool names and schemas are adapted to each provider, so the same server works with Claude and with the OpenCode models.
+
+**Set up a server**: [the guide](docs/configuration.md#mcp-servers) · [every field](docs/plugins.md#appmcp-mcp-servers) · [`/mcp` commands](docs/configuration.md#mcp) · [OAuth and GitHub](docs/configuration.md#oauth) · [workspace trust](docs/usage.md#mcp-servers-and-trust) · [`npx` not found from the app menu](docs/configuration.md#npx-from-the-app-menu)
+
+## Make it yours
+
+Configuration and plugins are Lua, with Neovim-style key notation. A plugin is a folder with an `init.lua` in `~/.config/crest/plugins/`, and it can add:
+
+| Extension point | What it does | Docs |
+| --- | --- | --- |
+| Tools | New tools the model can call, with a JSON schema and an effect for approvals | [`app.tools.register`](docs/plugins.md#apptoolsregisterdef) |
+| Hooks | Inspect, rewrite or deny every tool call (builtin, plugin and MCP) before it runs | [`app.on`](docs/plugins.md#apponevent-fn-hooks) |
+| Commands | Your own `/` commands, which can start a turn with any model role | [`app.commands.register`](docs/plugins.md#appcommandsregistername-fn-opts) |
+| Keymaps | Bindings in Neovim notation, with your own leader | [`app.keymap.set`](docs/plugins.md#appkeymapsetkeys-action-opts) |
+| Blocks | Charts, tables, diagrams, JSON trees, diffs and markdown in the timeline | [`app.ui`](docs/plugins.md#appui-custom-blocks) |
+| Modals | Windows over crest with images, CSV tables, charts and documents | [`app.modal`](docs/plugins.md#appmodal-modal-windows) |
+| MCP servers | Bundle the servers your plugin needs | [`app.mcp`](docs/plugins.md#appmcp-mcp-servers) |
+| APIs, programs, secrets | HTTP requests, command-line programs and keyring secrets, once you approve them | [Capabilities](docs/plugins.md#capabilities) |
+
+### Write a plugin
+
+A tool that answers with a chart instead of text, and a guard that no `rm` gets past:
+
+```lua
+-- ~/.config/crest/plugins/team/init.lua
+local app = require("app")
+
+app.tools.register({
+  name = "velocity",
+  description = "Shows the points closed in each sprint as a chart.",
+  schema = { type = "object", properties = { sprints = { type = "array" }, points = { type = "array" } } },
+  effect = "read",   -- only displays data: no approval needed
+  handler = function(input)
+    return app.ui.block("velocity", app.ui.chart({
+      title = "Velocity", kind = "line", labels = input.sprints,
+      series = { { name = "points", values = input.points } },
+    }))
+  end,
+})
+
+app.on("before_tool", function(ev)
+  if ev.name == "run_command" and ev.input.command == "rm" then
+    return { deny = true, reason = "rm is blocked by the team plugin" }
+  end
+end)
+```
+
+Plugins run in a sandbox: no files, no network, no programs, and limits on instructions and memory. A plugin that needs an API or a program declares it, and it stays off until you approve it with `/plugin trust <name>`:
+
+```lua
+app.plugin{ name = "jira", capabilities = { "network:jira.example.com", "shell:jq" } }
+```
+
+**Start from a recipe**: [a tool with a table and a pie chart](docs/plugins.md#1-a-todo_list-tool-with-a-custom-block) · [a hook that blocks `rm` and dry-runs `git push`](docs/plugins.md#2-a-hook-that-blocks-rm-and-forces-git-push---dry-run) · [a command on the `plan` model](docs/plugins.md#3-a-command-that-starts-a-turn-with-the-plan-role) · [a Jira tool with `app.http` and a secret](docs/plugins.md#example-an-api-tool-with-apphttp-and-appsecret) · [a `jq` wrapper](docs/plugins.md#example-a-cli-wrapper-with-appshellrun-and-jq) · [testing a plugin](docs/plugins.md#testing-a-plugin). Everything else is in [Writing plugins](docs/plugins.md).
 
 **Try the demo plugin**: [`examples/plugins/showcase`](examples/plugins/showcase/init.lua) shows every extension point in one file. Add it to `~/.config/crest/init.lua` and type `/demo`:
 
 ```lua
 app.plugins = { "~/path/to/crest/examples/plugins/showcase" }
 ```
+
+### Themes
+
+crest ships 14 themes ported from the most used Neovim colorschemes (catppuccin, tokyonight, kanagawa, rose-pine, gruvbox, nightfox, onedark, dracula, nord, everforest), and the installers copy them into your config folder. Type `/theme` and move through the list to see each one in the window, `Enter` to keep it. A theme is a Lua file that colors every element of the window in each of its states (hover, pressed, focused, selected, disabled) and every kind of code token, and anything it leaves out is derived from the rest:
+
+```lua
+app.opt.theme  = "catppuccin-mocha"
+app.opt.window = "maximized"   -- or "fullscreen", "windowed", { width = 1440, height = 900 }
+app.opt.colors = { ui = { caret = "#fab387" } }   -- tweak any theme
+```
+
+**[Create your own theme](docs/themes.md)**, port one from Vim, or start from the [example themes](examples/themes/).
 
 ## Claude and OpenCode
 
@@ -137,7 +192,7 @@ With an Anthropic key, crest works out of the box: every role has a Claude model
 | Role | Model | For |
 | --- | --- | --- |
 | `main` | `claude-sonnet-5-5` (falls back to Haiku) | The conversation and the agent loop |
-| `plan` | `claude-opus-5-5` | Plans, design, large refactors and the flows' reasoning |
+| `plan` | `claude-opus-5-5` | Plans, design and large refactors |
 | `explore`, `compact` | `claude-haiku-5-5` | Subagents, exploration and summarizing the history |
 | `deep` | `claude-fable-5-1` | Very hard tasks, on demand (`/model deep`, `--model deep`) |
 
@@ -241,7 +296,7 @@ crest --headless "find where the config is parsed and explain it" --workspace .
 ```
 
 - Type a prompt and press `Enter` (`Shift+Enter` for a new line). `↑` brings back what you sent before.
-- `/` opens the command palette: `/research`, `/implement`, `/simulate`, `/open @file`, `/model`, `/mode`, `/!git status`...
+- `/` opens the command palette: `/open @file`, `/model`, `/mode`, `/theme`, `/mcp`, `/!git status`...
 - `Ctrl+G` is the leader: `Ctrl+G ff` finds a file, `Ctrl+G fg` greps, `Ctrl+G e` shows the tree, `Ctrl+G m` picks a model.
 - `Esc` always brings you back to the prompt; `F1` shows everything else.
 
@@ -249,12 +304,14 @@ Opening crest again in the same directory resumes the last session; `crest --new
 
 ## Documentation
 
+**Jump straight to**: [connect an MCP server](docs/configuration.md#mcp-servers) · [write your first plugin](docs/plugins.md#step-by-step-examples) · [plugin capabilities](docs/plugins.md#capabilities) · [create a theme](docs/themes.md#your-first-theme) · [permissions](docs/configuration.md#permissions-and-sensitive-paths) · [headless mode](docs/usage.md#headless-mode) · [a full `init.lua`](docs/configuration.md#full-example)
+
 | Guide | What is in it |
 | --- | --- |
 | [Usage](docs/usage.md) | The window, every key and `/` command, approvals, blocks, the CLI, headless mode and sessions. |
-| [Configuration](docs/configuration.md) | Claude and OpenCode keys, providers, `app.opt`, models by role, the decision model, permissions and a full `init.lua`. |
+| [Configuration](docs/configuration.md) | Claude and OpenCode keys, providers, `app.opt`, models by role, the decision model, permissions, MCP servers and a full `init.lua`. |
+| [Themes](docs/themes.md) | Using, creating and porting color themes; how the window opens. |
 | [Plugins](docs/plugins.md) | Writing Lua plugins: tools, hooks, blocks, modals, MCP and capabilities. |
-| [Workflows](docs/workflows.md) | Research, simulation and implementation, stage by stage. |
 | [Architecture](docs/architecture.md) | Layers, ports and adapters, the loop of a turn, persistence. |
 | [Development](docs/development.md) | Requirements, `make` targets, tests, fakes, conventions and CI. |
 | [Vision](docs/vision.md) | Where crest is going: principles and roadmap. |
@@ -262,7 +319,7 @@ Opening crest again in the same directory resumes the last session; `crest --new
 
 ## Built with
 
-Rust (edition 2024), [GPUI](https://www.gpui.rs/) and [gpui-component](https://github.com/longbridge/gpui-component) for the native UI, wgpu for the 3D views, Lua 5.4 (mlua) for config and plugins, SQLite for sessions and flows, `rg` and `fzf` for search, the Anthropic API for Claude, and the Anthropic, OpenAI Responses and Chat Completions APIs for OpenCode.
+Rust (edition 2024), [GPUI](https://www.gpui.rs/) and [gpui-component](https://github.com/longbridge/gpui-component) for the native UI, wgpu for the 3D views, Lua 5.4 (mlua) for config and plugins, SQLite for sessions, `rg` and `fzf` for search, the Anthropic API for Claude, and the Anthropic, OpenAI Responses and Chat Completions APIs for OpenCode.
 
 crest follows a hexagonal architecture: the domain and the use cases know nothing about GPUI, HTTP, Lua or SQLite, every port has an in-memory fake for the tests, and `make arch` enforces the boundaries.
 

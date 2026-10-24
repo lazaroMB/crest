@@ -321,7 +321,12 @@ fn wire(
                 fakes.notice(format!("{action:?} is not wired in this example"));
             }
             // The example keeps no sessions.
-            InputEvent::Recorded(_) | InputEvent::ModelsWanted | InputEvent::Cleared => {}
+            InputEvent::Recorded(_)
+            | InputEvent::ModelsWanted
+            | InputEvent::ThemesWanted
+            | InputEvent::ThemePreview(_)
+            | InputEvent::ThemePreviewEnd
+            | InputEvent::Cleared => {}
         }
     })
     .detach();

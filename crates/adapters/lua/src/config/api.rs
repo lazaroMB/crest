@@ -42,6 +42,8 @@ pub(crate) struct Collected {
     pub(crate) hooks: Vec<HookSpec>,
     /// Servers from `app.mcp.add`, in call order.
     pub(crate) mcp_servers: Vec<McpServerSpec>,
+    /// Themes from `app.theme.define`, as JSON, in call order.
+    pub(crate) themes: Vec<serde_json::Value>,
     pub(crate) diagnostics: Vec<PluginDiagnostic>,
 }
 
@@ -85,6 +87,7 @@ impl Phase {
             .load(NEW_ENV)
             .set_name("=sandbox")
             .call((app.clone(), base_require))?;
+        env.raw_set("color", crate::api::theme::color_table(lua)?)?;
         Ok(Self {
             env,
             app,
@@ -126,6 +129,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     app.set("on", crate::api::hooks::on(lua, sink, origin)?)?;
     app.set("ui", crate::api::ui::table(lua, origin)?)?;
     app.set("modal", crate::api::modal::table(lua, origin)?)?;
+    app.set("theme", crate::api::theme::table(lua, sink, origin)?)?;
     crate::caps::install(lua, &app, sink, origin)?;
     Ok(app)
 }

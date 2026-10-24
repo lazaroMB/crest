@@ -51,6 +51,7 @@ pub mod history;
 pub mod model_popup;
 pub mod path_popup;
 pub mod paths;
+pub mod theme_popup;
 pub mod tray;
 
 use std::sync::Arc;
@@ -77,10 +78,12 @@ pub use model_popup::ModelPopup;
 use model_popup::{ModelCompletion, ModelKey, model_key};
 pub use path_popup::PathPopup;
 use path_popup::{PathCompletion, PathKey, path_key};
+pub use theme_popup::ThemePopup;
+use theme_popup::{ThemeCompletion, ThemeKey, theme_key, theme_query};
 use tray::{ImageTray, paste_handler};
 
 use crate::help::CommandRow;
-use crate::session::{INTERRUPT_ACTION, ModelChoice};
+use crate::session::{INTERRUPT_ACTION, ModelChoice, ThemeChoice};
 use domain::model::ModelId;
 
 /// Action of `Up` in an empty prompt while prompts are queued: takes the
@@ -142,6 +145,15 @@ pub enum InputEvent {
     /// The `/model ` popup opened for the first time: list the models and
     /// hand them over with [`InputView::set_models`].
     ModelsWanted,
+    /// The `/theme ` popup opened: list the themes and hand them over
+    /// with [`InputView::set_themes`].
+    ThemesWanted,
+    /// The `/theme ` popup chose this theme: show it until it is saved or
+    /// [`InputEvent::ThemePreviewEnd`].
+    ThemePreview(String),
+    /// The `/theme ` popup closed without saving: go back to the theme in
+    /// use.
+    ThemePreviewEnd,
 }
 
 /// What a submitted line is.
@@ -318,6 +330,11 @@ pub struct InputView {
     models: ModelCompletion,
     /// The model the next turn uses, marked in the `/model ` popup.
     current_model: Option<ModelId>,
+    themes: ThemeCompletion,
+    /// Name of the theme in use, marked in the `/theme ` popup.
+    current_theme: String,
+    /// Whether the `/theme ` popup is showing another theme.
+    theme_previewing: bool,
     tray: ImageTray,
     history: PromptHistory,
     blink: Blink,
@@ -359,6 +376,14 @@ impl InputView {
                 if this.models.wants_listing(&text) {
                     cx.emit(InputEvent::ModelsWanted);
                 }
+                if this.themes.wants_listing(&text) {
+                    cx.emit(InputEvent::ThemesWanted);
+                }
+                if theme_query(&text).is_none() {
+                    this.end_theme_preview(cx);
+                    // Theme files may change: list them again next time.
+                    this.themes.forget();
+                }
                 cx.notify();
             }
         });
@@ -375,6 +400,9 @@ impl InputView {
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
             current_model: None,
+            themes: ThemeCompletion::default(),
+            current_theme: String::new(),
+            theme_previewing: false,
             tray: ImageTray::default(),
             history: PromptHistory::default(),
             blink: Blink::default(),
@@ -463,6 +491,34 @@ impl InputView {
     /// The model the next turn uses, marked in the `/model ` popup.
     pub fn set_current_model(&mut self, model: Option<ModelId>) {
         self.current_model = model;
+    }
+
+    /// Hands the `/theme ` popup the themes, or why they could not be
+    /// listed.
+    pub fn set_themes(&mut self, themes: Result<Vec<ThemeChoice>, String>, cx: &mut Context<Self>) {
+        self.themes.set(themes);
+        cx.notify();
+    }
+
+    /// The theme in use, marked in the `/theme ` popup; the themes are
+    /// listed again the next time it opens.
+    pub fn set_current_theme(&mut self, name: &str) {
+        self.current_theme = name.to_owned();
+        self.themes.forget();
+    }
+
+    /// What the `/theme ` popup shows for the current text, if anything.
+    pub fn theme_popup(&self, cx: &App) -> Option<ThemePopup> {
+        if self.palette_hidden {
+            return None;
+        }
+        self.themes.popup(&self.text(cx))
+    }
+
+    fn end_theme_preview(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.theme_previewing) {
+            cx.emit(InputEvent::ThemePreviewEnd);
+        }
     }
 
     /// What the `/model ` popup shows for the current text, if anything.
@@ -639,6 +695,33 @@ impl InputView {
                     cx.emit(InputEvent::Command(line));
                 }
                 ModelKey::Ignored => return false,
+            }
+            return true;
+        }
+        if let Some(popup) = self.theme_popup(cx) {
+            match theme_key(key, &popup, self.palette_selected) {
+                ThemeKey::Preview(ix) => {
+                    if let ThemePopup::Entries(entries) = &popup {
+                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                        self.theme_previewing = true;
+                        cx.emit(InputEvent::ThemePreview(entries[ix].name.clone()));
+                    }
+                    self.palette_selected = ix;
+                }
+                ThemeKey::Hide => {
+                    self.palette_hidden = true;
+                    self.end_theme_preview(cx);
+                }
+                ThemeKey::SetText(text) => self.set_text(&text, window, cx),
+                ThemeKey::Run(line) => {
+                    // Saving replaces the preview.
+                    self.theme_previewing = false;
+                    self.record(&format!("/{line}"), cx);
+                    self.editor
+                        .update(cx, |editor, cx| editor.set_value("", window, cx));
+                    cx.emit(InputEvent::Command(line));
+                }
+                ThemeKey::Ignored => return false,
             }
             return true;
         }
@@ -925,7 +1008,24 @@ impl Render for InputView {
         } else {
             None
         };
-        let palette = if paths.is_none() && models.is_none() {
+        let themes = if paths.is_none() && models.is_none() {
+            self.theme_popup(cx).map(|popup| {
+                if let ThemePopup::Entries(entries) = &popup {
+                    let selected = self.palette_selected.min(entries.len() - 1);
+                    self.palette_top = palette_top(selected, self.palette_top, entries.len());
+                }
+                theme_popup::render(
+                    popup,
+                    self.palette_selected,
+                    self.palette_top,
+                    &self.current_theme,
+                    cx,
+                )
+            })
+        } else {
+            None
+        };
+        let palette = if paths.is_none() && models.is_none() && themes.is_none() {
             self.render_palette(cx)
         } else {
             None
@@ -987,6 +1087,7 @@ impl Render for InputView {
             .font_family(theme.mono_font_family.clone())
             .children(paths)
             .children(models)
+            .children(themes)
             .children(palette)
             .children(tray)
             .child(prompt)

@@ -198,6 +198,26 @@ pub struct ModelChoice {
     pub model: ModelId,
 }
 
+/// A theme the `/theme` popup offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeChoice {
+    /// Its name (`tokyonight-night`).
+    pub name: String,
+    /// Where it comes from: `built in`, `file` or `init.lua`.
+    pub origin: String,
+    /// The theme, resolved, for the preview.
+    pub theme: crate::app::ColorTheme,
+}
+
+/// A theme saved with `/theme set`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedTheme {
+    /// The theme to show now.
+    pub theme: crate::app::ColorTheme,
+    /// What to tell the user (saved, or that `init.lua` wins at start).
+    pub notice: String,
+}
+
 /// The input port of the session, implemented by the binary over the
 /// `AgentService`.
 ///
@@ -228,6 +248,18 @@ pub trait SessionController: Send + Sync {
     fn select_model(&self, model: ModelId) -> BoxFuture<'static, Result<String, String>> {
         let _ = model;
         futures::future::ready(Err("this session cannot save a model".to_owned())).boxed()
+    }
+
+    /// Every theme, resolved, for the `/theme` popup; `Err` says why they
+    /// could not be listed.
+    fn themes(&self) -> BoxFuture<'static, Result<Vec<ThemeChoice>, String>> {
+        futures::future::ready(Ok(Vec::new())).boxed()
+    }
+
+    /// Saves `name` as the user's theme and resolves it.
+    fn save_theme(&self, name: String) -> BoxFuture<'static, Result<SavedTheme, String>> {
+        let _ = name;
+        futures::future::ready(Err("this session cannot save a theme".to_owned())).boxed()
     }
 
     /// Adds a line sent from the prompt to the session's history, saved
@@ -357,8 +389,8 @@ pub struct SessionParts {
     pub history: Vec<Block>,
     /// Lines sent from the prompt of a resumed session, oldest first.
     pub prompt_history: Vec<String>,
-    /// Color scheme (`app.opt.theme`), applied before the window opens.
-    pub theme: crate::app::ThemeMode,
+    /// Color theme (`app.opt.theme`), applied before the window opens.
+    pub theme: crate::app::ColorTheme,
     /// The agent has no API key: the `/login` dialog opens at once.
     pub needs_login: bool,
     /// No model is selected for the default provider: the `/model` popup
@@ -388,7 +420,7 @@ impl SessionParts {
             timeoutlen: None,
             history: Vec::new(),
             prompt_history: Vec::new(),
-            theme: crate::app::ThemeMode::default(),
+            theme: crate::theme::default_theme(),
             needs_login: false,
             needs_model: false,
         }
@@ -427,6 +459,10 @@ pub struct Session {
     model_override: Option<String>,
     /// The catalogs' models, listed once per session for the popup.
     catalog_models: Option<Vec<ModelChoice>>,
+    /// The theme in use (not a `/theme` preview).
+    theme: crate::app::ColorTheme,
+    /// The themes the `/theme` popup lists, for its previews.
+    theme_choices: Vec<ThemeChoice>,
     git: Option<Task<()>>,
     _git_timer: Task<()>,
     _events: Task<()>,
@@ -493,7 +529,7 @@ impl Session {
             timeoutlen,
             history,
             prompt_history,
-            theme: _,
+            theme,
             needs_login,
             needs_model,
         } = parts;
@@ -517,6 +553,7 @@ impl Session {
         let input = cx.new(|cx| {
             let mut input = InputView::with_keymap(keymap, window, cx);
             input.set_current_model(model);
+            input.set_current_theme(&theme.name);
             input.set_file_search(files.clone());
             input.set_history(prompt_history);
             if let Some(timeoutlen) = timeoutlen {
@@ -606,6 +643,8 @@ impl Session {
             queue: VecDeque::new(),
             model_override: None,
             catalog_models: None,
+            theme,
+            theme_choices: Vec::new(),
             git: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
@@ -1198,6 +1237,16 @@ impl Session {
                 }
                 _ => self.set_model_override(Some(arg.to_owned()), cx),
             },
+            "theme" => match arg
+                .split_once(' ')
+                .map_or((arg, ""), |(a, b)| (a, b.trim()))
+            {
+                ("", _) => self.open_theme_popup(window, cx),
+                ("set", "") => self.notice(NoticeLevel::Warning, "usage: /theme set <name>", cx),
+                ("set", name) => self.save_theme(name.to_owned(), window, cx),
+                (name, "") => self.save_theme(name.to_owned(), window, cx),
+                _ => self.notice(NoticeLevel::Warning, "usage: /theme [set] <name>", cx),
+            },
             "mode" => match arg.parse::<PermissionMode>() {
                 Ok(mode) => self.set_permission_mode(mode, cx),
                 Err(err) => self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx),
@@ -1424,6 +1473,13 @@ impl Session {
             InputEvent::Action(action) => self.action(action, window, cx),
             InputEvent::Recorded(line) => self.controller.record_prompt(line.clone()),
             InputEvent::ModelsWanted => self.load_catalog(window, cx),
+            InputEvent::ThemesWanted => self.load_themes(window, cx),
+            InputEvent::ThemePreview(name) => {
+                if let Some(choice) = self.theme_choices.iter().find(|c| &c.name == name) {
+                    crate::app::set_theme(&choice.theme, cx);
+                }
+            }
+            InputEvent::ThemePreviewEnd => crate::app::set_theme(&self.theme, cx),
             InputEvent::Cleared => {
                 self.notice(NoticeLevel::Info, "prompt cleared · ↑ restores", cx)
             }
@@ -1538,6 +1594,57 @@ impl Session {
             input.focus(window, cx);
         });
         cx.notify();
+    }
+
+    /// Puts `/theme ` in the prompt, whose popup lists the themes.
+    pub fn open_theme_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            input.set_text("/theme ", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Resolves the themes and hands them to the input's popup.
+    fn load_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let listing = self.controller.themes();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = listing.await;
+            this.update(cx, |this, cx| {
+                if let Ok(themes) = &result {
+                    this.theme_choices.clone_from(themes);
+                }
+                this.input
+                    .update(cx, |input, cx| input.set_themes(result, cx));
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Saves `name` as the theme and shows it; a theme that cannot be
+    /// saved or resolved leaves the one in use.
+    fn save_theme(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let save = self.controller.save_theme(name);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = save.await;
+            this.update(cx, |this, cx| match result {
+                Ok(saved) => {
+                    this.theme = saved.theme;
+                    crate::app::set_theme(&this.theme, cx);
+                    let name = this.theme.name.clone();
+                    this.input
+                        .update(cx, |input, _| input.set_current_theme(&name));
+                    this.notice(NoticeLevel::Info, saved.notice, cx);
+                }
+                Err(error) => {
+                    crate::app::set_theme(&this.theme, cx);
+                    this.notice(NoticeLevel::Warning, format!("/theme: {error}"), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Lists the providers' models once per session and hands them to the

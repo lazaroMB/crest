@@ -234,6 +234,8 @@ pub struct App {
     pub commands: Vec<CommandSpec>,
     /// Options of `app.opt`.
     pub options: AppOptions,
+    /// The themes `app.opt.theme` and `/theme` can name.
+    pub themes: application::theme::ThemeCatalog,
     /// MCP servers declared in the config, started or not.
     pub mcp_specs: Vec<McpServerSpec>,
     /// Store of approved workspace MCP servers, if there is one.
@@ -546,6 +548,9 @@ pub async fn build_app(
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
+    let (themes, theme_warnings) =
+        startup::theme_catalog(config_sources.global.as_deref(), &loaded.themes);
+    warnings.extend(theme_warnings);
     let (line_shell, shell_warning) = startup::line_shell(&loaded.options);
     warnings.extend(shell_warning);
     let shell: Arc<dyn ShellPort> =
@@ -799,6 +804,7 @@ pub async fn build_app(
         keymaps: loaded.keymaps,
         commands: loaded.commands,
         options: loaded.options,
+        themes,
         mcp_specs: loaded.mcp_servers,
         mcp_trust_path,
         plugin_capabilities: loaded.plugin_capabilities,

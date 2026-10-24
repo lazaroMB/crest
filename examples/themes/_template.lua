@@ -1,0 +1,277 @@
+-- A crest theme, as a template: every color token and syntax name, each
+-- commented out with what it paints and what it takes when it is not set.
+--
+-- To make a theme, copy this file into your themes folder under a new name
+-- (~/.config/crest/themes/ on Linux and macOS, %APPDATA%\crest\themes\ on
+-- Windows), set `name` to the file name without .lua, and uncomment what you
+-- need. Then pick it with /theme, or set it in init.lua:
+--
+--   app.opt.theme = "my-theme"
+--
+-- Everything is optional. A token you leave out is derived from the ones
+-- before it (the "Unset:" notes), so background, foreground and accent.bg
+-- alone already give a complete theme; the ansi colors are the base of the
+-- status and syntax defaults. docs/themes.md in the crest repository has
+-- the details.
+--
+-- Colors are "#rrggbb" or "#rrggbbaa" (alpha last), or the name of an entry
+-- in `palette`. While this file runs, a global `color` table helps derive
+-- colors; its functions take and return hex strings (pass p.blue, not
+-- "blue"):
+--
+--   color.alpha(hex, a)        -- hex with opacity a (0 to 1)
+--   color.mix(hex_a, hex_b, t) -- hex_a moved toward hex_b by t (0 to 1)
+--   color.lighten(hex, x)      -- toward white by x (0 to 1)
+--   color.darken(hex, x)       -- toward black by x (0 to 1)
+--
+-- `ui` takes nested tables, joined into dotted token paths:
+-- `list = { hover = { bg = "#292e42" } }` sets list.hover.bg, and so does
+-- `["list.hover.bg"] = "#292e42"`. A color on a path that is not a token
+-- itself goes to its `bg` if that token exists, else to its `fg`:
+-- `accent = "blue"` sets accent.bg, `link = "blue"` sets link.fg, and
+-- `list = { hover = "#292e42" }` sets list.hover.bg. Unknown paths and names
+-- are reported as errors.
+--
+-- `syntax` styles code. Each entry is a color (`keyword = "magenta"`) or a
+-- table `{ fg = ..., italic = true, bold = false }`, every field optional.
+-- A dotted name you leave out follows its prefix when the prefix is set
+-- (string.escape takes after string), italic and bold included.
+--
+-- A theme can also start from another with `extends = "<theme name>"` and
+-- set only what differs; `app.opt.colors = { ui = ..., syntax = ... }` in
+-- init.lua tweaks whatever theme is chosen.
+
+-- Your colors, by name. Values elsewhere may use these names.
+local p = {
+  -- bg = "#1a1b26",
+  -- fg = "#c0caf5",
+  -- blue = "#7aa2f7",
+}
+
+return {
+  name = "_template", -- the file name without .lua
+  appearance = "dark", -- "dark" or "light": picks the defaults for what is unset
+  -- extends = "twocrest", -- start from another theme
+  palette = p,
+  ui = {
+    -- background = "#rrggbb", -- the window background. Unset: #0b0b0c (dark) / #f4f1ec (light)
+    -- foreground = "#rrggbb", -- the default text. Unset: #f4f1ec (dark) / #3d3a35 (light)
+    -- accent = {
+      -- bg = "#rrggbb", -- primary buttons, focus, highlights. Unset: #d9604a (dark) / #ae3a25 (light)
+      -- fg = "#rrggbb", -- text on the accent. Unset: background or foreground, whichever reads better on accent.bg
+      -- hover = {
+        -- bg = "#rrggbb", -- the accent under the mouse. Unset: accent.bg mixed 15% toward foreground
+      -- },
+      -- active = {
+        -- bg = "#rrggbb", -- the accent while pressed. Unset: accent.bg mixed 25% toward background
+      -- },
+    -- },
+    -- ansi = {
+      -- red = "#rrggbb", -- red. Unset: #f0524a (dark) / #c0392b (light)
+      -- green = "#rrggbb", -- green. Unset: #8fc27a (dark) / #3f7d3a (light)
+      -- yellow = "#rrggbb", -- yellow. Unset: #ffae42 (dark) / #b8740c (light)
+      -- blue = "#rrggbb", -- blue. Unset: #7aa2d6 (dark) / #3a6ea5 (light)
+      -- magenta = "#rrggbb", -- magenta. Unset: #d9604a (dark) / #ae3a25 (light)
+      -- cyan = "#rrggbb", -- cyan. Unset: #d6d2cb (dark) / #3d3a35 (light)
+    -- },
+    -- border = "#rrggbb", -- borders and rules. Unset: background mixed 15% toward foreground
+    -- muted = {
+      -- bg = "#rrggbb", -- cards, chips, code. Unset: background mixed 6% toward foreground
+      -- fg = "#rrggbb", -- secondary text: hints, labels, timestamps. Unset: foreground mixed 42% toward background
+    -- },
+    -- selection = "#rrggbb", -- selected text. Unset: accent.bg at 30% opacity
+    -- caret = "#rrggbb", -- the text cursor. Unset: accent.bg
+    -- overlay = "#rrggbb", -- the shade behind dialogs. Unset: background at 70% opacity
+    -- canvas = {
+      -- bg = "#rrggbb", -- the background of diagrams and 3D views. Unset: background
+    -- },
+    -- button = {
+      -- bg = "#rrggbb", -- buttons. Unset: muted.bg
+      -- fg = "#rrggbb", -- button labels. Unset: foreground
+      -- hover = {
+        -- bg = "#rrggbb", -- a button under the mouse; menu items too. Unset: button.bg mixed 8% toward foreground
+        -- fg = "#rrggbb", -- a button label under the mouse. Unset: foreground
+      -- },
+      -- active = {
+        -- bg = "#rrggbb", -- a button while pressed. Unset: button.bg mixed 15% toward foreground
+      -- },
+      -- disabled = {
+        -- fg = "#rrggbb", -- the label of a disabled button. Unset: foreground at 40% opacity
+      -- },
+    -- },
+    -- input = {
+      -- bg = "#rrggbb", -- the prompt and text fields. Unset: background
+      -- fg = "#rrggbb", -- typed text. Unset: foreground
+      -- border = "#rrggbb", -- text field borders. Unset: border
+      -- focused = {
+        -- border = "#rrggbb", -- the border (ring) of the focused field. Unset: accent.bg
+      -- },
+      -- disabled = {
+        -- fg = "#rrggbb", -- text of a disabled field and placeholders. Unset: foreground at 40% opacity
+      -- },
+    -- },
+    -- list = {
+      -- bg = "#rrggbb", -- lists and tables. Unset: background
+      -- even = {
+        -- bg = "#rrggbb", -- every other row. Unset: background mixed 2% toward foreground
+      -- },
+      -- header = {
+        -- bg = "#rrggbb", -- table headers. Unset: background mixed 4% toward foreground
+        -- fg = "#rrggbb", -- table header text. Unset: foreground
+      -- },
+      -- hover = {
+        -- bg = "#rrggbb", -- a row under the mouse. Unset: muted.bg
+      -- },
+      -- selected = {
+        -- bg = "#rrggbb", -- the selected row or timeline block. Unset: accent.bg at 15% opacity
+        -- fg = "#rrggbb", -- text of the selected row. Unset: foreground
+        -- border = "#rrggbb", -- the edge of the selected row or block. Unset: accent.bg
+      -- },
+      -- focused = {
+        -- border = "#rrggbb", -- the edge of the focused timeline block. Unset: accent.bg
+      -- },
+    -- },
+    -- popover = {
+      -- bg = "#rrggbb", -- popups, menus, dialogs. Unset: background mixed 3% toward foreground
+      -- fg = "#rrggbb", -- popup text. Unset: foreground
+      -- border = "#rrggbb", -- popup borders. Unset: border
+    -- },
+    -- title_bar = {
+      -- bg = "#rrggbb", -- the title bar. Unset: background
+      -- border = "#rrggbb", -- the title bar border. Unset: border
+    -- },
+    -- status_bar = {
+      -- bg = "#rrggbb", -- the status bar. Unset: popover.bg
+      -- fg = "#rrggbb", -- status bar text. Unset: muted.fg
+      -- border = "#rrggbb", -- the status bar border. Unset: border
+    -- },
+    -- sidebar = {
+      -- bg = "#rrggbb", -- the side panel. Unset: popover.bg
+      -- fg = "#rrggbb", -- side panel text. Unset: foreground
+      -- border = "#rrggbb", -- the side panel border. Unset: border
+      -- hover = {
+        -- bg = "#rrggbb", -- a side panel item under the mouse. Unset: muted.bg
+        -- fg = "#rrggbb", -- its text. Unset: foreground
+      -- },
+      -- selected = {
+        -- bg = "#rrggbb", -- the selected side panel item. Unset: accent.bg
+        -- fg = "#rrggbb", -- its text. Unset: accent.fg
+      -- },
+    -- },
+    -- tab = {
+      -- bar = {
+        -- bg = "#rrggbb", -- the tab bar. Unset: popover.bg
+      -- },
+      -- bg = "#rrggbb", -- tabs. Unset: background
+      -- fg = "#rrggbb", -- tab labels. Unset: muted.fg
+      -- selected = {
+        -- bg = "#rrggbb", -- the current tab. Unset: muted.bg
+        -- fg = "#rrggbb", -- the current tab label. Unset: foreground
+      -- },
+    -- },
+    -- scrollbar = {
+      -- bg = "#rrggbb", -- the scrollbar track. Unset: #00000000 (dark) / #00000000 (light)
+      -- thumb = {
+        -- bg = "#rrggbb", -- the scrollbar thumb. Unset: border mixed 10% toward foreground
+        -- hover = {
+          -- bg = "#rrggbb", -- the thumb under the mouse. Unset: muted.fg
+        -- },
+      -- },
+    -- },
+    -- link = {
+      -- fg = "#rrggbb", -- links. Unset: accent.bg
+      -- hover = {
+        -- fg = "#rrggbb", -- a link under the mouse. Unset: accent.hover.bg
+      -- },
+      -- active = {
+        -- fg = "#rrggbb", -- a link while pressed. Unset: accent.active.bg
+      -- },
+    -- },
+    -- info = {
+      -- bg = "#rrggbb", -- information: notices, running tools. Unset: ansi.blue
+      -- fg = "#rrggbb", -- text on it. Unset: background or foreground, whichever reads better on info.bg
+    -- },
+    -- success = {
+      -- bg = "#rrggbb", -- success: finished tools, approvals. Unset: ansi.green
+      -- fg = "#rrggbb", -- text on it. Unset: background or foreground, whichever reads better on success.bg
+    -- },
+    -- warning = {
+      -- bg = "#rrggbb", -- warnings. Unset: ansi.yellow
+      -- fg = "#rrggbb", -- text on it. Unset: background or foreground, whichever reads better on warning.bg
+    -- },
+    -- error = {
+      -- bg = "#rrggbb", -- errors, failed tools, denials. Unset: ansi.red
+      -- fg = "#rrggbb", -- text on it. Unset: background or foreground, whichever reads better on error.bg
+    -- },
+    -- diff = {
+      -- added = {
+        -- fg = "#rrggbb", -- added lines. Unset: success.bg
+        -- bg = "#rrggbb", -- the background of added lines. Unset: diff.added.fg at 12% opacity
+      -- },
+      -- removed = {
+        -- fg = "#rrggbb", -- removed lines. Unset: error.bg
+        -- bg = "#rrggbb", -- the background of removed lines. Unset: diff.removed.fg at 12% opacity
+      -- },
+      -- hunk = {
+        -- fg = "#rrggbb", -- hunk headers (`@@ ... @@`). Unset: info.bg
+      -- },
+      -- header = {
+        -- fg = "#rrggbb", -- file headers. Unset: muted.fg
+      -- },
+    -- },
+    -- editor = {
+      -- active_line = {
+        -- bg = "#rrggbb", -- the line of the cursor in code views. Unset: muted.bg
+      -- },
+      -- line_number = {
+        -- fg = "#rrggbb", -- line numbers. Unset: muted.fg
+      -- },
+      -- active_line_number = {
+        -- fg = "#rrggbb", -- the line number of the cursor. Unset: foreground
+      -- },
+    -- },
+    -- A list sets chart.1 to chart.5 (unset: accent.bg, warning.bg, info.bg,
+    -- success.bg, ansi.magenta); set the grid with its full path.
+    -- chart = { "#rrggbb", "#rrggbb", "#rrggbb", "#rrggbb", "#rrggbb" },
+    -- ["chart.grid"] = "#rrggbb", -- chart grid lines. Unset: border
+  },
+  syntax = {
+    -- comment = "#rrggbb", -- unset: muted.fg, italic
+    -- ["comment.doc"] = "#rrggbb", -- unset: muted.fg, italic
+    -- keyword = "#rrggbb", -- unset: ansi.magenta
+    -- string = "#rrggbb", -- unset: ansi.green
+    -- ["string.escape"] = "#rrggbb", -- unset: ansi.cyan
+    -- ["string.regex"] = "#rrggbb", -- unset: ansi.cyan
+    -- ["string.special"] = "#rrggbb", -- unset: ansi.cyan
+    -- ["string.special.symbol"] = "#rrggbb", -- unset: ansi.cyan
+    -- number = "#rrggbb", -- unset: ansi.yellow
+    -- boolean = "#rrggbb", -- unset: ansi.yellow
+    -- constant = "#rrggbb", -- unset: ansi.yellow
+    -- ["function"] = "#rrggbb", -- unset: ansi.blue
+    -- constructor = "#rrggbb", -- unset: ansi.blue
+    -- type = "#rrggbb", -- unset: ansi.cyan
+    -- enum = "#rrggbb", -- unset: ansi.cyan
+    -- variant = "#rrggbb", -- unset: ansi.cyan
+    -- variable = "#rrggbb", -- unset: foreground
+    -- ["variable.special"] = "#rrggbb", -- unset: ansi.red
+    -- property = "#rrggbb", -- unset: foreground
+    -- attribute = "#rrggbb", -- unset: ansi.yellow
+    -- label = "#rrggbb", -- unset: ansi.blue
+    -- tag = "#rrggbb", -- unset: ansi.red
+    -- operator = "#rrggbb", -- unset: foreground
+    -- punctuation = "#rrggbb", -- unset: muted.fg
+    -- ["punctuation.bracket"] = "#rrggbb", -- unset: muted.fg
+    -- ["punctuation.delimiter"] = "#rrggbb", -- unset: muted.fg
+    -- ["punctuation.special"] = "#rrggbb", -- unset: ansi.magenta
+    -- ["punctuation.list_marker"] = "#rrggbb", -- unset: accent.bg
+    -- preproc = "#rrggbb", -- unset: ansi.magenta
+    -- embedded = "#rrggbb", -- unset: foreground
+    -- title = "#rrggbb", -- unset: accent.bg, bold
+    -- link_text = "#rrggbb", -- unset: link.fg
+    -- link_uri = "#rrggbb", -- unset: muted.fg, italic
+    -- ["text.literal"] = "#rrggbb", -- unset: ansi.green
+    -- ["text.code.span"] = "#rrggbb", -- unset: ansi.green
+    -- emphasis = { italic = true }, -- unset: no color of its own, italic
+    -- ["emphasis.strong"] = { bold = true }, -- unset: no color of its own, bold
+  },
+}

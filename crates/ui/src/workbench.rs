@@ -23,7 +23,7 @@ use gpui::{
 };
 use gpui_component::ActiveTheme as _;
 
-use crate::app::{RootView, set_theme_mode, window_title};
+use crate::app::{RootView, set_theme, window_title};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -219,7 +219,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         window.set_window_title(&window_title(&parts.workspace_label));
-        set_theme_mode(parts.theme, cx);
+        set_theme(&parts.theme, cx);
         let (root, session) = crate::session::open(parts, window, cx);
         session.update(cx, |session, cx| session.focus_input(window, cx));
         cx.subscribe_in(

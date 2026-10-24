@@ -77,9 +77,44 @@ function Install-Setup([string]$File) {
     if ($process.ExitCode -ne 0) { throw "install.ps1: the setup failed (exit code $($process.ExitCode))" }
 }
 
+# crest's config folder, as crest finds it: $env:XDG_CONFIG_HOME\crest
+# when it is absolute, else %APPDATA%\crest.
+function Get-ConfigDir {
+    if ($env:XDG_CONFIG_HOME -and [System.IO.Path]::IsPathRooted($env:XDG_CONFIG_HOME)) {
+        return Join-Path $env:XDG_CONFIG_HOME "crest"
+    }
+    Join-Path $env:APPDATA "crest"
+}
+
+# Copies the config\ next to crest.exe (a commented init.lua and the
+# example color themes) into the config folder, never replacing a file
+# that exists. Zips before v0.15.0 have none: nothing to do.
+function Copy-ConfigSeed([string]$From) {
+    $seed = Join-Path $From "config"
+    if (-not (Test-Path $seed)) { return }
+    $config = Get-ConfigDir
+    $themes = Join-Path $config "themes"
+    New-Item -ItemType Directory -Force -Path $themes | Out-Null
+    $init = Join-Path $config "init.lua"
+    if (-not (Test-Path $init) -and (Test-Path (Join-Path $seed "init.lua"))) {
+        Copy-Item (Join-Path $seed "init.lua") $init
+        Write-Output "created $init (every option commented out)"
+    }
+    $added = 0
+    foreach ($theme in Get-ChildItem -Path (Join-Path $seed "themes") -Filter *.lua -ErrorAction SilentlyContinue) {
+        $target = Join-Path $themes $theme.Name
+        if (-not (Test-Path $target)) {
+            Copy-Item $theme.FullName $target
+            $added++
+        }
+    }
+    if ($added -gt 0) { Write-Output "added $added color themes to $themes (pick one with /theme)" }
+}
+
 # The installs of releases before v0.14.0: crest.exe, the shortcut and the
 # PATH entry made by this script.
 function Install-Exe([string]$Exe) {
+    Copy-ConfigSeed (Split-Path -Parent $Exe)
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -Force $Exe (Join-Path $InstallDir "crest.exe")
     Set-UserPath {

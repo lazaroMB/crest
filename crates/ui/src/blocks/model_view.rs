@@ -26,18 +26,15 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use super::mermaid::palette_color;
 use crate::render3d::camera::OrbitCamera;
 use crate::render3d::mesh::Mesh;
 use crate::sysboard::{Backend, auto_backend};
-use crate::theme::palette::{ACCENT, INK, TEXT_2};
+use crate::theme::token;
 
 /// Zoom step of one wheel notch.
 const WHEEL_STEP: f32 = 1.15;
 /// Zoom step of the keys and the buttons.
 const ZOOM_STEP: f32 = 1.25;
-/// The coral of the buttons under the pointer.
-const ACCENT_HOVER: &str = "#e2745f";
 /// Base colour of the model, linear: a neutral clay grey.
 const CLAY: [f32; 3] = [0.55, 0.56, 0.6];
 /// Height of the viewport at least, and the room left around it in the
@@ -56,6 +53,7 @@ struct FrameKey {
     size: (u32, u32),
     mesh: u64,
     camera: [u32; 7],
+    background: domain::theme::Color,
 }
 
 #[derive(Default)]
@@ -233,14 +231,19 @@ impl ModelView {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (accent, accent_hover, accent_fg) = (
+            token(cx, "accent.bg"),
+            token(cx, "accent.hover.bg"),
+            token(cx, "accent.fg"),
+        );
         let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
                 .px_1p5()
                 .rounded_sm()
-                .bg(palette_color(ACCENT))
-                .hover(|style| style.bg(palette_color(ACCENT_HOVER)))
-                .text_color(palette_color(INK))
+                .bg(accent)
+                .hover(move |style| style.bg(accent_hover))
+                .text_color(accent_fg)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(label)
         };
@@ -304,7 +307,8 @@ impl ModelView {
         let (mesh, mesh_key, camera) = (Rc::clone(&self.mesh), self.mesh_key, self.camera);
         canvas(
             move |bounds, _, _| viewport.set(bounds),
-            move |bounds, (), window, _| {
+            move |bounds, (), window, cx| {
+                let background = crate::theme::crest_theme(cx).color("canvas.bg");
                 let size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                 if size.0 <= 0.0 || size.1 <= 0.0 {
                     return;
@@ -323,8 +327,10 @@ impl ModelView {
                         size: px_size,
                         mesh: mesh_key,
                         camera: camera_bits(&camera),
+                        background,
                     };
                     if s.key != Some(key) {
+                        renderer.borrow_mut().set_background(background);
                         match renderer.borrow_mut().render_mesh(
                             &mesh,
                             Some(mesh_key),
@@ -383,9 +389,9 @@ impl Render for ModelView {
                     .h(px(height))
                     .overflow_hidden()
                     .rounded(radius)
-                    .bg(palette_color(INK))
+                    .bg(token(cx, "canvas.bg"))
                     .border_1()
-                    .border_color(palette_color(ACCENT))
+                    .border_color(token(cx, "accent.bg"))
                     .cursor_grab()
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
                     .on_mouse_down(MouseButton::Right, cx.listener(Self::mouse_down))
@@ -413,7 +419,7 @@ impl Render for ModelView {
                             .left_2()
                             .bottom_1()
                             .text_xs()
-                            .text_color(palette_color(TEXT_2))
+                            .text_color(token(cx, "muted.fg"))
                             .child(
                                 "drag: orbit · right/shift-drag: pan · wheel/+-: zoom · \
                                  0: fit · i: iso · u: up axis",

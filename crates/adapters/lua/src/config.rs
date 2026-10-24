@@ -14,6 +14,7 @@ use std::sync::Arc;
 use application::ports::plugin::{
     ConfigOrigin, ConfigSources, LoadedConfig, PluginCapabilities, PluginDiagnostic, PluginError,
 };
+use application::window::WINDOW_OPTION;
 use mlua::prelude::LuaChunkMode;
 
 use crate::caps::Grant;
@@ -81,10 +82,21 @@ pub(crate) fn load(vm: &mut Vm, sources: &ConfigSources) -> Result<LoadedConfig,
         }
     }
 
-    let workspace = sources
+    let mut workspace = sources
         .workspace
         .as_deref()
         .and_then(|path| run_file(vm, path, WORKSPACE_NAME, File::Workspace, &mut found));
+    // The window opens before any project: only the global config sets it.
+    if let (Some(ws), Some(path)) = (&mut workspace, &sources.workspace)
+        && ws.declared.options.extra.remove(WINDOW_OPTION).is_some()
+    {
+        errors.push(PluginDiagnostic {
+            source: path.display().to_string(),
+            message: "app.opt.window is ignored in a workspace config; set it in the global config"
+                .into(),
+            line: None,
+        });
+    }
     if let (Some(ws), Some(path)) = (&workspace, &sources.workspace)
         && !ws.declared.plugins.is_empty()
     {
@@ -457,6 +469,90 @@ end)
             decls[1].source,
             fx.workspace.join(WORKSPACE_DIR).join(INIT_FILE)
         );
+    }
+
+    #[test]
+    fn window_is_read_from_the_global_config_only() {
+        let fx = Fixture::new();
+        fx.global(r#"app.opt.window = { mode = "windowed", width = 1440 }"#)
+            .workspace(r#"app.opt.window = "fullscreen""#);
+        let (_vm, config) = fx.load();
+        assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
+        assert!(
+            config.errors[0]
+                .message
+                .contains("app.opt.window is ignored")
+        );
+        assert_eq!(
+            application::window::from_options(&config.options),
+            Ok(Some(application::window::WindowMode::Windowed {
+                width: 1440,
+                height: 800
+            }))
+        );
+    }
+
+    #[test]
+    fn themes_defined_in_config_and_color_overrides() {
+        let fx = Fixture::new();
+        fx.global(
+            r##"app.theme.define{ name = "mine", ui = { accent = color.alpha("#7aa2f7", 0.5) } }
+                app.theme.define{ ui = {} }
+                app.opt.colors = { ui = { carret = "#ff0000" } }"##,
+        )
+        .workspace(r#"app.theme.define{ name = "mine", appearance = "light" }"#);
+        let (_vm, config) = fx.load();
+        let messages: Vec<&str> = config.errors.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(
+            messages[0].contains("a theme needs a `name`"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1].contains("ui.carret: unknown token"),
+            "{messages:?}"
+        );
+        // Global first, the workspace last: the catalog keeps the last.
+        assert_eq!(config.themes.len(), 2);
+        assert_eq!(config.themes[0]["ui"]["accent"], "#7aa2f780");
+        assert_eq!(config.themes[1]["appearance"], "light");
+        assert!(config.options.extra.contains_key("colors"));
+    }
+
+    #[test]
+    fn the_installed_init_lua_loads_cleanly_as_is_and_uncommented() {
+        let template = include_str!("../../../../assets/init.lua");
+        let fx = Fixture::new();
+        fx.global(template);
+        let (_vm, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}", config.errors);
+        assert_eq!(
+            config.options,
+            application::ports::plugin::AppOptions::default()
+        );
+
+        // Each one-line option, uncommented, is valid too.
+        let options: String = template
+            .lines()
+            .filter_map(|line| line.strip_prefix("-- app.opt."))
+            .filter(|rest| !rest.trim_end().ends_with('{'))
+            .map(|rest| format!("app.opt.{rest}\n"))
+            .collect();
+        let fx = Fixture::new();
+        fx.global(&options);
+        let (_vm, config) = fx.load();
+        assert!(config.errors.is_empty(), "{:?}\n{options}", config.errors);
+        assert!(config.options.extra.contains_key("window"));
+    }
+
+    #[test]
+    fn a_malformed_window_is_dropped() {
+        let fx = Fixture::new();
+        fx.global(r#"app.opt.window = "kiosk""#);
+        let (_vm, config) = fx.load();
+        assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
+        assert!(config.errors[0].message.contains("unknown mode `kiosk`"));
+        assert!(!config.options.extra.contains_key("window"));
     }
 
     #[test]

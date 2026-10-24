@@ -227,6 +227,11 @@ pub struct UiController {
     default_provider: ProviderId,
     /// The models of the providers with a key, for the `/model` picker.
     catalog: Option<Arc<dyn ModelCatalogPort>>,
+    /// The themes `/theme` offers.
+    themes: application::theme::ThemeCatalog,
+    /// `app.opt` of the config: its `theme` wins at start, its `colors`
+    /// go over every theme.
+    theme_options: application::ports::plugin::AppOptions,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -680,6 +685,8 @@ impl UiController {
         let preferences_path = app.preferences_path.clone();
         let default_provider = app.default_provider;
         let catalog = app.catalog.clone();
+        let themes = app.themes.clone();
+        let theme_options = app.options.clone();
         let commands = app
             .commands
             .iter()
@@ -707,6 +714,8 @@ impl UiController {
             preferences_path,
             default_provider,
             catalog,
+            themes,
+            theme_options,
         }
     }
 }
@@ -1282,6 +1291,52 @@ impl SessionController for UiController {
             .boxed()
     }
 
+    fn themes(&self) -> BoxFuture<'static, Result<Vec<ui::session::ThemeChoice>, String>> {
+        let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
+        let task = self
+            .handle
+            .spawn_blocking(move || theme_choices(&catalog, &options));
+        task.map(|joined| joined.map_err(|err| err.to_string()))
+            .boxed()
+    }
+
+    fn save_theme(
+        &self,
+        name: String,
+    ) -> BoxFuture<'static, Result<ui::session::SavedTheme, String>> {
+        let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
+        let path = self.preferences_path.clone();
+        let task = self.handle.spawn_blocking(move || {
+            let (overrides, _) = application::theme::overrides_from_options(&options);
+            let resolved = catalog
+                .resolve(&name, overrides.as_ref())
+                .map_err(|err| err.to_string())?;
+            let name = resolved.theme.name.clone();
+            let mut notice = match &path {
+                Some(path) => {
+                    crate::preferences::update(Some(path), |p| p.theme = Some(name.clone()))?;
+                    format!("theme `{name}` saved")
+                }
+                None => format!("theme `{name}` for this window (preferences cannot be saved)"),
+            };
+            if let Some(fixed) = options.theme.as_deref() {
+                notice.push_str(&format!(
+                    "; init.lua sets app.opt.theme = \"{fixed}\", which wins when crest starts"
+                ));
+            }
+            for warning in resolved.warnings.iter().take(3) {
+                notice.push('\n');
+                notice.push_str(warning);
+            }
+            Ok(ui::session::SavedTheme {
+                theme: resolved.theme,
+                notice,
+            })
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
     fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
         logout_on(&self.handle, Arc::clone(&self.api_keys), account)
     }
@@ -1505,19 +1560,15 @@ pub fn session_parts(
                 app.warn(warning);
             }
             let timeoutlen = crate::keys::timeoutlen(&app.options);
-            let theme = match app
-                .options
-                .theme
+            let picked = preferences_path
                 .as_deref()
-                .map(ui::app::ThemeMode::from_name)
-            {
-                Some(Ok(theme)) => theme,
-                Some(Err(warning)) => {
-                    app.warn(warning);
-                    ui::app::ThemeMode::default()
-                }
-                None => ui::app::ThemeMode::default(),
-            };
+                .and_then(|path| Preferences::load(path).ok())
+                .and_then(|preferences| preferences.theme);
+            let (theme, theme_warnings) =
+                crate::startup::theme(&app.options, &app.themes, picked.as_deref());
+            for warning in theme_warnings {
+                app.warn(warning);
+            }
             let history = app.timeline_blocks();
             let prompt_history = app.prompt_history().clone();
             let needs_model = app.model_policy().needs_selection();
@@ -1606,8 +1657,25 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
         Overrides::default(),
         handle.clone(),
     ));
+    // The window opens before the project: only the global config sets it.
+    let (global, global_warnings) = crate::startup::global_config(handle);
+    let (window, window_warning) = crate::startup::window(&global.options);
+    for warning in global_warnings.iter().chain(&window_warning) {
+        eprintln!("warning: {warning}");
+    }
     if args.wants_picker() {
-        let opts = ui::app::UiOptions::default();
+        // No project yet: the theme of the global config (or `/theme`).
+        let global_init = platform::dirs::config_dir().map(|dir| dir.join("init.lua"));
+        let (catalog, _) = crate::startup::theme_catalog(global_init.as_deref(), &global.themes);
+        let picked = crate::preferences::default_path()
+            .and_then(|path| Preferences::load(&path).ok())
+            .and_then(|preferences| preferences.theme);
+        let (theme, _) = crate::startup::theme(&global.options, &catalog, picked.as_deref());
+        let opts = ui::app::UiOptions {
+            window,
+            theme,
+            ..ui::app::UiOptions::default()
+        };
         return window_exit(ui::app::run_with(opts, move |window, cx| {
             Workbench::new_picker(launcher, window, cx)
         }));
@@ -1628,7 +1696,8 @@ pub fn run(args: &Args, handle: &Handle) -> u8 {
     };
     let opts = ui::app::UiOptions {
         workspace_label: parts.workspace_label.clone(),
-        theme: parts.theme,
+        theme: std::sync::Arc::clone(&parts.theme),
+        window,
         ..ui::app::UiOptions::default()
     };
     let dir = parts.workspace_dir.clone().unwrap_or(config.workspace);
@@ -1752,6 +1821,33 @@ fn cancelled(err: &tokio::task::JoinError) -> BrowseError {
         path: String::new(),
         reason: err.to_string(),
     }
+}
+
+/// Every theme of `catalog`, resolved with `app.opt.colors` over it; a
+/// theme that does not resolve (a broken file) is left out.
+fn theme_choices(
+    catalog: &application::theme::ThemeCatalog,
+    options: &application::ports::plugin::AppOptions,
+) -> Vec<ui::session::ThemeChoice> {
+    use application::theme::ThemeOrigin;
+    let (overrides, _) = application::theme::overrides_from_options(options);
+    catalog
+        .entries()
+        .into_iter()
+        .filter_map(|entry| {
+            let resolved = catalog.resolve(&entry.name, overrides.as_ref()).ok()?;
+            let origin = match entry.origin {
+                ThemeOrigin::Builtin => "built in",
+                ThemeOrigin::File => "file",
+                ThemeOrigin::Config => "init.lua",
+            };
+            Some(ui::session::ThemeChoice {
+                name: entry.name,
+                origin: origin.to_owned(),
+                theme: resolved.theme,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

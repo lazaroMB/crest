@@ -113,6 +113,7 @@ pub fn auto_backend(cx: &mut App) -> Backend {
 /// What a rendered GPU frame showed; a new key renders a new frame.
 #[derive(Debug, Clone, PartialEq)]
 struct FrameKey {
+    background: domain::theme::Color,
     size: (u32, u32),
     scenario: usize,
     seed: u64,
@@ -625,6 +626,7 @@ impl SysBoardView {
         let camera = self.camera;
         let iso = self.iso;
         let key_base = FrameKey {
+            background: crate::theme::crest_theme(cx).color("canvas.bg"),
             size: (0, 0),
             scenario: self.scenario,
             seed: self.run().map_or(0, |r| r.trace.seed),
@@ -668,6 +670,7 @@ impl SysBoardView {
                         ..key_base
                     };
                     if s.key.as_ref() != Some(&key) {
+                        renderer.borrow_mut().set_background(key.background);
                         let result = renderer.borrow_mut().render(
                             &scene,
                             &frame,
@@ -711,6 +714,7 @@ impl SysBoardView {
         .size_full();
         let theme = cx.theme();
         let looks = self.frame().chips;
+        let label_color = crate::theme::token(cx, "foreground");
         let labels: Vec<AnyElement> = self
             .scene
             .labels
@@ -732,7 +736,7 @@ impl SysBoardView {
                             div()
                                 .text_xs()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(gpui::white())
+                                .text_color(label_color)
                                 .child(SharedString::from(label.text.clone())),
                         )
                         .child(

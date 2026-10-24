@@ -12,6 +12,8 @@ pub mod rtk;
 pub mod shell;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod theme;
 pub mod tools;
 pub mod usecases;
 pub mod web;
+pub mod window;

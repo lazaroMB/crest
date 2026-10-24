@@ -11,7 +11,9 @@ mod config;
 mod convert;
 mod host;
 mod sandbox;
+mod themes;
 mod vm;
 
 pub use config::default_sources;
 pub use host::{HostOptions, LuaHandle, LuaHost};
+pub use themes::{LuaThemeSource, THEMES_DIR};

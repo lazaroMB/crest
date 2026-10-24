@@ -1,6 +1,6 @@
 //! Choices the user makes in the window that outlive it: the provider of
-//! the last `/login`, the model picked with `/model` for each provider and
-//! which OpenCode plans the key may use.
+//! the last `/login`, the model picked with `/model` for each provider,
+//! which OpenCode plans the key may use and the theme of `/theme`.
 //!
 //! They live in `preferences.json` in crest's data directory, written
 //! privately like the trust stores. `app.opt.providers.default` and the
@@ -39,6 +39,9 @@ pub struct Preferences {
     /// (see [`crate::opencode::probe_access`]), and again after a `/login`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_access: Option<PlanAccess>,
+    /// Theme picked with `/theme`; `app.opt.theme` wins over it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 impl Preferences {
