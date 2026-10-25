@@ -16,6 +16,7 @@ pub mod diff;
 pub mod findings;
 pub mod flame;
 pub mod form;
+pub mod har;
 pub mod image;
 pub mod image_view;
 pub mod json;
@@ -79,6 +80,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::FlameGraph(_) => flame::render(entry, window, cx),
         BlockKind::Logs(_) => logs::render(entry, window, cx),
         BlockKind::QueryPlan(_) => query_plan::render(entry, window, cx),
+        BlockKind::Har(_) => har::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

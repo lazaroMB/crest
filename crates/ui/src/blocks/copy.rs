@@ -493,6 +493,17 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
             CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
         ],
+        BlockKind::Har(spec) => vec![
+            CopyFormat::new("requests", "requests CSV", spec.to_csv()),
+            CopyFormat::new(
+                "urls",
+                "URLs",
+                spec.entries
+                    .iter()
+                    .map(|e| format!("{} {}\n", e.method, domain::devops::har::redact_url(&e.url)))
+                    .collect(),
+            ),
+        ],
         _ => Vec::new(),
     }
 }

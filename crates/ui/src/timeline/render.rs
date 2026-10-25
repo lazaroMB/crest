@@ -44,6 +44,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::FlameGraph(_) => "flame_graph",
         BlockKind::Logs(_) => "logs",
         BlockKind::QueryPlan(_) => "query_plan",
+        BlockKind::Har(_) => "har",
     }
 }
 

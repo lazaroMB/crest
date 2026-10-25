@@ -53,7 +53,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Trace(_)
         | BlockKind::FlameGraph(_)
         | BlockKind::Logs(_)
-        | BlockKind::QueryPlan(_) => BlockWidth::Wide,
+        | BlockKind::QueryPlan(_)
+        | BlockKind::Har(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }
