@@ -304,6 +304,61 @@ fn check_options(name: &str, options: &[FormOption]) -> Result<(), BlockError> {
 }
 
 impl FieldKind {
+    /// What this input accepts, said to the user when an answer is
+    /// rejected (`Enter a whole number between 1 and 9`).
+    #[must_use]
+    pub fn hint(&self) -> String {
+        /// `between 1 and 5`, `at least 1`, `at most 5`, or nothing.
+        fn bounds<T: std::fmt::Display>(min: Option<T>, max: Option<T>) -> Option<String> {
+            match (min, max) {
+                (Some(min), Some(max)) => Some(format!("between {min} and {max}")),
+                (Some(min), None) => Some(format!("at least {min}")),
+                (None, Some(max)) => Some(format!("at most {max}")),
+                (None, None) => None,
+            }
+        }
+        // `of at least 1` reads better after a noun than `at least 1`.
+        let of = |b: String| {
+            if b.starts_with("between") {
+                b
+            } else {
+                format!("of {b}")
+            }
+        };
+        match self {
+            Self::String {
+                min_length,
+                max_length,
+                ..
+            } => match bounds(*min_length, *max_length) {
+                Some(b) => format!("Enter {b} characters"),
+                None => "Enter some text".to_owned(),
+            },
+            Self::Multiline { max_length, .. } => match max_length {
+                Some(max) => format!("Enter at most {max} characters"),
+                None => "Enter some text".to_owned(),
+            },
+            Self::Number { min, max, .. } => match bounds(*min, *max) {
+                Some(b) => format!("Enter a number {}", of(b)),
+                None => "Enter a number".to_owned(),
+            },
+            Self::Integer { min, max, .. } => match bounds(*min, *max) {
+                Some(b) => format!("Enter a whole number {}", of(b)),
+                None => "Enter a whole number".to_owned(),
+            },
+            Self::Boolean { .. } => "Answer yes or no".to_owned(),
+            Self::Enum { .. } => "Pick one of the options".to_owned(),
+            Self::MultiEnum {
+                min_items,
+                max_items,
+                ..
+            } => match bounds(*min_items, *max_items) {
+                Some(b) => format!("Pick {b} options"),
+                None => "Pick any of the options".to_owned(),
+            },
+        }
+    }
+
     /// Whether `value` is a valid answer for this input.
     #[must_use]
     pub fn accepts(&self, value: &Value) -> bool {
@@ -425,5 +480,23 @@ mod tests {
         ] {
             assert!(form.check_answer(&answer(bad.clone())).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn hints_say_what_a_field_accepts() {
+        let form = form();
+        let hints: Vec<String> = form.fields.iter().map(|f| f.kind.hint()).collect();
+        assert_eq!(
+            hints,
+            [
+                "Enter at most 10 characters",
+                "Enter some text",
+                "Enter a number between 0 and 1",
+                "Enter a whole number of at least 1",
+                "Answer yes or no",
+                "Pick one of the options",
+                "Pick at most 2 options",
+            ]
+        );
     }
 }
