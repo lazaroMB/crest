@@ -14,6 +14,10 @@ use serde_json::Value;
 
 use crate::block::BlockError;
 
+pub mod schema;
+
+pub use schema::{SchemaError, fields_from_schema};
+
 /// A form shown in the timeline.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FormSpec {
