@@ -314,16 +314,26 @@ Costs follow the modal note: S = a few days, M = 1–3 weeks, L = more than 3 we
 
 ### Phase 1: verifiable numbers and the everyday gaps (about 10–13 weeks)
 
-| Item | Approach | Estimate |
-| --- | --- | --- |
-| `Computed` envelope, slots, numeric-literal lint, provenance chip, recompute/diff, stale marking | serde + JSON Schema, BLAKE3 hashes, diff renderer reuse | 2 weeks |
-| Rust stats engine core + golden-file suite vs scipy/R | statrs, polars/ndarray-stats, linregress | 2 weeks |
-| Descriptive, hypothesis test, OLS regression, correlation cards | card anatomy, APA formatter, Lua misuse rules | 2 weeks |
-| LaTeX math (inline, display, mhchem) | RaTeX via `MarkdownPlugin` pre-pass → `RenderImage` | 2–3 weeks |
-| Unit-checked calc sheet + quantity card | numbat, reactive DAG | 1–2 weeks |
-| Form / approval block | JSON Schema subset, gpui-component inputs | 1–2 weeks |
-| Function plot with sliders (plot painter) | own painter + evaluator | 2 weeks |
-| Dataframe/Parquet preview, test report, SARIF, ANSI, WaveDrom, molecule 2D, plate map, export/copy-as | existing parsers onto existing table/tree/SVG paths | 2–3 weeks |
+**Status: implemented (2026-10-24).** The Status column says what was built and where it departs from the approach above. User documentation: [usage.md](../usage.md#statistics-and-calculations) and [plugins.md](../plugins.md#appcompute-engine-computed-cards).
+
+| Item | Approach | Estimate | Status |
+| --- | --- | --- | --- |
+| `Computed` envelope, slots, numeric-literal lint, provenance chip, recompute/diff, stale marking | serde + JSON Schema, BLAKE3 hashes, diff renderer reuse | 2 weeks | Done: `domain::computed` (envelope, `⟦id.key⟧` slots with an ASCII `[[calc:id.key]]` fallback, lint), recompute through `ComputePort` back to a `BlockUpdated` with `verification`; stale = a recompute found the input file's hash changed (no file watching). |
+| Rust stats engine core + golden-file suite vs scipy/R | statrs, polars/ndarray-stats, linregress | 2 weeks | Done in `adapter-compute` on statrs alone: descriptives, quantiles, ranks and OLS (Householder QR, statsmodels-style diagnostics) written by hand instead of polars/ndarray-stats/linregress; Brown-Forsythe as the equal-variance check. Reference tests use NIST StRD (Norris, Longley, Michelson, NumAcc) and R documentation examples. |
+| Descriptive, hypothesis test, OLS regression, correlation cards | card anatomy, APA formatter, Lua misuse rules | 2 weeks | Done: tools `stats_describe/test/regress/correlate`, the 8-part card, template sentences and the APA line in `domain`; the misuse rules are in the Rust engine, not Lua. `app.compute.*` in Lua returns the same card. |
+| LaTeX math (inline, display, mhchem) | RaTeX via `MarkdownPlugin` pre-pass → `RenderImage` | 2–3 weeks | Done with the RaTeX crates (=0.1.15) directly rather than `ratex-gpui`; inline math sits on the baseline as an inline object, so no image fallback was needed. |
+| Unit-checked calc sheet + quantity card | numbat, reactive DAG | 1–2 weeks | Done (`calc`, `convert`) on numbat 1.24.0 without default features; lines are evaluated in order, not as a reactive DAG. |
+| Form / approval block | JSON Schema subset, gpui-component inputs | 1–2 weeks | Done (`ask_user`, `FormPort`); headless asks on stdin. A cancel is an `is_error` result (not `ToolError::Cancelled`) so the block keeps its state. |
+| Function plot with sliders (plot painter) | own painter + evaluator | 2 weeks | Done (`show_plot`, `app.ui.plot`) with an own expression parser in `domain::plot::expr` instead of exmex; the regression card reuses it for residuals and QQ. |
+| Dataframe/Parquet preview, test report, SARIF, ANSI, WaveDrom, molecule 2D, plate map, export/copy-as | existing parsers onto existing table/tree/SVG paths | 2–3 weeks | Done in `adapter-formats` and `ui`: JUnit with quick-xml directly (quick-junit needs a `<testsuites>` root), hand-written SARIF 2.1.0 structs instead of serde-sarif, wavedrom 0.1.0, the parquet record API without arrow, chematic 1.2.1, ANSI with anstyle-parse, SVG with resvg; a copy-as row on the selected block. |
+
+Carried over to phase 2 (gaps left by phase 1):
+
+- Statistics: no session-wide multiple-testing rule (only within one correlation matrix); no Lua API for forms, datasets, molecules or plates.
+- Plots: linear axes only, no equal-aspect option, a fixed 160×120 grid for implicit curves (thin features can be missed); hover dots are not coloured per layer.
+- Formats: no nextest/libtest JSON reader; SARIF `fixes` are not shown; WaveDrom covers part of WaveJSON and draws on white with approximate text widths; Arrow IPC unsupported; CSV row count unknown beyond 32 MiB; Parquet nested columns shown as text, INT96 timestamps as `int96`.
+- Rendering: the molecule SVG and the WaveDrom diagram are not theme-tinted (light card) and molecules have no stereo wedges; the plate scale is sequential only (no diverging or log scale) and labels fit only in 96-well cells; the SVG raster cache never evicts.
+- Interaction: copy-as only on the selected block; in a form the Submit click moves focus to the timeline, and a form whose request was withdrawn stays pending in the store.
 
 ### Phase 2: shared widgets and domain viewers (about 12–16 weeks)
 

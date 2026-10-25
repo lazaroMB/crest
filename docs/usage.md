@@ -261,7 +261,7 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Text | Model reply (streamed markdown); your prompt appears quoted with `>`. | — |
 | Thinking | Extended thinking. | Collapsed to one line; `Enter` expands it. |
 | ToolCall | Any tool: one line with name, subject and status (pending, awaiting approval, running, ok, failed, denied, cancelled). | `Enter` shows the input and the output. |
-| Shell | `/!command` | `$ command`, exit status and output; long output collapsed until `Enter`. |
+| Shell | `/!command` | `$ command`, exit status and output; long output collapsed until `Enter`. ANSI colours and bold/dim/italic/underline are drawn, the 16 basic colours from the theme's `ansi.*` tokens. |
 | Diff | `edit_file`, `write_file` | Colored diff with its approval status. |
 | Chart | `show_chart` tool (bar, line, area, pie). | **`t` toggles a table** of the same data. Hovering a bar shows its value; on lines and areas a crosshair shows every series at that point. Many categories or long labels switch bars to horizontal. |
 | Table | `show_table` tool | Fills the block's width; long cells wrap (up to 8 lines) and numbers stay on one line, right-aligned. Shows 12 rows until **Show all N rows** (at most 500 drawn; `y` copies all). Clicking a header cycles descending → ascending → original, over every row. |
@@ -269,10 +269,64 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Markdown | `show_markdown` tool | Document typography; `t` shows the source. |
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
 | Sources, StageHeader | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
-| Image | [Pasted images](#pasted-images), research workflow | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. |
+| Image | [Pasted images](#pasted-images), research workflow, `show_wavedrom` | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. SVG is rasterized off the UI thread at the window's scale (sharper when zoomed). |
+| Computed | `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate`, `calc`, `convert`, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations). |
+| Form | `ask_user` | Typed questions the turn waits on; see [Forms](#forms-ask_user). |
+| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on numeric axes, a slider per parameter; hovering shows a crosshair with the values. |
+| Test report | `show_test_report` | Totals by outcome, failures first; a click on a chip filters, on a case shows its trace, on its location opens the file. |
+| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page. |
+| Dataset | `show_dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
+| Molecule | `show_molecule` | 2D structure on a light card and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
+| Plate | `show_plate` | A 96- or 384-well heatmap with a legend; each well has a tooltip with its name, label and value. |
 | Error | API, tool or config failures | Message and suggested action. |
 
 In the table, `Enter` means `Ctrl+G o` from the prompt or `o`/`Enter` with the timeline focused, and `t` means `Ctrl+G t` from the prompt or `t` with the timeline focused. `t` only has an effect on Chart, Markdown and Mermaid. `Ctrl+G y` (or `y` with the timeline focused) copies the content of the selected block.
+
+**Copy as.** The selected block shows a `copy as` row under it with the other forms it can be copied in: TSV and CSV for tables and charts (a chart as its data table), the JSON of a plot, the Mermaid source, the failing tests of a report, the `file:line` list of findings, the plain output of a Shell block (without colours), the profile and preview CSV of a dataset, the SMILES, canonical SMILES, formula and SVG of a molecule, a plate as CSV, and for a computed card the APA line, its reproduce lines (Lua, Python, R, shell) and the envelope JSON.
+
+### Statistics and calculations
+
+The model is told never to compute numbers in its head: it calls an engine, and the engine's numbers are the only ones the card shows.
+
+| Tool | What the engine does |
+| --- | --- |
+| `stats_describe` | n, missing, mean, SD, median, quartiles, min/max, skew and kurtosis per variable (and per group with `by`); counts and percentages for categorical columns. |
+| `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). |
+| `stats_regress` | OLS with coefficients, SE, t, p, CI, standardized β and VIF; R², adjusted R², F, AIC/BIC; Durbin-Watson, Jarque-Bera, Breusch-Pagan, the largest Cook's distance and the condition number as diagnostics. |
+| `stats_correlate` | Pearson, Spearman or Kendall matrix with Holm (default), BH or Bonferroni adjustment. |
+| `calc` | A sheet of named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) evaluated in order by numbat; each line shows its value, unit and dimension, and a unit error appears on its line. |
+| `convert` | A unit conversion with the factor, whether it is exact, the dimension and an optional uncertainty. |
+
+The data is a CSV/TSV file of the workspace (`data.path`, read through the same guard as `read_file`) or inline columns where `null` is a missing value. Every card has the same parts:
+
+- **Header**: the method and why it was chosen, and the **provenance chip** (engine, a short BLAKE3 hash of the input, the time). A click on the chip shows the inputs and the reproduce lines.
+- **Assumptions**: a checklist of each check (pass, fail, not checked), open when one fails. A calc sheet shows its unit readings as chips on their lines instead.
+- **Results**: numbers right-aligned in the monospace font. A regression adds residuals vs fitted and a normal QQ plot; a descriptive card a small histogram per variable.
+- **Sentence and APA line**: a plain-language sentence and the APA line (italic symbols, `Copy`), both filled from the engine's values by templates, never written by the model.
+- **Warnings** (small n, expected counts below 5, VIF above 10, unadjusted correlations...) and **alternatives** to the chosen method.
+- **Footer**: `Engine output` toggles the raw envelope, **Recompute** runs the stored request again (re-reading the file), and buttons copy the reproduce line (Lua, Python, R, shell) and the envelope JSON.
+
+After Recompute the header shows **✓ Verified · reproduced <time>** when every value matches, or **✗ Mismatch · N values changed** with a diff of the changed values. **Stale input** means Recompute found the data file changed since the card was computed (a warning names the old and new hashes). A failed recompute says why under the card.
+
+**Number slots.** Each tool result lists the card's values as slots, and the model cites them in its reply as `⟦id.key⟧` (for example `⟦st_1a2b3c4d5e6f.p_value⟧`; the ASCII form `[[calc:id.key]]` also works). The timeline replaces each slot with the engine's value as the card displays it; a slot that names no known value stays as written. Any other number the model typed (outside slots, math, code, years, versions and the numbers in your prompt; whole numbers up to 10 are ignored) is counted in a chip under the reply, **⚠ N numbers not from an engine**; a click lists them.
+
+### Math in text
+
+TeX math in replies and markdown blocks is typeset with RaTeX: inline `$..$`, `\(..\)` and `\ce{..}` (mhchem) on the text baseline, and display `$$..$$`, `\[..\]` and ```` ```math ```` fences centered (scrolled sideways when wider than the column). A single `$` follows pandoc's rule, so prices such as `$5 and $20` stay prose; code spans and fences are left alone. A formula that does not parse shows as a monospace chip with the source, the error and **Copy LaTeX**. A calc sheet shows its lines' formulas the same way.
+
+### Forms (`ask_user`)
+
+When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
+
+### Plots, reports, data and lab blocks
+
+- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. Axes are linear.
+- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`). Passed tests are folded into one row.
+- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. Suggested fixes are not shown.
+- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block (white background).
+- **`show_dataset`**: CSV, TSV, JSON lines or Parquet. Text files are read up to 32 MiB (beyond that the profile covers the first rows and says `sampled`), Parquet files up to 256 MiB; Arrow IPC is not supported. The model is told to look at a file this way before running statistics on it.
+- **`show_molecule`**: a structure from SMILES with values computed from it, never from the model. With `claimed_formula` a chip shows whether the model's formula matches; a SMILES that does not parse shows the error (and the model gets it too).
+- **`show_plate`**: a 96- or 384-well plate map; labels are drawn inside the wells of a 96-well plate.
 
 ### Plugin modals
 
@@ -440,6 +494,8 @@ printf 'y\n' | crest --headless "add a test for parse()" --workspace .
 - the first one cancels the turn (`^C interrupting the turn (again to quit)`) and exits with 130 after saving the session;
 - the second one exits immediately with 130.
 
+An `ask_user` form is asked field by field on the terminal: each shows its label (`*` when required), description and options. `Enter` alone keeps the default or skips an optional field, a choice takes the option's number or value (several separated by commas), a boolean `y` or `n`, and a text area reads lines until one with a single `.`. A value the field does not accept is explained and asked again; `/cancel` cancels the form. When stdin is not a terminal (piped input, CI) nobody can answer, so every form is cancelled with that reason and the model goes on without it. The new blocks print one dim line each (`[computed: Welch two-sample t-test]`, `[dataset: data/cars.csv]`, `[molecule: CCO]`...).
+
 With `--research` and `--implement`, however, `Ctrl+C` kills the process: there is no orderly cancellation, and the workflow stays at its last checkpoint.
 
 Without an API key, headless mode exits with the key error and code 2. The window, by contrast, opens anyway and shows that error as its first block.
@@ -466,7 +522,16 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `edit_file` | `path`, `old`, `new` (`old` must appear exactly once) | write |
 | `write_file` | `path`, `content` | write |
 | `run_command` | `command`, `args[]`, `timeout_s` (120). No shell, at the workspace root. | execute (read for some `git` commands) |
-| `show_chart`, `show_table`, `show_mermaid`, `show_markdown` | the block's data | read |
+| `show_chart`, `show_table`, `show_mermaid`, `show_markdown`, `show_plot` | the block's data | read |
+| `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate` | `data` (`path` of a CSV/TSV, `delimiter?`, or inline `columns`) and the request (variables, test, `y`, `x`, `group`, method...) | read |
+| `calc` | `lines` (`name = expr`, in order), `significant_digits` (6) | read |
+| `convert` | `value?`, `from`, `to`, `uncertainty?`, `significant_digits` (6) | read |
+| `ask_user` | `title`, `description?`, `schema` (a JSON Schema object), `submit_label?`: waits for the answer | read |
+| `show_test_report`, `show_findings` | `path` of a JUnit XML / SARIF file (32 MiB at most); `title?` for the report | read |
+| `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
+| `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |
+| `show_molecule` | `smiles`, `name?`, `claimed_formula?` | read |
+| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?` | read |
 | `web_search` | `query`, `max_results?` (1–10; `app.opt.web.max_results`, 8, by default): title, URL and snippet of each result | network, no approval |
 | `web_fetch` | `url` (http or https): the page as text, with its final URL and title | network, no approval |
 | `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls, with the web tools when they are on) that returns a summary | read |

@@ -13,10 +13,10 @@ flowchart TB
     subgraph bin["crates/bin · crest (composition root)"]
         root["root.rs · build_app"]
         gui["gui.rs · UiController"]
-        headless["headless/ · HeadlessSink, StdinApproval"]
+        headless["headless/ · HeadlessSink, StdinApproval, StdinForm"]
     end
     subgraph ui["crates/ui · GPUI"]
-        session["Session, Timeline, Input, Status, Picker, Tree, Approval, ModalHost, SysBoard, render3d"]
+        session["Session, Timeline, Input, Status, Picker, Tree, Approval, UiForm, ModalHost, SysBoard, render3d"]
     end
     subgraph adapters["crates/adapters/*"]
         anthropic["anthropic"]
@@ -28,11 +28,13 @@ flowchart TB
         mcp["mcp (rmcp)"]
         telemetry["telemetry"]
         export["export (board.html)"]
+        compute["compute (stats, numbat)"]
+        formats["formats (JUnit, SARIF, WaveDrom, datasets, molecules)"]
     end
     subgraph app["crates/app · application"]
         ports["ports/*"]
-        usecases["usecases/ · run_turn, compact, resume, simulate"]
-        tools["tools/ · registry, files, components, task, simulate, mcp, plugin"]
+        usecases["usecases/ · run_turn, compact, resume, simulate, compute"]
+        tools["tools/ · registry, files, components, compute, formats, form, task, simulate, mcp, plugin"]
         flows["flows/ · research, implement"]
         keymap["keymap.rs, cost.rs"]
     end
@@ -58,6 +60,8 @@ flowchart TB
 | `adapter-lua` | `crates/adapters/lua` | `mlua` host (Lua 5.4) on its own thread, with the sandbox, config loading and merging, and the `app` API. |
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |
 | `adapter-export` | `crates/adapters/export` | `SimExport`: the self-contained `board.html` replay of a simulated board, with three.js r160 vendored in `vendor/three/` (MIT) and inlined. |
+| `adapter-compute` | `crates/adapters/compute` | `StatsEngine`: crest-stats (descriptives, t / rank / χ² / Fisher tests, OLS, correlation with assumption checks and misuse warnings, on `statrs`) and crest-calc (`numbat` unit sheets and conversions); every result is a `Computed` envelope with BLAKE3 input hashes and reproduce lines. Synchronous and CPU-bound: callers run it on a blocking thread. |
+| `adapter-formats` | `crates/adapters/formats` | `Formats`: JUnit XML (`quick-xml`), SARIF 2.1.0 (own serde structs), WaveDrom to SVG (`wavedrom`), CSV/TSV/JSON-lines/Parquet previews and profiles (`parquet` record API, no arrow) and 2D molecules from SMILES (`chematic`). |
 | `adapter-telemetry` | `crates/adapters/telemetry` | `tracing` spans and, with the `langfuse` feature, OTLP export to Langfuse. |
 | `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog, plugin modals, the simulation board (`sysboard/`) and its offscreen wgpu renderer (`render3d/`). |
 | `crest` | `crates/bin` | Composition root: CLI, adapter construction, window or headless. |
@@ -69,7 +73,7 @@ flowchart TB
 | `LlmPort` | `ports/llm.rs` | `stream(LlmRequest)`, `count_tokens` | `adapter_anthropic::AnthropicLlm`. In the research workflow it is wrapped by `WebToolsLlm` (bin). | `llm::ScriptedLlm` |
 | `ModelCatalogPort` | `ports/llm.rs` | `list_models()` | `adapter_anthropic::AnthropicCatalog` | `llm::FakeModelCatalog` |
 | `McpPort` | `ports/mcp.rs` | `list_tools`, `call_tool`, `servers` | `adapter_mcp::McpManager` (with the bin's `TimedMcp`, for per-server timeouts) | `llm::FakeMcp` |
-| `FileSystemPort` | `ports/fs.rs` | `root`, `read_file`, `exists`, `prepare_edit`, `prepare_write`, `apply` | `adapter_fs::LocalFs` | `fs::InMemoryFs` |
+| `FileSystemPort` | `ports/fs.rs` | `root`, `read_file`, `read_bytes`, `read_head`, `exists`, `prepare_edit`, `prepare_write`, `apply` | `adapter_fs::LocalFs` | `fs::InMemoryFs` |
 | `FileSearchPort` | `ports/search.rs` | `list_files`, `find_file`, `tree` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ContentSearchPort` | `ports/search.rs` | `grep` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ShellPort` | `ports/shell.rs` | `run`, `classify` | `adapter_shell::LocalShell` | `fs::ScriptedShell` |
@@ -78,13 +82,16 @@ flowchart TB
 | `SessionStorePort` | `ports/store.rs` | `save`, `load`, `latest_for_workspace`, `list`, `delete` | `adapter_store::SqliteSessionStore` | `system::InMemorySessionStore` |
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
 | `ThemeSourcePort` | `ports/theme.rs` | `list`, `load(name)` (sync; theme files are small and local) | `adapter_lua::LuaThemeSource` (`<config dir>/themes/*.lua`, each in a fresh sandbox) | `theme::FakeThemes` |
+| `ComputePort` | `ports/compute.rs` | `describe`, `test`, `regress`, `correlate`, `calc`, `convert`, `recompute`, `run` (sync, CPU-bound) | `adapter_compute::StatsEngine` | `compute::FakeCompute` |
+| `FormatsPort` | `ports/formats.rs` | `parse_test_report`, `parse_sarif`, `render_wavedrom`, `preview_dataset`, `depict_molecule` (sync) | `adapter_formats::Formats` | `formats::FakeFormats` |
+| `FormPort` | `ports/form.rs` | `ask(FormRequest) → FormResponse` | `ui::form::UiForm` (window), `crest::headless::StdinForm` (terminal) | `form::ScriptedForm` |
 | `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |
 | `SessionStorage` (graph-flow trait) | — | — | `adapter_store::SqliteFlowStorage` | graph-flow's in-memory storage |
 
 Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
-The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback` and `run_command`. The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
+The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command` and `recompute` (re-runs a computed card's envelope). The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
 
 ## A turn: `run_turn`
 
