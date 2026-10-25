@@ -205,6 +205,9 @@ impl Walk<'_> {
             CustomNode::Graph(spec) => {
                 crate::widgets::graph::render(self.next_id(), spec, window, cx)
             }
+            CustomNode::Tree(spec) => {
+                crate::widgets::tree::render(self.next_id(), spec, window, cx)
+            }
             CustomNode::Model3d(spec) => {
                 super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
             }

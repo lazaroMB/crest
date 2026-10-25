@@ -14,7 +14,7 @@
 //! | dataset | column profile CSV, preview rows CSV |
 //! | molecule | SMILES, canonical SMILES, formula, SVG |
 //! | plate | `well,label,value` CSV |
-//! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT |
+//! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
@@ -208,6 +208,7 @@ fn widget(node: &CustomNode) -> Vec<CopyFormat> {
             vec![CopyFormat::new("lines", "lines", spec.all_text())]
         }
         CustomNode::Graph(spec) => vec![CopyFormat::new("dot", "DOT", spec.to_dot())],
+        CustomNode::Tree(spec) => vec![CopyFormat::new("tree", "indented text", spec.to_text())],
         _ => Vec::new(),
     }
 }

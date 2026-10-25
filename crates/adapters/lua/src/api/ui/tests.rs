@@ -214,6 +214,35 @@ fn graphs_take_nodes_edges_and_groups() {
 }
 
 #[test]
+fn trees_take_columns_and_nested_nodes() {
+    let got = tree(
+        r#"return app.ui.block("t", app.ui.tree({
+             columns = { { name = "time", kind = "duration" }, { name = "share", kind = "bar", unit = "%" } },
+             nodes = {
+               { label = "Hash Join", values = { time = 12, share = 100 }, children = {
+                   { label = "Seq Scan", badge = "hot", tone = "error", values = { time = 9, share = 75 } },
+                   { label = "Index Scan", values = {}, children = {} },
+               } },
+             },
+           }))"#,
+    );
+    let CustomNode::Tree(spec) = got else {
+        panic!("not a tree: {got:?}");
+    };
+    assert_eq!(spec.columns.len(), 2);
+    assert_eq!(spec.nodes[0].children.len(), 2);
+    assert_eq!(spec.nodes[0].children[0].badge.as_deref(), Some("hot"));
+    assert!(spec.nodes[0].children[1].children.is_empty());
+    let bad = error_of(
+        r#"return app.ui.tree({ columns = { { name = "n", kind = "number" } }, nodes = { { label = "x", values = { n = "many" } } } })"#,
+    );
+    assert!(
+        bad.contains("app.ui.tree") && bad.contains("needs a number"),
+        "{bad}"
+    );
+}
+
+#[test]
 fn filter_lists_take_items_and_facets() {
     let got = tree(
         r#"return app.ui.block("l", app.ui.filter_list({
