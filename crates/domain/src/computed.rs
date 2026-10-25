@@ -22,6 +22,7 @@ pub mod apa;
 pub mod bootstrap;
 pub mod contingency;
 pub mod distribution;
+pub mod forecast;
 pub mod lint;
 pub mod narrative;
 pub mod power;
@@ -40,6 +41,7 @@ pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
     QqPoint,
 };
+pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
 pub use self::power::{PowerBody, PowerTarget, PowerTest};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
@@ -612,6 +614,8 @@ pub enum ComputedBody {
     AbTest(AbTestBody),
     /// A bootstrap of one statistic.
     Bootstrap(BootstrapBody),
+    /// A time-series decomposition and forecast.
+    Forecast(ForecastBody),
 }
 
 impl ComputedBody {
@@ -643,6 +647,7 @@ impl ComputedBody {
             Self::Power(body) => body.validate(),
             Self::AbTest(body) => body.validate(),
             Self::Bootstrap(body) => body.validate(),
+            Self::Forecast(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

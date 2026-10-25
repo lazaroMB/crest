@@ -295,6 +295,41 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                     .map_or_else(|| "?".to_owned(), |s| s.to_string()),
             ))
         }
+        ("forecast", ComputedBody::Forecast(f)) => {
+            let horizon = display(computed, "horizon")?;
+            let end = computed.value("end")?;
+            let interval = end
+                .ci
+                .as_ref()
+                .map(|ci| {
+                    format!(
+                        " (95% interval {} to {})",
+                        apa::number(ci.lo, end.decimals.unwrap_or(2)),
+                        apa::number(ci.hi, end.decimals.unwrap_or(2))
+                    )
+                })
+                .unwrap_or_default();
+            let accuracy = match (display(computed, "mape"), display(computed, "smape")) {
+                (Some(mape), _) => format!(
+                    " On the {} held-out observations the model, fitted without them, was off \
+                     by MAPE {mape}%.",
+                    display(computed, "holdout").unwrap_or_default()
+                ),
+                (None, Some(smape)) => format!(
+                    " On the {} held-out observations the model, fitted without them, was off \
+                     by sMAPE {smape}%.",
+                    display(computed, "holdout").unwrap_or_default()
+                ),
+                _ => String::new(),
+            };
+            Some(format!(
+                "{} ({}): the forecast {horizon} steps ahead is {}{interval}, starting at {}.{accuracy}",
+                f.variable,
+                f.model,
+                end.display_text(),
+                display(computed, "next")?,
+            ))
+        }
         _ => None,
     }
 }

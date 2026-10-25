@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+augurs-core.workspace = true
+augurs-ets.workspace = true
+augurs-mstl.workspace = true
 blake3.workspace = true
 domain.workspace = true
 numbat.workspace = true

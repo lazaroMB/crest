@@ -47,8 +47,9 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Bootstrap, Contingency, Distribution, Power, StatsAbTestTool, StatsBootstrapTool,
-    StatsContingencyTool, StatsDistributionTool, StatsPowerTool,
+    AbTest, Bootstrap, Contingency, Distribution, ForecastKind, Power, StatsAbTestTool,
+    StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool, StatsForecastTool,
+    StatsPowerTool,
 };
 
 use super::registry::{
@@ -750,7 +751,7 @@ To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), c
 residuals), `stats_contingency`. Before a study, or to judge a non-significant result, \
 compute power or the sample size with `stats_power`; to compare two conversion rates \
 (an A/B test), `stats_ab_test`; for an interval without distributional assumptions, \
-`stats_bootstrap`.
+`stats_bootstrap`. To decompose or forecast a time series, call `stats_forecast`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -782,7 +783,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsContingencyTool::new(ports.clone()))?;
     registry.register_typed(StatsPowerTool::new(ports.clone()))?;
     registry.register_typed(StatsAbTestTool::new(ports.clone()))?;
-    registry.register_typed(StatsBootstrapTool::new(ports.clone()))
+    registry.register_typed(StatsBootstrapTool::new(ports.clone()))?;
+    registry.register_typed(StatsForecastTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -870,7 +872,11 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "stats_bootstrap_definition",
-            definition(StatsBootstrapTool::new(ports))
+            definition(StatsBootstrapTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "stats_forecast_definition",
+            definition(StatsForecastTool::new(ports))
         );
     }
 
@@ -1164,6 +1170,7 @@ mod tests {
                 "stats_correlate",
                 "stats_describe",
                 "stats_distribution",
+                "stats_forecast",
                 "stats_power",
                 "stats_regress",
                 "stats_test"

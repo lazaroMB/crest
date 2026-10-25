@@ -3250,6 +3250,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A time-series decomposition and forecast.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "forecast"
+            }
+          },
+          "$ref": "#/$defs/ForecastBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -5026,6 +5040,170 @@ expression: "schemars::schema_for!(Block)"
         "conf_level",
         "histogram",
         "intervals"
+      ]
+    },
+    "SeasonalComponent": {
+      "description": "One seasonal component of a decomposition.",
+      "type": "object",
+      "properties": {
+        "period": {
+          "description": "Its period, in observations.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "values": {
+          "description": "One value per observation.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "period",
+        "values"
+      ]
+    },
+    "Holdout": {
+      "description": "The forecast of the held-out tail by a model fitted without it.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "Index of the first held-out observation.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "predicted": {
+          "description": "The forecast of the held-out observations.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "start",
+        "predicted"
+      ]
+    },
+    "ForecastBody": {
+      "description": "Body of a forecast card. The forecast continues the series' indices\nat `values.len()`, `values.len() + 1`, …",
+      "type": "object",
+      "properties": {
+        "variable": {
+          "description": "The variable.",
+          "type": "string"
+        },
+        "time": {
+          "description": "Time labels of the observations, when the data had a time column.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "description": "The model, e.g. `MSTL (periods 12) + AutoETS trend`.",
+          "type": "string"
+        },
+        "values": {
+          "description": "The observations.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "trend": {
+          "description": "Trend of the decomposition (empty without seasonal periods).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "seasonal": {
+          "description": "Seasonal components, one per period.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeasonalComponent"
+          },
+          "default": []
+        },
+        "remainder": {
+          "description": "Remainder of the decomposition.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "forecast": {
+          "description": "Point forecasts.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "lo80": {
+          "description": "80% interval, lower bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "hi80": {
+          "description": "80% interval, upper bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "lo95": {
+          "description": "95% interval, lower bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "hi95": {
+          "description": "95% interval, upper bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "holdout": {
+          "description": "The hold-out check, when one ran.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Holdout"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "variable",
+        "model",
+        "values",
+        "forecast",
+        "lo80",
+        "hi80",
+        "lo95",
+        "hi95"
       ]
     },
     "FormField": {

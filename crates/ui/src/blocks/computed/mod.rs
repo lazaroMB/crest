@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], ...),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], ...),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -36,6 +36,7 @@ pub mod contingency;
 pub mod correlation;
 pub mod descriptive;
 pub mod distribution;
+pub mod forecast;
 pub mod grid;
 pub mod power;
 pub mod regression;
@@ -499,6 +500,7 @@ impl ComputedCard {
             ComputedBody::Contingency(body) => contingency::render(&id, body, cx),
             ComputedBody::Power(body) => power::render(&id, &self.envelope, body, window, cx),
             ComputedBody::AbTest(body) => ab_test::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::Forecast(body) => forecast::render(&id, &self.envelope, body, window, cx),
             ComputedBody::Bootstrap(body) => {
                 bootstrap::render(&id, &self.envelope, body, window, cx)
             }

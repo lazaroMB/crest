@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -257,6 +257,22 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("intervals", "intervals CSV", csv));
+    }
+    if let ComputedBody::Forecast(f) = body {
+        let mut csv = String::from("t,forecast,lo80,hi80,lo95,hi95\n");
+        let n = f.values.len();
+        for (i, point) in f.forecast.iter().enumerate() {
+            let at = |v: &[f64]| v.get(i).map(ToString::to_string).unwrap_or_default();
+            csv.push_str(&format!(
+                "{},{point},{},{},{},{}\n",
+                n + i,
+                at(&f.lo80),
+                at(&f.hi80),
+                at(&f.lo95),
+                at(&f.hi95)
+            ));
+        }
+        formats.push(CopyFormat::new("forecast", "forecast CSV", csv));
     }
     formats
 }
