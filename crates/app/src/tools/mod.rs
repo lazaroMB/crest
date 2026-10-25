@@ -4,6 +4,7 @@ pub mod budget;
 pub mod components;
 pub mod compute;
 pub mod files;
+pub mod form;
 pub mod mcp;
 pub mod plugin;
 pub mod registry;

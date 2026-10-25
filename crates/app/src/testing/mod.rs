@@ -3,6 +3,7 @@
 pub mod compute;
 pub mod credentials;
 pub mod decision;
+pub mod form;
 pub mod fs;
 pub mod llm;
 pub mod projects;

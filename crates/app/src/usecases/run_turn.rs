@@ -1206,12 +1206,12 @@ impl TurnRun<'_> {
                 ToolStatus::Denied,
             ),
             Decision::Allow => {
-                let extra = prepared.block.take().map(|kind| self.add_block(kind));
+                let extra = self.add_extra_block(&mut prepared);
                 self.run_prepared(name, &input, prepared, block_id, extra)
                     .await
             }
             Decision::Ask => {
-                let mut extra = prepared.block.take().map(|kind| self.add_block(kind));
+                let mut extra = self.add_extra_block(&mut prepared);
                 if let Some(block) = &mut extra {
                     self.set_diff_approval(block, ApprovalState::Pending);
                 }
@@ -1291,13 +1291,17 @@ impl TurnRun<'_> {
         });
     }
 
-    /// Adds a block to the timeline and returns it.
-    fn add_block(&self, kind: BlockKind) -> Block {
-        let block = Block::new(kind);
+    /// Adds the extra block of `prepared`, if any, to the timeline with
+    /// the id it asked for, and returns it.
+    fn add_extra_block(&self, prepared: &mut PreparedCall) -> Option<Block> {
+        let block = Block {
+            id: prepared.block_id.take().unwrap_or_default(),
+            kind: prepared.block.take()?,
+        };
         self.emit(DomainEvent::BlockAdded {
             block: block.clone(),
         });
-        block
+        Some(block)
     }
 
     /// Marks a `Diff` block with the user's decision; other kinds are left
