@@ -28,7 +28,7 @@ use domain::block::{BlockKind, ImageData, SourceRef};
 use domain::dataset::{DatasetFormat, DatasetSpec};
 use domain::permission::ToolEffect;
 use domain::report::{FindingSeverity, FindingsSpec, TestOutcome, TestReportSpec, apply_edits};
-use domain::science::{MoleculeSpec, PlateSpec, Well, plate_dimensions};
+use domain::science::{MoleculeSpec, PlateScale, PlateSpec, Well, plate_dimensions};
 use domain::workspace::WorkspacePath;
 use futures::FutureExt;
 use schemars::JsonSchema;
@@ -951,6 +951,15 @@ pub struct ShowPlate {
     /// Title shown above the plate.
     #[serde(default)]
     pub title: Option<String>,
+    /// Colour scale: `sequential` (default), `diverging` around `center`
+    /// (fold changes, z-scores, % of control) or `log` (concentrations,
+    /// counts spanning decades; values at or below 0 are not coloured).
+    #[serde(default)]
+    pub scale: PlateScale,
+    /// Centre of a diverging scale; 0 when the values straddle 0, else
+    /// their median.
+    #[serde(default)]
+    pub center: Option<f64>,
 }
 
 /// `show_plate`: a 96- or 384-well plate map coloured by value.
@@ -990,6 +999,8 @@ impl TypedTool for ShowPlateTool {
             format: input.format,
             value_label: input.value_label.filter(|l| !l.trim().is_empty()),
             wells: input.wells,
+            scale: input.scale,
+            center: input.center,
         };
         spec.validate()
             .map_err(|err| invalid(SHOW_PLATE, err.to_string()))?;

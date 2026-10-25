@@ -5208,6 +5208,26 @@ expression: "schemars::schema_for!(Block)"
         "well"
       ]
     },
+    "PlateScale": {
+      "description": "The colour scale of a plate map.",
+      "oneOf": [
+        {
+          "description": "Faint at the minimum to solid at the maximum.",
+          "type": "string",
+          "const": "sequential"
+        },
+        {
+          "description": "Two hues away from a centre (fold changes, z-scores, % of control).",
+          "type": "string",
+          "const": "diverging"
+        },
+        {
+          "description": "Sequential over `log10` of the values (concentrations, counts);\nwells at or below 0 are not coloured.",
+          "type": "string",
+          "const": "log"
+        }
+      ]
+    },
     "PlateSpec": {
       "description": "A microplate map: a value and a label per well, drawn as a heatmap.",
       "type": "object",
@@ -5239,6 +5259,18 @@ expression: "schemars::schema_for!(Block)"
           "items": {
             "$ref": "#/$defs/Well"
           }
+        },
+        "scale": {
+          "description": "How values map to colours.",
+          "$ref": "#/$defs/PlateScale"
+        },
+        "center": {
+          "description": "Centre of a diverging scale; 0 when the values straddle 0, else\ntheir median.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [

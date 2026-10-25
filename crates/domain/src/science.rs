@@ -132,6 +132,115 @@ pub struct PlateSpec {
     pub value_label: Option<String>,
     /// Wells with data; the others are drawn empty.
     pub wells: Vec<Well>,
+    /// How values map to colours.
+    #[serde(default, skip_serializing_if = "PlateScale::is_sequential")]
+    pub scale: PlateScale,
+    /// Centre of a diverging scale; 0 when the values straddle 0, else
+    /// their median.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center: Option<f64>,
+}
+
+/// The colour scale of a plate map.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlateScale {
+    /// Faint at the minimum to solid at the maximum.
+    #[default]
+    Sequential,
+    /// Two hues away from a centre (fold changes, z-scores, % of control).
+    Diverging,
+    /// Sequential over `log10` of the values (concentrations, counts);
+    /// wells at or below 0 are not coloured.
+    Log,
+}
+
+impl PlateScale {
+    /// Whether this is the default sequential scale.
+    #[must_use]
+    pub fn is_sequential(&self) -> bool {
+        *self == Self::Sequential
+    }
+}
+
+/// The finite values of a plate, its range and, for a diverging scale,
+/// its centre: what the colours are computed from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlateRange {
+    /// The scale.
+    pub scale: PlateScale,
+    /// Smallest value (smallest positive one on a log scale).
+    pub lo: f64,
+    /// Largest value.
+    pub hi: f64,
+    /// Centre of a diverging scale (else unused).
+    pub center: f64,
+}
+
+impl PlateRange {
+    /// The range of `spec`'s values, `None` when no well can be coloured.
+    #[must_use]
+    pub fn of(spec: &PlateSpec) -> Option<Self> {
+        let mut values: Vec<f64> = spec
+            .wells
+            .iter()
+            .filter_map(|w| w.value)
+            .filter(|v| v.is_finite() && (spec.scale != PlateScale::Log || *v > 0.0))
+            .collect();
+        values.sort_by(f64::total_cmp);
+        let (lo, hi) = (*values.first()?, *values.last()?);
+        let center = spec.center.unwrap_or_else(|| {
+            if lo < 0.0 && hi > 0.0 {
+                0.0
+            } else {
+                let n = values.len();
+                if n % 2 == 1 {
+                    values[n / 2]
+                } else {
+                    0.5 * (values[n / 2 - 1] + values[n / 2])
+                }
+            }
+        });
+        Some(Self {
+            scale: spec.scale,
+            lo,
+            hi,
+            center,
+        })
+    }
+
+    /// Where `value` sits: 0–1 on a sequential or log scale (the middle
+    /// when every value is the same), -1–1 around the centre on a
+    /// diverging one; `None` for a value the scale cannot show.
+    #[must_use]
+    pub fn position(&self, value: f64) -> Option<f64> {
+        if !value.is_finite() {
+            return None;
+        }
+        let unit = |v: f64, lo: f64, hi: f64| {
+            if hi > lo {
+                ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
+            } else {
+                0.5
+            }
+        };
+        match self.scale {
+            PlateScale::Sequential => Some(unit(value, self.lo, self.hi)),
+            PlateScale::Log => {
+                (value > 0.0).then(|| unit(value.log10(), self.lo.log10(), self.hi.log10()))
+            }
+            PlateScale::Diverging => {
+                let reach = (self.hi - self.center)
+                    .abs()
+                    .max((self.center - self.lo).abs());
+                Some(if reach > 0.0 {
+                    ((value - self.center) / reach).clamp(-1.0, 1.0)
+                } else {
+                    0.0
+                })
+            }
+        }
+    }
 }
 
 /// One well of a plate.
@@ -186,6 +295,9 @@ impl PlateSpec {
         };
         if plate_dimensions(self.format).is_none() {
             return Err(invalid(format!("format {} is not 96 or 384", self.format)));
+        }
+        if self.center.is_some_and(|c| !c.is_finite()) {
+            return Err(invalid("the centre must be finite".into()));
         }
         let mut seen = HashSet::new();
         for well in &self.wells {
@@ -249,6 +361,41 @@ mod tests {
         assert_eq!(parse_well("P24", 384), Some((15, 23)));
         assert_eq!(parse_well("A0", 384), None);
         assert_eq!(parse_well("A1", 48), None);
+    }
+
+    #[test]
+    fn plate_ranges_by_scale() {
+        let plate = |scale: &str, values: &[f64], center: Option<f64>| {
+            let wells: Vec<_> = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| json!({"well": format!("A{}", i + 1), "value": v}))
+                .collect();
+            let spec: PlateSpec = serde_json::from_value(json!({
+                "format": 96, "wells": wells, "scale": scale, "center": center
+            }))
+            .unwrap();
+            PlateRange::of(&spec).unwrap()
+        };
+        let seq = plate("sequential", &[1.0, 3.0], None);
+        assert_eq!(seq.position(2.0), Some(0.5));
+        // Straddling 0: centred on 0, the farther side reaching ±1.
+        let div = plate("diverging", &[-1.0, 4.0], None);
+        assert_eq!(div.center, 0.0);
+        assert_eq!(div.position(-1.0), Some(-0.25));
+        assert_eq!(div.position(4.0), Some(1.0));
+        // All positive: centred on the median, or the given centre.
+        assert_eq!(plate("diverging", &[1.0, 2.0, 10.0], None).center, 2.0);
+        assert_eq!(
+            plate("diverging", &[1.0, 2.0, 10.0, 20.0], None).center,
+            6.0
+        );
+        assert_eq!(plate("diverging", &[1.0, 3.0], Some(100.0)).center, 100.0);
+        // Log: decades; the non-positive well has no colour.
+        let log = plate("log", &[1.0, 100.0, 0.0, -5.0], None);
+        assert_eq!((log.lo, log.hi), (1.0, 100.0));
+        assert_eq!(log.position(10.0), Some(0.5));
+        assert_eq!(log.position(0.0), None);
     }
 
     #[test]
