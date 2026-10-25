@@ -6,15 +6,15 @@
 //! 1. header: the method and why it was chosen, the provenance chip
 //!    (engine, input hash, time; click for the inputs and reproduce lines)
 //!    and the verified / mismatch / stale badge;
-//! 2. the assumption checklist, open when a check fails;
+//! 2. the assumption checklist, open when a check fails (a calc sheet
+//!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
-//!    [`regression`], [`correlation`]; [`other`] for the calc sheet and
-//!    the quantity until their cards land), numbers right-aligned in the
-//!    monospace font;
+//!    [`regression`], [`correlation`], and [`calc`] for the calc sheet and
+//!    the quantity card), numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
 //!    the envelope by [`narrative`];
-//! 6. warnings;
+//! 6. warnings (a calc sheet shows line errors on their lines instead);
 //! 7. alternatives to the chosen method;
 //! 8. the footer: engine output (the raw envelope) / card toggle,
 //!    Recompute, copy the reproduce line (Lua, Python, R) and copy the
@@ -28,10 +28,10 @@
 //! The card is an entity kept per block ([`super::block_state`]), so its
 //! toggles survive scrolling.
 
+pub mod calc;
 pub mod correlation;
 pub mod descriptive;
 pub mod grid;
-pub mod other;
 pub mod regression;
 pub mod test;
 
@@ -395,7 +395,7 @@ impl ComputedCard {
 
     fn assumptions(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let items = &self.envelope.assumptions;
-        if items.is_empty() {
+        if items.is_empty() || matches!(self.body, ComputedBody::CalcSheet(_)) {
             return None;
         }
         let theme = cx.theme();
@@ -481,15 +481,21 @@ impl ComputedCard {
         Some(list.into_any_element())
     }
 
-    fn results(&self, cx: &App) -> AnyElement {
+    fn results(&self, window: &mut Window, cx: &mut App) -> AnyElement {
         let id = self.key("body");
         match &self.body {
             ComputedBody::Test(body) => test::render(&id, &self.envelope, body, cx),
             ComputedBody::Descriptive(body) => descriptive::render(&id, body, cx),
             ComputedBody::Regression(body) => regression::render(&id, body, cx),
             ComputedBody::Correlation(body) => correlation::render(&id, body, cx),
-            ComputedBody::CalcSheet(body) => other::calc_sheet(body, cx),
-            ComputedBody::Quantity(body) => other::quantity(body, cx),
+            ComputedBody::CalcSheet(body) => calc::calc_sheet(body, window, cx),
+            ComputedBody::Quantity(body) => calc::quantity(
+                body,
+                self.envelope
+                    .value("result")
+                    .map(domain::computed::ComputedValue::display_text),
+                cx,
+            ),
         }
     }
 
@@ -525,7 +531,13 @@ impl ComputedCard {
     }
 
     fn warnings(&self, cx: &App) -> Option<AnyElement> {
-        let warnings = &self.envelope.warnings;
+        let on_lines = matches!(self.body, ComputedBody::CalcSheet(_));
+        let warnings: Vec<_> = self
+            .envelope
+            .warnings
+            .iter()
+            .filter(|w| !(on_lines && w.code == calc::LINE_ERROR))
+            .collect();
         if warnings.is_empty() {
             return None;
         }
@@ -684,7 +696,7 @@ impl Render for ComputedCard {
             card = card.child(view);
         } else if !failed {
             card = card.children(self.assumptions(cx));
-            card = card.child(self.results(cx));
+            card = card.child(self.results(window, cx));
             if let Some(sentence) = narrative::sentence(&self.envelope, &self.body) {
                 card = card.child(
                     div()
