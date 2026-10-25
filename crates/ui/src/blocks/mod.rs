@@ -10,6 +10,7 @@ pub mod chart;
 pub mod computed;
 pub mod custom;
 pub mod diff;
+pub mod form;
 pub mod image;
 pub mod image_view;
 pub mod json;
@@ -53,8 +54,8 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Thinking { .. } => thinking::render(entry, window, cx),
         BlockKind::Computed { .. } => computed::render(entry, window, cx),
         // Phase 1 chat blocks; each gets its own renderer in a later piece.
-        BlockKind::Form(_)
-        | BlockKind::Plot(_)
+        BlockKind::Form(_) => form::render(entry, window, cx),
+        BlockKind::Plot(_)
         | BlockKind::TestReport(_)
         | BlockKind::Findings(_)
         | BlockKind::Dataset(_)

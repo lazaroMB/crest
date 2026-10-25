@@ -388,6 +388,9 @@ pub struct SessionParts {
     pub events: UnboundedReceiver<DomainEvent>,
     /// Requests of the `UiApproval` given to the agent.
     pub approvals: ApprovalInbox,
+    /// Requests of the `UiForm` given to `ask_user`, if any; each is
+    /// answered in its `Form` block.
+    pub forms: Option<crate::form::FormInbox>,
     /// File search for the tree and `<leader>ff`.
     pub files: Arc<dyn FileSearchPort>,
     /// Text search for `<leader>fg`.
@@ -430,6 +433,7 @@ impl SessionParts {
             controller,
             events,
             approvals,
+            forms: None,
             files,
             content,
             workspace_label: String::new(),
@@ -486,6 +490,7 @@ pub struct Session {
     git: Option<Task<()>>,
     _git_timer: Task<()>,
     _events: Task<()>,
+    _forms: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -540,6 +545,7 @@ impl Session {
             controller,
             events,
             approvals,
+            forms,
             files,
             content,
             workspace_label,
@@ -670,6 +676,7 @@ impl Session {
             git: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
+            _forms: forms.map(|forms| crate::form::listen(forms, window, cx)),
             _subscriptions: subscriptions,
         };
         if let Some(message) = watch_error {
@@ -849,14 +856,15 @@ impl Session {
         }
     }
 
-    /// Whether a picker, the approval dialog, a modal or the key dialog has
-    /// the focus. Keys typed there never reach the
+    /// Whether a picker, the approval dialog, a modal, the key dialog or a
+    /// waiting form has the focus. Keys typed there never reach the
     /// prompt (the API key must not land in it).
     fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
         self.login.read(cx).is_open()
             || self.picker.read(cx).is_open()
             || self.approval.focus_handle(cx).contains_focused(window, cx)
             || self.modal.read(cx).is_open()
+            || crate::blocks::form::owns_focus(window, cx)
     }
 
     /// Gives the focus back to the prompt.
