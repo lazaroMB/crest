@@ -389,3 +389,58 @@ fn the_port_reaches_the_block_and_a_withdrawn_form_stops_waiting(cx: &mut TestAp
     draw(cx, &view);
     drop(listener);
 }
+
+#[gpui::test]
+fn long_text_wraps_inside_the_card(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let long = "a label long enough to need several lines at this width ".repeat(6);
+    let spec: FormSpec = serde_json::from_value(json!({
+        "title": long,
+        "description": long,
+        "fields": [
+            {"name": "label", "type": "string", "label": long, "description": long},
+            {"name": "flag", "type": "boolean", "label": long},
+            {"name": "pick", "type": "enum", "options": [{"value": "a", "label": long}]},
+            {"name": "many", "type": "multi_enum", "options": [{"value": "b", "label": long}]}
+        ]
+    }))
+    .unwrap_or_else(|e| panic!("{e}"));
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let block = Block::new(BlockKind::Form(spec));
+    view.update(cx, |view, cx| {
+        view.apply(&DomainEvent::BlockAdded { block }, cx);
+    });
+    let drawn = view.clone();
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(480.), px(4000.)),
+        move |_, _| div().size_full().child(drawn.clone()),
+    );
+    let card = cx
+        .debug_bounds("form-card")
+        .unwrap_or_else(|| panic!("form-card not drawn"));
+    // The test window keeps its own width, so the card is as wide as the
+    // prose column: the text inside must wrap at that width.
+    assert!(
+        card.size.width <= px(760.),
+        "the card keeps the column width: {card:?}"
+    );
+    for selector in [
+        "form-label-0",
+        "form-option-1-0",
+        "form-option-2-0",
+        "form-option-3-0",
+    ] {
+        let option = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} not drawn"));
+        assert!(
+            option.right() <= card.right(),
+            "{selector} stays in the card: {option:?} vs {card:?}"
+        );
+        assert!(
+            option.size.height > px(30.),
+            "{selector} wrapped onto several lines: {option:?}"
+        );
+    }
+}
