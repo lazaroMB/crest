@@ -119,6 +119,14 @@ rusty-mermaid-core = "=0.2.0"
 # built twice there.
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "metal", "dx12"] }
 bytemuck = "1.25.2"
+# LaTeX math in markdown: RaTeX's KaTeX-compatible parser (mhchem
+# included), layout and rasterizer with the KaTeX fonts embedded (all MIT).
+# Used directly rather than through ratex-gpui 0.4.1, which hides the parse
+# error and the box depth that inline math needs for its baseline.
+ratex-parser = "=0.1.15"
+ratex-layout = "=0.1.15"
+ratex-render = { version = "=0.1.15", features = ["embed-fonts"] }
+ratex-types = "=0.1.15"
 # Frames of GPUI's RenderImage (the version gpui-pre uses).
 image = { version = "0.25.10", default-features = false }
 

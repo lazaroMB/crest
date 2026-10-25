@@ -2,7 +2,8 @@
 //! or a written `.md`) with its title above it.
 //!
 //! The document view is gpui-component's markdown `TextView` (headings,
-//! GFM tables, code blocks highlighted with Tree-sitter). `t` switches to
+//! GFM tables, code blocks highlighted with Tree-sitter, TeX math through
+//! [`super::math`]). `t` switches to
 //! the source, drawn as one fenced `markdown` code block so the same
 //! highlighter colors the raw text.
 
@@ -74,10 +75,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
             SharedString::from(fenced_source(source)),
         )
     } else {
-        TextView::markdown(
-            element_id("markdown-doc", id),
-            SharedString::from(source.clone()),
-        )
+        super::math::markdown(element_id("markdown-doc", id), source)
     };
     v_flex()
         .gap_2()
