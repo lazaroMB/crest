@@ -232,6 +232,8 @@ pub struct UiController {
     /// `app.opt` of the config: its `theme` wins at start, its `colors`
     /// go over every theme.
     theme_options: application::ports::plugin::AppOptions,
+    /// The statistics engine, for Recompute on a card.
+    compute: application::tools::compute::ComputeToolPorts,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -687,6 +689,7 @@ impl UiController {
         let catalog = app.catalog.clone();
         let themes = app.themes.clone();
         let theme_options = app.options.clone();
+        let compute = app.compute.clone();
         let commands = app
             .commands
             .iter()
@@ -716,8 +719,40 @@ impl UiController {
             catalog,
             themes,
             theme_options,
+            compute,
         }
     }
+}
+
+/// Recompute on a card: re-runs the envelope of `block` (reading its data
+/// file again) and sends the new version, with `verification` filled in,
+/// as a `BlockUpdated`.
+async fn recompute_block(
+    compute: application::tools::compute::ComputeToolPorts,
+    events: Arc<dyn EventSink>,
+    block: domain::block::Block,
+) -> Result<(), String> {
+    let domain::block::BlockKind::Computed { envelope, .. } = &block.kind else {
+        return Err("only statistics cards can be recomputed".into());
+    };
+    let (computed, body) = application::usecases::compute::recompute(
+        Arc::clone(&compute.engine),
+        Some(compute.fs.as_ref()),
+        &compute.offload,
+        envelope,
+        "user",
+    )
+    .await?;
+    events.emit(DomainEvent::BlockUpdated {
+        block: domain::block::Block {
+            id: block.id,
+            kind: domain::block::BlockKind::Computed {
+                envelope: Box::new(computed),
+                body: Box::new(body),
+            },
+        },
+    });
+    Ok(())
 }
 
 /// What the session shows or runs for the result of a Lua callback.
@@ -1115,6 +1150,16 @@ impl SessionController for UiController {
             end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
         })
         .boxed()
+    }
+
+    fn recompute(&self, block: domain::block::Block) -> BoxFuture<'static, Result<(), String>> {
+        let task = self.handle.spawn(recompute_block(
+            self.compute.clone(),
+            Arc::clone(&self.events),
+            block,
+        ));
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
     }
 
     fn post_images(
@@ -1858,6 +1903,62 @@ mod tests {
     use application::usecases::cancel::CancelToken;
 
     use super::*;
+
+    #[tokio::test]
+    async fn recompute_reruns_the_card_with_the_real_engine_and_rereads_its_file() {
+        use application::ports::compute::{ComputePort, DescribeRequest};
+        use application::testing::fs::{InMemoryFs, test_root};
+        use application::testing::system::RecordingSink;
+        use application::tools::compute::ComputeToolPorts;
+        use application::usecases::compute::{inline_offload, load_file};
+        use domain::block::{Block, BlockKind};
+
+        let fs = Arc::new(InMemoryFs::new(test_root()).with_file("d.csv", "x\n1\n2\n4\n"));
+        let engine = Arc::new(adapter_compute::StatsEngine::new());
+        let data = load_file(fs.as_ref(), "d.csv", None).await.unwrap();
+        let request = DescribeRequest {
+            data,
+            variables: Vec::new(),
+            by: None,
+        };
+        let (envelope, body) = engine.describe(&request).unwrap();
+        let block = Block::new(BlockKind::Computed {
+            envelope: Box::new(envelope),
+            body: Box::new(body),
+        });
+        let compute = ComputeToolPorts {
+            engine,
+            fs: fs.clone(),
+            offload: inline_offload(),
+        };
+        let sink = Arc::new(RecordingSink::new());
+        let verified = |sink: &RecordingSink| match sink.events().last() {
+            Some(DomainEvent::BlockUpdated {
+                block:
+                    Block {
+                        id,
+                        kind: BlockKind::Computed { envelope, .. },
+                    },
+            }) => (*id, envelope.verification.matched),
+            other => panic!("expected a computed update, got {other:?}"),
+        };
+
+        recompute_block(compute.clone(), sink.clone(), block.clone())
+            .await
+            .unwrap();
+        assert_eq!(verified(&sink), (block.id, Some(true)));
+
+        fs.set_file("d.csv", "x\n1\n2\n40\n");
+        recompute_block(compute.clone(), sink.clone(), block.clone())
+            .await
+            .unwrap();
+        assert_eq!(verified(&sink), (block.id, Some(false)));
+
+        let text = Block::new(BlockKind::Text {
+            markdown: "hi".into(),
+        });
+        assert!(recompute_block(compute, sink, text).await.is_err());
+    }
 
     /// A port that only works inside tokio (its timer panics elsewhere).
     struct NeedsTokio;
