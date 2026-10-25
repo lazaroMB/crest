@@ -1,6 +1,6 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
 //! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`,
-//! `solve_lp`, `solve_equations`, `simulate`, and what the model is
+//! `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -211,13 +211,13 @@ condition number; you get the values as slots to cite.";
 /// `solve_equations`.
 pub type SolveEquationsTool = UnitsTool<Equations>;
 
-/// `simulate`.
+/// `monte_carlo`.
 #[derive(Debug, Clone, Copy)]
 pub struct Simulate;
 
 impl UnitsKind for Simulate {
     type Request = SimulateRequest;
-    const NAME: &'static str = "simulate";
+    const NAME: &'static str = "monte_carlo";
     const DESCRIPTION: &'static str = "\
 Runs a seeded Monte Carlo simulation with crest's deterministic engine: each input has a \
 distribution (`fixed`, `uniform`, `normal`, `lognormal` from a 90% range low–high, \
@@ -243,8 +243,45 @@ its `source`, with exact percentiles. You get the values as slots to cite.";
     }
 }
 
-/// `simulate`.
+/// `monte_carlo`.
 pub type SimulateTool = UnitsTool<Simulate>;
+
+/// `cash_flow`.
+#[derive(Debug, Clone, Copy)]
+pub struct CashFlow;
+
+impl UnitsKind for CashFlow {
+    type Request = CashFlowRequest;
+    const NAME: &'static str = "cash_flow";
+    const DESCRIPTION: &'static str = "\
+Analyses a cash flow with crest's deterministic engine in decimal arithmetic: net `flows` per \
+period from period 0 (undiscounted; outflows negative) at a discount `rate` (a fraction). The \
+user sees the period table, NPV, every IRR (with a warning when the flows change sign more \
+than once, so there is no single IRR), MIRR at `finance_rate`/`reinvest_rate`, simple and \
+discounted payback, and the NPV-vs-rate curve; you get the values as slots to cite.";
+    fn wrap(request: CashFlowRequest) -> ComputeRequest {
+        ComputeRequest::CashFlow(request)
+    }
+    fn subject(request: &CashFlowRequest) -> String {
+        format!(
+            "{} flows at {}%",
+            request.flows.len(),
+            domain::computed::apa::number(request.rate * 100.0, 2)
+        )
+    }
+    fn check(request: &CashFlowRequest) -> Result<(), String> {
+        if request.flows.len() < 2 {
+            return Err("give at least two flows (period 0 and one more)".into());
+        }
+        if request.flows.iter().any(|f| !f.is_finite()) || !request.rate.is_finite() {
+            return Err("flows and rates must be finite numbers".into());
+        }
+        Ok(())
+    }
+}
+
+/// `cash_flow`.
+pub type CashFlowTool = UnitsTool<CashFlow>;
 
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]

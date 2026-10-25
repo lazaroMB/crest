@@ -3306,6 +3306,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A cash flow's NPV, IRR and MIRR.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cash_flow"
+            }
+          },
+          "$ref": "#/$defs/CashFlowBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -5798,6 +5812,120 @@ expression: "schemars::schema_for!(Block)"
         "histogram",
         "convergence",
         "base"
+      ]
+    },
+    "CashFlowRow": {
+      "description": "One period of a cash flow.",
+      "type": "object",
+      "properties": {
+        "period": {
+          "description": "Period number, 0 first (undiscounted).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "cash_flow": {
+          "description": "Net cash flow of the period.",
+          "type": "number",
+          "format": "double"
+        },
+        "discount_factor": {
+          "description": "1 / (1 + rate)^period.",
+          "type": "number",
+          "format": "double"
+        },
+        "present_value": {
+          "description": "Present value of the flow.",
+          "type": "number",
+          "format": "double"
+        },
+        "cumulative": {
+          "description": "Running total of the flows.",
+          "type": "number",
+          "format": "double"
+        },
+        "cumulative_pv": {
+          "description": "Running total of the present values.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "period",
+        "cash_flow",
+        "discount_factor",
+        "present_value",
+        "cumulative",
+        "cumulative_pv"
+      ]
+    },
+    "CashFlowBody": {
+      "description": "Body of a cash-flow card.",
+      "type": "object",
+      "properties": {
+        "rate": {
+          "description": "Discount rate per period, e.g. 0.1.",
+          "type": "number",
+          "format": "double"
+        },
+        "finance_rate": {
+          "description": "Rate paid on the money invested (MIRR).",
+          "type": "number",
+          "format": "double"
+        },
+        "reinvest_rate": {
+          "description": "Rate earned on the money returned (MIRR).",
+          "type": "number",
+          "format": "double"
+        },
+        "currency": {
+          "description": "Currency of the amounts, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "period_label": {
+          "description": "Name of a period, e.g. `year`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "description": "The periods.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CashFlowRow"
+          }
+        },
+        "irrs": {
+          "description": "Every rate at which the NPV is 0, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "sign_changes": {
+          "description": "Sign changes of the flows (Descartes: at most this many IRRs).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "npv_curve": {
+          "description": "NPV (y) against the discount rate (x).",
+          "$ref": "#/$defs/Curve"
+        }
+      },
+      "required": [
+        "rate",
+        "finance_rate",
+        "reinvest_rate",
+        "rows",
+        "sign_changes",
+        "npv_curve"
       ]
     },
     "FormField": {

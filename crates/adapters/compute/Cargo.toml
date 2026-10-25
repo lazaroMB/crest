@@ -17,6 +17,7 @@ domain.workspace = true
 microlp.workspace = true
 numbat.workspace = true
 rand_chacha.workspace = true
+rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 statrs.workspace = true

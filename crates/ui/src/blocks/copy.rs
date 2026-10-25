@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -331,6 +331,23 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("tornado", "tornado CSV", csv));
+    }
+    if let ComputedBody::CashFlow(f) = body {
+        let mut csv = String::from(
+            "period,cash_flow,discount_factor,present_value,cumulative,cumulative_pv\n",
+        );
+        for r in &f.rows {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                r.period,
+                r.cash_flow,
+                r.discount_factor,
+                r.present_value,
+                r.cumulative,
+                r.cumulative_pv
+            ));
+        }
+        formats.push(CopyFormat::new("periods", "periods CSV", csv));
     }
     formats
 }

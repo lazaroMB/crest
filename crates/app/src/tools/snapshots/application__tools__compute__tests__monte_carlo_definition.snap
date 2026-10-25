@@ -1,9 +1,9 @@
 ---
 source: crates/app/src/tools/compute.rs
-expression: "definition(SimulateTool::new(ports))"
+expression: "definition(SimulateTool::new(ports.clone()))"
 ---
 {
-  "name": "simulate",
+  "name": "monte_carlo",
   "description": "Runs a seeded Monte Carlo simulation with crest's deterministic engine: each input has a distribution (`fixed`, `uniform`, `normal`, `lognormal` from a 90% range low–high, `triangular`, `pert`) and the output is the `model` expression of the inputs (`price * volume - cost`). The user sees mean ± MCSE, the 5th/50th/95th percentiles, the histogram, the convergence trace and a tornado of each input's swing from its 10th to 90th percentile. Without `model` it is a Fermi estimate: the product of the inputs, each a lognormal range with its `source`, with exact percentiles. You get the values as slots to cite.",
   "input_schema": {
     "type": "object",

@@ -27,6 +27,7 @@
 //! | `optimize{ sense, objective, variables = { { name, lower, upper, integer, binary } }, constraints = { { name, expr } } }` | LP/MILP with duals |
 //! | `solve{ equations, unknowns = { { name, guess } }, range, tolerance, max_iterations }` | equation solver |
 //! | `simulate{ inputs = { { name, distribution = { type = 'normal', mean, sd }, source, unit } }, model, output, unit, samples, seed }` | Monte Carlo, tornado, Fermi |
+//! | `cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback |
 //! | `contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | contingency table, χ² or Fisher |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
@@ -35,8 +36,8 @@
 //! `nil` holes (missing values). Columns shorter than the longest are
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
-//! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve` and `simulate` read
-//! no data.
+//! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate` and
+//! `cash_flow` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -217,7 +218,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
     };
     let reads_data = !matches!(
         kind,
-        "calc" | "convert" | "power" | "ab_test" | "optimize" | "solve" | "simulate"
+        "calc" | "convert" | "power" | "ab_test" | "optimize" | "solve" | "simulate" | "cash_flow"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -285,6 +286,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "optimize",
         "solve",
         "simulate",
+        "cash_flow",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
