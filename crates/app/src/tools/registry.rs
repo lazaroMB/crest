@@ -12,7 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use domain::block::BlockKind;
+use domain::block::{BlockId, BlockKind};
 use domain::conversation::{SessionId, ToolResultContent, ToolUseId, TurnId};
 use domain::permission::ToolEffect;
 use futures::future::BoxFuture;
@@ -147,6 +147,9 @@ pub struct PreparedCall {
     pub preview: Option<ApprovalPreview>,
     /// Extra block to add to the timeline before running (e.g. a `Diff`).
     pub block: Option<BlockKind>,
+    /// Id the extra block gets, when the call must know it (a `Form`
+    /// answered in its block); a fresh one otherwise.
+    pub block_id: Option<BlockId>,
     /// Performs the call. Not polled until the call is approved; dropping
     /// it cancels the call.
     pub run: ToolRun,
@@ -160,6 +163,7 @@ impl PreparedCall {
             subject: subject.into(),
             preview: None,
             block: None,
+            block_id: None,
             run,
         }
     }
@@ -177,6 +181,14 @@ impl PreparedCall {
         self.block = Some(block);
         self
     }
+
+    /// Returns the same call with an extra timeline block of id `id`.
+    #[must_use]
+    pub fn with_block_as(mut self, id: BlockId, block: BlockKind) -> Self {
+        self.block = Some(block);
+        self.block_id = Some(id);
+        self
+    }
 }
 
 impl fmt::Debug for PreparedCall {
@@ -185,6 +197,7 @@ impl fmt::Debug for PreparedCall {
             .field("subject", &self.subject)
             .field("preview", &self.preview)
             .field("block", &self.block)
+            .field("block_id", &self.block_id)
             .finish_non_exhaustive()
     }
 }

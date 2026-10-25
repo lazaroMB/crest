@@ -697,3 +697,54 @@ async fn a_disabled_redactor_masks_nothing() {
     h.run("hola").await.unwrap();
     assert_eq!(h.tool_results()[0].0, "echo: AKIAIOSFODNN7EXAMPLE");
 }
+
+#[tokio::test]
+async fn ask_user_waits_in_its_form_block_and_shows_the_answer_there() {
+    use crate::ports::form::FormResponse;
+    use crate::testing::form::ScriptedForm;
+    use crate::tools::form::AskUserTool;
+    use domain::form::FormState;
+
+    let form = Arc::new(ScriptedForm::new([FormResponse::Submitted {
+        answer: [("ok".to_owned(), json!(true))].into(),
+    }]));
+    let port = Arc::clone(&form);
+    let script = vec![
+        ScriptedResponse::tool_use(
+            "toolu_1",
+            "ask_user",
+            json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "boolean"}}}}),
+        ),
+        ScriptedResponse::text("Bien."),
+    ];
+    let mut h = Harness::with(script, PermissionMode::Ask, move |tools| {
+        tools.register_typed(AskUserTool::new(port)).unwrap();
+    });
+    h.run("hola").await.unwrap();
+    let asked = form.requests();
+    assert_eq!(asked.len(), 1);
+    let id = asked[0].block_id;
+    let forms: Vec<_> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                match block.kind {
+                    BlockKind::Form(spec) => Some((block.id, spec.state)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [(id, FormState::Pending), (id, FormState::Submitted)]
+    );
+    let results = h.tool_results();
+    assert!(
+        !results[0].1 && results[0].0.contains("\"ok\": true"),
+        "{results:?}"
+    );
+}
