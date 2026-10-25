@@ -18,6 +18,7 @@ use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
 use crate::devops::flame::FlameSpec;
 use crate::devops::logs::LogSpec;
+use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::trace::TraceSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
@@ -133,6 +134,7 @@ impl Block {
             BlockKind::Trace(spec) => spec.validate(),
             BlockKind::FlameGraph(spec) => spec.validate(),
             BlockKind::Logs(spec) => spec.validate(),
+            BlockKind::QueryPlan(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -288,6 +290,8 @@ pub enum BlockKind {
     FlameGraph(Box<FlameSpec>),
     /// A log file on a filterable list (tool `show_logs`).
     Logs(Box<LogSpec>),
+    /// A SQL query plan on a tree table (tool `show_query_plan`).
+    QueryPlan(Box<QueryPlanSpec>),
 }
 
 /// Lifecycle of a tool call.

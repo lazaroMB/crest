@@ -5,9 +5,10 @@
 //! column statistics and first rows of a CSV, TSV, JSON lines or Parquet
 //! file), `show_molecule` (a SMILES as a 2D structure with its computed
 //! formula and mass) and `show_plate` (a 96/384-well plate map, pure),
-//! plus the developer/ops viewers of [`devops`]: `show_trace`,
-//! `show_flamegraph` and `show_logs`. [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
-//! the model when to use each.
+//! plus the developer/ops viewers of [`devops`] (`show_trace`,
+//! `show_flamegraph`, `show_logs`) and [`query_plan`]
+//! (`show_query_plan`). [`register_format_tools`] adds them and
+//! [`FORMAT_TOOLS_PROMPT`] tells the model when to use each.
 //!
 //! Files are read through the file port, with the workspace and
 //! sensitive-path guard of `read_file`, and parsed through the
@@ -43,11 +44,13 @@ use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
 pub mod devops;
+pub mod query_plan;
 
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
     flame_summary, logs_summary, read_log, trace_summary,
 };
+pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
@@ -1086,13 +1089,17 @@ graph; reason from the hottest path and self times it returns.
 - `show_logs`: show a log file (JSON lines, logfmt, text) as a filterable \
 list instead of pasting lines; it returns the level counts and the error \
 messages grouped by shape.
+- `show_query_plan`: show a PostgreSQL `EXPLAIN (FORMAT JSON)` plan as a \
+tree table when a query is slow; ask for `EXPLAIN (ANALYZE, BUFFERS, FORMAT \
+JSON)` to get actual times. Explain from the slowest nodes, misestimates \
+and warnings it returns.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
 
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
-/// `show_flamegraph` and `show_logs`.
+/// `show_flamegraph`, `show_logs` and `show_query_plan`.
 ///
 /// # Errors
 ///
@@ -1109,7 +1116,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowPlateTool)?;
     registry.register_typed(ShowTraceTool::new(ports.clone()))?;
     registry.register_typed(ShowFlamegraphTool::new(ports.clone()))?;
-    registry.register_typed(ShowLogsTool::new(ports.clone()))
+    registry.register_typed(ShowLogsTool::new(ports.clone()))?;
+    registry.register_typed(ShowQueryPlanTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1227,7 +1235,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 9);
+        assert_eq!(registry.names().len(), 10);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

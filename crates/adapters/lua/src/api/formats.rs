@@ -1,6 +1,6 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
-//! `show_molecule`, `show_trace`, `show_flamegraph` and `show_logs` tools
-//! from Lua. Each returns a block (wrapped like
+//! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs` and
+//! `show_query_plan` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -9,6 +9,7 @@
 //! return app.formats.trace{ path = 'traces/checkout.json' }
 //! return app.formats.flamegraph{ path = 'cpu.pb.gz', sample_type = 'cpu' }
 //! return app.formats.logs{ path = 'logs/app.log', format = 'logfmt' }
+//! return app.formats.query_plan{ path = 'plans/slow.json' }
 //! ```
 //!
 //! | Function | Block |
@@ -18,6 +19,7 @@
 //! | `trace{ path, title }` | a trace waterfall (OTLP, Jaeger or Zipkin JSON) |
 //! | `flamegraph{ path, sample_type, title }` | a flame graph (folded stacks or pprof) |
 //! | `logs{ path, format }` | a log file on a filterable list (`json`, `logfmt` or `text`; guessed when absent) |
+//! | `query_plan{ path or plan, title }` | a PostgreSQL `EXPLAIN (FORMAT JSON)` plan on a tree table |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -207,6 +209,27 @@ fn logs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Logs(Box::new(spec)))
 }
 
+fn query_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "query_plan";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?;
+    let bytes = match (&path, text(args, F, "plan")?) {
+        (Some(_), Some(_)) => return Err(error(F, "give `path` or `plan`, not both")),
+        (None, None) => return Err(error(F, "`path` or `plan` is required")),
+        (Some(path), None) => context(lua)?
+            .block_on(read_report(services.fs.as_ref(), path))?
+            .map_err(|e| error(F, e))?,
+        (None, Some(plan)) => plan.into_bytes(),
+    };
+    let mut spec = services
+        .formats
+        .parse_query_plan(&bytes, path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::QueryPlan(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -239,6 +262,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
     formats.set(
+        "query_plan",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => query_plan(lua, &args),
+            _ => Err(error("query_plan", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
         "logs",
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => logs(lua, &args),
@@ -268,6 +298,7 @@ mod tests {
             .with_file("traces/t.json", "{}")
             .with_file("cpu.folded", "main 1\n")
             .with_file("logs/app.log", "info hi\n")
+            .with_file("plans/q.json", "[]")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -307,6 +338,36 @@ mod tests {
             panic!("not a molecule: {out:?}");
         };
         assert_eq!(spec.name.as_deref(), Some("ethanol"));
+    }
+
+    #[test]
+    fn query_plans_come_from_a_file_or_inline() {
+        let formats = Arc::new(FakeFormats::new());
+        let out = run_code(
+            "return app.formats.query_plan{ path = 'plans/q.json', title = 'slow' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::QueryPlan(spec)) = out else {
+            panic!("not a plan: {out:?}");
+        };
+        assert_eq!(spec.title.as_deref(), Some("slow"));
+        let out = run_code(
+            "return app.formats.query_plan{ plan = '[]' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        assert!(
+            matches!(out, PluginOutput::Block(BlockKind::QueryPlan(_))),
+            "{out:?}"
+        );
+        let both = run_code(
+            "return app.formats.query_plan{ plan = '[]', path = 'x' }",
+            Some(formats),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("not both"), "{both}");
     }
 
     #[test]

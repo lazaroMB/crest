@@ -1,0 +1,111 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Sort",
+      "Parallel Aware": false,
+      "Startup Cost": 25432.11,
+      "Total Cost": 25457.11,
+      "Plan Rows": 100,
+      "Plan Width": 44,
+      "Actual Startup Time": 182.512,
+      "Actual Total Time": 190.004,
+      "Actual Rows": 12000,
+      "Actual Loops": 1,
+      "Sort Key": ["(sum(o.total)) DESC"],
+      "Sort Method": "external merge",
+      "Sort Space Used": 2048,
+      "Sort Space Type": "Disk",
+      "Shared Hit Blocks": 120,
+      "Shared Read Blocks": 4800,
+      "Temp Read Blocks": 256,
+      "Temp Written Blocks": 257,
+      "Plans": [
+        {
+          "Node Type": "Aggregate",
+          "Strategy": "Hashed",
+          "Parent Relationship": "Outer",
+          "Startup Cost": 25000.0,
+          "Total Cost": 25100.0,
+          "Plan Rows": 100,
+          "Actual Total Time": 170.0,
+          "Actual Rows": 12000,
+          "Actual Loops": 1,
+          "Group Key": ["c.id"],
+          "Shared Hit Blocks": 120,
+          "Shared Read Blocks": 4800,
+          "Plans": [
+            {
+              "Node Type": "Hash Join",
+              "Parent Relationship": "Outer",
+              "Join Type": "Inner",
+              "Startup Cost": 30.0,
+              "Total Cost": 22000.0,
+              "Plan Rows": 5000,
+              "Actual Total Time": 150.0,
+              "Actual Rows": 480000,
+              "Actual Loops": 1,
+              "Hash Cond": "(o.customer_id = c.id)",
+              "Shared Hit Blocks": 120,
+              "Shared Read Blocks": 4800,
+              "Plans": [
+                {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Relation Name": "orders",
+                  "Schema": "public",
+                  "Alias": "o",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 18000.0,
+                  "Plan Rows": 500000,
+                  "Actual Total Time": 95.0,
+                  "Actual Rows": 480000,
+                  "Actual Loops": 1,
+                  "Filter": "(status = 'paid'::text)",
+                  "Rows Removed by Filter": 20000,
+                  "Shared Hit Blocks": 0,
+                  "Shared Read Blocks": 4800
+                },
+                {
+                  "Node Type": "Hash",
+                  "Parent Relationship": "Inner",
+                  "Startup Cost": 20.0,
+                  "Total Cost": 20.0,
+                  "Plan Rows": 1000,
+                  "Actual Total Time": 4.0,
+                  "Actual Rows": 1000,
+                  "Actual Loops": 1,
+                  "Hash Buckets": 1024,
+                  "Hash Batches": 1,
+                  "Peak Memory Usage": 64,
+                  "Shared Hit Blocks": 120,
+                  "Shared Read Blocks": 0,
+                  "Plans": [
+                    {
+                      "Node Type": "Seq Scan",
+                      "Parent Relationship": "Outer",
+                      "Relation Name": "customers",
+                      "Schema": "public",
+                      "Alias": "c",
+                      "Startup Cost": 0.0,
+                      "Total Cost": 15.0,
+                      "Plan Rows": 1000,
+                      "Actual Total Time": 2.0,
+                      "Actual Rows": 1000,
+                      "Actual Loops": 1,
+                      "Shared Hit Blocks": 120,
+                      "Shared Read Blocks": 0
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Planning": {"Shared Hit Blocks": 12},
+    "Planning Time": 0.42,
+    "Triggers": [],
+    "Execution Time": 191.3
+  }
+]

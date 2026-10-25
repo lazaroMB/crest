@@ -531,6 +531,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A SQL query plan on a tree table (tool `show_query_plan`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "query_plan"
+        }
+      },
+      "$ref": "#/$defs/QueryPlanSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -7641,6 +7655,345 @@ expression: "schemars::schema_for!(Block)"
         "format",
         "total_lines",
         "list"
+      ]
+    },
+    "PlanEngine": {
+      "description": "The database that wrote the plan.",
+      "oneOf": [
+        {
+          "description": "PostgreSQL `EXPLAIN (FORMAT JSON)`.",
+          "type": "string",
+          "const": "postgres"
+        }
+      ]
+    },
+    "PlanNode": {
+      "description": "One node of the plan.",
+      "type": "object",
+      "properties": {
+        "node_type": {
+          "description": "`Node Type`: `Seq Scan`, `Hash Join`, `Sort`...",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Nesting level, 0 for the root.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "relation": {
+          "description": "Table, view, function or CTE scanned (`schema.name` when the schema\nwas given).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alias": {
+          "description": "Alias of the relation, when it differs from its name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "description": "Index used.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "join_type": {
+          "description": "`Inner`, `Left`, `Semi`... of a join.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent_relationship": {
+          "description": "How the node feeds its parent: `Outer`, `Inner`, `InitPlan`,\n`SubPlan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subplan_name": {
+          "description": "Name of an `InitPlan` / `SubPlan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "condition": {
+          "description": "The main condition or key (index, hash, merge or join condition,\nfilter, sort or group key).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startup_cost": {
+          "description": "Planner cost to the first row.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "total_cost": {
+          "description": "Planner cost to the last row.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "plan_rows": {
+          "description": "Rows the planner expected, per loop.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "actual_time": {
+          "description": "Time to the last row, per loop, in ms (`ANALYZE`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "actual_rows": {
+          "description": "Rows produced, per loop (`ANALYZE`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "loops": {
+          "description": "Times the node ran (`ANALYZE`); 0 means it never ran.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "rows_removed": {
+          "description": "Rows removed by the filter, join filter and index recheck, per\nloop.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "workers": {
+          "description": "Workers launched (`Gather`, `Gather Merge`).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "buffers": {
+          "description": "Buffer counts (`BUFFERS`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanBuffers"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sort_space_type": {
+          "description": "`Sort Space Type` (`Memory`, `Disk`) of a sort.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sort_space_kb": {
+          "description": "`Sort Space Used`, in kB.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "hash_batches": {
+          "description": "`Hash Batches` of a hash; more than one means it spilled.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "inclusive_time": {
+          "description": "Time over all loops (per process of a parallel plan), in ms; set\nby [`QueryPlanSpec::analyse`].",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "self_time": {
+          "description": "[`Self::inclusive_time`] minus the children's, in ms; set by\n[`QueryPlanSpec::analyse`].",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "warnings": {
+          "description": "What looks wrong with the node; set by [`QueryPlanSpec::analyse`].",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attrs": {
+          "description": "The node's other scalar properties, as written.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "node_type"
+      ]
+    },
+    "PlanBuffers": {
+      "description": "Buffer counts of a node (`BUFFERS`), in blocks.",
+      "type": "object",
+      "properties": {
+        "shared_hit": {
+          "description": "Shared blocks found in the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_read": {
+          "description": "Shared blocks read from disk (or the OS cache).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_dirtied": {
+          "description": "Shared blocks dirtied.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_written": {
+          "description": "Shared blocks written.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "local": {
+          "description": "Local (temporary table) blocks hit or read.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "temp_read": {
+          "description": "Temporary file blocks read.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "temp_written": {
+          "description": "Temporary file blocks written (a spill).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "QueryPlanSpec": {
+      "description": "A plan, its timings and its nodes.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file, when the plan came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine": {
+          "description": "Who wrote the plan.",
+          "$ref": "#/$defs/PlanEngine",
+          "default": "postgres"
+        },
+        "analyzed": {
+          "description": "The plan has actual times and rows (`ANALYZE`).",
+          "type": "boolean",
+          "default": false
+        },
+        "buffers": {
+          "description": "The plan has buffer counts (`BUFFERS`).",
+          "type": "boolean",
+          "default": false
+        },
+        "planning_time": {
+          "description": "`Planning Time`, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "execution_time": {
+          "description": "`Execution Time`, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "trigger_time": {
+          "description": "Time in triggers, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jit_time": {
+          "description": "JIT compilation time, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "nodes": {
+          "description": "Nodes in preorder, the root first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanNode"
+          }
+        }
+      },
+      "required": [
+        "nodes"
       ]
     }
   }

@@ -12,7 +12,8 @@
 //! - distributed traces from OTLP, Jaeger and Zipkin JSON ([`trace`],
 //!   serde);
 //! - profiles from folded stacks and pprof ([`flame`], prost + flate2);
-//! - log files in JSON lines, logfmt or text ([`logs`]).
+//! - log files in JSON lines, logfmt or text ([`logs`]);
+//! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json).
 
 pub mod dataset;
 pub mod flame;
@@ -20,6 +21,7 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod query_plan;
 pub mod sarif;
 pub mod trace;
 pub mod wave;
@@ -30,6 +32,7 @@ use application::ports::formats::{
 use domain::dataset::DatasetSpec;
 use domain::devops::flame::FlameSpec;
 use domain::devops::logs::LogSpec;
+use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -91,5 +94,13 @@ impl FormatsPort for Formats {
 
     fn parse_logs(&self, bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError> {
         logs::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_query_plan(
+        &self,
+        bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError> {
+        query_plan::parse(bytes, path).map_err(FormatError::Invalid)
     }
 }
