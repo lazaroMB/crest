@@ -419,3 +419,22 @@ fn rich_constructors_reject_bad_arguments() {
         assert!(err.contains(expected), "{code}: {err}");
     }
 }
+
+#[test]
+fn plates_are_whole_blocks() {
+    let out = eval(
+        "return app.ui.plate{ format = 96, value_label = 'OD600',
+           wells = { { well = 'A1', label = 'blank', value = 0.04 }, { well = 'H12', value = 1.2 } } }",
+    )
+    .unwrap();
+    let PluginOutput::Block(BlockKind::Plate(spec)) = out else {
+        panic!("not a plate: {out:?}");
+    };
+    assert_eq!(spec.wells.len(), 2);
+    assert_eq!(spec.value_label.as_deref(), Some("OD600"));
+    assert!(error_of("app.ui.plate{ format = 100, wells = {} }").contains("app.ui.plate"));
+    assert!(
+        error_of("app.ui.plate{ format = 96, wells = { { well = 'Z9' } } }")
+            .contains("app.ui.plate")
+    );
+}

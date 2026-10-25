@@ -126,6 +126,34 @@ impl LuaHandle {
             .await
     }
 
+    /// Gives `app.formats` the file-format parsers and the file port it
+    /// reads data files through (with the workspace guard).
+    ///
+    /// # Errors
+    ///
+    /// [`PluginError::Unavailable`] when the Lua thread has stopped.
+    pub async fn provide_formats(
+        &self,
+        formats: Arc<dyn application::ports::formats::FormatsPort>,
+        fs: Arc<dyn application::ports::fs::FileSystemPort>,
+    ) -> Result<(), PluginError> {
+        let services = crate::api::formats::FormatsServices { formats, fs };
+        self.run(move |vm| vm.context().provide_formats(services))
+            .await
+    }
+
+    /// Gives `app.ask` the front end's forms.
+    ///
+    /// # Errors
+    ///
+    /// [`PluginError::Unavailable`] when the Lua thread has stopped.
+    pub async fn provide_forms(
+        &self,
+        port: Arc<dyn application::ports::form::FormPort>,
+    ) -> Result<(), PluginError> {
+        self.run(move |vm| vm.context().provide_forms(port)).await
+    }
+
     /// Runs `f` on the VM thread and waits, without blocking, for its result.
     pub(crate) async fn run<R, F>(&self, f: F) -> Result<R, PluginError>
     where
