@@ -473,6 +473,9 @@ pub struct Reproduce {
     /// R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r: Option<String>,
+    /// A shell command of a standalone tool, e.g. `numbat -e '…'`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
 }
 
 /// The template of the plain-language sentence.
@@ -1008,9 +1011,17 @@ pub struct CalcLine {
     /// LaTeX of the line, when the engine can produce it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latex: Option<String>,
+    /// Physical dimension of the result, e.g. `Length` or `Energy`;
+    /// `None` for a plain number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<String>,
     /// Evaluation error, e.g. a dimension mismatch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// How the engine read an ambiguous name, e.g. `ton read as the metric
+    /// tonne (1000 kg)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// Body of a unit conversion.
@@ -1040,6 +1051,9 @@ pub struct Quantity {
     pub value: f64,
     /// Unit, e.g. `km/h`.
     pub unit: String,
+    /// Standard uncertainty of `value`, in `unit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<f64>,
 }
 
 /// One step of a conversion chain.

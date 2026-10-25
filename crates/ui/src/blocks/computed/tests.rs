@@ -176,17 +176,21 @@ fn other_cards() -> Vec<(Computed, ComputedBody)> {
             display: None,
             unit: Some("m/s²".into()),
             latex: None,
+            dimension: None,
             error: None,
+            notes: Vec::new(),
         }],
     });
     let quantity = ComputedBody::Quantity(QuantityBody {
         from: Quantity {
             value: 1.0,
             unit: "in".into(),
+            uncertainty: None,
         },
         to: Quantity {
             value: 25.4,
             unit: "mm".into(),
+            uncertainty: None,
         },
         factor: 25.4,
         exact: true,

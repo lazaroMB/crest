@@ -372,6 +372,7 @@ impl ComputedCard {
             ("lua", &reproduce.lua),
             ("python", &reproduce.python),
             ("r", &reproduce.r),
+            ("shell", &reproduce.shell),
         ] {
             if let Some(line) = line {
                 lines.push(format!("{lang}: {line}"));
@@ -619,6 +620,7 @@ impl ComputedCard {
             ("Lua", &reproduce.lua),
             ("Python", &reproduce.python),
             ("R", &reproduce.r),
+            ("shell", &reproduce.shell),
         ] {
             if let Some(line) = line.clone() {
                 row = row.child(
