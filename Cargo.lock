@@ -157,6 +157,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-formats"
+version = "0.14.0"
+dependencies = [
+ "application",
+ "domain",
+ "quick-xml 0.41.0",
+ "serde",
+ "serde_json",
+ "wavedrom",
+]
+
+[[package]]
 name = "adapter-fs"
 version = "0.14.0"
 dependencies = [
@@ -9247,6 +9259,16 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "wavedrom"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cdec24b0f243cc78dea82157f66c80a17c63aab54cfdac25140b4c5346a7e22"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

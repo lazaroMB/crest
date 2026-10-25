@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "clippy",
+          "semanticVersion": "0.1.95",
+          "rules": [
+            {
+              "id": "clippy::unwrap_used",
+              "helpUri": "https://rust-lang.github.io/rust-clippy/master/index.html#unwrap_used",
+              "shortDescription": { "text": "use of unwrap" },
+              "defaultConfiguration": { "level": "error" }
+            },
+            {
+              "id": "clippy::needless_return",
+              "messageStrings": { "default": { "text": "unneeded `return` in {0}" } }
+            }
+          ]
+        }
+      },
+      "originalUriBaseIds": { "SRCROOT": { "uri": "file:///home/user/proj/" } },
+      "results": [
+        {
+          "ruleId": "clippy::unwrap_used",
+          "ruleIndex": 0,
+          "message": { "text": "used `unwrap()` on a `Result` value" },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/main.rs", "uriBaseId": "SRCROOT" },
+                "region": { "startLine": 7, "endLine": 7, "snippet": { "text": "let x = f().unwrap();" } }
+              }
+            }
+          ]
+        },
+        {
+          "rule": { "index": 1 },
+          "level": "note",
+          "message": { "id": "default", "arguments": ["`main`"] },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "file:///home/user/proj/src/my%20lib.rs" },
+                "region": { "startLine": 3, "endLine": 5 }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "other",
+          "kind": "pass",
+          "message": { "text": "checked" }
+        }
+      ]
+    }
+  ]
+}

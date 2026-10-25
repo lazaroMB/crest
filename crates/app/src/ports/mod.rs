@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod decision;
 pub mod events;
 pub mod form;
+pub mod formats;
 pub mod fs;
 pub mod llm;
 pub mod mcp;

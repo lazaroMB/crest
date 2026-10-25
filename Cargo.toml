@@ -16,6 +16,7 @@ members = [
     "crates/adapters/telemetry",
     "crates/adapters/export",
     "crates/adapters/compute",
+    "crates/adapters/formats",
     "crates/platform",
     "crates/ui",
     "crates/bin",
@@ -45,6 +46,7 @@ adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
 adapter-export = { path = "crates/adapters/export" }
 adapter-compute = { path = "crates/adapters/compute" }
+adapter-formats = { path = "crates/adapters/formats" }
 ui = { path = "crates/ui" }
 platform = { path = "crates/platform" }
 
@@ -97,6 +99,14 @@ tracing-opentelemetry = { version = "0.34.0", default-features = false }
 statrs = { version = "0.19.1", default-features = false }
 blake3 = "1.8.7"
 numbat = { version = "=1.24.0", default-features = false }
+
+# Report formats (adapter-formats). JUnit is read with quick-xml directly:
+# quick-junit 0.8.0's deserializer is experimental and needs a
+# <testsuites> root. WaveDrom without its default features: no embedded
+# Helvetica (text widths come from its ASCII table) and no json5/pest
+# (adapter-formats relaxes JSON5-style input itself).
+quick-xml = "=0.41.0"
+wavedrom = { version = "=0.1.0", default-features = false, features = ["serde_json"] }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
