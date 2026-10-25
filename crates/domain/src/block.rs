@@ -700,6 +700,9 @@ pub enum CustomNode {
     /// A 3D model (`/open` of an OBJ, STL or PLY file), with an orbit
     /// camera.
     Model3d(ModelSpec),
+    /// A function plot with parameter sliders, as the `plot` block draws
+    /// it.
+    Plot(Box<crate::plot::PlotSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -761,6 +764,7 @@ impl CustomNode {
                 Err(BlockError::LinkScheme { url: url.clone() })
             }
             Self::Model3d(spec) => Ok(spec.mesh.validate()?),
+            Self::Plot(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }
