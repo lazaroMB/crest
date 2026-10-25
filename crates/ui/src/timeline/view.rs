@@ -420,7 +420,14 @@ impl TimelineView {
             .on_click(move |_, window, cx| {
                 let text_selected = !selection::selected_text(window, cx).is_empty();
                 view.update(cx, |this, cx| {
-                    window.focus(&this.focus_handle, cx);
+                    // A widget inside the block (a form field) that took
+                    // the focus on mouse down keeps it.
+                    let inner = window.focused(cx).is_some_and(|focused| {
+                        focused != this.focus_handle && this.focus_handle.contains(&focused, window)
+                    });
+                    if !inner {
+                        window.focus(&this.focus_handle, cx);
+                    }
                     this.click(ix, text_selected, cx);
                 })
                 .ok();

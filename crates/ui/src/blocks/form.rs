@@ -436,7 +436,10 @@ impl FormView {
     ) -> AnyElement {
         let disabled = self.waiting.is_none();
         match (input, &field.kind) {
-            (FieldInput::Line(state), _) => Input::new(state).disabled(disabled).into_any_element(),
+            (FieldInput::Line(state), _) => div()
+                .debug_selector(move || format!("form-input-{index}"))
+                .child(Input::new(state).disabled(disabled))
+                .into_any_element(),
             (FieldInput::Area(state), _) => {
                 Textarea::new(state).disabled(disabled).into_any_element()
             }

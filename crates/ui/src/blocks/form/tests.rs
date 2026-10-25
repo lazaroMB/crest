@@ -235,3 +235,30 @@ fn the_port_reaches_the_block_and_a_withdrawn_form_stops_waiting(cx: &mut TestAp
     draw(cx, &view);
     drop(listener);
 }
+
+#[gpui::test]
+fn a_clicked_field_keeps_the_focus(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let form_view = form(cx, &block);
+    let _answer = ask(cx, &view, &block);
+    // Somewhere else first, so the click has to move the focus.
+    let timeline = view.read_with(cx, |view, cx| view.focus_handle(cx));
+    cx.update(|window, cx| window.focus(&timeline, cx));
+    assert!(!cx.update(|window, cx| owns_focus(window, cx)));
+
+    // The click lands in the second field; the timeline row around it
+    // must not take the focus back.
+    click(cx, "form-input-1");
+    draw(cx, &view);
+    assert!(
+        cx.update(|window, cx| owns_focus(window, cx)),
+        "the clicked field has the focus"
+    );
+    cx.simulate_input("7");
+    form_view.read_with(cx, |form, cx| {
+        let Some(FieldInput::Line(state)) = form.inputs.get(1) else {
+            panic!("no line input for `n`");
+        };
+        assert_eq!(state.read(cx).value().as_ref(), "7");
+    });
+}
