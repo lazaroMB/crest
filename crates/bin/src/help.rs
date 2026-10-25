@@ -216,7 +216,9 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_logs"
         | "show_query_plan"
         | "show_har"
-        | "show_terraform_plan" => "read",
+        | "show_terraform_plan"
+        | "show_dot"
+        | "show_er" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

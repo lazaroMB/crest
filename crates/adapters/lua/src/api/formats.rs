@@ -1,7 +1,7 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
-//! `show_query_plan`, `show_har` and `show_terraform_plan` tools from
-//! Lua. Each returns a block (wrapped like
+//! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot` and
+//! `show_er` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -13,6 +13,8 @@
 //! return app.formats.query_plan{ path = 'plans/slow.json' }
 //! return app.formats.har{ path = 'net/checkout.har' }
 //! return app.formats.terraform_plan{ path = 'infra/plan.json' }
+//! return app.formats.dot{ source = 'digraph { a -> b }' }
+//! return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }
 //! ```
 //!
 //! | Function | Block |
@@ -25,6 +27,8 @@
 //! | `query_plan{ path or plan, title }` | a PostgreSQL `EXPLAIN (FORMAT JSON)` plan on a tree table |
 //! | `har{ path, title }` | an HTTP archive as a waterfall with a request inspector |
 //! | `terraform_plan{ path, title }` | a Terraform plan (`terraform show -json`) as a tree of resource changes |
+//! | `dot{ path or source, title }` | a Graphviz DOT graph on the graph widget |
+//! | `er{ path or sql, dialect, title }` | an ER diagram from SQL DDL (tables, foreign keys) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -270,6 +274,60 @@ fn terraform_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::TerraformPlan(Box::new(spec)))
 }
 
+/// The text of `path` (through the guard) or of the inline `inline`
+/// argument; exactly one must be given.
+fn path_or_inline(
+    lua: &Lua,
+    args: &Table,
+    function: &str,
+    inline: &str,
+) -> mlua::Result<(Option<String>, String)> {
+    let services = services(lua, function)?;
+    match (text(args, function, "path")?, text(args, function, inline)?) {
+        (Some(_), Some(_)) => Err(error(
+            function,
+            format!("give `path` or `{inline}`, not both"),
+        )),
+        (None, None) => Err(error(function, format!("`path` or `{inline}` is required"))),
+        (Some(path), None) => {
+            let bytes = context(lua)?
+                .block_on(read_report(services.fs.as_ref(), &path))?
+                .map_err(|e| error(function, e))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| error(function, format!("`{path}` is not UTF-8 text")))?;
+            Ok((Some(path), text))
+        }
+        (None, Some(source)) => Ok((None, source)),
+    }
+}
+
+fn dot(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "dot";
+    let services = services(lua, F)?;
+    let (path, source) = path_or_inline(lua, args, F, "source")?;
+    let mut spec = services
+        .formats
+        .parse_dot(&source, path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
+}
+
+fn er(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "er";
+    let services = services(lua, F)?;
+    let (path, sql) = path_or_inline(lua, args, F, "sql")?;
+    let dialect = text(args, F, "dialect")?;
+    let mut spec = services
+        .formats
+        .parse_ddl(&sql, dialect.as_deref(), path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -299,6 +357,20 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => flamegraph(lua, &args),
             _ => Err(error("flamegraph", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "dot",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => dot(lua, &args),
+            _ => Err(error("dot", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "er",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => er(lua, &args),
+            _ => Err(error("er", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -355,6 +427,7 @@ mod tests {
             .with_file("plans/q.json", "[]")
             .with_file("net/app.har", "{}")
             .with_file("infra/plan.json", "{}")
+            .with_file("db/schema.sql", "create table a (id int);")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -442,6 +515,31 @@ mod tests {
             panic!("not a plan: {out:?}");
         };
         assert_eq!(spec.resources.len(), 3);
+        let out = run_code(
+            "return app.formats.dot{ source = 'digraph { a -> b }', title = 'g' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Diagram(spec)) = out else {
+            panic!("not a diagram: {out:?}");
+        };
+        assert_eq!(spec.title.as_deref(), Some("g"));
+        let out = run_code(
+            "return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Diagram(spec)) = out else {
+            panic!("not a diagram: {out:?}");
+        };
+        assert_eq!(spec.tables.len(), 2);
+        let bad = run_code(
+            "return app.formats.er{}",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("`path` or `sql`"), "{bad}");
     }
 
     #[test]

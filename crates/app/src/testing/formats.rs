@@ -17,7 +17,9 @@
 //! failed `POST /api/pay?token=...` (503, 300 ms); every Terraform plan
 //! replaces `aws_instance.web` (forced by `ami`), updates a sensitive
 //! `password` of `aws_db_instance.main`, creates `aws_s3_bucket.logs`
-//! and leaves 4 resources unchanged.
+//! and leaves 4 resources unchanged; every DOT graph is `build -> test ->
+//! deploy` plus `lint -> test` with `build` and `test` in cluster `ci`;
+//! every DDL is `users` and `orders` (`orders.user_id` → `users.id`).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -26,6 +28,7 @@ use std::sync::{Mutex, PoisonError};
 use domain::block::{Cell, Column, SourceRef, TableSpec};
 use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
+use domain::devops::diagram::{DiagramSource, DiagramSpec, ErColumn, ErTable};
 use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
 use domain::devops::har::{HarEntry, HarHeader, HarSpec, HarTimings};
 use domain::devops::logs::{LogFormat, LogSpec};
@@ -37,6 +40,7 @@ use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, cri
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
+use domain::widget::graph::GraphSpec;
 use domain::widget::list::{ListItem, ListSpec};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use serde_json::Map;
@@ -466,6 +470,75 @@ impl FormatsPort for FakeFormats {
             outputs: Vec::new(),
             errored: false,
             applyable: Some(true),
+        })
+    }
+
+    fn parse_dot(&self, _text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError> {
+        self.record("parse_dot", path.unwrap_or("-"))?;
+        let graph: GraphSpec = serde_json::from_value(serde_json::json!({
+            "title": "pipeline",
+            "nodes": [
+                {"id": "build", "group": "ci"}, {"id": "test", "group": "ci"},
+                {"id": "deploy"}, {"id": "lint"}
+            ],
+            "edges": [
+                {"from": "build", "to": "test"}, {"from": "test", "to": "deploy"},
+                {"from": "lint", "to": "test"}
+            ],
+            "groups": [{"id": "ci", "label": "CI"}]
+        }))
+        .map_err(|e| FormatError::Invalid(e.to_string()))?;
+        Ok(DiagramSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            source: DiagramSource::Dot,
+            dialect: None,
+            graph,
+            tables: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_ddl(
+        &self,
+        _sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError> {
+        self.record("parse_ddl", path.unwrap_or("-"))?;
+        let col = |name: &str, pk, references: Option<&str>| ErColumn {
+            name: name.to_owned(),
+            data_type: "bigint".into(),
+            primary_key: pk,
+            nullable: !pk,
+            unique: false,
+            references: references.map(str::to_owned),
+        };
+        let graph: GraphSpec = serde_json::from_value(serde_json::json!({
+            "nodes": [{"id": "users", "kind": "table"}, {"id": "orders", "kind": "table"}],
+            "edges": [{"from": "orders", "to": "users", "label": "user_id → id"}]
+        }))
+        .map_err(|e| FormatError::Invalid(e.to_string()))?;
+        Ok(DiagramSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            source: DiagramSource::SqlDdl,
+            dialect: Some(dialect.unwrap_or("generic").to_owned()),
+            graph,
+            tables: vec![
+                ErTable {
+                    name: "users".into(),
+                    columns: vec![col("id", true, None)],
+                },
+                ErTable {
+                    name: "orders".into(),
+                    columns: vec![
+                        col("id", true, None),
+                        col("user_id", false, Some("users.id")),
+                    ],
+                },
+            ],
+            warnings: Vec::new(),
         })
     }
 }

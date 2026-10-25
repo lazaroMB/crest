@@ -573,6 +573,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A DOT graph or an ER diagram from SQL DDL on the graph widget\n(tools `show_dot`, `show_er`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "diagram"
+        }
+      },
+      "$ref": "#/$defs/DiagramSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -8618,6 +8632,133 @@ expression: "schemars::schema_for!(Block)"
       },
       "required": [
         "resources"
+      ]
+    },
+    "DiagramSource": {
+      "description": "What the diagram was drawn from.",
+      "oneOf": [
+        {
+          "description": "A Graphviz DOT file.",
+          "type": "string",
+          "const": "dot"
+        },
+        {
+          "description": "SQL `CREATE TABLE` / `ALTER TABLE` statements.",
+          "type": "string",
+          "const": "sql_ddl"
+        }
+      ]
+    },
+    "ErTable": {
+      "description": "A table and its columns.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Table name (schema-qualified when the DDL was).",
+          "type": "string"
+        },
+        "columns": {
+          "description": "Columns in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ErColumn"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "ErColumn": {
+      "description": "A column of a table.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "data_type": {
+          "description": "Its type as written (`varchar(80)`, `bigint`).",
+          "type": "string"
+        },
+        "primary_key": {
+          "description": "Part of the primary key.",
+          "type": "boolean"
+        },
+        "nullable": {
+          "description": "May hold NULL.",
+          "type": "boolean",
+          "default": true
+        },
+        "unique": {
+          "description": "Has a unique constraint of its own.",
+          "type": "boolean"
+        },
+        "references": {
+          "description": "`table.column` it references.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "data_type"
+      ]
+    },
+    "DiagramSpec": {
+      "description": "A diagram, its graph and (for DDL) its tables.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the graph's own name or the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file, when it came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "What it was drawn from.",
+          "$ref": "#/$defs/DiagramSource"
+        },
+        "dialect": {
+          "description": "The SQL dialect the DDL was read in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "graph": {
+          "description": "What the block draws.",
+          "$ref": "#/$defs/GraphSpec"
+        },
+        "tables": {
+          "description": "Tables of an ER diagram, in DDL order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ErTable"
+          }
+        },
+        "warnings": {
+          "description": "What was skipped (statements that did not parse, DOT features not\ndrawn).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "graph"
       ]
     }
   }

@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
+use crate::devops::diagram::DiagramSpec;
 use crate::devops::flame::FlameSpec;
 use crate::devops::har::HarSpec;
 use crate::devops::logs::LogSpec;
@@ -130,6 +131,7 @@ impl Block {
             BlockKind::QueryPlan(spec) => spec.validate(),
             BlockKind::Har(spec) => spec.validate(),
             BlockKind::TerraformPlan(spec) => spec.validate(),
+            BlockKind::Diagram(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -293,6 +295,9 @@ pub enum BlockKind {
     /// A Terraform plan's resource changes on a tree table (tool
     /// `show_terraform_plan`).
     TerraformPlan(Box<TerraformPlanSpec>),
+    /// A DOT graph or an ER diagram from SQL DDL on the graph widget
+    /// (tools `show_dot`, `show_er`).
+    Diagram(Box<DiagramSpec>),
 }
 
 /// Lifecycle of a tool call.

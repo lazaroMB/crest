@@ -1,6 +1,6 @@
 [package]
 name = "adapter-formats"
-description = "FormatsPort adapter: JUnit XML test reports, SARIF findings, WaveDrom timing diagrams, dataset previews, 2D molecules, traces, profiles and logs"
+description = "FormatsPort adapter: JUnit XML test reports, SARIF findings, WaveDrom timing diagrams, dataset previews, 2D molecules, traces, profiles, logs, query plans, HAR, Terraform plans, DOT and ER diagrams"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,6 +18,7 @@ prost.workspace = true
 quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlparser.workspace = true
 wavedrom.workspace = true
 
 [lints]
