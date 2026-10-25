@@ -129,6 +129,7 @@ fn app_table(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Table
     app.set("on", crate::api::hooks::on(lua, sink, origin)?)?;
     app.set("ui", crate::api::ui::table(lua, origin)?)?;
     app.set("modal", crate::api::modal::table(lua, origin)?)?;
+    app.set("compute", crate::api::compute::table(lua, origin)?)?;
     app.set("theme", crate::api::theme::table(lua, sink, origin)?)?;
     crate::caps::install(lua, &app, sink, origin)?;
     Ok(app)

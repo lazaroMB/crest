@@ -110,6 +110,22 @@ pub struct LuaHandle {
 }
 
 impl LuaHandle {
+    /// Gives `app.compute` the statistics engine and the file port it
+    /// reads data files through (with the workspace guard).
+    ///
+    /// # Errors
+    ///
+    /// [`PluginError::Unavailable`] when the Lua thread has stopped.
+    pub async fn provide_compute(
+        &self,
+        engine: Arc<dyn application::ports::compute::ComputePort>,
+        fs: Arc<dyn application::ports::fs::FileSystemPort>,
+    ) -> Result<(), PluginError> {
+        let services = crate::api::compute::ComputeServices { engine, fs };
+        self.run(move |vm| vm.context().provide_compute(services))
+            .await
+    }
+
     /// Runs `f` on the VM thread and waits, without blocking, for its result.
     pub(crate) async fn run<R, F>(&self, f: F) -> Result<R, PluginError>
     where

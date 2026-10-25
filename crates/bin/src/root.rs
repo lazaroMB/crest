@@ -585,6 +585,13 @@ pub async fn build_app(
     register_component_tools(&mut tools).context("tool registration")?;
     let compute = compute_ports(Arc::clone(&fs));
     register_compute_tools(&mut tools, &compute).context("tool registration")?;
+    if let Some(host) = &plugins
+        && let Err(err) = host
+            .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
+            .await
+    {
+        warnings.push(format!("app.compute unavailable: {err}"));
+    }
     if let Some(web) = &web {
         web.register(&mut tools).context("tool registration")?;
     }

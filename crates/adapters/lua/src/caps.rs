@@ -108,6 +108,8 @@ pub(crate) struct Context {
     pub(crate) events: Option<Events>,
     /// Ids handed to modals opened without one.
     pub(crate) next_modal: std::sync::atomic::AtomicU64,
+    /// What `app.compute` runs on, once the binary provided it.
+    compute: Mutex<Option<crate::api::compute::ComputeServices>>,
 }
 
 impl Context {
@@ -127,7 +129,21 @@ impl Context {
             runtime: OnceLock::new(),
             events: None,
             next_modal: std::sync::atomic::AtomicU64::new(1),
+            compute: Mutex::new(None),
         }
+    }
+
+    /// Gives `app.compute` its engine and file port.
+    pub(crate) fn provide_compute(&self, services: crate::api::compute::ComputeServices) {
+        *self.compute.lock().unwrap_or_else(PoisonError::into_inner) = Some(services);
+    }
+
+    /// What `app.compute` runs on, if it was provided.
+    pub(crate) fn compute(&self) -> Option<crate::api::compute::ComputeServices> {
+        self.compute
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The same context sending `app.modal` events to `events`.

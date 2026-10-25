@@ -1960,6 +1960,72 @@ mod tests {
         assert!(recompute_block(compute, sink, text).await.is_err());
     }
 
+    #[tokio::test]
+    async fn the_lua_reproduce_line_of_a_card_runs_and_gives_the_same_values() {
+        use adapter_lua::{HostOptions, LuaHost};
+        use application::ports::compute::{
+            ColumnValues, ComputePort, DataColumn, DataSet, TestRequest,
+        };
+        use application::ports::plugin::{ConfigSources, PluginHostPort, PluginOutput};
+        use application::testing::fs::{InMemoryFs, test_root};
+        use domain::block::BlockKind;
+
+        let engine = Arc::new(adapter_compute::StatsEngine::new());
+        let request = TestRequest {
+            data: DataSet::inline(vec![
+                DataColumn {
+                    name: "y".into(),
+                    values: ColumnValues::Numeric(vec![
+                        Some(1.0),
+                        Some(2.5),
+                        None,
+                        Some(3.0),
+                        Some(4.5),
+                        Some(5.0),
+                        Some(2.0),
+                    ]),
+                    unit: None,
+                },
+                DataColumn::categorical("g", &["a", "a", "a", "b", "b", "b", "a"]),
+            ]),
+            y: Some("y".into()),
+            group: Some("g".into()),
+            ..TestRequest::default()
+        };
+        let (original, _) = engine.test(&request).unwrap();
+        let line = original.reproduce.lua.clone().unwrap();
+        assert!(line.contains("nil"), "{line}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let init = dir.path().join("init.lua");
+        std::fs::write(
+            &init,
+            format!(
+                "app.tools.register({{ name = 'rep', handler = function() return {line} end }})"
+            ),
+        )
+        .unwrap();
+        let host = LuaHost::spawn(HostOptions::default()).unwrap();
+        host.provide_compute(engine, Arc::new(InMemoryFs::new(test_root())))
+            .await
+            .unwrap();
+        host.load_config(ConfigSources {
+            global: Some(init),
+            workspace: None,
+        })
+        .await
+        .unwrap();
+        let out = host
+            .call_tool("rep", serde_json::Value::Null)
+            .await
+            .unwrap();
+        let PluginOutput::Block(BlockKind::Computed { envelope, .. }) = out else {
+            panic!("not a card: {out:?}");
+        };
+        assert_eq!(envelope.id, original.id);
+        assert!(original.diff_values(&envelope, 0.0).is_empty());
+    }
+
     /// A port that only works inside tokio (its timer panics elsewhere).
     struct NeedsTokio;
 
