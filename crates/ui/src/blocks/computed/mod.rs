@@ -627,40 +627,29 @@ impl ComputedCard {
                             })),
                     ),
             );
-        let reproduce = &self.envelope.reproduce;
-        for (lang, line) in [
-            ("Lua", &reproduce.lua),
-            ("Python", &reproduce.python),
-            ("R", &reproduce.r),
-            ("shell", &reproduce.shell),
-        ] {
-            if let Some(line) = line.clone() {
-                row = row.child(
-                    Button::new(self.element_id(&format!("copy-{lang}")))
-                        .ghost()
-                        .xsmall()
-                        .label(format!("Copy {lang}"))
-                        .tooltip("Copy the reproduce command")
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            cx.write_to_clipboard(ClipboardItem::new_string(line.clone()));
-                        }),
-                );
-            }
+        // The same forms the copy-as row offers for other blocks; the APA
+        // line has its own button next to it.
+        let formats = super::copy::computed(&self.envelope, &self.body);
+        for format in formats.into_iter().filter(|f| f.key != "apa") {
+            let tooltip = if format.key == "json" {
+                "Copy the envelope"
+            } else {
+                "Copy the reproduce command"
+            };
+            let text = format.text;
+            row = row.child(
+                Button::new(self.element_id(&format!("copy-{}", format.key)))
+                    .ghost()
+                    .xsmall()
+                    .label(format!("Copy {}", format.label))
+                    .tooltip(tooltip)
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                    }),
+            );
         }
-        let json = serde_json::to_string_pretty(&self.envelope).unwrap_or_default();
-        row.child(
-            Button::new(self.element_id("copy-json"))
-                .ghost()
-                .xsmall()
-                .label("Copy JSON")
-                .tooltip("Copy the envelope")
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    cx.write_to_clipboard(ClipboardItem::new_string(json.clone()));
-                }),
-        )
-        .into_any_element()
+        row.into_any_element()
     }
 }
 

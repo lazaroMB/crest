@@ -9,6 +9,7 @@
 pub mod ansi;
 pub mod chart;
 pub mod computed;
+pub mod copy;
 pub mod custom;
 pub mod diff;
 pub mod findings;
