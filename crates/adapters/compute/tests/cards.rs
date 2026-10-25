@@ -6,12 +6,12 @@
 
 use adapter_compute::StatsEngine;
 use application::ports::compute::{
-    AbTestRequest, ArmCounts, ComputePort, ContingencyChoice, ContingencyRequest, DEFAULT_SEED,
-    DataColumn, DataSet, DistributionRequest, PowerRequest,
+    AbTestRequest, ArmCounts, BootstrapRequest, ComputePort, ContingencyChoice, ContingencyRequest,
+    DEFAULT_SEED, DataColumn, DataSet, DistributionRequest, PowerRequest,
 };
 use domain::computed::{
-    AbMethod, Alternative, BandwidthRule, BinRule, Computed, ComputedBody, ComputedStatus,
-    ContingencyBody, ContingencyTest, PowerTest,
+    AbMethod, Alternative, BandwidthRule, BinRule, BootMethod, BootStatistic, Computed,
+    ComputedBody, ComputedStatus, ContingencyBody, ContingencyTest, PowerTest,
 };
 
 /// Asserts `actual` rounds to `printed` at the printed digits.
@@ -469,4 +469,109 @@ fn ab_test_uses_fisher_for_small_counts_and_warns_about_peeking() {
     bad.control.conversions = 1;
     bad.looks = 0;
     assert!(engine().ab_test(&bad).is_err());
+}
+
+// --- Bootstrap -------------------------------------------------------------------
+
+/// Efron and Tibshirani (1993), table 3.1: the law school sample (n = 15).
+const LSAT: [f64; 15] = [
+    576.0, 635.0, 558.0, 578.0, 666.0, 580.0, 555.0, 661.0, 651.0, 605.0, 653.0, 575.0, 545.0,
+    572.0, 594.0,
+];
+const GPA: [f64; 15] = [
+    3.39, 3.30, 2.81, 3.03, 3.44, 3.07, 3.00, 3.43, 3.36, 3.13, 3.12, 2.74, 2.76, 2.88, 2.96,
+];
+
+fn bootstrap(statistic: BootStatistic, resamples: u32) -> BootstrapRequest {
+    BootstrapRequest {
+        data: DataSet::inline(vec![
+            DataColumn::numeric("lsat", &LSAT),
+            DataColumn::numeric("gpa", &GPA),
+        ]),
+        y: "lsat".into(),
+        statistic,
+        group: None,
+        y2: Some("gpa".into()),
+        levels: Vec::new(),
+        trim: 0.1,
+        resamples,
+        seed: 1,
+        conf_level: 0.95,
+    }
+}
+
+#[test]
+fn bootstrap_of_the_law_school_correlation_matches_efron_and_tibshirani() {
+    let (c, body) = engine()
+        .bootstrap(&bootstrap(BootStatistic::Correlation, 4000))
+        .unwrap();
+    assert_eq!(c.seed, Some(1));
+    assert_eq!(c.rng.as_deref(), Some("chacha20"));
+    // r = .776; the bootstrap SE settles near .132 for large B (E&T table
+    // 6.1: .133 at B = 1600, .132 at B = 3200).
+    printed(v(&c, "estimate"), "0.776");
+    near(v(&c, "se"), 0.132, 0.008);
+    let ComputedBody::Bootstrap(b) = &body else {
+        panic!("not a bootstrap");
+    };
+    let interval = |m: BootMethod| b.intervals.iter().find(|i| i.method == m).unwrap();
+    let (perc, bca) = (interval(BootMethod::Percentile), interval(BootMethod::Bca));
+    // The sampling distribution is skewed to the left: BCa moves down.
+    assert!(bca.lo < perc.lo && bca.hi < perc.hi, "{bca:?} vs {perc:?}");
+    assert!(perc.lo > 0.4 && perc.hi < 1.0, "{perc:?}");
+    assert!(v(&c, "lo_mcse") > 0.0 && v(&c, "se_mcse") > 0.0);
+    assert_eq!(b.histogram.counts.iter().sum::<u64>(), 4000);
+    assert!(b.acceleration.is_some() && b.z0.is_some());
+}
+
+#[test]
+fn bootstrap_is_seeded_and_recomputes_exactly() {
+    let request = bootstrap(BootStatistic::Mean, 20_000);
+    let (c, _) = engine().bootstrap(&request).unwrap();
+    // The bootstrap SE of the mean tends to the plug-in SD / √n.
+    let m = LSAT.iter().sum::<f64>() / 15.0;
+    let plug_in = (LSAT.iter().map(|x| (x - m).powi(2)).sum::<f64>() / 15.0).sqrt() / 15f64.sqrt();
+    near(v(&c, "se"), plug_in, 4.0 * v(&c, "se_mcse"));
+    let (again, _) = engine().bootstrap(&request).unwrap();
+    assert_eq!(c.values, again.values);
+    let (recomputed, _) = engine().recompute(&c).unwrap();
+    assert_eq!(recomputed.verification.matched, Some(true));
+    let mut other = request.clone();
+    other.seed = 2;
+    let (c2, _) = engine().bootstrap(&other).unwrap();
+    assert_ne!(v(&c, "se"), v(&c2, "se"));
+
+    let mut groups = bootstrap(BootStatistic::MeanDifference, 500);
+    groups.data.columns.push(DataColumn::categorical(
+        "g",
+        &[
+            "a", "a", "a", "a", "a", "a", "a", "b", "b", "b", "b", "b", "b", "b", "b",
+        ],
+    ));
+    groups.group = Some("g".into());
+    let (c, body) = engine().bootstrap(&groups).unwrap();
+    let a_mean = LSAT[..7].iter().sum::<f64>() / 7.0;
+    let b_mean = LSAT[7..].iter().sum::<f64>() / 8.0;
+    near(v(&c, "estimate"), a_mean - b_mean, 1e-9);
+    assert!(c.warnings.iter().any(|w| w.code == "few_resamples"));
+    assert!(matches!(&body, ComputedBody::Bootstrap(b) if b.versus.as_deref() == Some("g: a − b")));
+    groups.group = None;
+    assert!(engine().bootstrap(&groups).is_err());
+}
+
+#[test]
+fn bootstrap_sentence_names_the_interval_and_the_seed() {
+    let (c, body) = engine()
+        .bootstrap(&bootstrap(BootStatistic::Median, 1000))
+        .unwrap();
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.starts_with("The median of lsat is"), "{sentence}");
+    assert!(
+        sentence.contains("1000 resamples with seed 1"),
+        "{sentence}"
+    );
+    let line = domain::computed::narrative::apa_line(&c, &body)
+        .unwrap()
+        .plain();
+    assert!(line.starts_with("Mdn = "), "{line}");
 }

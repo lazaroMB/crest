@@ -1,5 +1,5 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
-//! `stats_power`, `stats_ab_test`, and what the model is
+//! `stats_power`, `stats_ab_test`, `stats_bootstrap`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -74,6 +74,36 @@ you get the values as slots to cite.";
 
 /// `stats_contingency`.
 pub type StatsContingencyTool = StatsTool<Contingency>;
+
+/// `stats_bootstrap`.
+#[derive(Debug, Clone, Copy)]
+pub struct Bootstrap;
+
+impl StatsKind for Bootstrap {
+    type Request = BootstrapRequest;
+    const NAME: &'static str = "stats_bootstrap";
+    const DESCRIPTION: &'static str = "\
+Bootstraps one statistic with crest's deterministic engine: B resamples (default 2000) from a \
+seeded generator, with percentile, BCa, basic and normal intervals, the bootstrap SE and bias, \
+and the Monte Carlo error of the endpoints; the same seed gives the same numbers. Statistics: \
+mean, median, sd, trimmed_mean, mean_difference and median_difference (with a two-level \
+`group`), correlation (with `y2`). The user sees the replicate histogram and the intervals; \
+you get the values as slots to cite.";
+    fn wrap(request: BootstrapRequest) -> ComputeRequest {
+        ComputeRequest::Bootstrap(request)
+    }
+    fn subject(request: &BootstrapRequest) -> String {
+        let what = request.statistic.label();
+        match (&request.group, &request.y2) {
+            (Some(g), _) => format!("{what} of {} by {g}", request.y),
+            (None, Some(y2)) => format!("{what} of {} and {y2}", request.y),
+            _ => format!("{what} of {}", request.y),
+        }
+    }
+}
+
+/// `stats_bootstrap`.
+pub type StatsBootstrapTool = StatsTool<Bootstrap>;
 
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]

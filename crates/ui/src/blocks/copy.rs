@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -242,6 +242,21 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("arms", "arms CSV", csv));
+    }
+    if let ComputedBody::Bootstrap(b) = body {
+        let mut csv = String::from("method,lo,hi,lo_mcse,hi_mcse\n");
+        let opt = |m: Option<f64>| m.map(|m| m.to_string()).unwrap_or_default();
+        for i in &b.intervals {
+            csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                i.method.label(),
+                i.lo,
+                i.hi,
+                opt(i.lo_mcse),
+                opt(i.hi_mcse)
+            ));
+        }
+        formats.push(CopyFormat::new("intervals", "intervals CSV", csv));
     }
     formats
 }

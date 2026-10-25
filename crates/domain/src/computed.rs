@@ -19,6 +19,7 @@
 
 pub mod ab_test;
 pub mod apa;
+pub mod bootstrap;
 pub mod contingency;
 pub mod distribution;
 pub mod lint;
@@ -33,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
+pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
 pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
@@ -608,6 +610,8 @@ pub enum ComputedBody {
     Power(PowerBody),
     /// An A/B test of two conversion rates.
     AbTest(AbTestBody),
+    /// A bootstrap of one statistic.
+    Bootstrap(BootstrapBody),
 }
 
 impl ComputedBody {
@@ -638,6 +642,7 @@ impl ComputedBody {
             Self::Contingency(body) => body.validate(),
             Self::Power(body) => body.validate(),
             Self::AbTest(body) => body.validate(),
+            Self::Bootstrap(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

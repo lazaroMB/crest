@@ -411,6 +411,8 @@ pub enum ComputeRequest {
     Power(PowerRequest),
     /// [`ComputePort::ab_test`].
     AbTest(AbTestRequest),
+    /// [`ComputePort::bootstrap`].
+    Bootstrap(BootstrapRequest),
 }
 
 impl ComputeRequest {
@@ -438,6 +440,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&r.data),
             Self::Distribution(r) => Some(&r.data),
             Self::Contingency(r) => Some(&r.data),
+            Self::Bootstrap(r) => Some(&r.data),
             Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
         }
     }
@@ -452,6 +455,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&mut r.data),
             Self::Distribution(r) => Some(&mut r.data),
             Self::Contingency(r) => Some(&mut r.data),
+            Self::Bootstrap(r) => Some(&mut r.data),
             Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
         }
     }
@@ -541,6 +545,15 @@ pub trait ComputePort: Send + Sync {
     /// levels.
     fn ab_test(&self, request: &AbTestRequest) -> ComputeResult;
 
+    /// A seeded bootstrap of one statistic with percentile, BCa, basic and
+    /// normal intervals and their Monte Carlo error.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for unknown columns, a statistic without
+    /// its second column or groups, or a bad number of resamples.
+    fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -568,6 +581,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Contingency(r) => self.contingency(r),
             ComputeRequest::Power(r) => self.power(r),
             ComputeRequest::AbTest(r) => self.ab_test(r),
+            ComputeRequest::Bootstrap(r) => self.bootstrap(r),
         }
     }
 }

@@ -201,3 +201,48 @@ pub struct AbTestRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_lift: Option<f64>,
 }
+
+fn default_resamples() -> u32 {
+    2000
+}
+
+fn default_trim() -> f64 {
+    0.1
+}
+
+/// Input of `bootstrap`: the resampling distribution of one statistic,
+/// with percentile, BCa, basic and normal intervals and their Monte Carlo
+/// error. The resamples come from a seeded generator, so the same seed
+/// gives the same numbers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BootstrapRequest {
+    /// The data.
+    pub data: DataSet,
+    /// The numeric column.
+    pub y: String,
+    /// The statistic (default mean).
+    #[serde(default)]
+    pub statistic: domain::computed::BootStatistic,
+    /// Grouping column with two levels, for `mean_difference` and
+    /// `median_difference` (each group is resampled on its own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Second numeric column, for `correlation`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y2: Option<String>,
+    /// Order of the two groups (first − second); sorted levels when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levels: Vec<String>,
+    /// Share trimmed from each end for `trimmed_mean` (default 0.1).
+    #[serde(default = "default_trim")]
+    pub trim: f64,
+    /// Number of resamples B (default 2000, at most 100000).
+    #[serde(default = "default_resamples")]
+    pub resamples: u32,
+    /// Seed of the generator.
+    #[serde(default = "default_seed")]
+    pub seed: u64,
+    /// Level of the intervals (default 0.95).
+    #[serde(default = "default_conf_level")]
+    pub conf_level: f64,
+}

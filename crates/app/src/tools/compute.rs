@@ -47,8 +47,8 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Contingency, Distribution, Power, StatsAbTestTool, StatsContingencyTool,
-    StatsDistributionTool, StatsPowerTool,
+    AbTest, Bootstrap, Contingency, Distribution, Power, StatsAbTestTool, StatsBootstrapTool,
+    StatsContingencyTool, StatsDistributionTool, StatsPowerTool,
 };
 
 use super::registry::{
@@ -749,7 +749,8 @@ To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), c
 `stats_distribution`; for a cross-table of two categorical variables (χ² or Fisher, \
 residuals), `stats_contingency`. Before a study, or to judge a non-significant result, \
 compute power or the sample size with `stats_power`; to compare two conversion rates \
-(an A/B test), `stats_ab_test`.
+(an A/B test), `stats_ab_test`; for an interval without distributional assumptions, \
+`stats_bootstrap`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -780,7 +781,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsDistributionTool::new(ports.clone()))?;
     registry.register_typed(StatsContingencyTool::new(ports.clone()))?;
     registry.register_typed(StatsPowerTool::new(ports.clone()))?;
-    registry.register_typed(StatsAbTestTool::new(ports.clone()))
+    registry.register_typed(StatsAbTestTool::new(ports.clone()))?;
+    registry.register_typed(StatsBootstrapTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -864,7 +866,11 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "stats_ab_test_definition",
-            definition(StatsAbTestTool::new(ports))
+            definition(StatsAbTestTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "stats_bootstrap_definition",
+            definition(StatsBootstrapTool::new(ports))
         );
     }
 
@@ -1153,6 +1159,7 @@ mod tests {
                 "calc",
                 "convert",
                 "stats_ab_test",
+                "stats_bootstrap",
                 "stats_contingency",
                 "stats_correlate",
                 "stats_describe",
