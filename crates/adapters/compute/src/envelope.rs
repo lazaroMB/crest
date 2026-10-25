@@ -68,7 +68,7 @@ pub fn derive_id(request: &ComputeRequest) -> String {
     let hex = blake3::hash(&bytes).to_hex();
     let prefix = match request {
         ComputeRequest::Calc(_) | ComputeRequest::Convert(_) => "ca",
-        ComputeRequest::Optimize(_) => "so",
+        ComputeRequest::Optimize(_) | ComputeRequest::Solve(_) => "so",
         _ => "st",
     };
     format!("{prefix}_{}", &hex.as_str()[..12])

@@ -18,7 +18,8 @@
 //! (percentile, BCa, basic, normal, with MCSE) and forecasts (MSTL and
 //! AutoETS from `augurs`, with a hold-out check). The solver cards run as
 //! `crest-solve` (ids `so_*`): LP/MILP on `microlp` with duals from the dual
-//! program. Resampling and simulation draw from a seeded ChaCha20
+//! program, and the equation solver (bracket scan or damped Newton, with a
+//! plug-back check). Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -39,6 +40,7 @@ mod data;
 mod describe;
 mod distribution;
 mod envelope;
+mod equations;
 mod exprs;
 mod forecast;
 mod linalg;
@@ -110,6 +112,7 @@ impl StatsEngine {
             ComputeRequest::Bootstrap(r) => bootstrap::run(r, id)?,
             ComputeRequest::Forecast(r) => forecast::run(r, id)?,
             ComputeRequest::Optimize(r) => optimize::run(r, id)?,
+            ComputeRequest::Solve(r) => equations::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -136,6 +139,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Bootstrap(_) => "bootstrap",
         ComputeRequest::Forecast(_) => "forecast",
         ComputeRequest::Optimize(_) => "optimize",
+        ComputeRequest::Solve(_) => "solve",
     }
 }
 
@@ -190,6 +194,10 @@ impl ComputePort for StatsEngine {
 
     fn optimize(&self, request: &OptimizeRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Optimize(request.clone()), None)
+    }
+
+    fn solve(&self, request: &SolveRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Solve(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

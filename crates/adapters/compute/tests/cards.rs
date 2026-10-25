@@ -809,3 +809,104 @@ fn milp_infeasible_unbounded_and_nonlinear() {
     let request = lp(Sense::Maximize, "x", &["x"], &[("c", "x^2 <= 1")]);
     assert!(engine().optimize(&request).is_err());
 }
+
+// --- Equation solver ------------------------------------------------------------------
+
+fn equations(eqs: &[&str], unknowns: &[(&str, f64)], range: Option<[f64; 2]>) -> SolveRequest {
+    SolveRequest {
+        equations: eqs.iter().map(|e| (*e).to_owned()).collect(),
+        unknowns: unknowns
+            .iter()
+            .map(|(name, guess)| Unknown {
+                name: (*name).into(),
+                guess: Some(*guess),
+            })
+            .collect(),
+        range,
+        tolerance: 1e-12,
+        max_iterations: 100,
+    }
+}
+
+fn solved(body: &ComputedBody) -> &EquationsBody {
+    match body {
+        ComputedBody::Equations(e) => e,
+        other => panic!("not a solution: {other:?}"),
+    }
+}
+
+#[test]
+fn equation_solver_finds_known_roots_and_plugs_them_back() {
+    // Every root of x² = 2 in [−3, 3]: ±√2.
+    let (c, body) = engine()
+        .solve(&equations(&["x^2 = 2"], &[("x", 1.0)], Some([-3.0, 3.0])))
+        .unwrap();
+    let e = solved(&body);
+    assert_eq!(e.method, SolveMethod::BracketScan);
+    assert_eq!(e.roots.len(), 2);
+    near(e.roots[0], -std::f64::consts::SQRT_2, 1e-12);
+    near(v(&c, "root_2"), std::f64::consts::SQRT_2, 1e-12);
+    assert!(e.plug_back[0].residual.abs() < 1e-12);
+    // The Dottie number: cos x = x at 0.7390851332151607.
+    let (c, _) = engine()
+        .solve(&equations(&["cos(x) = x"], &[("x", 1.0)], None))
+        .unwrap();
+    near(v(&c, "x"), 0.739_085_133_215_160_7, 1e-12);
+    // Kepler's equation E − 0.5 sin E = 1: E = 1.498701133517848.
+    let (c, _) = engine()
+        .solve(&equations(&["E - 0.5 sin(E) = 1"], &[("E", 1.0)], None))
+        .unwrap();
+    near(v(&c, "E"), 1.498_701_133_517_848, 1e-11);
+    // x² + y² = 4, x − y = 1 from (1, 1): x = (1 + √7)/2, y = x − 1.
+    let (c, body) = engine()
+        .solve(&equations(
+            &["x^2 + y^2 = 4", "x - y = 1"],
+            &[("x", 1.0), ("y", 1.0)],
+            None,
+        ))
+        .unwrap();
+    let x = (1.0 + 7f64.sqrt()) / 2.0;
+    near(v(&c, "x"), x, 1e-12);
+    near(v(&c, "y"), x - 1.0, 1e-12);
+    let e = solved(&body);
+    assert!(e.converged && e.residual_norm < 1e-12);
+    assert!(v(&c, "condition_number") >= 1.0);
+    assert_eq!(e.plug_back.len(), 2);
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.starts_with("Newton converged"), "{sentence}");
+}
+
+#[test]
+fn equation_solver_reports_failure_and_bad_systems() {
+    // x² + 1 = 0 has no real root.
+    let (c, body) = engine()
+        .solve(&equations(
+            &["x^2 + 1 = 0"],
+            &[("x", 1.0)],
+            Some([-5.0, 5.0]),
+        ))
+        .unwrap();
+    assert!(!solved(&body).converged);
+    assert!(c.warnings.iter().any(|w| w.code == "not_converged"));
+    // A pole is not a root: tan x has roots at 0 and ±π in [−4, 4] but
+    // sign flips at ±π/2 too.
+    let (_, body) = engine()
+        .solve(&equations(&["tan(x)"], &[("x", 1.0)], Some([-4.0, 4.0])))
+        .unwrap();
+    assert_eq!(solved(&body).roots.len(), 3);
+    assert!(
+        engine()
+            .solve(&equations(&["x + y = 1"], &[("x", 0.0), ("y", 0.0)], None))
+            .is_err()
+    );
+    assert!(
+        engine()
+            .solve(&equations(&["x = = 1"], &[("x", 0.0)], None))
+            .is_err()
+    );
+    assert!(
+        engine()
+            .solve(&equations(&["pi = 1"], &[("pi", 0.0)], None))
+            .is_err()
+    );
+}

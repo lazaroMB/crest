@@ -181,9 +181,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "stats_test" | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user"
         | "show_test_report" | "show_findings" | "show_wavedrom" | "show_dataset"
         | "show_molecule" | "show_plate" | "stats_distribution" | "stats_contingency"
-        | "stats_power" | "stats_ab_test" | "stats_bootstrap" | "stats_forecast" | "solve_lp" => {
-            "read"
-        }
+        | "stats_power" | "stats_ab_test" | "stats_bootstrap" | "stats_forecast" | "solve_lp"
+        | "solve_equations" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

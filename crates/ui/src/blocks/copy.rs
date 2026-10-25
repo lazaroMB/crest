@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -296,6 +296,19 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("solution", "solution CSV", csv));
+    }
+    if let ComputedBody::Equations(e) = body {
+        let mut csv = String::from("equation,lhs,rhs,residual\n");
+        for p in &e.plug_back {
+            csv.push_str(&format!(
+                "{},{},{},{}\n",
+                csv_field(&p.equation),
+                p.lhs,
+                p.rhs,
+                p.residual
+            ));
+        }
+        formats.push(CopyFormat::new("plug_back", "plug-back CSV", csv));
     }
     formats
 }

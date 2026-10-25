@@ -61,3 +61,43 @@ pub struct OptimizeRequest {
     #[serde(default)]
     pub constraints: Vec<LpConstraint>,
 }
+
+/// One unknown of an equation system.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Unknown {
+    /// Name, as the equations use it.
+    pub name: String,
+    /// Starting value of Newton's method (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guess: Option<f64>,
+}
+
+fn default_tolerance() -> f64 {
+    1e-10
+}
+
+fn default_iterations() -> u32 {
+    100
+}
+
+/// Input of `solve`: equations in as many unknowns, solved numerically.
+/// With one unknown and a `range`, every root in the range is found (sign
+/// changes on a fine grid, refined by bisection); otherwise damped Newton
+/// starts from the guesses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SolveRequest {
+    /// The equations, `lhs = rhs` (`x^2 + y^2 = 4`, `cos(x) = x`); an
+    /// expression without `=` means `= 0`.
+    pub equations: Vec<String>,
+    /// The unknowns, as many as equations.
+    pub unknowns: Vec<Unknown>,
+    /// For one unknown: `[low, high]` to search for every root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
+    /// Largest |lhs − rhs| accepted (default 1e-10).
+    #[serde(default = "default_tolerance")]
+    pub tolerance: f64,
+    /// Most Newton iterations (default 100).
+    #[serde(default = "default_iterations")]
+    pub max_iterations: u32,
+}

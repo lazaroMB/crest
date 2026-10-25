@@ -3278,6 +3278,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "An equation or a small system solved numerically.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "equations"
+            }
+          },
+          "$ref": "#/$defs/EquationsBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -5466,6 +5480,151 @@ expression: "schemars::schema_for!(Block)"
         "status",
         "variables",
         "constraints"
+      ]
+    },
+    "SolveMethod": {
+      "description": "How the solver searched.",
+      "oneOf": [
+        {
+          "description": "Damped Newton with a finite-difference Jacobian, from a guess.",
+          "type": "string",
+          "const": "newton"
+        },
+        {
+          "description": "Sign changes scanned on a grid over a range, each refined by\nbisection (one unknown).",
+          "type": "string",
+          "const": "bracket_scan"
+        }
+      ]
+    },
+    "SolvedUnknown": {
+      "description": "One unknown at the solution.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value (the first root of a scan).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "PlugBack": {
+      "description": "One equation evaluated at the solution.",
+      "type": "object",
+      "properties": {
+        "equation": {
+          "description": "The equation as written.",
+          "type": "string"
+        },
+        "lhs": {
+          "description": "Its left-hand side at the solution.",
+          "type": "number",
+          "format": "double"
+        },
+        "rhs": {
+          "description": "Its right-hand side at the solution.",
+          "type": "number",
+          "format": "double"
+        },
+        "residual": {
+          "description": "`lhs − rhs`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "equation",
+        "lhs",
+        "rhs",
+        "residual"
+      ]
+    },
+    "EquationsBody": {
+      "description": "Body of an equation-solver card.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "How the solver searched.",
+          "$ref": "#/$defs/SolveMethod"
+        },
+        "converged": {
+          "description": "Whether it met the tolerance.",
+          "type": "boolean"
+        },
+        "unknowns": {
+          "description": "The unknowns at the solution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SolvedUnknown"
+          }
+        },
+        "roots": {
+          "description": "Every root found in the range (bracket scan).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "plug_back": {
+          "description": "The equations at the solution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlugBack"
+          }
+        },
+        "residual_norm": {
+          "description": "Largest |residual|.",
+          "type": "number",
+          "format": "double"
+        },
+        "iterations": {
+          "description": "Iterations used (Newton steps or bisection halvings in total).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tolerance": {
+          "description": "Tolerance on the residuals.",
+          "type": "number",
+          "format": "double"
+        },
+        "condition_number": {
+          "description": "Condition number of the Jacobian at the solution (Newton).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "curve": {
+          "description": "`lhs − rhs` over the range, for one unknown.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Curve"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "converged",
+        "unknowns",
+        "plug_back",
+        "residual_norm",
+        "iterations",
+        "tolerance"
       ]
     },
     "FormField": {

@@ -22,6 +22,7 @@ pub mod apa;
 pub mod bootstrap;
 pub mod contingency;
 pub mod distribution;
+pub mod equations;
 pub mod forecast;
 pub mod lint;
 pub mod narrative;
@@ -42,6 +43,7 @@ pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
     QqPoint,
 };
+pub use self::equations::{EquationsBody, PlugBack, SolveMethod, SolvedUnknown};
 pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
 pub use self::optimization::{
     ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
@@ -622,6 +624,8 @@ pub enum ComputedBody {
     Forecast(ForecastBody),
     /// A linear or mixed-integer program.
     Optimization(OptimizationBody),
+    /// An equation or a small system solved numerically.
+    Equations(EquationsBody),
 }
 
 impl ComputedBody {
@@ -655,6 +659,7 @@ impl ComputedBody {
             Self::Bootstrap(body) => body.validate(),
             Self::Forecast(body) => body.validate(),
             Self::Optimization(body) => body.validate(),
+            Self::Equations(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

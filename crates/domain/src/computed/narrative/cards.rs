@@ -402,6 +402,49 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 values.join(", ")
             ))
         }
+        ("equations", ComputedBody::Equations(e)) => {
+            use crate::computed::SolveMethod;
+            if !e.converged {
+                return Some(format!(
+                    "No solution met the tolerance ({}): see the warning.",
+                    apa::significant(e.tolerance, 2)
+                ));
+            }
+            let residual = display(computed, "residual_norm").unwrap_or_default();
+            Some(match e.method {
+                SolveMethod::BracketScan => {
+                    let name = e.unknowns.first().map_or("x", |u| u.name.as_str());
+                    let roots: Vec<String> = (1..=e.roots.len())
+                        .filter_map(|i| display(computed, &format!("root_{i}")))
+                        .collect();
+                    format!(
+                        "{} has {} root{} in the range: {name} = {} (largest residual {residual}).",
+                        e.plug_back
+                            .first()
+                            .map_or("The equation", |p| p.equation.as_str()),
+                        roots.len(),
+                        if roots.len() == 1 { "" } else { "s" },
+                        roots.join(", ")
+                    )
+                }
+                SolveMethod::Newton => {
+                    let values: Vec<String> = e
+                        .unknowns
+                        .iter()
+                        .map(|u| format!("{} = {}", u.name, apa::significant(u.value, 10)))
+                        .collect();
+                    let condition = display(computed, "condition_number")
+                        .map(|c| format!("; Jacobian condition number {c}"))
+                        .unwrap_or_default();
+                    format!(
+                        "Newton converged in {} iterations to {}; plugged back, the largest \
+                         residual is {residual}{condition}.",
+                        e.iterations,
+                        values.join(", ")
+                    )
+                }
+            })
+        }
         _ => None,
     }
 }
