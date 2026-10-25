@@ -303,8 +303,14 @@ fn widget_tree() -> CustomNode {
         "nodes": [{ "id": "a" }, { "id": "b" }],
         "edges": [{ "from": "a", "to": "b" }]
     });
+    let tree = serde_json::json!({
+        "type": "tree",
+        "columns": [{ "name": "ms", "kind": "bar" }],
+        "nodes": [{ "label": "root", "values": { "ms": 2 },
+                    "children": [{ "label": "leaf", "values": { "ms": 1 } }] }]
+    });
     CustomNode::Col {
-        children: [timeline, list, graph]
+        children: [timeline, list, graph, tree]
             .into_iter()
             .map(|node| serde_json::from_value(node).unwrap_or_else(|e| panic!("{e}")))
             .collect(),
@@ -372,5 +378,7 @@ fn widget_nodes_draw_and_a_click_in_them_keeps_the_row_open(cx: &mut TestAppCont
     assert_eq!(formats[1].key, "lines");
     assert_eq!(formats[2].key, "dot");
     assert!(formats[2].text.contains("\"a\" -> \"b\""));
+    assert_eq!(formats[3].key, "tree");
+    assert_eq!(formats[3].text, "name\tms\nroot\t2\n  leaf\t1\n");
     assert!(formats[0].text.starts_with("row,label,start,end"));
 }

@@ -10,6 +10,7 @@
 pub mod graph;
 pub mod list;
 pub mod timeline;
+pub mod tree;
 
 use crate::block::BlockError;
 

@@ -366,6 +366,20 @@ expression: "schemars::schema_for!(CustomNode)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Nested rows with typed columns (text, numbers, durations, inline\nbars) and badges, collapsible (query plans, Terraform plans).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tree"
+        }
+      },
+      "$ref": "#/$defs/TreeSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1409,6 +1423,167 @@ expression: "schemars::schema_for!(CustomNode)"
           "items": {
             "$ref": "#/$defs/GraphGroup"
           }
+        }
+      },
+      "required": [
+        "nodes"
+      ]
+    },
+    "TreeColumn": {
+      "description": "One column.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Header, and the key of the nodes' `values`.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What it holds.",
+          "$ref": "#/$defs/ColumnKind",
+          "default": "text"
+        },
+        "unit": {
+          "description": "For a duration, its time unit (`ns`, `us`, `ms`, `s`); for a\nnumber or a bar, a suffix (`rows`, `%`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "ColumnKind": {
+      "description": "What a column holds and how it is drawn.",
+      "oneOf": [
+        {
+          "description": "Any value, as text, left-aligned.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "A number, right-aligned.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "A time span in the column's unit (`ms` by default), right-aligned.",
+          "type": "string",
+          "const": "duration"
+        },
+        {
+          "description": "A number with a bar scaled to the column's largest value.",
+          "type": "string",
+          "const": "bar"
+        }
+      ]
+    },
+    "TreeNode": {
+      "description": "One row, with its children.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Text of the first column.",
+          "type": "string"
+        },
+        "badge": {
+          "description": "A short tag after the label (`hot`, `seq scan`, `+create`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tone": {
+          "description": "Color of the badge.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BadgeTone"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "values": {
+          "description": "Value of each column, by column name.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "children": {
+          "description": "Rows nested under this one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          }
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "BadgeTone": {
+      "description": "Color of a badge.",
+      "oneOf": [
+        {
+          "description": "Muted.",
+          "type": "string",
+          "const": "neutral"
+        },
+        {
+          "description": "Informational (accent).",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "Good (success color).",
+          "type": "string",
+          "const": "ok"
+        },
+        {
+          "description": "Worth a look (warning color).",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "Bad (danger color): a hot plan node, a resource destroyed.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "TreeSpec": {
+      "description": "Nested rows with typed columns.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption above the tree.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Columns after the label.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TreeColumn"
+          },
+          "default": []
+        },
+        "nodes": {
+          "description": "Top-level rows.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          }
+        },
+        "expand_depth": {
+          "description": "Levels open at first (2: the top rows and their children).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 2
         }
       },
       "required": [

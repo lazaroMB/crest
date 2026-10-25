@@ -36,6 +36,7 @@
 //! | `csv(text, { header, delimiter })` | the CSV as a table node |
 //! | `graph{ title, directed, layout, direction, seed, nodes, edges, groups }` | nodes and edges laid out in layers, by forces or on a grid (pan, zoom, click to focus) |
 //! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
+//! | `tree{ title, columns, nodes, expand_depth }` | nested rows with typed columns (`text`, `number`, `duration`, `bar`), badges and inline bars |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
 
 use std::sync::Arc;
@@ -366,6 +367,12 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "graph",
         lua.create_function(|lua, def: Table| {
             to_lua(lua, &widget_node(lua, "graph", "graph", def)?)
+        })?,
+    )?;
+    ui.set(
+        "tree",
+        lua.create_function(|lua, def: Table| {
+            to_lua(lua, &widget_node(lua, "tree", "tree", def)?)
         })?,
     )?;
     ui.set(

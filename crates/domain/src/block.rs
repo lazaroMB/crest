@@ -713,6 +713,9 @@ pub enum CustomNode {
     /// with pan, zoom and a click to focus a node's neighbourhood (DOT,
     /// ER diagrams, netlists, networks).
     Graph(Box<crate::widget::graph::GraphSpec>),
+    /// Nested rows with typed columns (text, numbers, durations, inline
+    /// bars) and badges, collapsible (query plans, Terraform plans).
+    Tree(Box<crate::widget::tree::TreeSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -778,6 +781,7 @@ impl CustomNode {
             Self::Timeline(spec) => spec.validate(),
             Self::FilterList(spec) => spec.validate(),
             Self::Graph(spec) => spec.validate(),
+            Self::Tree(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }
