@@ -17,7 +17,7 @@ use domain::block::{
     BlockKind, Cell, ChartKind, ChartSpec, Column, MermaidSpec, Series, TableSpec,
 };
 use domain::permission::ToolEffect;
-use domain::plot::{PlotFunction, PlotParam, PlotRange, PlotSpec, XySeries};
+use domain::plot::{AxisScale, PlotAspect, PlotFunction, PlotParam, PlotRange, PlotSpec, XySeries};
 use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -167,6 +167,17 @@ pub struct ShowPlot {
     /// data next to a model curve.
     #[serde(default)]
     pub series: Vec<XySeries>,
+    /// `log` draws an axis in decades (only positive values show; others
+    /// are skipped with a note), for data spanning orders of magnitude.
+    #[serde(default)]
+    pub x_scale: AxisScale,
+    /// `log` for a logarithmic y axis, as for `x_scale`.
+    #[serde(default)]
+    pub y_scale: AxisScale,
+    /// `equal` keeps one unit as long on both axes, so circles and angles
+    /// look right (geometry, phase portraits).
+    #[serde(default)]
+    pub aspect: PlotAspect,
 }
 
 /// `show_plot`: draws functions (with parameter sliders) and xy data on
@@ -212,6 +223,9 @@ impl TypedTool for ShowPlotTool {
             functions: input.functions,
             params: input.params,
             series: input.series,
+            x_scale: input.x_scale,
+            y_scale: input.y_scale,
+            aspect: input.aspect,
         };
         spec.validate()
             .map_err(|err| invalid(SHOW_PLOT, err.to_string()))?;

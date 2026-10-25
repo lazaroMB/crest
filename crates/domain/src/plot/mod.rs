@@ -26,7 +26,7 @@ use crate::block::BlockError;
 pub const RESERVED_VARIABLES: [&str; 3] = ["x", "y", "t"];
 
 /// A plot of functions and series.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PlotSpec {
     /// Title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,6 +52,73 @@ pub struct PlotSpec {
     /// Numeric series.
     #[serde(default)]
     pub series: Vec<XySeries>,
+    /// Scale of the x axis.
+    #[serde(default, skip_serializing_if = "AxisScale::is_linear")]
+    pub x_scale: AxisScale,
+    /// Scale of the y axis.
+    #[serde(default, skip_serializing_if = "AxisScale::is_linear")]
+    pub y_scale: AxisScale,
+    /// Shape of the plot area.
+    #[serde(default, skip_serializing_if = "PlotAspect::is_auto")]
+    pub aspect: PlotAspect,
+}
+
+/// How an axis maps values to positions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AxisScale {
+    /// Equal steps for equal differences.
+    #[default]
+    Linear,
+    /// Equal steps for equal ratios (base 10); only positive values show.
+    Log,
+}
+
+impl AxisScale {
+    /// Whether this is the default linear scale.
+    #[must_use]
+    pub fn is_linear(&self) -> bool {
+        *self == Self::Linear
+    }
+
+    /// `v` in axis units: itself, or `log10(v)` (NaN for `v <= 0`).
+    #[must_use]
+    pub fn forward(self, v: f64) -> f64 {
+        match self {
+            Self::Linear => v,
+            Self::Log if v > 0.0 => v.log10(),
+            Self::Log => f64::NAN,
+        }
+    }
+
+    /// The value at `u` axis units: the inverse of [`Self::forward`].
+    #[must_use]
+    pub fn inverse(self, u: f64) -> f64 {
+        match self {
+            Self::Linear => u,
+            Self::Log => 10f64.powf(u),
+        }
+    }
+}
+
+/// The shape of a plot area.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlotAspect {
+    /// Height follows the width.
+    #[default]
+    Auto,
+    /// One unit (axis unit, so a decade on a log axis) is as long on both
+    /// axes: circles stay round.
+    Equal,
+}
+
+impl PlotAspect {
+    /// Whether this is the default shape.
+    #[must_use]
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
 }
 
 /// A closed interval of an axis or of `t`.
@@ -197,6 +264,16 @@ impl PlotSpec {
                 )));
             }
         }
+        for (axis, range, scale) in [
+            ("x", self.x_range, self.x_scale),
+            ("y", self.y_range, self.y_scale),
+        ] {
+            if scale == AxisScale::Log && range.is_some_and(|r| r.min <= 0.0) {
+                return Err(invalid(format!(
+                    "the {axis} axis is logarithmic, so its range must be positive"
+                )));
+            }
+        }
         for f in &self.functions {
             if f.expr.trim().is_empty() {
                 return Err(invalid("a function has an empty expression".into()));
@@ -329,8 +406,27 @@ mod tests {
         let value = serde_json::to_value(&spec).unwrap();
         assert_eq!(value["functions"][1]["kind"], "parametric");
         assert_eq!(value["series"][0]["style"], "line");
+        // Default scales and aspect are left out.
+        assert!(value.get("x_scale").is_none() && value.get("aspect").is_none());
         let back: PlotSpec = serde_json::from_value(value).unwrap();
         assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn scales_and_aspect_read_and_map() {
+        let spec: PlotSpec = serde_json::from_value(json!({
+            "x_scale": "log", "y_scale": "linear", "aspect": "equal",
+            "series": [{"name": "s", "x": [1, 10], "y": [1, 2]}]
+        }))
+        .unwrap();
+        assert_eq!(
+            (spec.x_scale, spec.aspect),
+            (AxisScale::Log, PlotAspect::Equal)
+        );
+        assert_eq!(AxisScale::Log.forward(100.0), 2.0);
+        assert!(AxisScale::Log.forward(0.0).is_nan());
+        assert!((AxisScale::Log.inverse(-1.0) - 0.1).abs() < 1e-15);
+        assert_eq!(AxisScale::Linear.forward(-3.0), -3.0);
     }
 
     #[test]
@@ -355,6 +451,13 @@ mod tests {
         let mut out_of_range = plot();
         out_of_range.params[1].value = 5.0;
         assert!(out_of_range.validate().is_err());
+
+        let mut log = plot();
+        log.x_scale = AxisScale::Log;
+        log.x_range = Some(PlotRange { min: 0.0, max: 1.0 });
+        assert!(log.validate().is_err());
+        log.x_range = Some(PlotRange { min: 0.1, max: 1.0 });
+        assert_eq!(log.validate(), Ok(()));
 
         let mut builtin = plot();
         builtin.params[0].name = "sin".into();
