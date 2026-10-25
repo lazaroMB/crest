@@ -7,6 +7,7 @@
 //! pure helpers here (validation, extents, copy-as text) are shared by the
 //! UI and the tools that summarise them for the model.
 
+pub mod graph;
 pub mod list;
 pub mod timeline;
 

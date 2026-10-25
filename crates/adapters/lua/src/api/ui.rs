@@ -34,6 +34,7 @@
 //! | `link(text, url)` or `link(url)` | link opened in the browser |
 //! | `diff(unified)` | colored unified diff |
 //! | `csv(text, { header, delimiter })` | the CSV as a table node |
+//! | `graph{ title, directed, layout, direction, seed, nodes, edges, groups }` | nodes and edges laid out in layers, by forces or on a grid (pan, zoom, click to focus) |
 //! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
 
@@ -359,6 +360,12 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "timeline",
         lua.create_function(|lua, def: Table| {
             to_lua(lua, &widget_node(lua, "timeline", "timeline", def)?)
+        })?,
+    )?;
+    ui.set(
+        "graph",
+        lua.create_function(|lua, def: Table| {
+            to_lua(lua, &widget_node(lua, "graph", "graph", def)?)
         })?,
     )?;
     ui.set(

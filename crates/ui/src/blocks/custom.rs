@@ -202,6 +202,9 @@ impl Walk<'_> {
             CustomNode::FilterList(spec) => {
                 crate::widgets::list::render(self.next_id(), spec, window, cx)
             }
+            CustomNode::Graph(spec) => {
+                crate::widgets::graph::render(self.next_id(), spec, window, cx)
+            }
             CustomNode::Model3d(spec) => {
                 super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
             }

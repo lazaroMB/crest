@@ -298,8 +298,13 @@ fn widget_tree() -> CustomNode {
             { "level": "info", "text": "fine" }
         ]
     });
+    let graph = serde_json::json!({
+        "type": "graph",
+        "nodes": [{ "id": "a" }, { "id": "b" }],
+        "edges": [{ "from": "a", "to": "b" }]
+    });
     CustomNode::Col {
-        children: [timeline, list]
+        children: [timeline, list, graph]
             .into_iter()
             .map(|node| serde_json::from_value(node).unwrap_or_else(|e| panic!("{e}")))
             .collect(),
@@ -365,5 +370,7 @@ fn widget_nodes_draw_and_a_click_in_them_keeps_the_row_open(cx: &mut TestAppCont
     let formats = crate::blocks::copy::custom(&widget_tree());
     assert_eq!(formats[0].key, "spans");
     assert_eq!(formats[1].key, "lines");
+    assert_eq!(formats[2].key, "dot");
+    assert!(formats[2].text.contains("\"a\" -> \"b\""));
     assert!(formats[0].text.starts_with("row,label,start,end"));
 }

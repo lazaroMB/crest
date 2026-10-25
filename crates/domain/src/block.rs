@@ -718,6 +718,10 @@ pub enum CustomNode {
     /// Records (log lines, requests) with a text or regex filter, level
     /// and field chips, follow mode and rows that open to their fields.
     FilterList(Box<crate::widget::list::ListSpec>),
+    /// Nodes joined by edges, laid out in layers, by forces or on a grid,
+    /// with pan, zoom and a click to focus a node's neighbourhood (DOT,
+    /// ER diagrams, netlists, networks).
+    Graph(Box<crate::widget::graph::GraphSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -782,6 +786,7 @@ impl CustomNode {
             Self::Plot(spec) => spec.validate(),
             Self::Timeline(spec) => spec.validate(),
             Self::FilterList(spec) => spec.validate(),
+            Self::Graph(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }
