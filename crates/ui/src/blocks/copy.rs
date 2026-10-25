@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -201,6 +201,25 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             }
         }
         formats.push(CopyFormat::new("bins", "bins CSV", csv));
+    }
+    if let ComputedBody::Contingency(t) = body {
+        let mut csv =
+            String::from("row,column,observed,expected,row_percent,column_percent,std_residual\n");
+        for (i, row) in t.row_levels.iter().enumerate() {
+            for (j, col) in t.column_levels.iter().enumerate() {
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{},{}\n",
+                    csv_field(row),
+                    csv_field(col),
+                    t.observed[i][j],
+                    t.expected[i][j],
+                    t.row_percent[i][j],
+                    t.column_percent[i][j],
+                    t.std_residuals[i][j]
+                ));
+            }
+        }
+        formats.push(CopyFormat::new("cells", "cells CSV", csv));
     }
     formats
 }

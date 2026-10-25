@@ -99,6 +99,9 @@ tracing-opentelemetry = { version = "0.34.0", default-features = false }
 statrs = { version = "0.19.1", default-features = false }
 blake3 = "1.8.7"
 numbat = { version = "=1.24.0", default-features = false }
+# Seeded resampling and simulation (bootstrap, Monte Carlo, simulated
+# p-values): ChaCha20, the same stream on every platform.
+rand_chacha = { version = "0.10.0", default-features = false }
 
 # Report formats (adapter-formats). JUnit is read with quick-xml directly:
 # quick-junit 0.8.0's deserializer is experimental and needs a

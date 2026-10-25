@@ -25,7 +25,7 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use self::stats::DistributionRequest;
+pub use self::stats::{ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DistributionRequest};
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
 pub const REQUEST_PARAM: &str = "request";
@@ -220,7 +220,7 @@ pub(crate) fn default_conf_level() -> f64 {
     0.95
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 
@@ -405,6 +405,8 @@ pub enum ComputeRequest {
     Convert(ConvertRequest),
     /// [`ComputePort::distribution`].
     Distribution(DistributionRequest),
+    /// [`ComputePort::contingency`].
+    Contingency(ContingencyRequest),
 }
 
 impl ComputeRequest {
@@ -431,6 +433,7 @@ impl ComputeRequest {
             Self::Regress(r) => Some(&r.data),
             Self::Correlate(r) => Some(&r.data),
             Self::Distribution(r) => Some(&r.data),
+            Self::Contingency(r) => Some(&r.data),
             Self::Calc(_) | Self::Convert(_) => None,
         }
     }
@@ -444,6 +447,7 @@ impl ComputeRequest {
             Self::Regress(r) => Some(&mut r.data),
             Self::Correlate(r) => Some(&mut r.data),
             Self::Distribution(r) => Some(&mut r.data),
+            Self::Contingency(r) => Some(&mut r.data),
             Self::Calc(_) | Self::Convert(_) => None,
         }
     }
@@ -506,6 +510,15 @@ pub trait ComputePort: Send + Sync {
     /// bad bin and bandwidth settings.
     fn distribution(&self, request: &DistributionRequest) -> ComputeResult;
 
+    /// A contingency table with expected counts, percentages, standardised
+    /// residuals and χ² or Fisher's test.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] when neither columns nor a table are
+    /// given, or they are malformed.
+    fn contingency(&self, request: &ContingencyRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -530,6 +543,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Calc(r) => self.calc(r),
             ComputeRequest::Convert(r) => self.convert(r),
             ComputeRequest::Distribution(r) => self.distribution(r),
+            ComputeRequest::Contingency(r) => self.contingency(r),
         }
     }
 }

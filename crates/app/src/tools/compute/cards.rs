@@ -1,4 +1,5 @@
-//! The phase-2 compute tools: `stats_distribution`, and what the model is
+//! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
+//! and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -10,7 +11,7 @@ use std::fmt::Write as _;
 use domain::computed::ComputedBody;
 
 use super::{StatsKind, StatsTool};
-use crate::ports::compute::{ComputeRequest, DistributionRequest};
+use crate::ports::compute::{ComputeRequest, ContingencyRequest, DistributionRequest};
 
 /// `stats_distribution`.
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +40,41 @@ outlier count, bin width and bandwidth as slots to cite.";
 /// `stats_distribution`.
 pub type StatsDistributionTool = StatsTool<Distribution>;
 
+/// `stats_contingency`.
+#[derive(Debug, Clone, Copy)]
+pub struct Contingency;
+
+impl StatsKind for Contingency {
+    type Request = ContingencyRequest;
+    const NAME: &'static str = "stats_contingency";
+    const DESCRIPTION: &'static str = "\
+Analyses a two-way contingency table with crest's deterministic engine: observed and expected \
+counts, row and column percentages, adjusted standardised residuals (a heatmap) and a test of \
+independence. With `test: auto` it runs Fisher's exact test when an expected count is below 5 \
+(any r×c table; simulated p-value with a seed when too large to enumerate) and Pearson's χ² \
+otherwise, and says why; Cramér's V, and on 2×2 tables the odds ratio with its interval. Give \
+two categorical columns `row` and `column`, or the counts in `table`. The user sees the card; \
+you get the values as slots to cite.";
+    fn wrap(request: ContingencyRequest) -> ComputeRequest {
+        ComputeRequest::Contingency(request)
+    }
+    fn needs_data(request: &ContingencyRequest) -> bool {
+        request.table.is_none()
+    }
+    fn subject(request: &ContingencyRequest) -> String {
+        match (&request.row, &request.column) {
+            (Some(r), Some(c)) => format!("{r} × {c}"),
+            _ => match &request.table {
+                Some(t) => format!("{}×{} table", t.len(), t.first().map_or(0, Vec::len)),
+                None => "table".into(),
+            },
+        }
+    }
+}
+
+/// `stats_contingency`.
+pub type StatsContingencyTool = StatsTool<Contingency>;
+
 /// Lines for the model about a phase-2 card that the slots do not say.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
     match body {
@@ -50,6 +86,34 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                 d.by.as_deref().unwrap_or("by"),
                 names.join(", ")
             );
+        }
+        ComputedBody::Contingency(t) => {
+            let cells: Vec<String> = t
+                .row_levels
+                .iter()
+                .enumerate()
+                .flat_map(|(i, row)| {
+                    t.column_levels
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(j, col)| {
+                            let r = t.std_residuals[i][j];
+                            (r.abs() > 2.0).then(|| {
+                                format!("{row} × {col} ({})", domain::computed::apa::number(r, 2))
+                            })
+                        })
+                })
+                .collect();
+            if cells.is_empty() {
+                let _ = writeln!(out, "No cell has an adjusted residual beyond ±2.");
+            } else {
+                let _ = writeln!(
+                    out,
+                    "Cells beyond ±2 adjusted residuals (positive: more than independence \
+                     predicts): {}.",
+                    cells.join(", ")
+                );
+            }
         }
         _ => {}
     }
@@ -101,5 +165,28 @@ mod tests {
         };
         assert_eq!(request.data.source.path.as_deref(), Some("data/cars.csv"));
         let _ = tool.name();
+    }
+
+    #[tokio::test]
+    async fn a_contingency_table_needs_no_data_when_counts_are_given() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(StatsContingencyTool::new(ports(Arc::clone(&engine))));
+        let prepared = tool
+            .prepare(json!({ "table": [[3, 1], [1, 3]] }), &ctx())
+            .await
+            .unwrap();
+        assert_eq!(prepared.subject, "2×2 table");
+        let out = prepared.run.await.unwrap();
+        assert!(!out.is_error, "{}", out.text_content());
+        assert!(
+            out.text_content().contains("Cells beyond ±2"),
+            "{}",
+            out.text_content()
+        );
+        let without = tool
+            .prepare(json!({ "row": "a", "column": "b" }), &ctx())
+            .await;
+        assert!(without.is_err(), "columns without data are refused");
+        assert_eq!(engine.requests().len(), 1);
     }
 }

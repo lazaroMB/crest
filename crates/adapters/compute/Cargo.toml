@@ -12,6 +12,7 @@ application.workspace = true
 blake3.workspace = true
 domain.workspace = true
 numbat.workspace = true
+rand_chacha.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 statrs.workspace = true

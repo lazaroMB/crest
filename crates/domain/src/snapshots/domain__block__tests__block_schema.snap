@@ -3194,6 +3194,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A contingency table with residuals and a test of independence.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "contingency"
+            }
+          },
+          "$ref": "#/$defs/ContingencyBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -4442,6 +4456,129 @@ expression: "schemars::schema_for!(Block)"
         "bandwidth_rule",
         "conf_level",
         "groups"
+      ]
+    },
+    "ContingencyTest": {
+      "description": "The test of independence the engine ran.",
+      "oneOf": [
+        {
+          "description": "Pearson's χ² (with Yates' correction on a 2×2 table when asked).",
+          "type": "string",
+          "const": "chi_square"
+        },
+        {
+          "description": "Fisher's exact test, by full enumeration of the tables with the\nobserved margins.",
+          "type": "string",
+          "const": "fisher_exact"
+        },
+        {
+          "description": "Fisher's test with a Monte Carlo p-value (too many tables to\nenumerate), as R's `simulate.p.value`.",
+          "type": "string",
+          "const": "fisher_simulated"
+        }
+      ]
+    },
+    "ContingencyBody": {
+      "description": "Body of a contingency-table card. Every matrix is rows × columns in the\norder of the level lists.",
+      "type": "object",
+      "properties": {
+        "row_variable": {
+          "description": "Row variable, when built from data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "column_variable": {
+          "description": "Column variable, when built from data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "row_levels": {
+          "description": "Row labels.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "column_levels": {
+          "description": "Column labels.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "observed": {
+          "description": "Observed counts.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "expected": {
+          "description": "Expected counts under independence.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "row_percent": {
+          "description": "Each cell as a percentage of its row, 0–100.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "column_percent": {
+          "description": "Each cell as a percentage of its column, 0–100.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "std_residuals": {
+          "description": "Adjusted standardised residuals (R's `stdres`): about N(0, 1)\nunder independence, so |r| > 2 marks a cell that departs from it.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "test": {
+          "description": "The test that produced the p-value.",
+          "$ref": "#/$defs/ContingencyTest"
+        }
+      },
+      "required": [
+        "row_levels",
+        "column_levels",
+        "observed",
+        "expected",
+        "row_percent",
+        "column_percent",
+        "std_residuals",
+        "test"
       ]
     },
     "FormField": {
