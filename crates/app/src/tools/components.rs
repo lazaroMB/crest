@@ -1,5 +1,6 @@
 //! Component tools: the model calls them to show rich blocks in the
-//! timeline (`show_chart`, `show_table`, `show_mermaid`, `show_markdown`).
+//! timeline (`show_chart`, `show_plot`, `show_table`, `show_mermaid`,
+//! `show_markdown`).
 //! [`register_component_tools`] adds them all and [`COMPONENT_TOOLS_PROMPT`]
 //! tells the model when to use each.
 //!
@@ -16,6 +17,7 @@ use domain::block::{
     BlockKind, Cell, ChartKind, ChartSpec, Column, MermaidSpec, Series, TableSpec,
 };
 use domain::permission::ToolEffect;
+use domain::plot::{PlotFunction, PlotParam, PlotRange, PlotSpec, XySeries};
 use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -125,6 +127,117 @@ fn chart_kind_name(kind: ChartKind) -> &'static str {
         ChartKind::Line => "line",
         ChartKind::Area => "area",
         ChartKind::Pie => "pie",
+    }
+}
+
+/// Input of `show_plot`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowPlot {
+    /// Plot title, shown above it.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Visible x range; give it for functions. Without one the plot fits
+    /// the series, or shows `-10..10`.
+    #[serde(default)]
+    pub x_range: Option<PlotRange>,
+    /// Visible y range; fitted to the curves (ignoring spikes near
+    /// asymptotes) when absent.
+    #[serde(default)]
+    pub y_range: Option<PlotRange>,
+    /// Label of the x axis.
+    #[serde(default)]
+    pub x_label: Option<String>,
+    /// Label of the y axis.
+    #[serde(default)]
+    pub y_label: Option<String>,
+    /// Functions in calculator notation: `explicit` is `f(x)` (variable
+    /// `x`), `parametric` is `expr` = x(t) and `y_expr` = y(t) over
+    /// `t_range`, `implicit` draws the curve where `f(x, y) = 0`. Operators
+    /// `+ - * / ^`, functions sin cos tan asin acos atan atan2 sinh cosh tanh
+    /// exp ln log (natural) log10 sqrt abs floor ceil min max pow, constants
+    /// pi and e, and the parameter names.
+    #[serde(default)]
+    pub functions: Vec<PlotFunction>,
+    /// Parameters the expressions use, each shown as a slider the user can
+    /// drag to re-plot.
+    #[serde(default)]
+    pub params: Vec<PlotParam>,
+    /// Numeric (x, y) points drawn as `scatter` or a `line`, e.g. measured
+    /// data next to a model curve.
+    #[serde(default)]
+    pub series: Vec<XySeries>,
+}
+
+/// `show_plot`: draws functions (with parameter sliders) and xy data on
+/// numeric axes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowPlotTool;
+
+const SHOW_PLOT: &str = "show_plot";
+
+#[async_trait]
+impl TypedTool for ShowPlotTool {
+    type Input = ShowPlot;
+
+    fn name(&self) -> &str {
+        SHOW_PLOT
+    }
+
+    fn description(&self) -> &str {
+        "Plots mathematical functions and numeric (x, y) data on numeric axes \
+         in the user's timeline. Functions can be explicit y = f(x), \
+         parametric (x(t), y(t)) or implicit f(x, y) = 0; parameters become \
+         sliders the user drags to see how the curves change, without \
+         another call. Use it to explain a formula, compare models or show a \
+         fit next to its data. Returns only a short confirmation: do not \
+         repeat the data in your reply."
+    }
+
+    fn effect(&self, _input: &ShowPlot) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowPlot,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let spec = PlotSpec {
+            title: input.title.filter(|t| !t.trim().is_empty()),
+            x_range: input.x_range,
+            y_range: input.y_range,
+            x_label: input.x_label,
+            y_label: input.y_label,
+            functions: input.functions,
+            params: input.params,
+            series: input.series,
+        };
+        spec.validate()
+            .map_err(|err| invalid(SHOW_PLOT, err.to_string()))?;
+        let mut parts = Vec::new();
+        if !spec.functions.is_empty() {
+            parts.push(count(spec.functions.len(), "function", "functions"));
+        }
+        if !spec.params.is_empty() {
+            parts.push(count(spec.params.len(), "slider", "sliders"));
+        }
+        if !spec.series.is_empty() {
+            parts.push(count(spec.series.len(), "series", "series"));
+        }
+        let title = spec
+            .title
+            .as_deref()
+            .map(|t| format!(" '{t}'"))
+            .unwrap_or_default();
+        let confirmation = format!("Plot{title} shown to the user ({}).", parts.join(", "));
+        let subject = spec
+            .title
+            .clone()
+            .or_else(|| spec.functions.first().map(|f| f.expr.clone()))
+            .or_else(|| spec.series.first().map(|s| s.name.clone()))
+            .unwrap_or_default();
+        Ok(show(subject, BlockKind::Plot(spec), confirmation))
     }
 }
 
@@ -332,6 +445,12 @@ easier to read than prose:
 - `show_chart`: quantities across categories or over time (sizes by file \
 type, durations per run, commits per week). `bar` compares categories, \
 `line`/`area` show trends, `pie` shows parts of a whole with one series.
+- `show_plot`: mathematical functions and curves on numeric axes \
+(explicit `f(x)`, parametric, implicit), with a slider per parameter so the \
+user can explore how a formula behaves; also (x, y) data next to a model \
+curve. Prefer it over `show_chart` whenever x is a number rather than a \
+category. Plotting a formula is not computing a result: numbers you report \
+from data (a fit, a mean) still come from the statistics tools.
 - `show_table`: records with several attributes or exact values the user \
 will scan, sort or compare (largest files, failing tests with their errors).
 - `show_mermaid`: structure and flow (module dependencies, call sequences, \
@@ -345,7 +464,7 @@ sees the component: do not repeat its data, add a sentence or two with the \
 insight instead. If a call fails with an input error, fix the input and \
 call it again.";
 
-/// Registers `show_chart`, `show_table`, `show_mermaid` and
+/// Registers `show_chart`, `show_plot`, `show_table`, `show_mermaid` and
 /// `show_markdown`.
 ///
 /// # Errors
@@ -353,6 +472,7 @@ call it again.";
 /// [`RegisterError::Duplicate`] when one of them is already registered.
 pub fn register_component_tools(registry: &mut ToolRegistry) -> Result<(), RegisterError> {
     registry.register_typed(ShowChartTool)?;
+    registry.register_typed(ShowPlotTool)?;
     registry.register_typed(ShowTableTool)?;
     registry.register_typed(ShowMermaidTool)?;
     registry.register_typed(ShowMarkdownTool)
@@ -492,6 +612,72 @@ mod tests {
             out.text_content()
         );
         assert_eq!(out.block_update, None);
+    }
+
+    #[test]
+    fn show_plot_definition() {
+        insta::assert_json_snapshot!("show_plot_definition", definition(ShowPlotTool));
+    }
+
+    #[tokio::test]
+    async fn show_plot_adds_a_plot_and_confirms_briefly() {
+        let out = call(
+            ShowPlotTool,
+            json!({
+                "title": "Damped wave",
+                "x_range": { "min": 0, "max": 10 },
+                "functions": [
+                    { "kind": "explicit", "expr": "a * exp(-k x) sin(x)" },
+                    { "kind": "implicit", "expr": "x^2 + y^2 - 1" }
+                ],
+                "params": [
+                    { "name": "a", "min": 0, "max": 2, "value": 1 },
+                    { "name": "k", "min": 0, "max": 1, "step": 0.01, "value": 0.2 }
+                ],
+                "series": [{ "name": "measured", "x": [1, 2], "y": [0.7, 0.6] }]
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!out.is_error);
+        assert_eq!(
+            out.text_content(),
+            "Plot 'Damped wave' shown to the user (2 functions, 2 sliders, 1 series)."
+        );
+        let Some(BlockKind::Plot(spec)) = out.block_update else {
+            panic!("expected a plot, got {:?}", out.block_update);
+        };
+        assert_eq!(spec.params[1].name, "k");
+        assert_eq!(spec.series[0].x, [1.0, 2.0]);
+    }
+
+    #[tokio::test]
+    async fn show_plot_reports_a_bad_expression_to_the_model() {
+        let result = call(
+            ShowPlotTool,
+            json!({
+                "functions": [{ "kind": "explicit", "expr": "a * sinx" }],
+                "params": [{ "name": "a", "min": 0, "max": 2, "value": 1 }]
+            }),
+        )
+        .await;
+        let out = ToolOutput::from(result.unwrap_err());
+        assert!(out.is_error);
+        assert!(
+            out.text_content()
+                .contains(r#"unknown name "sinx" (variables here: x, a) (column 5)"#),
+            "{}",
+            out.text_content()
+        );
+        assert_eq!(out.block_update, None);
+
+        let unclosed = json!({ "functions": [{ "kind": "explicit", "expr": "sin(x" }] });
+        assert!(invalid_message(call(ShowPlotTool, unclosed).await).contains("expected ')'"));
+        let nothing = json!({ "title": "empty" });
+        assert_eq!(
+            invalid_message(call(ShowPlotTool, nothing).await),
+            "plot: a plot needs a function or a series"
+        );
     }
 
     #[test]
@@ -640,12 +826,18 @@ mod tests {
     }
 
     #[test]
-    fn registers_the_four_component_tools() {
+    fn registers_the_component_tools() {
         let mut registry = ToolRegistry::new();
         register_component_tools(&mut registry).unwrap();
         assert_eq!(
             registry.names(),
-            ["show_chart", "show_markdown", "show_mermaid", "show_table"]
+            [
+                "show_chart",
+                "show_markdown",
+                "show_mermaid",
+                "show_plot",
+                "show_table"
+            ]
         );
         for name in registry.names() {
             assert!(
