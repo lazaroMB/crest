@@ -11,6 +11,7 @@ pub mod chart;
 pub mod computed;
 pub mod custom;
 pub mod diff;
+pub mod findings;
 pub mod form;
 pub mod image;
 pub mod image_view;
@@ -26,6 +27,7 @@ pub mod sources;
 pub mod stage;
 pub mod svg;
 pub mod table;
+pub mod test_report;
 pub mod thinking;
 
 use std::any::TypeId;
@@ -59,11 +61,11 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         // Phase 1 chat blocks; each gets its own renderer in a later piece.
         BlockKind::Form(_) => form::render(entry, window, cx),
         BlockKind::Plot(_) => plot::render(entry, window, cx),
-        BlockKind::TestReport(_)
-        | BlockKind::Findings(_)
-        | BlockKind::Dataset(_)
-        | BlockKind::Molecule(_)
-        | BlockKind::Plate(_) => placeholder(entry, cx),
+        BlockKind::TestReport(_) => test_report::render(entry, window, cx),
+        BlockKind::Findings(_) => findings::render(entry, window, cx),
+        BlockKind::Dataset(_) | BlockKind::Molecule(_) | BlockKind::Plate(_) => {
+            placeholder(entry, cx)
+        }
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }
