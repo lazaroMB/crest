@@ -1,8 +1,12 @@
-//! Report tools, thin [`TypedTool`]s over the [`FormatsPort`]:
+//! Report and lab tools, thin [`TypedTool`]s over the [`FormatsPort`]:
 //! `show_test_report` (a JUnit XML file as a test report block),
-//! `show_findings` (a SARIF log as a findings block) and `show_wavedrom`
-//! (WaveJSON as an SVG timing diagram). [`register_format_tools`] adds
-//! them and [`FORMAT_TOOLS_PROMPT`] tells the model when to use each.
+//! `show_findings` (a SARIF log as a findings block), `show_wavedrom`
+//! (WaveJSON as an SVG timing diagram), `show_dataset` (the schema,
+//! column statistics and first rows of a CSV, TSV, JSON lines or Parquet
+//! file), `show_molecule` (a SMILES as a 2D structure with its computed
+//! formula and mass) and `show_plate` (a 96/384-well plate map, pure).
+//! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
+//! the model when to use each.
 //!
 //! Files are read through the file port, with the workspace and
 //! sensitive-path guard of `read_file`, and parsed through the
@@ -10,7 +14,8 @@
 //! report gives as absolute paths inside the workspace are made relative
 //! to it, so the block can open them. The model gets the totals and the
 //! failing tests or the findings as `file:line` lines (capped), enough to
-//! act on, not the whole report. They only read: no call needs approval.
+//! act on, not the whole report; for a dataset, its shape and column
+//! types, never the rows. They only read: no call needs approval.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -19,8 +24,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base64::Engine as _;
 use domain::block::{BlockKind, ImageData, SourceRef};
+use domain::dataset::{DatasetFormat, DatasetSpec};
 use domain::permission::ToolEffect;
 use domain::report::{FindingSeverity, FindingsSpec, TestOutcome, TestReportSpec};
+use domain::science::{MoleculeSpec, PlateSpec, Well, plate_dimensions};
 use domain::workspace::WorkspacePath;
 use futures::FutureExt;
 use schemars::JsonSchema;
@@ -29,8 +36,8 @@ use serde::Deserialize;
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
 };
-use crate::ports::formats::FormatsPort;
-use crate::ports::fs::FileSystemPort;
+use crate::ports::formats::{DatasetRequest, FormatsPort};
+use crate::ports::fs::{FileSystemPort, FsError};
 use crate::usecases::compute::{Offload, offloaded};
 
 /// Largest report file the tools read, in bytes.
@@ -474,10 +481,469 @@ impl TypedTool for ShowWavedromTool {
     }
 }
 
-/// Tells the model when to use the report tools; appended to the system
-/// prompt after the component tools.
+/// Largest Parquet file `show_dataset` reads (Parquet needs the whole
+/// file), in bytes.
+pub const MAX_PARQUET_BYTES: u64 = 256 * 1024 * 1024;
+
+/// How much of a text dataset (CSV, TSV, JSON lines) `show_dataset`
+/// reads; a larger file is profiled on its head and marked sampled.
+pub const MAX_TEXT_HEAD_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Preview rows by default and at most.
+pub const DEFAULT_PREVIEW_ROWS: usize = 20;
+/// Most preview rows a call may ask for.
+pub const MAX_PREVIEW_ROWS: usize = 200;
+
+/// Most columns described to the model; the block shows all of them.
+pub const MAX_LISTED_COLUMNS: usize = 60;
+
+/// The format a dataset file name implies, if it is one `show_dataset`
+/// reads.
+#[must_use]
+pub fn dataset_format(path: &str) -> Option<DatasetFormat> {
+    let lower = path.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e)?;
+    match ext {
+        "csv" => Some(DatasetFormat::Csv),
+        "tsv" | "tab" => Some(DatasetFormat::Tsv),
+        "jsonl" | "ndjson" => Some(DatasetFormat::Jsonl),
+        "parquet" | "pq" => Some(DatasetFormat::Parquet),
+        "arrow" | "feather" | "ipc" => Some(DatasetFormat::Arrow),
+        _ => None,
+    }
+}
+
+/// Lower-case name of a dataset format.
+#[must_use]
+pub fn format_name(format: DatasetFormat) -> &'static str {
+    match format {
+        DatasetFormat::Csv => "csv",
+        DatasetFormat::Tsv => "tsv",
+        DatasetFormat::Parquet => "parquet",
+        DatasetFormat::Arrow => "arrow",
+        DatasetFormat::Jsonl => "jsonl",
+    }
+}
+
+/// `bytes` in MiB with one decimal.
+fn mib(bytes: u64) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let mib = bytes as f64 / (1024.0 * 1024.0);
+    format!("{mib:.1} MiB")
+}
+
+/// Input of `show_dataset`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowDataset {
+    /// A data file of the workspace: `.csv`, `.tsv`, `.jsonl`/`.ndjson`
+    /// (one JSON object per line) or `.parquet`.
+    pub path: String,
+    /// Rows in the preview table (default 20, at most 200).
+    #[serde(default)]
+    pub rows: Option<usize>,
+}
+
+/// `show_dataset`: a data file's schema, column statistics and first rows.
+#[derive(Clone)]
+pub struct ShowDatasetTool {
+    ports: FormatToolPorts,
+}
+
+impl ShowDatasetTool {
+    /// The tool over `ports`.
+    #[must_use]
+    pub fn new(ports: FormatToolPorts) -> Self {
+        Self { ports }
+    }
+}
+
+/// Name of `show_dataset`.
+pub const SHOW_DATASET: &str = "show_dataset";
+
+/// Reads a dataset: a Parquet file whole (up to [`MAX_PARQUET_BYTES`]),
+/// a text file's head (up to [`MAX_TEXT_HEAD_BYTES`]). Returns the bytes
+/// and whether they are only the head.
+async fn read_dataset(
+    fs: &dyn FileSystemPort,
+    path: &str,
+    format: DatasetFormat,
+) -> Result<(Vec<u8>, bool), String> {
+    let parsed = WorkspacePath::parse(path).map_err(|e| format!("dataset path `{path}`: {e}"))?;
+    if format == DatasetFormat::Parquet {
+        return match fs.read_bytes(&parsed, MAX_PARQUET_BYTES).await {
+            Ok(bytes) => Ok((bytes, false)),
+            Err(FsError::TooLarge { size, limit }) => Err(format!(
+                "`{path}` is {}; Parquet previews read the whole file and the limit is {}. \
+                 Write a smaller sample (e.g. the first row groups) and show that",
+                mib(size),
+                mib(limit)
+            )),
+            Err(e) => Err(format!("cannot read `{path}`: {e}")),
+        };
+    }
+    let (bytes, size) = fs
+        .read_head(&parsed, MAX_TEXT_HEAD_BYTES)
+        .await
+        .map_err(|e| format!("cannot read `{path}`: {e}"))?;
+    let truncated = (bytes.len() as u64) < size;
+    Ok((bytes, truncated))
+}
+
+#[async_trait]
+impl TypedTool for ShowDatasetTool {
+    type Input = ShowDataset;
+
+    fn name(&self) -> &str {
+        SHOW_DATASET
+    }
+
+    fn description(&self) -> &str {
+        "Shows a data file of the workspace (CSV, TSV, JSON lines or \
+         Parquet) in the user's timeline: its shape, one row per column \
+         with the type, missing share, distinct count, range and a \
+         distribution sparkline, then the first rows. Use it to look at a \
+         dataset before analysing it. Returns the shape and the column \
+         types with their missing shares, never the rows."
+    }
+
+    fn effect(&self, _input: &ShowDataset) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowDataset,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        if input.path.trim().is_empty() {
+            return Err(invalid(SHOW_DATASET, "`path` is empty"));
+        }
+        let Some(format) = dataset_format(&input.path) else {
+            return Err(invalid(
+                SHOW_DATASET,
+                format!(
+                    "`{}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet",
+                    input.path
+                ),
+            ));
+        };
+        let preview_rows = input
+            .rows
+            .unwrap_or(DEFAULT_PREVIEW_ROWS)
+            .min(MAX_PREVIEW_ROWS);
+        let ports = self.ports.clone();
+        let subject = input.path.clone();
+        let run = async move {
+            let (bytes, truncated) =
+                match read_dataset(ports.fs.as_ref(), &input.path, format).await {
+                    Ok(read) => read,
+                    Err(message) => return Ok(ToolOutput::error(message)),
+                };
+            let request = DatasetRequest {
+                path: input.path.clone(),
+                format,
+                preview_rows,
+                truncated,
+            };
+            let formats = Arc::clone(&ports.formats);
+            let parsed = offloaded(&ports.offload, move || {
+                formats.preview_dataset(&bytes, &request)
+            })
+            .await;
+            let spec = match parsed {
+                Some(Ok(spec)) => spec,
+                Some(Err(err)) => {
+                    return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
+                }
+                None => return Ok(ToolOutput::error("the dataset reader did not run")),
+            };
+            if let Err(err) = spec.validate() {
+                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
+            }
+            let summary = dataset_summary(&spec);
+            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Dataset(spec)))
+        };
+        Ok(PreparedCall::new(subject, run.boxed()))
+    }
+}
+
+/// What the model gets back from `show_dataset`: the shape, whether the
+/// statistics are a sample, and per column its type, missing share and
+/// distinct count (capped at [`MAX_LISTED_COLUMNS`]).
+#[must_use]
+pub fn dataset_summary(spec: &DatasetSpec) -> String {
+    let rows = spec
+        .rows
+        .map_or_else(|| "an unknown number of".to_owned(), |n| n.to_string());
+    let mut out = format!(
+        "Dataset `{}` ({}) shown to the user: {rows} rows × {} columns.",
+        spec.path,
+        format_name(spec.format),
+        spec.columns.len()
+    );
+    if spec.sampled {
+        out.push_str(" Column statistics come from the first rows only (sampled).");
+    }
+    out.push_str("\nColumns:");
+    for column in spec.columns.iter().take(MAX_LISTED_COLUMNS) {
+        let _ = write!(
+            out,
+            "\n- {}: {}, {:.1}% missing",
+            column.name, column.dtype, column.null_percent
+        );
+        if let Some(distinct) = column.distinct {
+            let at_least = if column.distinct_capped { "≥" } else { "" };
+            let _ = write!(out, ", {at_least}{distinct} distinct");
+        }
+    }
+    if spec.columns.len() > MAX_LISTED_COLUMNS {
+        let _ = write!(
+            out,
+            "\n… and {} more",
+            spec.columns.len() - MAX_LISTED_COLUMNS
+        );
+    }
+    out
+}
+
+/// Input of `show_molecule`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowMolecule {
+    /// The structure as SMILES, e.g. `CC(=O)Oc1ccccc1C(=O)O` (aspirin).
+    pub smiles: String,
+    /// Name shown with the drawing, e.g. `aspirin`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The molecular formula you believe it has, e.g. `C9H8O4`; it is
+    /// checked against the formula computed from the SMILES.
+    #[serde(default)]
+    pub claimed_formula: Option<String>,
+}
+
+/// `show_molecule`: a SMILES as a 2D structure with its computed formula,
+/// mass, charge and canonical SMILES.
+#[derive(Clone)]
+pub struct ShowMoleculeTool {
+    ports: FormatToolPorts,
+}
+
+impl ShowMoleculeTool {
+    /// The tool over `ports`.
+    #[must_use]
+    pub fn new(ports: FormatToolPorts) -> Self {
+        Self { ports }
+    }
+}
+
+/// Name of `show_molecule`.
+pub const SHOW_MOLECULE: &str = "show_molecule";
+
+#[async_trait]
+impl TypedTool for ShowMoleculeTool {
+    type Input = ShowMolecule;
+
+    fn name(&self) -> &str {
+        SHOW_MOLECULE
+    }
+
+    fn description(&self) -> &str {
+        "Draws a molecule from SMILES in the user's timeline with its \
+         molecular formula, molecular weight, net charge and canonical \
+         SMILES, all computed from the structure. Pass `claimed_formula` \
+         when you state a formula so the block checks it. Returns the \
+         computed values (cite these, not values from memory) or the parse \
+         error to fix."
+    }
+
+    fn effect(&self, _input: &ShowMolecule) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowMolecule,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        if input.smiles.trim().is_empty() {
+            return Err(invalid(SHOW_MOLECULE, "`smiles` is empty"));
+        }
+        let ports = self.ports.clone();
+        let subject = input
+            .name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| input.smiles.clone());
+        let run = async move {
+            let formats = Arc::clone(&ports.formats);
+            let smiles = input.smiles.trim().to_owned();
+            let claimed = input
+                .claimed_formula
+                .clone()
+                .filter(|c| !c.trim().is_empty());
+            let depicted = offloaded(&ports.offload, move || {
+                formats.depict_molecule(&smiles, claimed.as_deref())
+            })
+            .await;
+            let Some(mut spec) = depicted else {
+                return Ok(ToolOutput::error("the molecule renderer did not run"));
+            };
+            spec.name = input.name.filter(|n| !n.trim().is_empty());
+            let summary = molecule_summary(&spec);
+            let output = if spec.error.is_some() {
+                ToolOutput::error(summary)
+            } else {
+                ToolOutput::text(summary)
+            };
+            Ok(output.with_block_update(BlockKind::Molecule(spec)))
+        };
+        Ok(PreparedCall::new(subject, run.boxed()))
+    }
+}
+
+/// What the model gets back from `show_molecule`: the computed values and
+/// a notice when its claimed formula disagrees, or the parse error.
+#[must_use]
+pub fn molecule_summary(spec: &MoleculeSpec) -> String {
+    let name = spec
+        .name
+        .as_deref()
+        .map(|n| format!(" {n}"))
+        .unwrap_or_default();
+    if let Some(error) = &spec.error {
+        return format!(
+            "Molecule{name} could not be drawn: {error}. Fix the SMILES `{}` and call again.",
+            spec.smiles
+        );
+    }
+    let mut out = format!("Molecule{name} shown to the user, computed from the SMILES:");
+    if let Some(formula) = &spec.formula {
+        let _ = write!(out, " formula {formula}");
+    }
+    if let Some(mw) = spec.mw {
+        let _ = write!(out, ", MW {mw:.2} g/mol");
+    }
+    if let Some(charge) = spec.charge {
+        let _ = write!(out, ", net charge {charge:+}");
+    }
+    if let Some(canonical) = &spec.canonical {
+        let _ = write!(out, ", canonical SMILES `{canonical}`");
+    }
+    out.push('.');
+    match (spec.claimed_matches, &spec.claimed_formula, &spec.formula) {
+        (Some(false), Some(claimed), Some(formula)) => {
+            let _ = write!(
+                out,
+                "\nMismatch: you said {claimed}, computed {formula}. Correct the formula in \
+                 your reply, or the SMILES if it is not the structure you meant."
+            );
+        }
+        (None, Some(claimed), _) => {
+            let _ = write!(
+                out,
+                "\nThe claimed formula {claimed} could not be read as a formula; it was not checked."
+            );
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Input of `show_plate`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShowPlate {
+    /// Wells on the plate: 96 (rows A–H, columns 1–12) or 384 (rows A–P,
+    /// columns 1–24).
+    pub format: u16,
+    /// Wells with data, e.g. `{"well": "A1", "label": "blank", "value":
+    /// 0.041}`; unlisted wells are drawn empty.
+    pub wells: Vec<Well>,
+    /// What the values are, e.g. `OD600` or `RFU`.
+    #[serde(default)]
+    pub value_label: Option<String>,
+    /// Title shown above the plate.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// `show_plate`: a 96- or 384-well plate map coloured by value.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowPlateTool;
+
+/// Name of `show_plate`.
+pub const SHOW_PLATE: &str = "show_plate";
+
+#[async_trait]
+impl TypedTool for ShowPlateTool {
+    type Input = ShowPlate;
+
+    fn name(&self) -> &str {
+        SHOW_PLATE
+    }
+
+    fn description(&self) -> &str {
+        "Shows a 96- or 384-well microplate map in the user's timeline: a \
+         heatmap of the well values with a legend, sample labels inside the \
+         wells and a tooltip per well. Use it for plate-reader results, \
+         layouts of samples and controls, or screening hits. Returns only a \
+         short confirmation."
+    }
+
+    fn effect(&self, _input: &ShowPlate) -> ToolEffect {
+        ToolEffect::Read
+    }
+
+    async fn prepare(
+        &self,
+        input: ShowPlate,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let spec = PlateSpec {
+            title: input.title.filter(|t| !t.trim().is_empty()),
+            format: input.format,
+            value_label: input.value_label.filter(|l| !l.trim().is_empty()),
+            wells: input.wells,
+        };
+        spec.validate()
+            .map_err(|err| invalid(SHOW_PLATE, err.to_string()))?;
+        let values: Vec<f64> = spec.wells.iter().filter_map(|w| w.value).collect();
+        let mut confirmation = format!(
+            "{}-well plate map shown to the user ({} wells listed, {} with values",
+            spec.format,
+            spec.wells.len(),
+            values.len()
+        );
+        if let (Some(lo), Some(hi)) = (
+            values.iter().copied().reduce(f64::min),
+            values.iter().copied().reduce(f64::max),
+        ) {
+            let unit = spec
+                .value_label
+                .as_deref()
+                .map(|l| format!(" {l}"))
+                .unwrap_or_default();
+            let _ = write!(confirmation, ", range {lo}–{hi}{unit}");
+        }
+        confirmation.push_str(").");
+        let (rows, cols) = plate_dimensions(spec.format).unwrap_or_default();
+        let subject = spec
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("{rows}×{cols} plate"));
+        let output = ToolOutput::text(confirmation).with_block_update(BlockKind::Plate(spec));
+        Ok(PreparedCall::new(
+            subject,
+            futures::future::ready(Ok(output)).boxed(),
+        ))
+    }
+}
+
+/// Tells the model when to use the report and lab tools; appended to the
+/// system prompt after the component tools.
 pub const FORMAT_TOOLS_PROMPT: &str = "\
-# Reports and diagrams
+# Reports, data files and lab results
 
 - `show_test_report`: after a test run that wrote a JUnit XML report, show \
 it instead of pasting the output: the user sees failures first with their \
@@ -487,11 +953,21 @@ pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum).
 semgrep, CodeQL, ESLint) grouped by file and severity.
 - `show_wavedrom`: draw a digital timing diagram from WaveJSON (clocks, \
 handshakes, bus transfers over cycles).
+- `show_dataset`: look at a data file (CSV, TSV, JSON lines, Parquet) \
+before any statistics on it: its columns, types, missing values and first \
+rows. Use the column names and types it returns when you call the \
+statistics tools.
+- `show_molecule`: whenever you give a chemical structure, draw it from \
+SMILES. Never state a formula or molecular weight from memory: cite the \
+values the tool computes, and pass `claimed_formula` when you have one in \
+mind so a mismatch is caught.
+- `show_plate`: a 96- or 384-well plate map of values and sample labels.
 
-Their results list what failed with `file:line`, so you can open the files \
-and fix them; do not repeat the lists to the user.";
+The test report and findings results list what failed with `file:line`, so \
+you can open the files and fix them; do not repeat the lists to the user.";
 
-/// Registers `show_test_report`, `show_findings` and `show_wavedrom`.
+/// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
+/// `show_dataset`, `show_molecule` and `show_plate`.
 ///
 /// # Errors
 ///
@@ -502,7 +978,10 @@ pub fn register_format_tools(
 ) -> Result<(), RegisterError> {
     registry.register_typed(ShowTestReportTool::new(ports.clone()))?;
     registry.register_typed(ShowFindingsTool::new(ports.clone()))?;
-    registry.register_typed(ShowWavedromTool::new(ports.clone()))
+    registry.register_typed(ShowWavedromTool::new(ports.clone()))?;
+    registry.register_typed(ShowDatasetTool::new(ports.clone()))?;
+    registry.register_typed(ShowMoleculeTool::new(ports.clone()))?;
+    registry.register_typed(ShowPlateTool)
 }
 
 #[cfg(test)]
@@ -524,6 +1003,8 @@ mod tests {
         let fs = InMemoryFs::new(test_root())
             .with_file("out/junit.xml", "<testsuites/>")
             .with_file("out/lint.sarif", "{}")
+            .with_file("data/cars.csv", "x,label\n1,a\n")
+            .with_file("data/big.jsonl", "{}\n".repeat(10))
             .with_file(".env", "SECRET=1");
         FormatToolPorts {
             formats,
@@ -561,8 +1042,168 @@ mod tests {
             "show_wavedrom_definition",
             definition(ShowWavedromTool::new(ports.clone()))
         );
+        insta::assert_json_snapshot!(
+            "show_dataset_definition",
+            definition(ShowDatasetTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "show_molecule_definition",
+            definition(ShowMoleculeTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!("show_plate_definition", definition(ShowPlateTool));
         let tool = Typed(ShowTestReportTool::new(ports));
         assert_eq!(tool.effect(&json!({ "path": "a" })), ToolEffect::Read);
+    }
+
+    #[test]
+    fn registers_every_format_tool_and_prompts_for_each() {
+        let mut registry = ToolRegistry::new();
+        register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
+        assert_eq!(registry.names().len(), 6);
+        for name in registry.names() {
+            assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dataset_is_a_block_and_the_model_gets_its_shape() {
+        let formats = Arc::new(FakeFormats::new());
+        let tool = Typed(ShowDatasetTool::new(ports(Arc::clone(&formats))));
+        let out = call(&tool, json!({ "path": "data/cars.csv", "rows": 2 }))
+            .await
+            .unwrap();
+        assert!(!out.is_error, "{}", out.text_content());
+        assert_eq!(
+            out.text_content(),
+            "Dataset `data/cars.csv` (csv) shown to the user: 3 rows × 2 columns.\n\
+             Columns:\n- x: integer, 0.0% missing, 3 distinct\n\
+             - label: text, 25.0% missing, 3 distinct"
+        );
+        let Some(BlockKind::Dataset(spec)) = out.block_update else {
+            panic!("expected a dataset, got {:?}", out.block_update);
+        };
+        assert_eq!(spec.preview.rows.len(), 2);
+        assert_eq!(
+            formats.calls(),
+            [("preview_dataset".to_owned(), "data/cars.csv".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn dataset_inputs_and_files_are_checked() {
+        let tool = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::new()))));
+        let not_data = tool.prepare(json!({ "path": "src/lib.rs" }), &ctx()).await;
+        assert!(matches!(not_data, Err(ToolError::InvalidInput { .. })));
+        let guarded = call(&tool, json!({ "path": "../x.csv" })).await.unwrap();
+        assert!(guarded.is_error);
+        let bad = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::failing(
+            "line 1 is not a JSON object",
+        )))));
+        let out = call(&bad, json!({ "path": "data/big.jsonl" }))
+            .await
+            .unwrap();
+        assert!(out.is_error);
+        assert_eq!(
+            out.text_content(),
+            "`data/big.jsonl`: line 1 is not a JSON object"
+        );
+        assert_eq!(dataset_format("a/B.PARQUET"), Some(DatasetFormat::Parquet));
+        assert_eq!(dataset_format("x.ndjson"), Some(DatasetFormat::Jsonl));
+        assert_eq!(dataset_format("README"), None);
+    }
+
+    #[tokio::test]
+    async fn the_head_of_a_large_text_dataset_is_a_sample() {
+        let fs = InMemoryFs::new(test_root()).with_file(
+            "data/huge.csv",
+            "x\n".repeat(usize::try_from(MAX_TEXT_HEAD_BYTES).unwrap_or(0)),
+        );
+        let (bytes, truncated) = read_dataset(&fs, "data/huge.csv", DatasetFormat::Csv)
+            .await
+            .unwrap();
+        assert!(truncated);
+        assert_eq!(bytes.len() as u64, MAX_TEXT_HEAD_BYTES);
+        let small = InMemoryFs::new(test_root()).with_file("d.parquet", "PAR1");
+        let (_, truncated) = read_dataset(&small, "d.parquet", DatasetFormat::Parquet)
+            .await
+            .unwrap();
+        assert!(!truncated);
+    }
+
+    #[tokio::test]
+    async fn a_molecule_reports_computed_values_and_a_wrong_claim() {
+        let formats = Arc::new(FakeFormats::new());
+        let tool = Typed(ShowMoleculeTool::new(ports(Arc::clone(&formats))));
+        let out = call(
+            &tool,
+            json!({ "smiles": "CCO", "name": "ethanol", "claimed_formula": "C2H4O" }),
+        )
+        .await
+        .unwrap();
+        assert!(!out.is_error);
+        assert_eq!(
+            out.text_content(),
+            "Molecule ethanol shown to the user, computed from the SMILES: formula C2H6O, \
+             MW 46.07 g/mol, net charge +0, canonical SMILES `CCO`.\n\
+             Mismatch: you said C2H4O, computed C2H6O. Correct the formula in your reply, \
+             or the SMILES if it is not the structure you meant."
+        );
+        let Some(BlockKind::Molecule(spec)) = out.block_update else {
+            panic!("expected a molecule, got {:?}", out.block_update);
+        };
+        assert_eq!(spec.name.as_deref(), Some("ethanol"));
+        assert_eq!(spec.claimed_matches, Some(false));
+        assert_eq!(
+            formats.calls(),
+            [("depict_molecule".to_owned(), "CCO".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bad_smiles_is_an_error_with_its_block() {
+        let tool = Typed(ShowMoleculeTool::new(ports(Arc::new(FakeFormats::new()))));
+        let out = call(&tool, json!({ "smiles": "bad" })).await.unwrap();
+        assert!(out.is_error);
+        assert!(
+            out.text_content()
+                .contains("could not be drawn: invalid SMILES"),
+            "{}",
+            out.text_content()
+        );
+        assert!(matches!(
+            out.block_update,
+            Some(BlockKind::Molecule(MoleculeSpec { error: Some(_), .. }))
+        ));
+        let empty = tool.prepare(json!({ "smiles": "  " }), &ctx()).await;
+        assert!(matches!(empty, Err(ToolError::InvalidInput { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_plate_is_validated_and_confirmed_briefly() {
+        let tool = Typed(ShowPlateTool);
+        let out = call(
+            &tool,
+            json!({
+                "format": 96, "value_label": "OD600",
+                "wells": [{"well": "A1", "label": "blank", "value": 0.04}, {"well": "H12", "value": 1.2}]
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out.text_content(),
+            "96-well plate map shown to the user (2 wells listed, 2 with values, \
+             range 0.04–1.2 OD600)."
+        );
+        assert!(matches!(out.block_update, Some(BlockKind::Plate(_))));
+        let outside = tool
+            .prepare(json!({ "format": 96, "wells": [{"well": "I1"}] }), &ctx())
+            .await;
+        assert!(matches!(outside, Err(ToolError::InvalidInput { .. })));
+        let format = tool
+            .prepare(json!({ "format": 48, "wells": [] }), &ctx())
+            .await;
+        assert!(matches!(format, Err(ToolError::InvalidInput { .. })));
     }
 
     #[tokio::test]

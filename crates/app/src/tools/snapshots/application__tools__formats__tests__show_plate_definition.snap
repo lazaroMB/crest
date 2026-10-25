@@ -1,0 +1,81 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: definition(ShowPlateTool)
+---
+{
+  "name": "show_plate",
+  "description": "Shows a 96- or 384-well microplate map in the user's timeline: a heatmap of the well values with a legend, sample labels inside the wells and a tooltip per well. Use it for plate-reader results, layouts of samples and controls, or screening hits. Returns only a short confirmation.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "type": "integer",
+        "format": "uint16",
+        "minimum": 0,
+        "maximum": 65535,
+        "description": "Wells on the plate: 96 (rows A–H, columns 1–12) or 384 (rows A–P,\ncolumns 1–24)."
+      },
+      "wells": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Well"
+        },
+        "description": "Wells with data, e.g. `{\"well\": \"A1\", \"label\": \"blank\", \"value\":\n0.041}`; unlisted wells are drawn empty."
+      },
+      "value_label": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "What the values are, e.g. `OD600` or `RFU`.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the plate.",
+        "default": null
+      }
+    },
+    "required": [
+      "format",
+      "wells"
+    ],
+    "description": "Input of `show_plate`.",
+    "title": "ShowPlate",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Well": {
+        "type": "object",
+        "properties": {
+          "well": {
+            "type": "string",
+            "description": "Position, row letter and 1-based column: `A1`, `P24`."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sample label, e.g. `blank`, `ctrl+`."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Measured value."
+          }
+        },
+        "required": [
+          "well"
+        ],
+        "description": "One well of a plate."
+      }
+    }
+  }
+}

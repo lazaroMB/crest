@@ -179,7 +179,8 @@ fn builtin_effect(name: &str) -> &'static str {
         "list_files" | "find_file" | "grep" | "tree" | "read_file" | "task" | "show_chart"
         | "show_plot" | "show_table" | "show_mermaid" | "show_markdown" | "stats_describe"
         | "stats_test" | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user"
-        | "show_test_report" | "show_findings" | "show_wavedrom" => "read",
+        | "show_test_report" | "show_findings" | "show_wavedrom" | "show_dataset"
+        | "show_molecule" | "show_plate" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }
