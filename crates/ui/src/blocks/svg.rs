@@ -7,7 +7,8 @@
 //! power-of-two zoom bucket so a zoomed modal stays sharp. Results are
 //! kept in a global cache keyed by (data hash, raster scale, tint); a
 //! request that is still running shows as [`SvgState::Loading`] and the
-//! windows are refreshed when it lands.
+//! windows are refreshed when it lands. The cache keeps at most
+//! [`CACHE_BYTES`] of bitmaps, dropping the least recently drawn first.
 //!
 //! SVGs drawn for white paper (molecule depictions, WaveDrom diagrams,
 //! images whose media type carries [`TINT_PARAM`]) can be tinted to the
@@ -287,8 +288,96 @@ pub fn raster_scale(scale_factor: f32, zoom: f32) -> f32 {
 /// hundredth).
 type Key = (u64, u32);
 
-#[derive(Default)]
-struct SvgCache(HashMap<Key, SvgState>);
+/// Most bytes of bitmaps the cache keeps.
+pub const CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bytes a cache entry holds: its bitmap's, 0 while loading or failed.
+fn state_bytes(state: &SvgState) -> usize {
+    match state {
+        SvgState::Ready(raster) => {
+            let size = raster.image.size(0);
+            usize::try_from(size.width.0).unwrap_or(0)
+                * usize::try_from(size.height.0).unwrap_or(0)
+                * 4
+        }
+        SvgState::Loading | SvgState::Failed(_) => 0,
+    }
+}
+
+/// A map bounded by the bytes of its values: inserting past `cap` drops
+/// the least recently used entries that have bytes (never the one just
+/// inserted, and never an entry of 0 bytes, such as one still loading).
+#[derive(Debug)]
+pub(crate) struct Lru<K, V> {
+    cap: usize,
+    bytes: usize,
+    tick: u64,
+    entries: HashMap<K, (V, usize, u64)>,
+}
+
+impl<K: std::hash::Hash + Eq + Clone, V: Clone> Lru<K, V> {
+    pub(crate) fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            bytes: 0,
+            tick: 0,
+            entries: HashMap::new(),
+        }
+    }
+
+    /// The value of `key`, marked as just used.
+    pub(crate) fn get(&mut self, key: &K) -> Option<V> {
+        self.tick += 1;
+        let tick = self.tick;
+        self.entries.get_mut(key).map(|(value, _, used)| {
+            *used = tick;
+            value.clone()
+        })
+    }
+
+    /// Stores `value` of `size` bytes under `key`, then evicts down to the
+    /// cap.
+    pub(crate) fn insert(&mut self, key: K, value: V, size: usize) {
+        self.tick += 1;
+        if let Some((_, old, _)) = self.entries.insert(key.clone(), (value, size, self.tick)) {
+            self.bytes -= old;
+        }
+        self.bytes += size;
+        while self.bytes > self.cap {
+            let victim = self
+                .entries
+                .iter()
+                .filter(|(k, (_, size, _))| *size > 0 && **k != key)
+                .min_by_key(|(_, (_, _, used))| *used)
+                .map(|(k, _)| k.clone());
+            let Some(victim) = victim else {
+                break;
+            };
+            if let Some((_, size, _)) = self.entries.remove(&victim) {
+                self.bytes -= size;
+            }
+        }
+    }
+
+    /// Bytes held.
+    #[cfg(test)]
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains(&self, key: &K) -> bool {
+        self.entries.contains_key(key)
+    }
+}
+
+struct SvgCache(Lru<Key, SvgState>);
+
+impl Default for SvgCache {
+    fn default() -> Self {
+        Self(Lru::new(CACHE_BYTES))
+    }
+}
 
 impl Global for SvgCache {}
 
@@ -331,11 +420,11 @@ pub fn use_svg_tinted(
     let scale = raster_scale(window.scale_factor(), zoom);
     let key = key(data, scale, tint.as_ref());
     if let Some(state) = cx.default_global::<SvgCache>().0.get(&key) {
-        return state.clone();
+        return state;
     }
     cx.default_global::<SvgCache>()
         .0
-        .insert(key, SvgState::Loading);
+        .insert(key, SvgState::Loading, 0);
     let data = data.clone();
     let task = cx.background_executor().spawn(async move {
         let bytes = bytes(&data)?;
@@ -353,7 +442,8 @@ pub fn use_svg_tinted(
             Err(err) => SvgState::Failed(err),
         };
         cx.update(|cx| {
-            cx.default_global::<SvgCache>().0.insert(key, state);
+            let size = state_bytes(&state);
+            cx.default_global::<SvgCache>().0.insert(key, state, size);
             cx.refresh_windows();
         });
     })
@@ -371,7 +461,7 @@ pub(crate) fn cached(
     cx: &mut App,
 ) -> Option<SvgState> {
     let key = key(data, raster_scale(window.scale_factor(), zoom), None);
-    cx.default_global::<SvgCache>().0.get(&key).cloned()
+    cx.default_global::<SvgCache>().0.get(&key)
 }
 
 /// A 40×20 red rectangle, for tests.
@@ -433,6 +523,44 @@ mod tests {
                 data: String::new()
             }
         ));
+    }
+
+    #[test]
+    fn the_cache_drops_the_least_recently_used_bitmaps_past_its_cap() {
+        let mut lru: Lru<&str, u8> = Lru::new(100);
+        lru.insert("a", 1, 40);
+        lru.insert("b", 2, 40);
+        lru.insert("loading", 0, 0);
+        assert_eq!(lru.get(&"a"), Some(1));
+        // 120 bytes: `b`, used least recently, goes.
+        lru.insert("c", 3, 40);
+        assert!(!lru.contains(&"b") && lru.contains(&"a") && lru.contains(&"c"));
+        assert!(lru.contains(&"loading"));
+        assert_eq!(lru.bytes(), 80);
+        // Replacing an entry counts its new size only.
+        lru.insert("a", 4, 10);
+        assert_eq!(lru.bytes(), 50);
+        // One entry over the cap stays: nothing else to drop.
+        lru.insert("huge", 5, 500);
+        assert!(lru.contains(&"huge"));
+        assert_eq!(lru.bytes(), 500);
+        let raster = rasterize(SQUARE.as_bytes(), 1.0).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(state_bytes(&SvgState::Ready(Arc::new(raster))), 40 * 20 * 4);
+        assert_eq!(state_bytes(&SvgState::Loading), 0);
+    }
+
+    #[test]
+    fn a_landed_bitmap_evicts_older_ones_but_not_itself() {
+        let mut lru: Lru<&str, u8> = Lru::new(100);
+        lru.insert("old", 1, 60);
+        lru.insert("new", 0, 0);
+        assert_eq!(lru.bytes(), 60);
+        // The placeholder becomes a bitmap: the older one makes room.
+        lru.insert("new", 2, 60);
+        assert!(!lru.contains(&"old"));
+        assert_eq!(lru.get(&"new"), Some(2));
+        assert_eq!(lru.get(&"missing"), None);
+        assert_eq!(lru.bytes(), 60);
     }
 
     #[test]
