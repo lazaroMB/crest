@@ -6,8 +6,8 @@
 //! mark them as unverified. It is a cheap guard, not a parser, and it errs
 //! on the side of not flagging. It skips:
 //!
-//! - slots, code fences, inline code, TeX math (`$..$`, `$$..$$`), link
-//!   targets and bare URLs;
+//! - slots, code fences, inline code, TeX math (`$..$`, `$$..$$`,
+//!   `\(..\)`, `\[..\]`, see [`crate::math`]), link targets and bare URLs;
 //! - small unsigned integers up to 10, which are counts and steps far more
 //!   often than results ("3 files", "step 2");
 //! - years 1900–2100 and ISO dates (`2026-10-24`);
@@ -151,50 +151,12 @@ fn mask_inline_code(text: &str, mask: &mut [bool]) {
     }
 }
 
-/// Masks TeX math: `$$..$$` (across lines) and then `$..$` within a line,
-/// with pandoc's rule that the opening `$` is followed by a non-space and
-/// the closing one preceded by a non-space and not followed by a digit, so
-/// prices (`$5 and $10`) stay prose.
+/// Masks TeX math as [`crate::math`] finds it: `$..$` under pandoc's rule
+/// (so prices such as `$5 and $10` stay prose), `$$..$$`, `\(..\)`,
+/// `\[..\]`, ```` ```math ```` fences and bare `\ce{..}`.
 fn mask_math(text: &str, mask: &mut [bool]) {
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while let Some(open) = text[i..].find("$$").map(|o| o + i) {
-        if mask[open] {
-            i = open + 2;
-            continue;
-        }
-        let Some(close) = text[open + 2..].find("$$").map(|c| c + open + 2) else {
-            break;
-        };
-        mask[open..close + 2].fill(true);
-        i = close + 2;
-    }
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'$' || mask[i] || bytes.get(i + 1).is_none_or(u8::is_ascii_whitespace) {
-            i += 1;
-            continue;
-        }
-        let mut j = i + 1;
-        let mut close = None;
-        while j < bytes.len() && bytes[j] != b'\n' {
-            if bytes[j] == b'$'
-                && !mask[j]
-                && !bytes[j - 1].is_ascii_whitespace()
-                && !bytes.get(j + 1).is_some_and(u8::is_ascii_digit)
-            {
-                close = Some(j);
-                break;
-            }
-            j += 1;
-        }
-        match close {
-            Some(end) => {
-                mask[i..=end].fill(true);
-                i = end + 1;
-            }
-            None => i += 1,
-        }
+    for span in crate::math::find(text) {
+        mask[span.range].fill(true);
     }
 }
 

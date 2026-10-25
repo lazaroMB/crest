@@ -10,6 +10,7 @@ pub mod dataset;
 pub mod decision;
 pub mod form;
 pub mod git;
+pub mod math;
 pub mod modal;
 pub mod model;
 pub mod model3d;
