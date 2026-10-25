@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats/devops.rs
+expression: "definition(ShowTraceTool::new(ports.clone()))"
+---
+{
+  "name": "show_trace",
+  "description": "Shows a distributed trace file of the workspace (OTLP JSON, Jaeger JSON or Zipkin v2 JSON) as a waterfall in the user's timeline: one row per span under its parent, colored by service, failed spans in red, events as ticks, the critical path on a toggle and each span's attributes on hover. Returns the span and service counts, the critical path, the spans with the most self time and the errors: do not repeat the trace in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A trace file of the workspace: OTLP JSON (an\n`ExportTraceServiceRequest`, or the collector file exporter's JSON\nlines), a Jaeger JSON download or Zipkin v2 JSON."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the waterfall; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_trace`.",
+    "title": "ShowTrace",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

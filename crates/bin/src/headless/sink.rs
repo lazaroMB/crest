@@ -212,6 +212,22 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             );
         }
         BlockKind::Plate(_) => w.line(Some(Style::Dim), "[plate]"),
+        BlockKind::Trace(trace) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[trace: {} spans, {} errors]",
+                trace.span_count(),
+                trace.errors().len()
+            ),
+        ),
+        BlockKind::FlameGraph(flame) => w.line(
+            Some(Style::Dim),
+            &format!("[flame graph: {} {}]", flame.total(), flame.unit),
+        ),
+        BlockKind::Logs(logs) => w.line(
+            Some(Style::Dim),
+            &format!("[logs: {} lines]", logs.total_lines),
+        ),
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
     }
 }

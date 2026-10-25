@@ -40,6 +40,9 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Dataset(_) => "dataset",
         BlockKind::Molecule(_) => "molecule",
         BlockKind::Plate(_) => "plate",
+        BlockKind::Trace(_) => "trace",
+        BlockKind::FlameGraph(_) => "flame_graph",
+        BlockKind::Logs(_) => "logs",
     }
 }
 

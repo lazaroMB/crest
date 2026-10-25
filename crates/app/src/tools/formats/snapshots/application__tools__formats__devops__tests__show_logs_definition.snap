@@ -1,0 +1,57 @@
+---
+source: crates/app/src/tools/formats/devops.rs
+expression: "definition(ShowLogsTool::new(ports))"
+---
+{
+  "name": "show_logs",
+  "description": "Shows a log file of the workspace (JSON lines, logfmt or plain text) in the user's timeline as a filterable list: level colors, chips by level and by fields such as the service, a text or /regex/ filter, a histogram of lines over time, and each line's fields and stack trace on click. Returns the line count, the counts per level, the facets and the error messages grouped by shape: do not repeat the log in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A log file of the workspace: JSON lines (pino, bunyan, zap, slog,\ntracing JSON), logfmt or plain text (log4j/logback, Python logging,\nenv_logger, tracing's default format)."
+      },
+      "format": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LogFormatInput"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "How the lines are written; told from the first lines when omitted."
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_logs`.",
+    "title": "ShowLogs",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "LogFormatInput": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "json",
+            "description": "One JSON object per line."
+          },
+          {
+            "type": "string",
+            "const": "logfmt",
+            "description": "`key=value` pairs."
+          },
+          {
+            "type": "string",
+            "const": "text",
+            "description": "Plain text."
+          }
+        ],
+        "description": "How `show_logs` reads the lines."
+      }
+    }
+  }
+}
