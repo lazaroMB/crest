@@ -8,6 +8,7 @@ pub mod computed;
 pub mod conversation;
 pub mod dataset;
 pub mod decision;
+pub mod devops;
 pub mod form;
 pub mod git;
 pub mod math;
