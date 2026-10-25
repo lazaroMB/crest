@@ -5,14 +5,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_compute::StatsEngine;
-use application::ports::compute::{
-    AbTestRequest, ArmCounts, BootstrapRequest, ComputePort, ContingencyChoice, ContingencyRequest,
-    DEFAULT_SEED, DataColumn, DataSet, DistributionRequest, ForecastRequest, PowerRequest,
-};
-use domain::computed::{
-    AbMethod, Alternative, BandwidthRule, BinRule, BootMethod, BootStatistic, Computed,
-    ComputedBody, ComputedStatus, ContingencyBody, ContingencyTest, PowerTest,
-};
+use application::ports::compute::*;
+use domain::computed::*;
 
 /// Asserts `actual` rounds to `printed` at the printed digits.
 #[track_caller]
@@ -657,4 +651,161 @@ fn forecast_without_periods_and_too_short_series() {
     bad.periods = Vec::new();
     bad.horizon = 0;
     assert!(engine().forecast(&bad).is_err());
+}
+
+// --- LP / MILP -----------------------------------------------------------------------
+
+fn lp(
+    sense: Sense,
+    objective: &str,
+    vars: &[&str],
+    constraints: &[(&str, &str)],
+) -> OptimizeRequest {
+    OptimizeRequest {
+        sense,
+        objective: objective.into(),
+        variables: vars
+            .iter()
+            .map(|n| LpVariable {
+                name: (*n).into(),
+                lower: Some(0.0),
+                upper: None,
+                integer: false,
+                binary: false,
+            })
+            .collect(),
+        constraints: constraints
+            .iter()
+            .map(|(name, expr)| LpConstraint {
+                name: Some((*name).into()),
+                expr: (*expr).into(),
+            })
+            .collect(),
+    }
+}
+
+fn optimization(body: &ComputedBody) -> &OptimizationBody {
+    match body {
+        ComputedBody::Optimization(o) => o,
+        other => panic!("not an optimisation: {other:?}"),
+    }
+}
+
+#[test]
+fn lp_matches_textbook_solutions_and_shadow_prices() {
+    // Hillier & Lieberman, Wyndor Glass: x1 = 2, x2 = 6, Z = 36; shadow
+    // prices 0, 1.5, 1.
+    let request = lp(
+        Sense::Maximize,
+        "3*x1 + 5*x2",
+        &["x1", "x2"],
+        &[
+            ("plant1", "x1 <= 4"),
+            ("plant2", "2*x2 <= 12"),
+            ("plant3", "3*x1 + 2*x2 <= 18"),
+        ],
+    );
+    let (c, body) = engine().optimize(&request).unwrap();
+    assert!(c.id.starts_with("so_"), "{}", c.id);
+    assert_eq!(c.engine.name, "crest-solve");
+    let o = optimization(&body);
+    assert_eq!(o.status, OptimizationStatus::Optimal);
+    near(v(&c, "objective"), 36.0, 1e-9);
+    near(v(&c, "value.x1"), 2.0, 1e-9);
+    near(v(&c, "value.x2"), 6.0, 1e-9);
+    for (name, price) in [("plant1", 0.0), ("plant2", 1.5), ("plant3", 1.0)] {
+        near(v(&c, &format!("dual.{name}")), price, 1e-9);
+    }
+    assert_eq!(
+        o.constraints.iter().map(|k| k.binding).collect::<Vec<_>>(),
+        [false, true, true]
+    );
+    near(v(&c, "slack.plant1"), 2.0, 1e-9);
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("plant2"), "{sentence}");
+
+    // Winston, Dorian Auto (minimise, ≥ rows): x1 = 3.6, x2 = 1.4, z = 320;
+    // shadow prices 5 and 7.5.
+    let request = lp(
+        Sense::Minimize,
+        "50 x1 + 100 x2",
+        &["x1", "x2"],
+        &[
+            ("women", "7 x1 + 2 x2 >= 28"),
+            ("men", "2 x1 + 12 x2 >= 24"),
+        ],
+    );
+    let (c, _) = engine().optimize(&request).unwrap();
+    near(v(&c, "objective"), 320.0, 1e-9);
+    near(v(&c, "value.x1"), 3.6, 1e-9);
+    near(v(&c, "dual.women"), 5.0, 1e-9);
+    near(v(&c, "dual.men"), 7.5, 1e-9);
+
+    // Winston, Giapetto: the demand bound has slack 20 and price 0; the
+    // reduced costs of the basic variables are 0.
+    let request = lp(
+        Sense::Maximize,
+        "3 soldiers + 2 trains",
+        &["soldiers", "trains"],
+        &[
+            ("finishing", "2 soldiers + trains <= 100"),
+            ("carpentry", "soldiers + trains <= 80"),
+            ("demand", "soldiers <= 40"),
+        ],
+    );
+    let (c, _) = engine().optimize(&request).unwrap();
+    near(v(&c, "objective"), 180.0, 1e-9);
+    near(v(&c, "slack.demand"), 20.0, 1e-9);
+    near(v(&c, "dual.finishing"), 1.0, 1e-9);
+    near(v(&c, "dual.carpentry"), 1.0, 1e-9);
+    near(v(&c, "reduced_cost.soldiers"), 0.0, 1e-9);
+}
+
+#[test]
+fn milp_infeasible_unbounded_and_nonlinear() {
+    // 0/1 knapsack: values 8, 11, 6, 4, weights 5, 7, 4, 3, capacity 14:
+    // optimum 21 with b, c and d.
+    let mut request = lp(
+        Sense::Maximize,
+        "8a + 11b + 6c + 4d",
+        &["a", "b", "c", "d"],
+        &[("capacity", "5a + 7b + 4c + 3d <= 14")],
+    );
+    for v in &mut request.variables {
+        v.binary = true;
+    }
+    let (c, body) = engine().optimize(&request).unwrap();
+    let o = optimization(&body);
+    assert!(o.integer);
+    assert_eq!(o.status, OptimizationStatus::Optimal);
+    near(v(&c, "objective"), 21.0, 1e-9);
+    assert_eq!(
+        ["a", "b", "c", "d"].map(|n| v(&c, &format!("value.{n}"))),
+        [0.0, 1.0, 1.0, 1.0]
+    );
+    assert!(c.method.params["duals"].as_str().unwrap().contains("fixed"));
+    let (again, _) = engine().recompute(&c).unwrap();
+    assert_eq!(again.verification.matched, Some(true));
+
+    let request = lp(
+        Sense::Maximize,
+        "x",
+        &["x"],
+        &[("low", "x >= 5"), ("high", "x <= 3")],
+    );
+    let (c, body) = engine().optimize(&request).unwrap();
+    assert_eq!(optimization(&body).status, OptimizationStatus::Infeasible);
+    assert!(c.warnings.iter().any(|w| w.code == "infeasible"));
+    let request = lp(
+        Sense::Maximize,
+        "x + y",
+        &["x", "y"],
+        &[("c", "x - y <= 1")],
+    );
+    let (_, body) = engine().optimize(&request).unwrap();
+    assert_eq!(optimization(&body).status, OptimizationStatus::Unbounded);
+    let request = lp(Sense::Maximize, "x*y", &["x", "y"], &[("c", "x + y <= 1")]);
+    assert!(engine().optimize(&request).is_err());
+    let request = lp(Sense::Maximize, "x", &["x"], &[("c", "x^2 <= 1")]);
+    assert!(engine().optimize(&request).is_err());
 }

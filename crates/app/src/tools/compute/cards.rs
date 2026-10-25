@@ -1,6 +1,6 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
-//! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`, and
-//! what the model is
+//! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`,
+//! `solve_lp`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -130,6 +130,49 @@ components; you get the values as slots to cite.";
 
 /// `stats_forecast`.
 pub type StatsForecastTool = StatsTool<ForecastKind>;
+
+/// `solve_lp`.
+#[derive(Debug, Clone, Copy)]
+pub struct Lp;
+
+impl UnitsKind for Lp {
+    type Request = OptimizeRequest;
+    const NAME: &'static str = "solve_lp";
+    const DESCRIPTION: &'static str = "\
+Solves a linear program, or a mixed-integer one, with crest's deterministic solver (microlp): \
+`objective` and each constraint's `expr` are linear expressions of the named `variables` \
+(`3*x + 5*y`, `2x + y <= 100`, `a + b = 1`); variables default to ≥ 0 and may be `integer` or \
+`binary`. The user sees the status, the variable values with reduced costs, and each \
+constraint's slack, whether it binds and its shadow price (dual value); you get them as slots \
+to cite. Infeasible and unbounded problems are reported as such.";
+    fn wrap(request: OptimizeRequest) -> ComputeRequest {
+        ComputeRequest::Optimize(request)
+    }
+    fn subject(request: &OptimizeRequest) -> String {
+        let sense = match request.sense {
+            domain::computed::Sense::Maximize => "max",
+            domain::computed::Sense::Minimize => "min",
+        };
+        format!(
+            "{sense} {} · {} variables, {} constraints",
+            request.objective,
+            request.variables.len(),
+            request.constraints.len()
+        )
+    }
+    fn check(request: &OptimizeRequest) -> Result<(), String> {
+        if request.variables.is_empty() {
+            return Err("give at least one variable".into());
+        }
+        if request.objective.trim().is_empty() {
+            return Err("`objective` is empty".into());
+        }
+        Ok(())
+    }
+}
+
+/// `solve_lp`.
+pub type SolveLpTool = UnitsTool<Lp>;
 
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]
@@ -261,6 +304,14 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                     cells.join(", ")
                 );
             }
+        }
+        ComputedBody::Optimization(o) => {
+            let _ = writeln!(
+                out,
+                "Status: {}. Shadow prices are the change of the objective per unit increase of \
+                 a constraint's right-hand side; ranging is not available.",
+                o.status.label()
+            );
         }
         ComputedBody::Forecast(f) => {
             let _ = writeln!(

@@ -109,6 +109,9 @@ rand_chacha = { version = "0.10.0", default-features = false }
 augurs-core = "=0.10.2"
 augurs-ets = { version = "=0.10.2", features = ["mstl"] }
 augurs-mstl = "=0.10.2"
+# LP/MILP (Apache-2.0, pure Rust; sprs underneath). Used directly: good_lp
+# would add a modelling layer but no duals for this solver.
+microlp = { version = "=0.6.0", default-features = false }
 
 # Report formats (adapter-formats). JUnit is read with quick-xml directly:
 # quick-junit 0.8.0's deserializer is experimental and needs a

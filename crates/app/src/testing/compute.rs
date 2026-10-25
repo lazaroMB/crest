@@ -208,6 +208,33 @@ impl FakeCompute {
                     holdout: None,
                 }),
             ),
+            ComputeRequest::Optimize(r) => (
+                "solve.lp",
+                "Linear program",
+                "optimization",
+                ComputedBody::Optimization(OptimizationBody {
+                    sense: r.sense,
+                    objective_expr: r.objective.clone(),
+                    status: OptimizationStatus::Optimal,
+                    objective: Some(36.0),
+                    integer: false,
+                    mip_gap: None,
+                    variables: r
+                        .variables
+                        .iter()
+                        .map(|v| OptVariable {
+                            name: v.name.clone(),
+                            value: Some(1.0),
+                            lower: v.lower,
+                            upper: v.upper,
+                            integer: v.integer,
+                            objective_coefficient: 1.0,
+                            reduced_cost: Some(0.0),
+                        })
+                        .collect(),
+                    constraints: Vec::new(),
+                }),
+            ),
             ComputeRequest::Power(r) => (
                 "stats.power",
                 "Power analysis",
@@ -491,6 +518,10 @@ impl ComputePort for FakeCompute {
 
     fn forecast(&self, request: &ForecastRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Forecast(request.clone()), None)
+    }
+
+    fn optimize(&self, request: &OptimizeRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Optimize(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

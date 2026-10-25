@@ -3264,6 +3264,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A linear or mixed-integer program.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "optimization"
+            }
+          },
+          "$ref": "#/$defs/OptimizationBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -5204,6 +5218,254 @@ expression: "schemars::schema_for!(Block)"
         "hi80",
         "lo95",
         "hi95"
+      ]
+    },
+    "Sense": {
+      "description": "Direction of the objective.",
+      "oneOf": [
+        {
+          "description": "Largest objective.",
+          "type": "string",
+          "const": "maximize"
+        },
+        {
+          "description": "Smallest objective.",
+          "type": "string",
+          "const": "minimize"
+        }
+      ]
+    },
+    "OptimizationStatus": {
+      "description": "How a solve ended.",
+      "oneOf": [
+        {
+          "description": "Proven optimal.",
+          "type": "string",
+          "const": "optimal"
+        },
+        {
+          "description": "A feasible point, optimality not proven (node limit reached).",
+          "type": "string",
+          "const": "feasible"
+        },
+        {
+          "description": "No point satisfies every constraint.",
+          "type": "string",
+          "const": "infeasible"
+        },
+        {
+          "description": "The objective improves without limit.",
+          "type": "string",
+          "const": "unbounded"
+        },
+        {
+          "description": "Stopped before any feasible point was found.",
+          "type": "string",
+          "const": "stopped"
+        }
+      ]
+    },
+    "OptVariable": {
+      "description": "One decision variable.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "lower": {
+          "description": "Lower bound (`None` = −∞).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "upper": {
+          "description": "Upper bound (`None` = +∞).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "integer": {
+          "description": "Whether it must be a whole number.",
+          "type": "boolean",
+          "default": false
+        },
+        "objective_coefficient": {
+          "description": "Its coefficient in the objective.",
+          "type": "number",
+          "format": "double"
+        },
+        "reduced_cost": {
+          "description": "Change of the objective per unit the variable is forced up (0 for a\nvariable strictly between its bounds).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "objective_coefficient"
+      ]
+    },
+    "OptConstraint": {
+      "description": "One linear constraint.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "expr": {
+          "description": "The constraint as written.",
+          "type": "string"
+        },
+        "coefficients": {
+          "description": "Coefficient of each variable (in variable order) after moving every\nvariable term to the left.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "op": {
+          "description": "Comparison.",
+          "$ref": "#/$defs/ConstraintOp"
+        },
+        "rhs": {
+          "description": "Right-hand side after moving every variable term to the left.",
+          "type": "number",
+          "format": "double"
+        },
+        "activity": {
+          "description": "Value of the left-hand side at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "slack": {
+          "description": "How far it is from binding (≥ 0 when satisfied).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "binding": {
+          "description": "Whether it holds with equality.",
+          "type": "boolean",
+          "default": false
+        },
+        "dual": {
+          "description": "Shadow price: change of the objective per unit increase of `rhs`.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "expr",
+        "op",
+        "rhs"
+      ]
+    },
+    "ConstraintOp": {
+      "description": "A comparison of a linear constraint.",
+      "oneOf": [
+        {
+          "description": "`≤`.",
+          "type": "string",
+          "const": "le"
+        },
+        {
+          "description": "`≥`.",
+          "type": "string",
+          "const": "ge"
+        },
+        {
+          "description": "`=`.",
+          "type": "string",
+          "const": "eq"
+        }
+      ]
+    },
+    "OptimizationBody": {
+      "description": "Body of an optimisation card.",
+      "type": "object",
+      "properties": {
+        "sense": {
+          "description": "Direction.",
+          "$ref": "#/$defs/Sense"
+        },
+        "objective_expr": {
+          "description": "The objective as written.",
+          "type": "string"
+        },
+        "status": {
+          "description": "How the solve ended.",
+          "$ref": "#/$defs/OptimizationStatus"
+        },
+        "objective": {
+          "description": "Objective value at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "integer": {
+          "description": "Whether some variables are integer (a MILP).",
+          "type": "boolean",
+          "default": false
+        },
+        "mip_gap": {
+          "description": "Relative gap between the solution and the best bound (MILP).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "variables": {
+          "description": "The variables, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptVariable"
+          }
+        },
+        "constraints": {
+          "description": "The constraints, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptConstraint"
+          }
+        }
+      },
+      "required": [
+        "sense",
+        "objective_expr",
+        "status",
+        "variables",
+        "constraints"
       ]
     },
     "FormField": {

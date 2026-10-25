@@ -1,0 +1,121 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(SolveLpTool::new(ports))"
+---
+{
+  "name": "solve_lp",
+  "description": "Solves a linear program, or a mixed-integer one, with crest's deterministic solver (microlp): `objective` and each constraint's `expr` are linear expressions of the named `variables` (`3*x + 5*y`, `2x + y <= 100`, `a + b = 1`); variables default to ≥ 0 and may be `integer` or `binary`. The user sees the status, the variable values with reduced costs, and each constraint's slack, whether it binds and its shadow price (dual value); you get them as slots to cite. Infeasible and unbounded problems are reported as such.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "sense": {
+        "$ref": "#/$defs/Sense",
+        "description": "`maximize` (default) or `minimize`.",
+        "default": "maximize"
+      },
+      "objective": {
+        "type": "string",
+        "description": "The objective, linear in the variables: `3*x + 5*y`."
+      },
+      "variables": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/LpVariable"
+        },
+        "description": "The variables."
+      },
+      "constraints": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/LpConstraint"
+        },
+        "description": "The constraints.",
+        "default": []
+      }
+    },
+    "required": [
+      "objective",
+      "variables"
+    ],
+    "description": "Input of `optimize`: a linear program, or a mixed-integer one when\nsome variables are integer or binary.",
+    "title": "OptimizeRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Sense": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "maximize",
+            "description": "Largest objective."
+          },
+          {
+            "type": "string",
+            "const": "minimize",
+            "description": "Smallest objective."
+          }
+        ],
+        "description": "Direction of the objective."
+      },
+      "LpVariable": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, as the expressions use it (letters, digits, `_`)."
+          },
+          "lower": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Lower bound (default 0; `null` for none).",
+            "default": 0.0
+          },
+          "upper": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Upper bound (default none)."
+          },
+          "integer": {
+            "type": "boolean",
+            "description": "Whether it must take whole values.",
+            "default": false
+          },
+          "binary": {
+            "type": "boolean",
+            "description": "Whether it is 0 or 1 (overrides the bounds).",
+            "default": false
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "A decision variable of a linear program."
+      },
+      "LpConstraint": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name (default `c1`, `c2`, …), e.g. `labor`."
+          },
+          "expr": {
+            "type": "string",
+            "description": "The constraint, linear in the variables: `2*x + 3*y <= 120`,\n`x - y >= 0`, `a + b = 1` (`<=`, `>=`, `=`)."
+          }
+        },
+        "required": [
+          "expr"
+        ],
+        "description": "One constraint of a linear program."
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ augurs-ets.workspace = true
 augurs-mstl.workspace = true
 blake3.workspace = true
 domain.workspace = true
+microlp.workspace = true
 numbat.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true
