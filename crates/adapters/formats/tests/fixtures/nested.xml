@@ -1,0 +1,9 @@
+<testsuites>
+  <testsuite name="outer">
+    <testsuite name="inner">
+      <testcase name="a"/>
+    </testsuite>
+    <testcase name="b"><failure/></testcase>
+  </testsuite>
+  <testsuite name="empty"/>
+</testsuites>

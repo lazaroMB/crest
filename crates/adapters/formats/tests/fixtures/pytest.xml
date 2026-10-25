@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="1" failures="1" skipped="1" tests="4" time="1.25" hostname="box">
+    <testcase classname="tests.test_math" name="test_add" file="tests/test_math.py" line="3" time="0.001"/>
+    <testcase classname="tests.test_math" name="test_div" file="tests/test_math.py" line="10" time="0.020">
+      <failure message="assert 1 == 2">def test_div():
+&gt;       assert 1 == 2
+E       assert 1 == 2
+
+tests/test_math.py:12: AssertionError</failure>
+      <system-out>dividing &amp; checking</system-out>
+    </testcase>
+    <testcase classname="tests.test_io" name="test_slow" time="0.000">
+      <skipped type="pytest.skip" message="needs network">tests/test_io.py:4: needs network</skipped>
+    </testcase>
+    <testcase classname="tests.test_io" name="test_open" time="0.5">
+      <error type="FileNotFoundError">fixture 'tmp' not found</error>
+    </testcase>
+  </testsuite>
+</testsuites>
