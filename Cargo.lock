@@ -503,6 +503,7 @@ name = "application"
 version = "0.14.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "domain",
  "futures",
  "graph-flow",
@@ -1706,6 +1707,7 @@ dependencies = [
  "adapter-cloudflare",
  "adapter-compute",
  "adapter-export",
+ "adapter-formats",
  "adapter-fs",
  "adapter-lua",
  "adapter-mcp",

@@ -13,6 +13,8 @@ testing = []
 
 [dependencies]
 async-trait.workspace = true
+# SVG of show_wavedrom as an inline image block.
+base64.workspace = true
 domain.workspace = true
 futures.workspace = true
 graph-flow.workspace = true

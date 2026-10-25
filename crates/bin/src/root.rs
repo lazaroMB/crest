@@ -15,6 +15,7 @@ use adapter_anthropic::{
 };
 use adapter_compute::StatsEngine;
 use adapter_export::HtmlExporter;
+use adapter_formats::Formats;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
@@ -48,6 +49,7 @@ use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_
 use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::form::{FORM_TOOL_PROMPT, register_form_tool};
+use application::tools::formats::{FORMAT_TOOLS_PROMPT, FormatToolPorts, register_format_tools};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::simulate::SimulateTool;
@@ -590,6 +592,15 @@ pub async fn build_app(
     register_form_tool(&mut tools, Arc::clone(&frontend.form)).context("tool registration")?;
     let compute = compute_ports(Arc::clone(&fs));
     register_compute_tools(&mut tools, &compute).context("tool registration")?;
+    register_format_tools(
+        &mut tools,
+        &FormatToolPorts {
+            formats: Arc::new(Formats::new()),
+            fs: Arc::clone(&compute.fs),
+            offload: Arc::clone(&compute.offload),
+        },
+    )
+    .context("tool registration")?;
     if let Some(host) = &plugins
         && let Err(err) = host
             .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
@@ -1035,6 +1046,8 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
          \n\
          {COMPONENT_TOOLS_PROMPT}\n\
          \n\
+         {FORMAT_TOOLS_PROMPT}\n\
+         \n\
          {FORM_TOOL_PROMPT}\n\
          \n\
          {COMPUTE_TOOLS_PROMPT}",
@@ -1074,6 +1087,7 @@ mod tests {
         assert_eq!(prompt.contains(WINDOWS_NOTE), cfg!(windows));
         assert!(prompt.contains(COMPONENT_TOOLS_PROMPT));
         assert!(prompt.contains(FORM_TOOL_PROMPT));
+        assert!(prompt.contains(FORMAT_TOOLS_PROMPT));
         assert!(prompt.ends_with(COMPUTE_TOOLS_PROMPT));
     }
 
