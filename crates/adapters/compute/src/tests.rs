@@ -807,7 +807,11 @@ pub fn run(request: &TestRequest, id: String) -> Result<(Computed, ComputedBody)
         request.clone(),
     ))
     .unwrap_or_default();
-    computed.reproduce.lua = Some(crate::reproduce::lua("test", &lua_request, &request.data));
+    computed.reproduce.lua = Some(crate::reproduce::lua(
+        "test",
+        &lua_request,
+        Some(&request.data),
+    ));
     Ok((computed, ComputedBody::Test(body)))
 }
 

@@ -96,6 +96,7 @@ tracing-opentelemetry = { version = "0.34.0", default-features = false }
 # BLAKE3 hashes of the input data in the Computed envelope.
 statrs = { version = "0.19.1", default-features = false }
 blake3 = "1.8.7"
+numbat = { version = "=1.24.0", default-features = false }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
