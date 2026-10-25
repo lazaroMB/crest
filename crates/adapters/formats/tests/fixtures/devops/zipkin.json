@@ -1,0 +1,10 @@
+[
+  { "traceId": "t1", "id": "a", "name": "get /", "timestamp": 1792847107000000, "duration": 20000,
+    "kind": "SERVER", "localEndpoint": { "serviceName": "web" }, "tags": { "http.path": "/" } },
+  { "traceId": "t1", "parentId": "a", "id": "b", "name": "get /api", "timestamp": 1792847107002000, "duration": 15000,
+    "kind": "CLIENT", "localEndpoint": { "serviceName": "web" },
+    "tags": { "error": "connection reset" },
+    "annotations": [ { "timestamp": 1792847107010000, "value": "retry" } ] },
+  { "traceId": "t2", "id": "c", "name": "cron", "timestamp": 1792847107030000, "duration": 1000,
+    "localEndpoint": { "serviceName": "worker" } }
+]

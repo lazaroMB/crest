@@ -1,0 +1,8 @@
+2026-10-24 13:05:00,001 INFO [main] app.Server - started on 8080
+2026-10-24 13:05:01,120 WARN [pool-1] app.Db - pool nearly exhausted
+2026-10-24 13:05:02,500 ERROR [pool-1] app.Db - query failed
+java.sql.SQLException: deadlock detected
+	at app.Db.run(Db.java:42)
+	at app.Server.handle(Server.java:17)
+Caused by: org.postgresql.util.PSQLException: deadlock
+2026-10-24 13:05:03,000 INFO [main] app.Server - recovered

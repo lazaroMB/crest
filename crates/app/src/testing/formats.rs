@@ -6,7 +6,11 @@
 //! [`FakeFormats::with_location`]), every SARIF log is one warning and
 //! every diagram is a tiny SVG, every dataset has an integer `x` and a
 //! text `label` column over three rows, and every molecule is ethanol's
-//! numbers (`C2H6O`, 46.07 g/mol) unless the SMILES is `bad`.
+//! numbers (`C2H6O`, 46.07 g/mol) unless the SMILES is `bad`. Every trace
+//! is `GET /checkout` (api, 100 ms) calling a failed `charge` (payments,
+//! 10–90 ms, "card declined") that calls `SELECT cards` (db, 20–40 ms);
+//! every profile is `main;work 70` and `main;idle 30` samples; every log
+//! is an info line and two `db down` errors of service `db`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -15,13 +19,19 @@ use std::sync::{Mutex, PoisonError};
 use domain::block::{Cell, Column, SourceRef, TableSpec};
 use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
+use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
+use domain::devops::logs::{LogFormat, LogSpec};
+use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
+use domain::widget::list::{ListItem, ListSpec};
+use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
+use serde_json::Map;
 
 use domain::science::{MoleculeSpec, formulas_match};
 
-use crate::ports::formats::{DatasetRequest, FormatError, FormatsPort};
+use crate::ports::formats::{DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest};
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -212,5 +222,98 @@ impl FormatsPort for FakeFormats {
         spec.canonical = Some("CCO".into());
         spec.claimed_matches = claimed_formula.and_then(|c| formulas_match(c, "C2H6O"));
         spec
+    }
+
+    fn parse_trace(&self, _bytes: &[u8], path: &str) -> Result<TraceSpec, FormatError> {
+        self.record("parse_trace", path)?;
+        let row = |id: &str, depth, (start, end), service: &str, error: Option<&str>| {
+            let mut attrs = Map::new();
+            attrs.insert(SERVICE.into(), service.into());
+            if let Some(message) = error {
+                attrs.insert(STATUS_MESSAGE.into(), message.into());
+            }
+            TimelineRow {
+                id: id.to_owned(),
+                label: id.to_owned(),
+                depth,
+                group: None,
+                spans: vec![Span {
+                    start,
+                    end,
+                    label: None,
+                    color_key: Some(service.to_owned()),
+                    status: error.map(|_| SpanStatus::Error),
+                    attrs,
+                }],
+                markers: Vec::new(),
+            }
+        };
+        let timeline = TimelineSpec {
+            title: None,
+            unit: TimeUnit::Ms,
+            rows: vec![
+                row("GET /checkout", 0, (0.0, 100.0), "api", None),
+                row("charge", 1, (10.0, 90.0), "payments", Some("card declined")),
+                row("SELECT cards", 2, (20.0, 40.0), "db", None),
+            ],
+            range: None,
+        };
+        Ok(TraceSpec {
+            title: None,
+            path: Some(path.to_owned()),
+            format: TraceFormat::Otlp,
+            traces: 1,
+            services: vec!["api".into(), "payments".into(), "db".into()],
+            started_at: Some(1_792_847_107.0),
+            total_spans: 3,
+            critical_path: critical_path(&timeline),
+            timeline,
+        })
+    }
+
+    fn parse_profile(
+        &self,
+        _bytes: &[u8],
+        request: &ProfileRequest,
+    ) -> Result<FlameSpec, FormatError> {
+        self.record("parse_profile", &request.path)?;
+        let mut tree = FlameTree::new();
+        tree.add(["main", "work"], 70);
+        tree.add(["main", "idle"], 30);
+        let mut spec = tree.finish(ProfileFormat::Folded, "samples");
+        spec.path = Some(request.path.clone());
+        Ok(spec)
+    }
+
+    fn parse_logs(&self, _bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError> {
+        self.record("parse_logs", &request.path)?;
+        let item = |level: &str, ts: &str, text: &str| {
+            let mut fields = Map::new();
+            fields.insert("service".into(), "db".into());
+            ListItem {
+                level: Some(level.to_owned()),
+                ts: Some(ts.to_owned()),
+                text: text.to_owned(),
+                fields,
+            }
+        };
+        Ok(LogSpec {
+            path: Some(request.path.clone()),
+            format: request.format.unwrap_or(LogFormat::Json),
+            total_lines: 3,
+            truncated: request.truncated,
+            list: ListSpec {
+                title: None,
+                columns: vec!["service".into()],
+                items: vec![
+                    item("info", "2026-10-24T13:05:07Z", "started"),
+                    item("error", "2026-10-24T13:05:08Z", "db down after 3 tries"),
+                    item("error", "2026-10-24T13:05:09Z", "db down after 4 tries"),
+                ],
+                facets: vec!["service".into()],
+                follow: false,
+            },
+            histogram: None,
+        })
     }
 }

@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "traceID": "abc123",
+      "spans": [
+        {
+          "traceID": "abc123", "spanID": "s2", "operationName": "query",
+          "references": [ { "refType": "CHILD_OF", "traceID": "abc123", "spanID": "s1" } ],
+          "startTime": 1792847107001000, "duration": 4000,
+          "tags": [ { "key": "db.statement", "type": "string", "value": "SELECT 1" },
+                    { "key": "error", "type": "bool", "value": true },
+                    { "key": "span.kind", "type": "string", "value": "client" } ],
+          "logs": [ { "timestamp": 1792847107003000, "fields": [ { "key": "event", "type": "string", "value": "timeout" } ] } ],
+          "processID": "p2"
+        },
+        {
+          "traceID": "abc123", "spanID": "s1", "operationName": "HTTP GET /users",
+          "references": [], "startTime": 1792847107000000, "duration": 10000,
+          "tags": [ { "key": "http.status_code", "type": "int64", "value": 200 } ],
+          "logs": [], "processID": "p1"
+        }
+      ],
+      "processes": {
+        "p1": { "serviceName": "api", "tags": [] },
+        "p2": { "serviceName": "db", "tags": [] }
+      },
+      "warnings": null
+    }
+  ],
+  "total": 0, "limit": 0, "offset": 0, "errors": null
+}

@@ -125,6 +125,11 @@ wavedrom = { version = "=0.1.0", default-features = false, features = ["serde_js
 # lz4); no async, no object store, no encryption.
 bytes = "1.12.1"
 parquet = { version = "=60.0.0", default-features = false, features = ["snap", "zstd", "flate2-zlib-rs", "lz4"] }
+# pprof profiles (show_flamegraph): our own message structs on prost's
+# derive (no prost-build, no generated code) and gzip through flate2,
+# both already in the tree (opentelemetry-otlp, parquet).
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 # 2D molecules: SMILES parsing, formula/mass and SVG depiction (pure Rust).
 chematic = { version = "=1.2.1", default-features = false, features = ["smiles", "depict", "chem"] }
 
