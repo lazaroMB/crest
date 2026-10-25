@@ -136,6 +136,20 @@ fn sarif_findings_resolve_rules_levels_and_paths() {
             .unwrap_or_default()
             .ends_with("#unwrap_used")
     );
+    // The fix's edit, with its path resolved like the location's.
+    let [fix] = &unwrap.fixes[..] else {
+        panic!("one fix: {:?}", unwrap.fixes);
+    };
+    assert_eq!(fix.description.as_deref(), Some("use `?`"));
+    assert_eq!(fix.edits.len(), 1);
+    let edit = &fix.edits[0];
+    assert_eq!(edit.path, "/home/user/proj/src/main.rs");
+    assert_eq!(
+        (edit.start_line, edit.start_column, edit.end_column),
+        (Some(7), Some(16), Some(25))
+    );
+    assert_eq!(edit.inserted, "?");
+    assert!(ret.fixes.is_empty());
     assert_eq!(ret.rule.as_deref(), Some("clippy::needless_return"));
     assert_eq!(ret.severity, FindingSeverity::Note);
     assert_eq!(ret.message, "unneeded `return` in `main`");

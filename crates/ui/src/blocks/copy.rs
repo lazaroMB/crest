@@ -464,6 +464,7 @@ mod tests {
                     snippet: None,
                     help_uri: None,
                     fix: None,
+                    fixes: Vec::new(),
                 },
                 Finding {
                     rule: None,
@@ -473,6 +474,7 @@ mod tests {
                     snippet: None,
                     help_uri: None,
                     fix: None,
+                    fixes: Vec::new(),
                 },
             ],
         };

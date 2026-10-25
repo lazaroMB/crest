@@ -123,6 +123,7 @@ impl FormatsPort for FakeFormats {
                 snippet: None,
                 help_uri: None,
                 fix: None,
+                fixes: Vec::new(),
             }],
         })
     }

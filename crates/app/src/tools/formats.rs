@@ -17,6 +17,7 @@
 //! act on, not the whole report; for a dataset, its shape and column
 //! types, never the rows. They only read: no call needs approval.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
@@ -26,7 +27,7 @@ use base64::Engine as _;
 use domain::block::{BlockKind, ImageData, SourceRef};
 use domain::dataset::{DatasetFormat, DatasetSpec};
 use domain::permission::ToolEffect;
-use domain::report::{FindingSeverity, FindingsSpec, TestOutcome, TestReportSpec};
+use domain::report::{FindingSeverity, FindingsSpec, TestOutcome, TestReportSpec, apply_edits};
 use domain::science::{MoleculeSpec, PlateSpec, Well, plate_dimensions};
 use domain::workspace::WorkspacePath;
 use futures::FutureExt;
@@ -37,7 +38,7 @@ use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
 };
 use crate::ports::formats::{DatasetRequest, FormatsPort};
-use crate::ports::fs::{FileSystemPort, FsError};
+use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
 /// Largest report file the tools read, in bytes.
@@ -337,14 +338,79 @@ impl TypedTool for ShowFindingsTool {
             let root = ports.fs.root().as_path().to_path_buf();
             for finding in &mut spec.findings {
                 relativize_ref(&root, &mut finding.location);
+                for edit in finding.fixes.iter_mut().flat_map(|f| &mut f.edits) {
+                    edit.path = relativize(&root, &edit.path);
+                }
             }
             if let Err(err) = spec.validate() {
                 return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
             }
+            fix_diffs(ports.fs.as_ref(), &mut spec).await;
             let summary = findings_summary(&input.path, &spec);
             Ok(ToolOutput::text(summary).with_block_update(BlockKind::Findings(spec)))
         };
         Ok(PreparedCall::new(subject, run.boxed()))
+    }
+}
+
+/// Findings whose fix is turned into a diff; the others show the edits.
+pub const MAX_FIX_DIFFS: usize = 200;
+
+/// Sets [`Finding::fix`] to a unified diff of the first fix of each
+/// finding (up to [`MAX_FIX_DIFFS`]), its edits applied to the files read
+/// through `fs`. A file that cannot be read or edits that do not apply
+/// leave `fix` empty, and the block lists the edits instead.
+pub async fn fix_diffs(fs: &dyn FileSystemPort, spec: &mut FindingsSpec) {
+    let mut files: HashMap<String, Option<String>> = HashMap::new();
+    for finding in spec
+        .findings
+        .iter_mut()
+        .filter(|f| f.fix.is_none() && !f.fixes.is_empty())
+        .take(MAX_FIX_DIFFS)
+    {
+        let Some(first) = finding.fixes.first() else {
+            continue;
+        };
+        let mut paths: Vec<&str> = Vec::new();
+        for edit in &first.edits {
+            if !paths.contains(&edit.path.as_str()) {
+                paths.push(&edit.path);
+            }
+        }
+        let mut diff = String::new();
+        for path in paths {
+            if !files.contains_key(path) {
+                let text = read(fs, path)
+                    .await
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok());
+                files.insert(path.to_owned(), text);
+            }
+            let Some(Some(text)) = files.get(path) else {
+                diff.clear();
+                break;
+            };
+            let edits = first.edits.iter().filter(|e| e.path == path);
+            let (Ok(new), Ok(parsed)) = (apply_edits(text, edits), WorkspacePath::parse(path))
+            else {
+                diff.clear();
+                break;
+            };
+            let request = WriteFileRequest {
+                path: parsed,
+                content: new,
+            };
+            match fs.prepare_write(request).await {
+                Ok(change) => diff.push_str(change.diff_unified()),
+                Err(_) => {
+                    diff.clear();
+                    break;
+                }
+            }
+        }
+        if !diff.is_empty() {
+            finding.fix = Some(diff);
+        }
     }
 }
 
@@ -389,9 +455,14 @@ pub fn findings_summary(path: &str, spec: &FindingsSpec) -> String {
             .as_deref()
             .map(|r| format!(" [{r}]"))
             .unwrap_or_default();
+        let fix = if finding.fixes.is_empty() {
+            ""
+        } else {
+            " (fix suggested)"
+        };
         let _ = write!(
             out,
-            "\n- {at}: {}{rule} {}",
+            "\n- {at}: {}{rule} {}{fix}",
             severity_name(finding.severity),
             one_line(&finding.message, 160)
         );
@@ -1030,6 +1101,46 @@ mod tests {
             "description": tool.description(),
             "input_schema": tool.input_schema(),
         })
+    }
+
+    #[tokio::test]
+    async fn sarif_fixes_become_diffs_of_the_files() {
+        use domain::report::{Finding, FindingFix, FixEdit};
+        let fs = InMemoryFs::new(test_root())
+            .with_file("src/a.rs", "fn main() {\n    let x = f().unwrap();\n}\n");
+        let finding = |path: &str| Finding {
+            rule: Some("clippy::unwrap_used".into()),
+            severity: FindingSeverity::Warning,
+            message: "unwrap".into(),
+            location: None,
+            snippet: None,
+            help_uri: None,
+            fix: None,
+            fixes: vec![FindingFix {
+                description: Some("use `?`".into()),
+                edits: vec![FixEdit {
+                    path: path.into(),
+                    start_line: Some(2),
+                    start_column: Some(16),
+                    end_column: Some(25),
+                    inserted: "?".into(),
+                    ..FixEdit::default()
+                }],
+            }],
+        };
+        let mut spec = FindingsSpec {
+            tool: None,
+            findings: vec![finding("src/a.rs"), finding("missing.rs")],
+        };
+        fix_diffs(&fs, &mut spec).await;
+        let diff = spec.findings[0].fix.as_deref().unwrap_or_default();
+        assert!(diff.contains("--- a/src/a.rs"), "{diff}");
+        assert!(diff.contains("-    let x = f().unwrap();"), "{diff}");
+        assert!(diff.contains("+    let x = f()?;"), "{diff}");
+        // Unreadable: no diff, the edits stay for the block to list.
+        assert_eq!(spec.findings[1].fix, None);
+        assert_eq!(spec.findings[1].fixes.len(), 1);
+        assert!(findings_summary("x.sarif", &spec).contains("(fix suggested)"));
     }
 
     #[test]
