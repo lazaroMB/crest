@@ -34,6 +34,7 @@
 //! | `link(text, url)` or `link(url)` | link opened in the browser |
 //! | `diff(unified)` | colored unified diff |
 //! | `csv(text, { header, delimiter })` | the CSV as a table node |
+//! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
 
 use std::sync::Arc;
@@ -358,6 +359,12 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "timeline",
         lua.create_function(|lua, def: Table| {
             to_lua(lua, &widget_node(lua, "timeline", "timeline", def)?)
+        })?,
+    )?;
+    ui.set(
+        "filter_list",
+        lua.create_function(|lua, def: Table| {
+            to_lua(lua, &widget_node(lua, "filter_list", "filter_list", def)?)
         })?,
     )?;
     ui.set(

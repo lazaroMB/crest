@@ -291,8 +291,18 @@ fn widget_tree() -> CustomNode {
               "spans": [{ "start": 10, "end": 60, "status": "error" }] }
         ]
     });
+    let list = serde_json::json!({
+        "type": "filter_list",
+        "items": [
+            { "level": "error", "text": "boom", "fields": { "k": 1 } },
+            { "level": "info", "text": "fine" }
+        ]
+    });
     CustomNode::Col {
-        children: vec![serde_json::from_value(timeline).unwrap_or_else(|e| panic!("{e}"))],
+        children: [timeline, list]
+            .into_iter()
+            .map(|node| serde_json::from_value(node).unwrap_or_else(|e| panic!("{e}")))
+            .collect(),
     }
 }
 
@@ -333,7 +343,27 @@ fn widget_nodes_draw_and_a_click_in_them_keeps_the_row_open(cx: &mut TestAppCont
         timeline.is_some(),
         "the timeline is the first stateful node"
     );
+    // Keys typed in the list's filter stay there: Enter does not
+    // collapse the block.
+    let input = cx
+        .debug_bounds("filter-list-input")
+        .unwrap_or_else(|| panic!("list not drawn"));
+    cx.simulate_click(input.center(), gpui::Modifiers::none());
+    cx.simulate_input("boom");
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(view.read_with(cx, |v, _| v.state().entries()[0].expanded));
+    let list = cx.update(|_, cx| {
+        crate::blocks::existing_block_state::<crate::widgets::list::ListView>(
+            super::node_id(id, 1),
+            cx,
+        )
+    });
+    let visible = list.map(|list| list.read_with(cx, |l, _| l.visible().to_vec()));
+    assert_eq!(visible, Some(vec![0]));
+
     let formats = crate::blocks::copy::custom(&widget_tree());
     assert_eq!(formats[0].key, "spans");
+    assert_eq!(formats[1].key, "lines");
     assert!(formats[0].text.starts_with("row,label,start,end"));
 }

@@ -9,13 +9,15 @@
 //! waveforms) call the same `view`/`render` functions with a spec their
 //! parser built.
 
+pub mod list;
 pub mod timeline;
 
 use gpui::{
-    App, FontWeight, Hsla, InteractiveElement as _, ParentElement as _, SharedString, Stateful,
-    Styled as _, div,
+    App, Entity, FontWeight, Global, Hsla, InteractiveElement as _, ParentElement as _,
+    SharedString, Stateful, Styled as _, WeakEntity, Window, div,
 };
 use gpui_component::ActiveTheme as _;
+use gpui_component::input::InputState;
 
 use crate::theme::token;
 
@@ -57,4 +59,34 @@ pub fn readout(text: impl Into<SharedString>, cx: &App) -> gpui::Div {
         .bg(cx.theme().muted)
         .text_color(cx.theme().muted_foreground)
         .child(text.into())
+}
+
+/// Text inputs of widgets (a list's filter), to tell whether one has the
+/// focus.
+#[derive(Default)]
+struct TextInputs(Vec<WeakEntity<InputState>>);
+
+impl Global for TextInputs {}
+
+/// Registers a widget's text input, so [`owns_focus`] sees it.
+pub(crate) fn register_input(input: &Entity<InputState>, cx: &mut App) {
+    let inputs = &mut cx.default_global::<TextInputs>().0;
+    inputs.retain(|weak| weak.upgrade().is_some());
+    inputs.push(input.downgrade());
+}
+
+/// Whether the focus is in a widget's text input. The session then leaves
+/// the keys to it instead of typing them in the prompt, and the timeline
+/// does not take arrows and Enter for block navigation.
+pub fn owns_focus(window: &Window, cx: &App) -> bool {
+    cx.try_global::<TextInputs>().is_some_and(|inputs| {
+        inputs
+            .0
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .any(|input| {
+                use gpui::Focusable as _;
+                input.read(cx).focus_handle(cx).contains_focused(window, cx)
+            })
+    })
 }

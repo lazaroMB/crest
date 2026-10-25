@@ -14,7 +14,7 @@
 //! | dataset | column profile CSV, preview rows CSV |
 //! | molecule | SMILES, canonical SMILES, formula, SVG |
 //! | plate | `well,label,value` CSV |
-//! | custom | its widgets: timeline → spans CSV |
+//! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones) |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
@@ -203,6 +203,9 @@ fn widget(node: &CustomNode) -> Vec<CopyFormat> {
     match node {
         CustomNode::Timeline(spec) => {
             vec![CopyFormat::new("spans", "spans CSV", spec.to_csv())]
+        }
+        CustomNode::FilterList(spec) => {
+            vec![CopyFormat::new("lines", "lines", spec.all_text())]
         }
         _ => Vec::new(),
     }

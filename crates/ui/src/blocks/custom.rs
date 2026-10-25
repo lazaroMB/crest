@@ -199,6 +199,9 @@ impl Walk<'_> {
             CustomNode::Timeline(spec) => {
                 crate::widgets::timeline::render(self.next_id(), spec, window, cx)
             }
+            CustomNode::FilterList(spec) => {
+                crate::widgets::list::render(self.next_id(), spec, window, cx)
+            }
             CustomNode::Model3d(spec) => {
                 super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
             }

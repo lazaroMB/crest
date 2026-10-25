@@ -41,6 +41,8 @@ ratex-layout.workspace = true
 ratex-parser.workspace = true
 ratex-render.workspace = true
 ratex-types.workspace = true
+# Regex filters of the list widget.
+regex.workspace = true
 # SVG images: parsed and rasterized off the UI thread (blocks/svg.rs).
 resvg.workspace = true
 rusty-mermaid.workspace = true

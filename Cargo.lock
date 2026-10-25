@@ -9097,6 +9097,7 @@ dependencies = [
  "ratex-parser",
  "ratex-render",
  "ratex-types",
+ "regex",
  "resvg 0.46.0",
  "rusty-mermaid",
  "rusty-mermaid-core",

@@ -1126,6 +1126,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "Records (log lines, requests) with a text or regex filter, level\nand field chips, follow mode and rows that open to their fields.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "filter_list"
+            }
+          },
+          "$ref": "#/$defs/ListSpec",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -1738,6 +1752,79 @@ expression: "schemars::schema_for!(Block)"
       },
       "required": [
         "rows"
+      ]
+    },
+    "ListItem": {
+      "description": "One record.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Severity (`error`, `warn`, `info`...); colors the row.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ts": {
+          "description": "Timestamp as written by the source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The message.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Named fields, shown when the row is opened.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "ListSpec": {
+      "description": "Records with a text filter and facet chips.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption above the list.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "columns": {
+          "description": "Fields shown as columns between the level and the text.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "items": {
+          "description": "The records, oldest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ListItem"
+          }
+        },
+        "facets": {
+          "description": "Fields offered as filter chips (besides the level).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "follow": {
+          "description": "Start following the tail (scrolled to the last item).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "items"
       ]
     },
     "SourceRef": {
