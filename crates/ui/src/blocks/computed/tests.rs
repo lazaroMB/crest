@@ -567,7 +567,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::CashFlow(super::cash_flow::tests::body()),
             &["npv"],
         ),
-        // Later cards go above this line.
+        (
+            card("solve.decision_matrix", "Decision matrix"),
+            ComputedBody::DecisionMatrix(super::decision_matrix::tests::body()),
+            &[],
+        ),
     ]
 }
 

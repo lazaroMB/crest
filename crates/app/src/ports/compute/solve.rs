@@ -226,3 +226,37 @@ pub struct CashFlowRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub period: Option<String>,
 }
+
+/// One criterion of a decision matrix.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CriterionInput {
+    /// Name, e.g. `price`.
+    pub name: String,
+    /// Weight (any non-negative scale; normalised to sum 1).
+    pub weight: f64,
+    /// `benefit` (default: more is better) or `cost` (less is better).
+    #[serde(default)]
+    pub direction: domain::computed::CriterionDirection,
+}
+
+/// One option of a decision matrix.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OptionInput {
+    /// Name.
+    pub name: String,
+    /// One score per criterion, in criterion order.
+    pub scores: Vec<f64>,
+}
+
+/// Input of `decide`: a weighted decision matrix with ranks and weight
+/// sensitivity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DecideRequest {
+    /// The criteria.
+    pub criteria: Vec<CriterionInput>,
+    /// The options.
+    pub options: Vec<OptionInput>,
+    /// `min_max` (default), `max` or `none`.
+    #[serde(default)]
+    pub normalization: domain::computed::Normalization,
+}

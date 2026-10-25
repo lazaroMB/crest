@@ -425,6 +425,8 @@ pub enum ComputeRequest {
     Simulate(SimulateRequest),
     /// [`ComputePort::cash_flow`].
     CashFlow(CashFlowRequest),
+    /// [`ComputePort::decide`].
+    Decide(DecideRequest),
 }
 
 impl ComputeRequest {
@@ -461,7 +463,8 @@ impl ComputeRequest {
             | Self::Optimize(_)
             | Self::Solve(_)
             | Self::Simulate(_)
-            | Self::CashFlow(_) => None,
+            | Self::CashFlow(_)
+            | Self::Decide(_) => None,
         }
     }
 
@@ -484,7 +487,8 @@ impl ComputeRequest {
             | Self::Optimize(_)
             | Self::Solve(_)
             | Self::Simulate(_)
-            | Self::CashFlow(_) => None,
+            | Self::CashFlow(_)
+            | Self::Decide(_) => None,
         }
     }
 }
@@ -627,6 +631,15 @@ pub trait ComputePort: Send + Sync {
     /// below −100%.
     fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult;
 
+    /// A weighted decision matrix: normalised scores, totals, ranks and
+    /// how far each weight can move before first place changes.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for missing scores, negative weights or
+    /// fewer than two options.
+    fn decide(&self, request: &DecideRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -660,6 +673,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Solve(r) => self.solve(r),
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
+            ComputeRequest::Decide(r) => self.decide(r),
         }
     }
 }

@@ -230,6 +230,20 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A weighted decision matrix.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "decision_matrix"
+        }
+      },
+      "$ref": "#/$defs/DecisionMatrixBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -2836,6 +2850,212 @@ expression: "schemars::schema_for!(ComputedBody)"
         "rows",
         "sign_changes",
         "npv_curve"
+      ]
+    },
+    "Normalization": {
+      "description": "How raw scores are put on a common scale.",
+      "oneOf": [
+        {
+          "description": "(x − min)/(max − min), reversed for a cost: the best option 1, the\nworst 0.",
+          "type": "string",
+          "const": "min_max"
+        },
+        {
+          "description": "x/max, or min/x for a cost (positive scores).",
+          "type": "string",
+          "const": "max"
+        },
+        {
+          "description": "The raw scores (already on one scale); a cost counts negatively.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "DecisionCriterion": {
+      "description": "One criterion.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "raw_weight": {
+          "description": "The weight as given.",
+          "type": "number",
+          "format": "double"
+        },
+        "weight": {
+          "description": "The weight normalised to sum 1 over the criteria.",
+          "type": "number",
+          "format": "double"
+        },
+        "direction": {
+          "description": "Benefit or cost.",
+          "$ref": "#/$defs/CriterionDirection"
+        }
+      },
+      "required": [
+        "name",
+        "raw_weight",
+        "weight",
+        "direction"
+      ]
+    },
+    "CriterionDirection": {
+      "description": "Whether more of a criterion is better.",
+      "oneOf": [
+        {
+          "description": "Higher scores are better.",
+          "type": "string",
+          "const": "benefit"
+        },
+        {
+          "description": "Lower scores are better (price, risk).",
+          "type": "string",
+          "const": "cost"
+        }
+      ]
+    },
+    "DecisionOption": {
+      "description": "One option.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "scores": {
+          "description": "Raw score per criterion, in criterion order.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "normalized": {
+          "description": "Normalised score per criterion.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "total": {
+          "description": "Σ weight × normalised score.",
+          "type": "number",
+          "format": "double"
+        },
+        "rank": {
+          "description": "1 for the best; tied options share a rank.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "scores",
+        "normalized",
+        "total",
+        "rank"
+      ]
+    },
+    "WeightSensitivity": {
+      "description": "How far one criterion's weight can move before the leader changes.",
+      "type": "object",
+      "properties": {
+        "criterion": {
+          "description": "The criterion.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Its current normalised weight.",
+          "type": "number",
+          "format": "double"
+        },
+        "lower": {
+          "description": "The nearest threshold below, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WeightThreshold"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upper": {
+          "description": "The nearest threshold above, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WeightThreshold"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "criterion",
+        "weight"
+      ]
+    },
+    "WeightThreshold": {
+      "description": "A weight at which another option overtakes the leader.",
+      "type": "object",
+      "properties": {
+        "weight": {
+          "description": "The criterion's normalised weight there (the others rescaled in\nproportion).",
+          "type": "number",
+          "format": "double"
+        },
+        "new_leader": {
+          "description": "The option that takes first place.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "weight",
+        "new_leader"
+      ]
+    },
+    "DecisionMatrixBody": {
+      "description": "Body of a decision-matrix card.",
+      "type": "object",
+      "properties": {
+        "normalization": {
+          "description": "How scores were normalised.",
+          "$ref": "#/$defs/Normalization"
+        },
+        "criteria": {
+          "description": "The criteria, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionCriterion"
+          }
+        },
+        "options": {
+          "description": "The options, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          }
+        },
+        "sensitivity": {
+          "description": "One entry per criterion.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WeightSensitivity"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "normalization",
+        "criteria",
+        "options"
       ]
     }
   }

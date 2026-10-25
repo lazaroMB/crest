@@ -47,10 +47,10 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Bootstrap, CashFlow, CashFlowTool, Contingency, Distribution, Equations, ForecastKind,
-    Lp, Power, Simulate, SimulateTool, SolveEquationsTool, SolveLpTool, StatsAbTestTool,
-    StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool, StatsForecastTool,
-    StatsPowerTool,
+    AbTest, Bootstrap, CashFlow, CashFlowTool, Contingency, Decide, DecisionMatrixTool,
+    Distribution, Equations, ForecastKind, Lp, Power, Simulate, SimulateTool, SolveEquationsTool,
+    SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
+    StatsForecastTool, StatsPowerTool,
 };
 
 use super::registry::{
@@ -758,7 +758,8 @@ To optimise a linear model (resource allocation, blending, scheduling, knapsack)
 `solve_lp` with the objective, variables and constraints instead of reasoning out the \
 optimum. To solve an equation or a system numerically, call `solve_equations`. For a \
 quantity built from uncertain inputs (a business case, a Fermi estimate), call `monte_carlo`. \
-For NPV, IRR or payback of a series of cash flows, call `cash_flow`.
+For NPV, IRR or payback of a series of cash flows, call `cash_flow`; to compare options \
+against weighted criteria, `decision_matrix`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -795,7 +796,8 @@ pub fn register_compute_tools(
     registry.register_typed(SolveLpTool::new(ports.clone()))?;
     registry.register_typed(SolveEquationsTool::new(ports.clone()))?;
     registry.register_typed(SimulateTool::new(ports.clone()))?;
-    registry.register_typed(CashFlowTool::new(ports.clone()))
+    registry.register_typed(CashFlowTool::new(ports.clone()))?;
+    registry.register_typed(DecisionMatrixTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -901,7 +903,14 @@ mod tests {
             "monte_carlo_definition",
             definition(SimulateTool::new(ports.clone()))
         );
-        insta::assert_json_snapshot!("cash_flow_definition", definition(CashFlowTool::new(ports)));
+        insta::assert_json_snapshot!(
+            "cash_flow_definition",
+            definition(CashFlowTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "decision_matrix_definition",
+            definition(DecisionMatrixTool::new(ports))
+        );
     }
 
     #[tokio::test]
@@ -1189,6 +1198,7 @@ mod tests {
                 "calc",
                 "cash_flow",
                 "convert",
+                "decision_matrix",
                 "monte_carlo",
                 "solve_equations",
                 "solve_lp",

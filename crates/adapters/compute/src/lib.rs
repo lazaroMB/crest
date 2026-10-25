@@ -21,7 +21,7 @@
 //! program, and the equation solver (bracket scan or damped Newton, with a
 //! plug-back check) and seeded Monte Carlo models with a tornado and Fermi
 //! estimates, and cash flows in decimal arithmetic (NPV, every IRR, MIRR,
-//! payback). Resampling and simulation draw from a seeded ChaCha20
+//! payback) and decision matrices with exact weight sensitivity. Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -40,6 +40,7 @@ mod checks;
 mod contingency;
 mod correlate;
 mod data;
+mod decide;
 mod describe;
 mod distribution;
 mod envelope;
@@ -119,6 +120,7 @@ impl StatsEngine {
             ComputeRequest::Solve(r) => equations::run(r, id)?,
             ComputeRequest::Simulate(r) => simulate::run(r, id)?,
             ComputeRequest::CashFlow(r) => cash_flow::run(r, id)?,
+            ComputeRequest::Decide(r) => decide::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -148,6 +150,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Solve(_) => "solve",
         ComputeRequest::Simulate(_) => "simulate",
         ComputeRequest::CashFlow(_) => "cash_flow",
+        ComputeRequest::Decide(_) => "decide",
     }
 }
 
@@ -214,6 +217,10 @@ impl ComputePort for StatsEngine {
 
     fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult {
         self.execute(&ComputeRequest::CashFlow(request.clone()), None)
+    }
+
+    fn decide(&self, request: &DecideRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Decide(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -1130,3 +1130,75 @@ fn cash_flow_with_two_sign_changes_has_two_irrs() {
     assert!(engine().cash_flow(&cash(&[1.0], 0.1)).is_err());
     assert!(engine().cash_flow(&cash(&[-1.0, 2.0], -1.0)).is_err());
 }
+
+// --- Decision matrix ------------------------------------------------------------------------
+
+#[test]
+fn decision_matrix_totals_and_weight_thresholds_by_hand() {
+    let criterion = |name: &str, weight, direction| CriterionInput {
+        name: name.into(),
+        weight,
+        direction,
+    };
+    let option = |name: &str, scores: [f64; 3]| OptionInput {
+        name: name.into(),
+        scores: scores.to_vec(),
+    };
+    let request = DecideRequest {
+        criteria: vec![
+            criterion("price", 50.0, CriterionDirection::Cost),
+            criterion("quality", 30.0, CriterionDirection::Benefit),
+            criterion("support", 20.0, CriterionDirection::Benefit),
+        ],
+        options: vec![
+            option("A", [100.0, 7.0, 5.0]),
+            option("B", [80.0, 6.0, 8.0]),
+            option("C", [120.0, 9.0, 6.0]),
+        ],
+        normalization: Normalization::MinMax,
+    };
+    let (c, body) = engine().decide(&request).unwrap();
+    // Min-max scores: price A .5, B 1, C 0; quality A 1/3, B 0, C 1;
+    // support A 0, B 1, C 1/3. Totals .35, .70, .3667.
+    near(v(&c, "total.A"), 0.35, 1e-12);
+    near(v(&c, "total.B"), 0.7, 1e-12);
+    near(v(&c, "total.C"), 0.3 + 0.2 / 3.0, 1e-12);
+    near(v(&c, "margin"), 0.7 - (0.3 + 0.2 / 3.0), 1e-12);
+    let ComputedBody::DecisionMatrix(d) = &body else {
+        panic!("not a decision matrix");
+    };
+    assert_eq!(
+        d.options.iter().map(|o| o.rank).collect::<Vec<_>>(),
+        [3, 1, 2]
+    );
+    // Price at .25 instead of .50 (B: .4 + .6w, C: .7333(1 − w)) hands
+    // the lead to C; quality at .475 does too.
+    let price = &d.sensitivity[0];
+    let lower = price.lower.as_ref().unwrap();
+    near(lower.weight, 0.25, 1e-12);
+    assert_eq!(lower.new_leader, "C");
+    assert!(price.upper.is_none());
+    let quality = d.sensitivity[1].upper.as_ref().unwrap();
+    near(
+        quality.weight,
+        0.904_761_904_761_904_7 / 1.904_761_904_761_904_7,
+        1e-12,
+    );
+    assert_eq!(quality.new_leader, "C");
+    // The nearest threshold is quality's, .475 − .300 = .175 away.
+    near(v(&c, "min_weight_change"), 0.475 - 0.3, 1e-12);
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(
+        sentence.starts_with("B ranks first with 0.700"),
+        "{sentence}"
+    );
+    assert!(sentence.contains("most sensitive to quality"), "{sentence}");
+
+    let mut tie = request.clone();
+    tie.options[0].scores = vec![80.0, 6.0, 8.0];
+    let (c, _) = engine().decide(&tie).unwrap();
+    assert!(c.warnings.iter().any(|w| w.code == "tie"));
+    let mut bad = request;
+    bad.options[0].scores.pop();
+    assert!(engine().decide(&bad).is_err());
+}
