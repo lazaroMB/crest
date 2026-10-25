@@ -132,6 +132,20 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "An A/B test of two conversion rates.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ab_test"
+        }
+      },
+      "$ref": "#/$defs/AbTestBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1624,6 +1638,111 @@ expression: "schemars::schema_for!(ComputedBody)"
         "alpha",
         "power",
         "curve"
+      ]
+    },
+    "AbArm": {
+      "description": "One arm of an A/B test.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Arm name, e.g. `A`.",
+          "type": "string"
+        },
+        "visitors": {
+          "description": "Units exposed.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "conversions": {
+          "description": "Units that converted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "rate": {
+          "description": "Conversion rate, a fraction.",
+          "type": "number",
+          "format": "double"
+        },
+        "rate_lo": {
+          "description": "Wilson interval of the rate: lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "rate_hi": {
+          "description": "Wilson interval of the rate: upper bound.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "visitors",
+        "conversions",
+        "rate",
+        "rate_lo",
+        "rate_hi"
+      ]
+    },
+    "AbMethod": {
+      "description": "The test behind an A/B card's p-value.",
+      "oneOf": [
+        {
+          "description": "Two-proportion z-test with the pooled rate (R's `prop.test(...,\ncorrect = FALSE)`).",
+          "type": "string",
+          "const": "z_test"
+        },
+        {
+          "description": "Fisher's exact test, for small counts.",
+          "type": "string",
+          "const": "fisher_exact"
+        }
+      ]
+    },
+    "AbTestBody": {
+      "description": "Body of an A/B test card.",
+      "type": "object",
+      "properties": {
+        "arms": {
+          "description": "Control first, then treatment.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AbArm"
+          }
+        },
+        "expected_split": {
+          "description": "The share of visitors meant for the treatment, e.g. 0.5.",
+          "type": "number",
+          "format": "double"
+        },
+        "conf_level": {
+          "description": "Level of the intervals.",
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "description": "The test behind the p-value.",
+          "$ref": "#/$defs/AbMethod"
+        },
+        "looks": {
+          "description": "How often the results were looked at (1 = once, at the end).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "sample_ratio_mismatch": {
+          "description": "Whether the visitor split departs from `expected_split` (SRM χ²\np < .001).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "arms",
+        "expected_split",
+        "conf_level",
+        "method",
+        "looks",
+        "sample_ratio_mismatch"
       ]
     }
   }

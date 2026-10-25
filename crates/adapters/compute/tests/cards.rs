@@ -6,12 +6,12 @@
 
 use adapter_compute::StatsEngine;
 use application::ports::compute::{
-    ComputePort, ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DataColumn, DataSet,
-    DistributionRequest, PowerRequest,
+    AbTestRequest, ArmCounts, ComputePort, ContingencyChoice, ContingencyRequest, DEFAULT_SEED,
+    DataColumn, DataSet, DistributionRequest, PowerRequest,
 };
 use domain::computed::{
-    Alternative, BandwidthRule, BinRule, Computed, ComputedBody, ComputedStatus, ContingencyBody,
-    ContingencyTest, PowerTest,
+    AbMethod, Alternative, BandwidthRule, BinRule, Computed, ComputedBody, ComputedStatus,
+    ContingencyBody, ContingencyTest, PowerTest,
 };
 
 /// Asserts `actual` rounds to `printed` at the printed digits.
@@ -387,4 +387,86 @@ fn power_of_anova_and_proportions_matches_pwr() {
     assert!(engine().power(&r).is_err());
     let anova = power(PowerTest::Anova);
     assert!(engine().power(&anova).is_err());
+}
+
+// --- A/B test ------------------------------------------------------------------
+
+fn ab(xa: u64, na: u64, xb: u64, nb: u64) -> AbTestRequest {
+    let arm = |conversions, visitors| ArmCounts {
+        name: None,
+        visitors,
+        conversions,
+    };
+    AbTestRequest {
+        control: arm(xa, na),
+        treatment: arm(xb, nb),
+        expected_split: 0.5,
+        conf_level: 0.95,
+        alternative: Alternative::TwoSided,
+        looks: 1,
+        planned_visitors: None,
+        minimum_lift: None,
+    }
+}
+
+#[test]
+fn ab_test_matches_prop_test_newcombe_and_srm() {
+    // Newcombe (1998) example (a): 56/70 vs 48/80.
+    let (c, body) = engine().ab_test(&ab(48, 80, 56, 70)).unwrap();
+    let ComputedBody::AbTest(t) = &body else {
+        panic!("not an A/B test");
+    };
+    assert_eq!(t.method, AbMethod::ZTest);
+    let lift = c.value("abs_lift").unwrap();
+    near(lift.v, 0.2, 1e-12);
+    let ci = lift.ci.as_ref().unwrap();
+    near(ci.lo, 0.0524, 5e-5);
+    near(ci.hi, 0.3339, 5e-5);
+    // prop.test(c(56, 48), c(70, 80), correct = FALSE): X-squared = z², the
+    // uncorrected χ² of the 2×2 table.
+    let mut chi = table(&[&[56.0, 14.0], &[48.0, 32.0]]);
+    chi.correct = false;
+    chi.test = ContingencyChoice::ChiSquare;
+    let (x, _) = engine().contingency(&chi).unwrap();
+    near(v(&c, "statistic").powi(2), v(&x, "statistic"), 1e-9);
+    near(v(&c, "p_value"), v(&x, "p_value"), 1e-12);
+    near(v(&c, "prob_b_better"), 0.995_929_539, 1e-8);
+    assert!(!t.sample_ratio_mismatch);
+
+    // chisq.test(c(50000, 51000)): X-squared = 9.901, p-value = 0.001652:
+    // not a mismatch at .001; 50000 vs 52000 is.
+    let (c, body) = engine().ab_test(&ab(5000, 50_000, 5100, 51_000)).unwrap();
+    printed(v(&c, "srm_chi2"), "9.90");
+    near(v(&c, "srm_p"), 0.001_651_898_7, 1e-9);
+    assert!(matches!(&body, ComputedBody::AbTest(t) if !t.sample_ratio_mismatch));
+    let (c, body) = engine().ab_test(&ab(5000, 50_000, 5200, 52_000)).unwrap();
+    assert!(matches!(&body, ComputedBody::AbTest(t) if t.sample_ratio_mismatch));
+    assert!(c.warnings.iter().any(|w| w.code == "sample_ratio_mismatch"));
+    assert_eq!(c.status, ComputedStatus::Warning);
+}
+
+#[test]
+fn ab_test_uses_fisher_for_small_counts_and_warns_about_peeking() {
+    let mut request = ab(1, 20, 6, 20);
+    request.looks = 5;
+    request.planned_visitors = Some(100);
+    request.minimum_lift = Some(0.1);
+    let (c, body) = engine().ab_test(&request).unwrap();
+    assert!(matches!(&body, ComputedBody::AbTest(t) if t.method == AbMethod::FisherExact));
+    // fisher.test(matrix(c(6, 1, 14, 19), 2)): p-value = 0.09148 (scipy
+    // fisher_exact agrees).
+    printed(v(&c, "p_value"), "0.09148");
+    assert!(c.value("statistic").is_none());
+    let peeking = c.warnings.iter().find(|w| w.code == "peeking").unwrap();
+    assert!(peeking.text.contains(".14"), "{}", peeking.text);
+    assert!(c.warnings.iter().any(|w| w.code == "stopped_early"));
+    assert!(v(&c, "power") > 0.0 && v(&c, "mde") > 0.0);
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("Fisher"), "{sentence}");
+
+    let mut bad = ab(5, 4, 1, 10);
+    assert!(engine().ab_test(&bad).is_err());
+    bad.control.conversions = 1;
+    bad.looks = 0;
+    assert!(engine().ab_test(&bad).is_err());
 }

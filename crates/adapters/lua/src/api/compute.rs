@@ -21,6 +21,7 @@
 //! | `convert{ value, from, to, uncertainty, significant_digits }` | unit conversion |
 //! | `distribution{ data, variable, by, bin_rule, bins, bandwidth_rule, bandwidth, conf_level }` | histogram, density, box/violin, QQ, ECDF |
 //! | `power{ test, n, effect, p1, p2, alpha, power, groups, alternative, solve_for }` | power or sample size |
+//! | `ab_test{ control = { name, visitors, conversions }, treatment = {...}, expected_split, conf_level, alternative, looks, planned_visitors, minimum_lift }` | A/B test |
 //! | `contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | contingency table, χ² or Fisher |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
@@ -29,7 +30,7 @@
 //! `nil` holes (missing values). Columns shorter than the longest are
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
-//! `calc`, `convert` and `power` read no data.
+//! `calc`, `convert`, `power` and `ab_test` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -208,7 +209,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             ));
         }
     };
-    let reads_data = !matches!(kind, "calc" | "convert" | "power");
+    let reads_data = !matches!(kind, "calc" | "convert" | "power" | "ab_test");
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
         Value::String(path) => {
@@ -269,6 +270,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "distribution",
         "contingency",
         "power",
+        "ab_test",
     ] {
         let origin = Arc::clone(origin);
         compute.set(

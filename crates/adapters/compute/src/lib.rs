@@ -13,7 +13,8 @@
 //!
 //! The phase-2 cards run here too: distributions (histogram, density,
 //! box/violin, QQ, ECDF), contingency tables (residuals, χ² or an exact
-//! r×c Fisher test) and power (noncentral t and F, as R's `pwr`). Resampling and simulation draw from a seeded ChaCha20
+//! r×c Fisher test), power (noncentral t and F, as R's `pwr`) and A/B
+//! tests (lift intervals, sample-ratio and peeking checks). Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -24,6 +25,7 @@
 //! conversions on numbat, with envelopes of kinds `calc.sheet` and
 //! `calc.convert`.
 
+mod ab_test;
 mod calc;
 mod checks;
 mod contingency;
@@ -44,11 +46,7 @@ mod tests;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use application::ports::compute::{
-    CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ContingencyRequest,
-    ConvertRequest, CorrelateRequest, DescribeRequest, DistributionRequest, PowerRequest,
-    RegressRequest, TestRequest,
-};
+use application::ports::compute::*;
 use domain::computed::Computed;
 
 pub use envelope::{BACKEND, CALC_BACKEND, CALC_ENGINE_NAME, ENGINE_NAME};
@@ -100,6 +98,7 @@ impl StatsEngine {
             ComputeRequest::Distribution(r) => distribution::run(r, id)?,
             ComputeRequest::Contingency(r) => contingency::run(r, id)?,
             ComputeRequest::Power(r) => power::run(r, id)?,
+            ComputeRequest::AbTest(r) => ab_test::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -122,6 +121,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Distribution(_) => "distribution",
         ComputeRequest::Contingency(_) => "contingency",
         ComputeRequest::Power(_) => "power",
+        ComputeRequest::AbTest(_) => "ab_test",
     }
 }
 
@@ -160,6 +160,10 @@ impl ComputePort for StatsEngine {
 
     fn power(&self, request: &PowerRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Power(request.clone()), None)
+    }
+
+    fn ab_test(&self, request: &AbTestRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::AbTest(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

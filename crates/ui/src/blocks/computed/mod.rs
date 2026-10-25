@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], ...),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], ...),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -29,6 +29,7 @@
 //! The card is an entity kept per block ([`super::block_state`]), so its
 //! toggles survive scrolling.
 
+pub mod ab_test;
 pub mod calc;
 pub mod contingency;
 pub mod correlation;
@@ -496,6 +497,7 @@ impl ComputedCard {
             ComputedBody::Distribution(body) => distribution::render(&id, body, window, cx),
             ComputedBody::Contingency(body) => contingency::render(&id, body, cx),
             ComputedBody::Power(body) => power::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::AbTest(body) => ab_test::render(&id, &self.envelope, body, window, cx),
             ComputedBody::Quantity(body) => calc::quantity(
                 body,
                 self.envelope
