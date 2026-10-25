@@ -46,7 +46,7 @@ use serde_json::{Value, json};
 
 mod cards;
 
-pub use self::cards::{Distribution, StatsDistributionTool};
+pub use self::cards::{Contingency, Distribution, StatsContingencyTool, StatsDistributionTool};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -742,7 +742,9 @@ path of the workspace in `data.path`, or inline `data.columns`). The engine show
 card with the method and why it was chosen, assumption checks, results, a sentence and the \
 APA line, so do not repeat the card.
 
-To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), call `stats_distribution`.
+To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), call \
+`stats_distribution`; for a cross-table of two categorical variables (χ² or Fisher, \
+residuals), `stats_contingency`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -770,7 +772,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsCorrelateTool::new(ports.clone()))?;
     registry.register_typed(CalcTool::new(ports.clone()))?;
     registry.register_typed(ConvertTool::new(ports.clone()))?;
-    registry.register_typed(StatsDistributionTool::new(ports.clone()))
+    registry.register_typed(StatsDistributionTool::new(ports.clone()))?;
+    registry.register_typed(StatsContingencyTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -842,7 +845,11 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "stats_distribution_definition",
-            definition(StatsDistributionTool::new(ports))
+            definition(StatsDistributionTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "stats_contingency_definition",
+            definition(StatsContingencyTool::new(ports))
         );
     }
 
@@ -1130,6 +1137,7 @@ mod tests {
             [
                 "calc",
                 "convert",
+                "stats_contingency",
                 "stats_correlate",
                 "stats_describe",
                 "stats_distribution",

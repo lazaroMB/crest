@@ -16,16 +16,16 @@ use std::sync::{Mutex, PoisonError};
 
 use domain::computed::{
     Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine, CalcSheetBody, Computed,
-    ComputedBody, ComputedValue, CorrelationBody, CorrelationMethod, Curve, DescriptiveBody,
-    Diagnostics, DistributionBody, DistributionGroup, Engine, FitStats, Histogram, Narrative,
-    PAdjust, Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind,
-    VariableSummary,
+    ComputedBody, ComputedValue, ContingencyBody, ContingencyTest, CorrelationBody,
+    CorrelationMethod, Curve, DescriptiveBody, Diagnostics, DistributionBody, DistributionGroup,
+    Engine, FitStats, Histogram, Narrative, PAdjust, Quantity, QuantityBody, RegressionBody,
+    TestBody, TestKind, VariableKind, VariableSummary,
 };
 
 use crate::ports::compute::{
     CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
-    ConvertRequest, CorrelateRequest, DataSet, DescribeRequest, DistributionRequest, REQUEST_PARAM,
-    RegressRequest, TestRequest,
+    ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet, DescribeRequest,
+    DistributionRequest, REQUEST_PARAM, RegressRequest, TestRequest,
 };
 
 /// Name of the fake engine.
@@ -145,6 +145,12 @@ impl FakeCompute {
                 "convert",
                 convert_body(r),
             ),
+            ComputeRequest::Contingency(_) => (
+                "stats.contingency",
+                "Pearson's χ² test",
+                "contingency",
+                contingency_body(),
+            ),
             ComputeRequest::Distribution(r) => (
                 "stats.distribution",
                 "Distribution",
@@ -231,6 +237,22 @@ fn describe_body(data: &DataSet) -> ComputedBody {
     ComputedBody::Descriptive(DescriptiveBody {
         by: None,
         variables,
+    })
+}
+
+fn contingency_body() -> ComputedBody {
+    let square = |a: f64, b: f64| vec![vec![a, b], vec![b, a]];
+    ComputedBody::Contingency(ContingencyBody {
+        row_variable: None,
+        column_variable: None,
+        row_levels: vec!["R1".into(), "R2".into()],
+        column_levels: vec!["C1".into(), "C2".into()],
+        observed: square(3.0, 1.0),
+        expected: square(2.0, 2.0),
+        row_percent: square(75.0, 25.0),
+        column_percent: square(75.0, 25.0),
+        std_residuals: square(2.5, -2.5),
+        test: ContingencyTest::ChiSquare,
     })
 }
 
@@ -376,6 +398,10 @@ impl ComputePort for FakeCompute {
 
     fn distribution(&self, request: &DistributionRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Distribution(request.clone()), None)
+    }
+
+    fn contingency(&self, request: &ContingencyRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Contingency(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -501,11 +501,18 @@ fn assumptions_open_when_one_fails_and_toggle(cx: &mut TestAppContext) {
 /// One card per phase-2 body, with the selectors of the plots it draws.
 fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
     let card = |kind: &str, method: &str| Computed::new("st_p2", kind, method, engine());
-    vec![(
-        card("stats.distribution", "Distribution of mpg"),
-        ComputedBody::Distribution(super::distribution::tests::body()),
-        &["histogram", "box", "qq", "ecdf"],
-    )]
+    vec![
+        (
+            card("stats.distribution", "Distribution of mpg"),
+            ComputedBody::Distribution(super::distribution::tests::body()),
+            &["histogram", "box", "qq", "ecdf"],
+        ),
+        (
+            card("stats.contingency_chisq", "Pearson's χ² test"),
+            ComputedBody::Contingency(super::contingency::tests::body()),
+            &[],
+        ),
+    ]
 }
 
 #[gpui::test]

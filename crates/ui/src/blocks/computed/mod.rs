@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], ...),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], ...),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -30,6 +30,7 @@
 //! toggles survive scrolling.
 
 pub mod calc;
+pub mod contingency;
 pub mod correlation;
 pub mod descriptive;
 pub mod distribution;
@@ -492,6 +493,7 @@ impl ComputedCard {
             ComputedBody::Correlation(body) => correlation::render(&id, body, cx),
             ComputedBody::CalcSheet(body) => calc::calc_sheet(body, window, cx),
             ComputedBody::Distribution(body) => distribution::render(&id, body, window, cx),
+            ComputedBody::Contingency(body) => contingency::render(&id, body, cx),
             ComputedBody::Quantity(body) => calc::quantity(
                 body,
                 self.envelope

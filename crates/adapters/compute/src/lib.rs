@@ -12,7 +12,9 @@
 //! every value matched.
 //!
 //! The phase-2 cards run here too: distributions (histogram, density,
-//! box/violin, QQ, ECDF).
+//! box/violin, QQ, ECDF) and contingency tables (residuals, χ² or an exact
+//! r×c Fisher test). Resampling and simulation draw from a seeded ChaCha20
+//! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
 //! engine against NIST StRD certified values and examples from R's
@@ -24,6 +26,7 @@
 
 mod calc;
 mod checks;
+mod contingency;
 mod correlate;
 mod data;
 mod describe;
@@ -34,14 +37,16 @@ mod math;
 mod ols;
 mod rank;
 mod reproduce;
+mod rng;
 mod tests;
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use application::ports::compute::{
-    CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ConvertRequest,
-    CorrelateRequest, DescribeRequest, DistributionRequest, RegressRequest, TestRequest,
+    CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ContingencyRequest,
+    ConvertRequest, CorrelateRequest, DescribeRequest, DistributionRequest, RegressRequest,
+    TestRequest,
 };
 use domain::computed::Computed;
 
@@ -92,6 +97,7 @@ impl StatsEngine {
             ComputeRequest::Calc(r) => calc::sheet(r, id)?,
             ComputeRequest::Convert(r) => calc::convert(r, id)?,
             ComputeRequest::Distribution(r) => distribution::run(r, id)?,
+            ComputeRequest::Contingency(r) => contingency::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -112,6 +118,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Calc(_) => "calc",
         ComputeRequest::Convert(_) => "convert",
         ComputeRequest::Distribution(_) => "distribution",
+        ComputeRequest::Contingency(_) => "contingency",
     }
 }
 
@@ -142,6 +149,10 @@ impl ComputePort for StatsEngine {
 
     fn distribution(&self, request: &DistributionRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Distribution(request.clone()), None)
+    }
+
+    fn contingency(&self, request: &ContingencyRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Contingency(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

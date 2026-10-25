@@ -18,6 +18,7 @@
 //! envelope".
 
 pub mod apa;
+pub mod contingency;
 pub mod distribution;
 pub mod lint;
 pub mod narrative;
@@ -29,6 +30,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use self::contingency::{ContingencyBody, ContingencyTest};
 pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
     QqPoint,
@@ -596,6 +598,8 @@ pub enum ComputedBody {
     Quantity(QuantityBody),
     /// Histogram, density, box/violin, QQ and ECDF of one variable.
     Distribution(DistributionBody),
+    /// A contingency table with residuals and a test of independence.
+    Contingency(ContingencyBody),
 }
 
 impl ComputedBody {
@@ -623,6 +627,7 @@ impl ComputedBody {
             }
             Self::Correlation(body) => body.validate(),
             Self::Distribution(body) => body.validate(),
+            Self::Contingency(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

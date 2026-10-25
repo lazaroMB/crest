@@ -5,9 +5,9 @@
 //! As in the parent module, the words come from fixed templates and every
 //! number from the envelope (`display` of a value) or the engine's body.
 
-use super::{display, raw};
-use crate::computed::apa::ApaLine;
-use crate::computed::{Computed, ComputedBody};
+use super::{display, equals, raw, significance};
+use crate::computed::apa::{self, ApaLine};
+use crate::computed::{Computed, ComputedBody, ContingencyTest};
 
 /// The APA line of a phase-2 template, if it has one.
 pub(super) fn apa_line(
@@ -27,6 +27,36 @@ pub(super) fn apa_line(
             }
             Some(line)
         }
+        "contingency" => match body {
+            ComputedBody::Contingency(t) if t.test == ContingencyTest::ChiSquare => {
+                let n = raw(computed, "n").unwrap_or_default();
+                // A count is a whole non-negative number.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let mut line = apa::chi_square(
+                    raw(computed, "statistic")?,
+                    raw(computed, "df")?,
+                    n.max(0.0).round() as u64,
+                    raw(computed, "p_value")?,
+                );
+                if let Some(v) = display(computed, "cramers_v") {
+                    line = line.part(equals("V", &v));
+                }
+                Some(line)
+            }
+            ComputedBody::Contingency(_) => {
+                let mut line = ApaLine::new().p(raw(computed, "p_value")?);
+                if let Some(or) = computed.value("odds_ratio") {
+                    line = line.part(equals("OR", &or.display_text()));
+                    if let Some(ci) = &or.ci {
+                        line = line.ci(ci, false);
+                    }
+                } else if let Some(v) = display(computed, "cramers_v") {
+                    line = line.part(equals("V", &v));
+                }
+                Some(line)
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -73,6 +103,40 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                     display(computed, "n")?,
                 )),
             }
+        }
+        ("contingency", ComputedBody::Contingency(t)) => {
+            let what = match (&t.row_variable, &t.column_variable) {
+                (Some(r), Some(c)) => format!(" of {r} by {c}"),
+                _ => String::new(),
+            };
+            let effect = match computed.value("odds_ratio") {
+                Some(or) if t.test != ContingencyTest::ChiSquare => {
+                    format!(" (odds ratio {})", or.display_text())
+                }
+                _ => display(computed, "cramers_v")
+                    .map(|v| format!(" (Cramér's V = {v})"))
+                    .unwrap_or_default(),
+            };
+            let cell = computed
+                .method
+                .params
+                .get("max_residual_cell")
+                .and_then(serde_json::Value::as_str);
+            let departs = match (cell, display(computed, "max_residual")) {
+                (Some(cell), Some(res)) => format!(
+                    " The cell that departs most from independence is {cell} (adjusted \
+                     standardised residual {res})."
+                ),
+                _ => String::new(),
+            };
+            Some(format!(
+                "{} on the {}×{} table{what} (N = {}): the association is {} at α = .05{effect}.{departs}",
+                t.test.label(),
+                t.row_levels.len(),
+                t.column_levels.len(),
+                display(computed, "n")?,
+                significance(raw(computed, "p_value")?),
+            ))
         }
         _ => None,
     }
