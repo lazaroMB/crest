@@ -1,0 +1,51 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(ConvertTool::new(ports))"
+---
+{
+  "name": "convert",
+  "description": "Converts a value between units with crest's deterministic engine (numbat): the result, the conversion factor, whether the factor is exact by definition or rounded, the dimension and the chain through SI units. Give `value` and units (`value: 65, from: \"mi/h\", to: \"km/h\"`), or a whole quantity in `from` (`from: \"5 ft + 3 in\", to: \"cm\"`). Temperatures (`degC`, `degF`, `K`) convert with their offset. An `uncertainty` is propagated linearly. The user sees a card; you get the result as a slot to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "The magnitude in `from`. Omit it when `from` is a whole quantity\nsuch as `5 ft + 3 in`."
+      },
+      "from": {
+        "type": "string",
+        "description": "Unit (or, without `value`, quantity) converted from, e.g. `mi/h`,\n`degF`, `5 ft + 3 in`."
+      },
+      "to": {
+        "type": "string",
+        "description": "Unit converted to, e.g. `km/h`, `degC`, `cm`."
+      },
+      "uncertainty": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Standard uncertainty of the value, in `from`; propagated linearly."
+      },
+      "significant_digits": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Significant digits of the displayed result (default 6).",
+        "default": 6
+      }
+    },
+    "required": [
+      "from",
+      "to"
+    ],
+    "description": "Input of `convert`: one value from one unit to another.",
+    "title": "ConvertRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

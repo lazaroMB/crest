@@ -1,4 +1,5 @@
-//! The deterministic compute engine behind the statistics cards.
+//! The deterministic compute engine behind the statistics cards, the calc
+//! sheet and the unit conversion card.
 //!
 //! The model decides what to compute; a [`ComputePort`] computes it and
 //! returns a [`Computed`] envelope (values, method, assumption checks,
@@ -338,6 +339,48 @@ pub struct CorrelateRequest {
     pub conf_level: f64,
 }
 
+fn default_significant_digits() -> u32 {
+    6
+}
+
+/// Input of `calc`: a calc sheet of lines evaluated top to bottom.
+///
+/// Each line is `name = expression` or a bare expression, in the units
+/// language of numbat: `v = 100 km/h`, `t = 2 h + 30 min`, `d = v * t ->
+/// km`. Later lines use the names of earlier ones; a line that fails (a
+/// dimension mismatch, an unknown unit) shows its error and the others
+/// still evaluate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CalcRequest {
+    /// The lines, in order, e.g. `["m_car = 1200 kg", "v = 100 km/h",
+    /// "E = 1/2 m_car v^2 -> kJ"]`. Names must not clash with units or
+    /// constants (`m`, `g`, `h`, `c` are units); use `m_car`, `g_0`, …
+    pub lines: Vec<String>,
+    /// Significant digits of the displayed results (default 6).
+    #[serde(default = "default_significant_digits")]
+    pub significant_digits: u32,
+}
+
+/// Input of `convert`: one value from one unit to another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ConvertRequest {
+    /// The magnitude in `from`. Omit it when `from` is a whole quantity
+    /// such as `5 ft + 3 in`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// Unit (or, without `value`, quantity) converted from, e.g. `mi/h`,
+    /// `degF`, `5 ft + 3 in`.
+    pub from: String,
+    /// Unit converted to, e.g. `km/h`, `degC`, `cm`.
+    pub to: String,
+    /// Standard uncertainty of the value, in `from`; propagated linearly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<f64>,
+    /// Significant digits of the displayed result (default 6).
+    #[serde(default = "default_significant_digits")]
+    pub significant_digits: u32,
+}
+
 /// Any engine request, tagged by `kind`; what an envelope stores to be
 /// recomputed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -351,6 +394,10 @@ pub enum ComputeRequest {
     Regress(RegressRequest),
     /// [`ComputePort::correlate`].
     Correlate(CorrelateRequest),
+    /// [`ComputePort::calc`].
+    Calc(CalcRequest),
+    /// [`ComputePort::convert`].
+    Convert(ConvertRequest),
 }
 
 impl ComputeRequest {
@@ -367,25 +414,28 @@ impl ComputeRequest {
             .map_err(|e| ComputeError::NotRecomputable(format!("stored request: {e}")))
     }
 
-    /// The data the request reads.
+    /// The data the request reads; `None` for calc sheets and
+    /// conversions, which read none.
     #[must_use]
-    pub fn data(&self) -> &DataSet {
+    pub fn data(&self) -> Option<&DataSet> {
         match self {
-            Self::Describe(r) => &r.data,
-            Self::Test(r) => &r.data,
-            Self::Regress(r) => &r.data,
-            Self::Correlate(r) => &r.data,
+            Self::Describe(r) => Some(&r.data),
+            Self::Test(r) => Some(&r.data),
+            Self::Regress(r) => Some(&r.data),
+            Self::Correlate(r) => Some(&r.data),
+            Self::Calc(_) | Self::Convert(_) => None,
         }
     }
 
     /// Mutable access to the data, e.g. to reload a changed file before a
     /// recompute.
-    pub fn data_mut(&mut self) -> &mut DataSet {
+    pub fn data_mut(&mut self) -> Option<&mut DataSet> {
         match self {
-            Self::Describe(r) => &mut r.data,
-            Self::Test(r) => &mut r.data,
-            Self::Regress(r) => &mut r.data,
-            Self::Correlate(r) => &mut r.data,
+            Self::Describe(r) => Some(&mut r.data),
+            Self::Test(r) => Some(&mut r.data),
+            Self::Regress(r) => Some(&mut r.data),
+            Self::Correlate(r) => Some(&mut r.data),
+            Self::Calc(_) | Self::Convert(_) => None,
         }
     }
 }
@@ -421,6 +471,23 @@ pub trait ComputePort: Send + Sync {
     /// [`ComputeError::Invalid`] for unknown or non-numeric columns.
     fn correlate(&self, request: &CorrelateRequest) -> ComputeResult;
 
+    /// Evaluates a calc sheet with units. Errors of single lines stay on
+    /// their line.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty sheet.
+    fn calc(&self, request: &CalcRequest) -> ComputeResult;
+
+    /// Converts a value between units: the result, the factor, whether it
+    /// is exact and the chain through base units.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for unknown units or a dimension
+    /// mismatch.
+    fn convert(&self, request: &ConvertRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -442,6 +509,8 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Test(r) => self.test(r),
             ComputeRequest::Regress(r) => self.regress(r),
             ComputeRequest::Correlate(r) => self.correlate(r),
+            ComputeRequest::Calc(r) => self.calc(r),
+            ComputeRequest::Convert(r) => self.convert(r),
         }
     }
 }
