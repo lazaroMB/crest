@@ -109,7 +109,7 @@ pub async fn recompute(
 ) -> Result<(Computed, ComputedBody), String> {
     let mut request = ComputeRequest::from_envelope(envelope).map_err(|e| e.to_string())?;
     let mut stored = envelope.clone();
-    if let (Some(fs), Some(path)) = (fs, request.data().source.path.clone()) {
+    if let (Some(fs), Some(path)) = (fs, request.data().and_then(|d| d.source.path.clone())) {
         let delimiter = envelope
             .method
             .params
@@ -117,7 +117,9 @@ pub async fn recompute(
             .and_then(serde_json::Value::as_str)
             .and_then(|d| d.chars().next());
         let fresh = load_file(fs, &path, delimiter).await?;
-        *request.data_mut() = fresh;
+        if let Some(data) = request.data_mut() {
+            *data = fresh;
+        }
         stored.method.params.insert(
             REQUEST_PARAM.into(),
             serde_json::to_value(&request).map_err(|e| e.to_string())?,
