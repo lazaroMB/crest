@@ -641,10 +641,7 @@ mod tests {
     fn normalize_puts_display_math_on_its_own_lines() {
         assert_eq!(normalize("$$x^2$$"), "$$\nx^2\n$$");
         assert_eq!(normalize("\\[\nx\n\\]\n"), "$$\nx\n$$\n");
-        assert_eq!(
-            normalize("see $$x$$ then"),
-            "see \n\n$$\nx\n$$\nthen"
-        );
+        assert_eq!(normalize("see $$x$$ then"), "see \n\n$$\nx\n$$\nthen");
         assert_eq!(normalize("> $$\n> a\n> $$"), "> $$\n> a\n> $$");
         assert_eq!(normalize("- $$a$$\n"), "- $$\n  a\n  $$\n");
         let fence = "```math\nx_1\n```\n";
