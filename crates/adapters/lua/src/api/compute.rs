@@ -1,8 +1,8 @@
 //! `app.compute`: the compute engine from Lua, the same calls the
-//! `stats_*`, `calc` and `convert` tools make. Each returns a computed
-//! block (a statistics card, a calc sheet or a conversion card), so a tool
-//! or command handler that returns it shows the card, and the
-//! `reproduce.lua` line of every card runs as written.
+//! `stats_*`, `calc`, `convert` and solver card tools make. Each returns a
+//! computed block (a statistics card, a calc sheet, a conversion or a
+//! solver card), so a tool or command handler that returns it shows the
+//! card, and the `reproduce.lua` line of every card runs as written.
 //!
 //! ```lua
 //! return app.compute.test{ data = 'data/cars.csv', y = 'mpg', group = 'am' }
@@ -20,6 +20,7 @@
 //! | `calc{ lines, significant_digits }` | calc sheet with units (`lines = { 'v = 100 km/h', … }`) |
 //! | `convert{ value, from, to, uncertainty, significant_digits }` | unit conversion |
 //! | `distribution{ data, variable, by, bin_rule, bins, bandwidth_rule, bandwidth, conf_level }` | histogram, density, box/violin, QQ, ECDF |
+//! | `contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | contingency table, χ² or Fisher |
 //! | `power{ test, n, effect, p1, p2, alpha, power, groups, alternative, solve_for }` | power or sample size |
 //! | `ab_test{ control = { name, visitors, conversions }, treatment = {...}, expected_split, conf_level, alternative, looks, planned_visitors, minimum_lift }` | A/B test |
 //! | `bootstrap{ data, y, statistic, group, y2, levels, trim, resamples, seed, conf_level }` | seeded bootstrap |
@@ -29,7 +30,6 @@
 //! | `simulate{ inputs = { { name, distribution = { type = 'normal', mean, sd }, source, unit } }, model, output, unit, samples, seed }` | Monte Carlo, tornado, Fermi |
 //! | `cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback |
 //! | `decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | decision matrix |
-//! | `contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | contingency table, χ² or Fisher |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -429,6 +429,43 @@ mod tests {
         };
         assert_eq!(convert.value, Some(5.0));
         assert_eq!(convert.to, "cm");
+    }
+
+    #[test]
+    fn the_card_requests_take_their_tables() {
+        let engine = Arc::new(FakeCompute::new());
+        let out = run_code(
+            "return app.compute.power{ test = 'two_sample_t', effect = 0.8, power = 0.8 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        assert_eq!(envelope(out).kind, "stats.power");
+        run_code(
+            "return app.compute.optimize{ objective = '3*x + 5*y',
+               variables = { { name = 'x' }, { name = 'y', upper = 6 } },
+               constraints = { { name = 'plant', expr = '3*x + 2*y <= 18' } } }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        run_code(
+            "return app.compute.distribution{ data = 'cars.tsv', variable = 'mpg' }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let requests = engine.requests();
+        let ComputeRequest::Power(power) = &requests[0] else {
+            panic!("not a power request");
+        };
+        assert_eq!(power.effect, Some(0.8));
+        let ComputeRequest::Optimize(lp) = &requests[1] else {
+            panic!("not an optimisation");
+        };
+        assert_eq!(lp.variables[1].upper, Some(6.0));
+        assert_eq!(lp.variables[0].lower, Some(0.0));
+        let ComputeRequest::Distribution(d) = &requests[2] else {
+            panic!("not a distribution");
+        };
+        assert_eq!(d.data.source.path.as_deref(), Some("cars.tsv"));
     }
 
     #[test]

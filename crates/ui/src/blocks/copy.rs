@@ -573,6 +573,47 @@ mod tests {
     }
 
     #[test]
+    fn card_bodies_copy_their_tables_as_csv() {
+        let keys = |body: ComputedBody| {
+            computed_body(&body)
+                .into_iter()
+                .map(|f| (f.key, f.text))
+                .collect::<Vec<_>>()
+        };
+        let bins = keys(ComputedBody::Distribution(
+            super::super::computed::distribution::tests::body(),
+        ));
+        assert_eq!(bins[0].0, "bins");
+        assert!(
+            bins[0].1.starts_with("group,lo,hi,count\n0,0,1,3\n"),
+            "{}",
+            bins[0].1
+        );
+        let lp = keys(ComputedBody::Optimization(
+            super::super::computed::optimization::tests::body(),
+        ));
+        assert!(
+            lp[0].1.contains("constraint,plant2,12,0,1.5"),
+            "{}",
+            lp[0].1
+        );
+        let matrix = keys(ComputedBody::DecisionMatrix(
+            super::super::computed::decision_matrix::tests::body(),
+        ));
+        assert!(
+            matrix[0]
+                .1
+                .starts_with("option,price,quality,total,rank\nA,1,0,0.6,1"),
+            "{}",
+            matrix[0].1
+        );
+        let flows = keys(ComputedBody::CashFlow(
+            super::super::computed::cash_flow::tests::body(),
+        ));
+        assert_eq!(flows[0].1.lines().count(), 4);
+    }
+
+    #[test]
     fn lab_blocks_copy_their_values() {
         let spec = MoleculeSpec {
             smiles: "OCC".into(),
