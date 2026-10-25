@@ -31,6 +31,7 @@ use application::flows::research::session::ResearchSession;
 use application::llm_retry::RetryingLlm;
 use application::ports::approval::ApprovalPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::form::FormPort;
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
@@ -46,6 +47,7 @@ use application::providers::{Provider, ProviderRouter, ProvidersOptions, effecti
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
+use application::tools::form::{FORM_TOOL_PROMPT, register_form_tool};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::simulate::SimulateTool;
@@ -136,6 +138,8 @@ pub struct Frontend {
     pub events: Arc<dyn EventSink>,
     /// Answers approval requests.
     pub approval: Arc<dyn ApprovalPort>,
+    /// Shows the forms of `ask_user` and returns the answers.
+    pub form: Arc<dyn FormPort>,
 }
 
 /// Replacements of the external services, for tests.
@@ -590,6 +594,7 @@ pub async fn build_app(
     )
     .context("tool registration")?;
     register_component_tools(&mut tools).context("tool registration")?;
+    register_form_tool(&mut tools, Arc::clone(&frontend.form)).context("tool registration")?;
     let compute = compute_ports(Arc::clone(&fs));
     register_compute_tools(&mut tools, &compute).context("tool registration")?;
     if let Some(host) = &plugins
@@ -1051,6 +1056,8 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
          \n\
          {COMPONENT_TOOLS_PROMPT}\n\
          \n\
+         {FORM_TOOL_PROMPT}\n\
+         \n\
          {COMPUTE_TOOLS_PROMPT}",
         root = root.as_path().display(),
         os = std::env::consts::OS,
@@ -1105,6 +1112,7 @@ mod tests {
         assert!(prompt.contains(std::env::consts::OS));
         assert_eq!(prompt.contains(WINDOWS_NOTE), cfg!(windows));
         assert!(prompt.contains(COMPONENT_TOOLS_PROMPT));
+        assert!(prompt.contains(FORM_TOOL_PROMPT));
         assert!(prompt.ends_with(COMPUTE_TOOLS_PROMPT));
     }
 
