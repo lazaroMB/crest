@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: "definition(ShowTestReportTool::new(ports.clone()))"
+---
+{
+  "name": "show_test_report",
+  "description": "Shows a JUnit XML test report of the workspace as a test report in the user's timeline: totals by outcome, failures first with their message and stack trace, durations and links to the test files. Most runners write one (cargo nextest `--profile ci`, pytest `--junitxml`, Maven Surefire, Jest/Vitest junit reporters, gotestsum `--junitfile`). Returns the totals and the failing tests with their locations: do not repeat the report in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A JUnit XML report of the workspace, e.g.\n`target/nextest/default/junit.xml` or `reports/pytest.xml`."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the report; defaults to the report's own name or\nthe file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_test_report`.",
+    "title": "ShowTestReport",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

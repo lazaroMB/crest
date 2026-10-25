@@ -1,0 +1,24 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: "definition(ShowWavedromTool::new(ports.clone()))"
+---
+{
+  "name": "show_wavedrom",
+  "description": "Draws a digital timing diagram (WaveDrom WaveJSON) in the user's timeline: clocks, signals, buses with data labels. Use it for protocols, handshakes, register timing and state sequences over clock cycles. Returns only a short confirmation.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "source": {
+        "type": "string",
+        "description": "The diagram as WaveJSON, e.g. `{ \"signal\": [ { \"name\": \"clk\",\n\"wave\": \"p....\" }, { \"name\": \"data\", \"wave\": \"x=.=x\", \"data\": [\"a\",\n\"b\"] } ] }`. Wave characters: `p`/`n` clocks, `0`/`1` levels, `x`\nunknown, `z` high impedance, `=` and `2`-`9` data (labels from\n`data`), `.` repeats the previous cycle, `|` a gap. JSON5-style\nkeys without quotes are accepted."
+      }
+    },
+    "required": [
+      "source"
+    ],
+    "description": "Input of `show_wavedrom`.",
+    "title": "ShowWavedrom",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

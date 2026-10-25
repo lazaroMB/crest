@@ -178,9 +178,8 @@ fn builtin_effect(name: &str) -> &'static str {
         "edit_file" | "write_file" | "simulate_solution" => "write",
         "list_files" | "find_file" | "grep" | "tree" | "read_file" | "task" | "show_chart"
         | "show_plot" | "show_table" | "show_mermaid" | "show_markdown" | "stats_describe"
-        | "stats_test" | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user" => {
-            "read"
-        }
+        | "stats_test" | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user"
+        | "show_test_report" | "show_findings" | "show_wavedrom" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

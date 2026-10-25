@@ -1,0 +1,24 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: "definition(ShowFindingsTool::new(ports.clone()))"
+---
+{
+  "name": "show_findings",
+  "description": "Shows a SARIF static-analysis log of the workspace (linters, security scanners) as findings in the user's timeline, grouped by file and severity with the rule, message, snippet and a link to the rule's documentation. Returns the counts and the findings as `file:line: rule message` lines: do not repeat them in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A SARIF 2.1.0 log of the workspace, e.g. `clippy.sarif` (from\n`clippy-sarif`), `semgrep.sarif`, CodeQL or ESLint SARIF output."
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_findings`.",
+    "title": "ShowFindings",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}
