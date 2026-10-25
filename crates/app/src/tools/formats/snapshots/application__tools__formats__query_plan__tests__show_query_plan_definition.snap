@@ -1,0 +1,41 @@
+---
+source: crates/app/src/tools/formats/query_plan.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_query_plan",
+  "description": "Shows a PostgreSQL query plan (EXPLAIN (FORMAT JSON), best with ANALYZE and BUFFERS) as a tree table in the user's timeline: per node its time, self time and rows as bars, estimated vs actual rows with the misestimate factor, loops, buffers and cost, hot nodes badged, spills and filtering sequential scans noted. Give a workspace file in `path` or the JSON in `plan`. Returns the timings, the slowest nodes by self time, the worst row misestimates and the warnings: reason from those, and do not repeat the plan in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A file of the workspace with the output of PostgreSQL's\n`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ...` (or without ANALYZE /\nBUFFERS). Give this or `plan`.",
+        "default": null
+      },
+      "plan": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The same JSON plan inline, e.g. pasted from psql (header and `+`\nmarks are fine). Give this or `path`.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the plan; defaults to the file name.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_query_plan`.",
+    "title": "ShowQueryPlan",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

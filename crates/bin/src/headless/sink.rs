@@ -228,6 +228,13 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::QueryPlan(plan) => w.line(
+            Some(Style::Dim),
+            &match plan.execution_time {
+                Some(t) => format!("[query plan: {} nodes, {t} ms]", plan.nodes.len()),
+                None => format!("[query plan: {} nodes]", plan.nodes.len()),
+            },
+        ),
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
     }
 }

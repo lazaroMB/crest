@@ -2,8 +2,9 @@
 //! blocks: test reports (JUnit XML, libtest JSON), static-analysis findings (SARIF),
 //! timing diagrams (WaveDrom WaveJSON), dataset previews (CSV, TSV, JSON
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
-//! Jaeger, Zipkin JSON), profiles (folded stacks, pprof) and log files
-//! (JSON lines, logfmt, text).
+//! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
+//! (JSON lines, logfmt, text) and SQL query plans (PostgreSQL `EXPLAIN
+//! (FORMAT JSON)`).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -14,6 +15,7 @@
 use domain::dataset::{DatasetFormat, DatasetSpec};
 use domain::devops::flame::FlameSpec;
 use domain::devops::logs::{LogFormat, LogSpec};
+use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -144,6 +146,22 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for a file that is not text or has no
     /// line.
     fn parse_logs(&self, bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError>;
+
+    /// A SQL query plan: PostgreSQL `EXPLAIN (FORMAT JSON)`, with
+    /// `ANALYZE` and `BUFFERS` when given (also pasted from `psql`), with
+    /// self times, misestimates and warnings derived
+    /// ([`QueryPlanSpec::analyse`]). `path` names the file, when there is
+    /// one.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for a text plan, malformed JSON or JSON
+    /// without a `Plan`.
+    fn parse_query_plan(
+        &self,
+        bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError>;
 }
 
 #[cfg(test)]

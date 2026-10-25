@@ -1,0 +1,19 @@
+                     QUERY PLAN
+-----------------------------------------------------
+ [                                                  +
+   {                                                +
+     "Plan": {                                      +
+       "Node Type": "Index Scan",                   +
+       "Relation Name": "users",                    +
+       "Alias": "users",                            +
+       "Index Name": "users_pkey",                  +
+       "Startup Cost": 0.29,                        +
+       "Total Cost": 8.30,                          +
+       "Plan Rows": 1,                              +
+       "Plan Width": 72,                            +
+       "Index Cond": "(id = 42)"                    +
+     }                                              +
+   }                                                +
+ ]
+(1 row)
+

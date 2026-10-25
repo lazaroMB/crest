@@ -1,6 +1,6 @@
 //! Developer and operations viewers: distributed traces (`show_trace`),
-//! profiles as flame graphs (`show_flamegraph`) and structured logs
-//! (`show_logs`).
+//! profiles as flame graphs (`show_flamegraph`), structured logs
+//! (`show_logs`) and SQL query plans (`show_query_plan`).
 //!
 //! Adapters parse the files (OTLP, Jaeger and Zipkin JSON; folded stacks
 //! and pprof; JSON lines, logfmt and plain text) into these specs, which
@@ -10,6 +10,7 @@
 
 pub mod flame;
 pub mod logs;
+pub mod query_plan;
 pub mod trace;
 
 use crate::block::BlockError;

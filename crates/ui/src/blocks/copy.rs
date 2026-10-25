@@ -489,6 +489,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Logs(spec) => {
             vec![CopyFormat::new("lines", "lines", spec.list.all_text())]
         }
+        BlockKind::QueryPlan(spec) => vec![
+            CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
+            CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
+        ],
         _ => Vec::new(),
     }
 }

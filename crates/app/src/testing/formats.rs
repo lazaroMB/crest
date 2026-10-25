@@ -10,7 +10,9 @@
 //! is `GET /checkout` (api, 100 ms) calling a failed `charge` (payments,
 //! 10–90 ms, "card declined") that calls `SELECT cards` (db, 20–40 ms);
 //! every profile is `main;work 70` and `main;idle 30` samples; every log
-//! is an info line and two `db down` errors of service `db`.
+//! is an info line and two `db down` errors of service `db`; every query
+//! plan is a `Hash Join` (100 ms, 5000 rows for 50 planned) over a hot
+//! `Seq Scan on orders` (70 ms) and a `Hash`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -21,6 +23,7 @@ use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
 use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
 use domain::devops::logs::{LogFormat, LogSpec};
+use domain::devops::query_plan::{PlanEngine, PlanNode, QueryPlanSpec};
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
@@ -315,5 +318,42 @@ impl FormatsPort for FakeFormats {
             },
             histogram: None,
         })
+    }
+
+    fn parse_query_plan(
+        &self,
+        _bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError> {
+        self.record("parse_query_plan", path.unwrap_or("-"))?;
+        let node = |node_type: &str, depth, time, rows, planned| PlanNode {
+            node_type: node_type.to_owned(),
+            depth,
+            actual_time: Some(time),
+            actual_rows: Some(rows),
+            plan_rows: Some(planned),
+            loops: Some(1.0),
+            ..PlanNode::default()
+        };
+        let mut scan = node("Seq Scan", 1, 70.0, 10_000.0, 9_000.0);
+        scan.relation = Some("orders".into());
+        let mut spec = QueryPlanSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            engine: PlanEngine::Postgres,
+            analyzed: true,
+            buffers: false,
+            planning_time: Some(0.5),
+            execution_time: Some(100.0),
+            trigger_time: None,
+            jit_time: None,
+            nodes: vec![
+                node("Hash Join", 0, 100.0, 5_000.0, 50.0),
+                scan,
+                node("Hash", 1, 20.0, 10.0, 10.0),
+            ],
+        };
+        spec.analyse();
+        Ok(spec)
     }
 }
