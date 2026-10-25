@@ -1,7 +1,8 @@
 //! Renderer of the `image` block kind: the picture, from inline base64 or
 //! a file, with its source underneath. An image that cannot be decoded or
 //! loaded shows a placeholder with the error instead. SVG is rasterized
-//! off the UI thread at the window's scale ([`super::svg`]).
+//! off the UI thread at the window's scale ([`super::svg`]), tinted to
+//! the theme when its media type asks for it (`; tint=theme`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -134,8 +135,9 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     });
     let theme = cx.theme();
     let (danger, border) = (theme.danger, theme.border);
+    let tint = super::svg::wants_tint(media_type).then(|| super::svg::Tint::from_theme(cx));
     let svg = super::svg::is_svg(media_type, data_or_path)
-        .then(|| super::svg::use_svg(data_or_path, 1.0, window, cx));
+        .then(|| super::svg::use_svg_tinted(data_or_path, 1.0, tint, window, cx));
     let inspect = BlockEvent::InspectImage {
         block: entry.block.id,
         media_type: media_type.clone(),

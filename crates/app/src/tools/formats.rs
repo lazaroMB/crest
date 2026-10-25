@@ -504,6 +504,9 @@ impl ShowWavedromTool {
     }
 }
 
+/// Media type of the WaveDrom image block: SVG to tint to the theme.
+pub const WAVEDROM_MEDIA_TYPE: &str = "image/svg+xml; tint=theme";
+
 /// Name of `show_wavedrom`.
 pub const SHOW_WAVEDROM: &str = "show_wavedrom";
 
@@ -540,8 +543,10 @@ impl TypedTool for ShowWavedromTool {
             .formats
             .render_wavedrom(&input.source)
             .map_err(|err| invalid(SHOW_WAVEDROM, err.to_string()))?;
+        // Drawn black on white; the parameter asks the UI to tint it to
+        // the theme.
         let block = BlockKind::Image {
-            media_type: "image/svg+xml".into(),
+            media_type: WAVEDROM_MEDIA_TYPE.into(),
             data_or_path: ImageData::Base64 {
                 data: base64::engine::general_purpose::STANDARD.encode(svg),
             },
@@ -1433,7 +1438,7 @@ mod tests {
         else {
             panic!("expected an image, got {:?}", out.block_update);
         };
-        assert_eq!(media_type, "image/svg+xml");
+        assert_eq!(media_type, WAVEDROM_MEDIA_TYPE);
         let svg = base64::engine::general_purpose::STANDARD
             .decode(data)
             .unwrap_or_default();
