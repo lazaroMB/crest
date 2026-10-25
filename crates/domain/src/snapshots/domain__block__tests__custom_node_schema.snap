@@ -324,6 +324,20 @@ expression: "schemars::schema_for!(CustomNode)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Rows of spans on a time axis, with zoom, pan and a tooltip\n(traces, Gantt charts, waveforms).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "timeline"
+        }
+      },
+      "$ref": "#/$defs/TimelineSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -877,6 +891,240 @@ expression: "schemars::schema_for!(CustomNode)"
           "default": []
         }
       }
+    },
+    "TimeUnit": {
+      "description": "Unit of every time in a [`TimelineSpec`].",
+      "oneOf": [
+        {
+          "description": "Nanoseconds.",
+          "type": "string",
+          "const": "ns"
+        },
+        {
+          "description": "Microseconds.",
+          "type": "string",
+          "const": "us"
+        },
+        {
+          "description": "Milliseconds.",
+          "type": "string",
+          "const": "ms"
+        },
+        {
+          "description": "Seconds.",
+          "type": "string",
+          "const": "s"
+        },
+        {
+          "description": "Calendar time: seconds since 1970-01-01T00:00:00Z.",
+          "type": "string",
+          "const": "date"
+        }
+      ]
+    },
+    "TimelineRow": {
+      "description": "One lane of the timeline.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id of the row (a span id, a signal path).",
+          "type": "string"
+        },
+        "label": {
+          "description": "Text in the label column.",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Indentation level (0 = top level), for trees of spans.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "group": {
+          "description": "Consecutive rows of the same group are banded together.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spans": {
+          "description": "Intervals of the row.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Span"
+          },
+          "default": []
+        },
+        "markers": {
+          "description": "Instants of the row.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Marker"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ]
+    },
+    "Span": {
+      "description": "One interval of a row.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "Start time.",
+          "type": "number",
+          "format": "double"
+        },
+        "end": {
+          "description": "End time; at least `start` (equal for an instant). `stop` is\naccepted too, since `end` is a keyword in Lua.",
+          "type": "number",
+          "format": "double"
+        },
+        "label": {
+          "description": "Text drawn inside the bar when it fits, and in the tooltip.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color_key": {
+          "description": "Spans with the same key share a palette color (a service, a kind).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Outcome; errors and warnings are drawn in their theme colors.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attrs": {
+          "description": "Extra fields shown when the span is hovered or selected.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "SpanStatus": {
+      "description": "How a span ended.",
+      "oneOf": [
+        {
+          "description": "Finished fine.",
+          "type": "string",
+          "const": "ok"
+        },
+        {
+          "description": "Finished with a warning (slow, retried).",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "Failed.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "Marker": {
+      "description": "A point in time drawn as a tick across its row.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "When.",
+          "type": "number",
+          "format": "double"
+        },
+        "label": {
+          "description": "What happened (shown in the tooltip).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color_key": {
+          "description": "Palette key, as for spans.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "at"
+      ]
+    },
+    "TimeRange": {
+      "description": "A closed time interval.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "First time shown.",
+          "type": "number",
+          "format": "double"
+        },
+        "end": {
+          "description": "Last time shown; greater than `start`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "TimelineSpec": {
+      "description": "Rows of spans on a shared time axis.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption above the timeline.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit of every time.",
+          "$ref": "#/$defs/TimeUnit",
+          "default": "ms"
+        },
+        "rows": {
+          "description": "Lanes, top to bottom.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineRow"
+          }
+        },
+        "range": {
+          "description": "Axis range at first; the extent of the data when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "rows"
+      ]
     }
   }
 }

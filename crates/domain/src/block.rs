@@ -703,6 +703,9 @@ pub enum CustomNode {
     /// A function plot with parameter sliders, as the `plot` block draws
     /// it.
     Plot(Box<crate::plot::PlotSpec>),
+    /// Rows of spans on a time axis, with zoom, pan and a tooltip
+    /// (traces, Gantt charts, waveforms).
+    Timeline(Box<crate::widget::timeline::TimelineSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -765,6 +768,7 @@ impl CustomNode {
             }
             Self::Model3d(spec) => Ok(spec.mesh.validate()?),
             Self::Plot(spec) => spec.validate(),
+            Self::Timeline(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }

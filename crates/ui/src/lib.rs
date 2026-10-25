@@ -21,4 +21,5 @@ pub mod sysboard;
 pub mod theme;
 pub mod timeline;
 pub mod tree;
+pub mod widgets;
 pub mod workbench;

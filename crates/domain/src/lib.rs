@@ -22,4 +22,5 @@ pub mod research;
 pub mod science;
 pub mod sysmodel;
 pub mod theme;
+pub mod widget;
 pub mod workspace;

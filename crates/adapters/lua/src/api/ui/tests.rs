@@ -151,6 +151,36 @@ fn plots_take_the_show_plot_fields() {
 }
 
 #[test]
+fn timelines_take_rows_of_spans() {
+    let got = tree(
+        r#"return app.ui.block("t", app.ui.timeline({
+             title = "Request",
+             unit = "ms",
+             rows = {
+               { id = "root", label = "GET /", spans = { { start = 0, stop = 120, status = "ok" } } },
+               { id = "db", label = "SELECT", depth = 1,
+                 spans = { { start = 10, ["end"] = 80, attrs = { rows = 3 } } }, markers = {} },
+               { id = "empty", label = "idle", spans = {} },
+             },
+           }))"#,
+    );
+    let CustomNode::Timeline(spec) = got else {
+        panic!("not a timeline: {got:?}");
+    };
+    assert_eq!(spec.rows.len(), 3);
+    assert_eq!(spec.rows[1].depth, 1);
+    assert_eq!(spec.rows[1].spans[0].attrs["rows"], 3);
+    assert!(spec.rows[2].spans.is_empty());
+    let reversed = error_of(
+        r#"return app.ui.timeline({ rows = { { id = "a", label = "a", spans = { { start = 5, stop = 1 } } } } })"#,
+    );
+    assert!(
+        reversed.contains("app.ui.timeline") && reversed.contains("ends before"),
+        "{reversed}"
+    );
+}
+
+#[test]
 fn invalid_trees_raise_errors() {
     let short_row =
         error_of(r#"return app.ui.table({ columns = { "a", "b" }, rows = { { 1 } } })"#);
