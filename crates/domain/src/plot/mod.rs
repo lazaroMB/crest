@@ -6,12 +6,20 @@
 //! variables the expressions use, each with a slider. Numeric series (from
 //! an engine, e.g. residuals vs fitted) are drawn as points or lines on the
 //! same axes.
+//!
+//! [`expr`] parses the expressions, for the tool (which reports a typo to
+//! the model) and the UI alike; [`PlotSpec::compile`] turns every function
+//! into parsed expressions over its variables.
+
+pub mod expr;
+pub mod qq;
 
 use std::collections::HashSet;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use self::expr::{Expr, is_builtin};
 use crate::block::BlockError;
 
 /// Variable names a parameter cannot take, since expressions use them.
@@ -90,6 +98,35 @@ pub enum FunctionKind {
     Parametric,
     /// `f(x, y) = 0`.
     Implicit,
+}
+
+impl FunctionKind {
+    /// The variables its expressions take, before the parameters.
+    #[must_use]
+    pub fn variables(self) -> &'static [&'static str] {
+        match self {
+            Self::Explicit => &["x"],
+            Self::Parametric => &["t"],
+            Self::Implicit => &["x", "y"],
+        }
+    }
+}
+
+/// A [`PlotFunction`] with its expressions parsed. They take the kind's
+/// [`FunctionKind::variables`] then the parameter values, in the order of
+/// [`PlotSpec::params`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledFunction {
+    /// How the function is read.
+    pub kind: FunctionKind,
+    /// `f(x)`, `x(t)` or `f(x, y)`.
+    pub expr: Expr,
+    /// `y(t)` for a parametric function.
+    pub y_expr: Option<Expr>,
+    /// Range of `t` (`0..1` when absent), parametric only.
+    pub t_range: PlotRange,
+    /// Legend label.
+    pub label: String,
 }
 
 /// A parameter with a slider.
@@ -176,7 +213,7 @@ impl PlotSpec {
         for p in &self.params {
             let identifier = p.name.chars().next().is_some_and(char::is_alphabetic)
                 && p.name.chars().all(|c| c.is_alphanumeric() || c == '_');
-            if !identifier || RESERVED_VARIABLES.contains(&p.name.as_str()) {
+            if !identifier || RESERVED_VARIABLES.contains(&p.name.as_str()) || is_builtin(&p.name) {
                 return Err(invalid(format!("{:?} cannot be a parameter name", p.name)));
             }
             if !names.insert(p.name.as_str()) {
@@ -213,7 +250,50 @@ impl PlotSpec {
                 });
             }
         }
-        Ok(())
+        self.compile().map(|_| ())
+    }
+
+    /// Parses every function's expressions.
+    ///
+    /// # Errors
+    ///
+    /// [`BlockError::Invalid`] naming the expression, the problem, its
+    /// column and the names it may use.
+    pub fn compile(&self) -> Result<Vec<CompiledFunction>, BlockError> {
+        self.functions
+            .iter()
+            .map(|f| {
+                let mut names: Vec<&str> = f.kind.variables().to_vec();
+                names.extend(self.params.iter().map(|p| p.name.as_str()));
+                let parse = |source: &str| {
+                    Expr::parse(source, &names)
+                        .map_err(|err| invalid(format!("in {source:?}: {err}")))
+                };
+                let y_expr = match (f.kind, f.y_expr.as_deref()) {
+                    (FunctionKind::Parametric, Some(source)) => Some(parse(source)?),
+                    _ => None,
+                };
+                Ok(CompiledFunction {
+                    kind: f.kind,
+                    expr: parse(&f.expr)?,
+                    y_expr,
+                    t_range: f.t_range.unwrap_or(PlotRange { min: 0.0, max: 1.0 }),
+                    label: f.label.clone().unwrap_or_else(|| match &f.y_expr {
+                        Some(y) if f.kind == FunctionKind::Parametric => {
+                            format!("({}, {y})", f.expr)
+                        }
+                        _ => f.expr.clone(),
+                    }),
+                })
+            })
+            .collect()
+    }
+
+    /// The current parameter values, in the order compiled functions take
+    /// them.
+    #[must_use]
+    pub fn param_values(&self) -> Vec<f64> {
+        self.params.iter().map(|p| p.value).collect()
     }
 }
 
@@ -276,11 +356,51 @@ mod tests {
         out_of_range.params[1].value = 5.0;
         assert!(out_of_range.validate().is_err());
 
+        let mut builtin = plot();
+        builtin.params[0].name = "sin".into();
+        assert!(builtin.validate().is_err());
+
         let mut short = plot();
         short.series[0].y.pop();
         assert!(matches!(
             short.validate(),
             Err(BlockError::SeriesLength { .. })
         ));
+    }
+
+    #[test]
+    fn plot_validate_checks_the_expressions() {
+        let mut typo = plot();
+        typo.functions[0].expr = "a * exp(-k * x) * sinx".into();
+        assert_eq!(
+            typo.validate().map_err(|e| e.to_string()),
+            Err(r#"plot: in "a * exp(-k * x) * sinx": unknown name "sinx" (variables here: x, a, k, r) (column 19)"#.to_owned())
+        );
+        // `t` belongs to parametric functions only.
+        let mut wrong_variable = plot();
+        wrong_variable.functions[0].expr = "t + 1".into();
+        assert!(wrong_variable.validate().is_err());
+        let mut bad_y = plot();
+        bad_y.functions[1].y_expr = Some("sin(t".into());
+        assert!(bad_y.validate().is_err());
+    }
+
+    #[test]
+    fn compiled_functions_take_their_variables_then_the_params() {
+        let spec = plot();
+        let compiled = spec.compile().unwrap();
+        let values = spec.param_values();
+        let at = |f: &CompiledFunction, vars: &[f64]| {
+            let mut all = vars.to_vec();
+            all.extend(&values);
+            f.expr.eval(&all)
+        };
+        let x = std::f64::consts::FRAC_PI_2;
+        assert!((at(&compiled[0], &[x]) - (-0.2 * x).exp()).abs() < 1e-12);
+        assert_eq!(compiled[0].label, "f");
+        assert_eq!(compiled[1].label, "(cos(t), sin(t))");
+        assert!(compiled[1].y_expr.is_some());
+        assert_eq!(compiled[2].t_range, PlotRange { min: 0.0, max: 1.0 });
+        assert_eq!(at(&compiled[2], &[1.0, 0.0]), 0.0);
     }
 }
