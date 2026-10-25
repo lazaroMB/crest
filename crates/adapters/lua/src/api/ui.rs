@@ -163,6 +163,17 @@ fn chart_node(lua: &Lua, def: Table) -> mlua::Result<CustomNode> {
     )
 }
 
+/// `app.ui.plot{...}`: the fields of a `show_plot` call (functions,
+/// params, series, ranges, labels) as a plot node with sliders.
+fn plot_node(lua: &Lua, def: Table) -> mlua::Result<CustomNode> {
+    let mut json = convert::to_json(lua, Value::Table(def))?;
+    let Some(fields) = json.as_object_mut() else {
+        return Err(error("plot", "expected a table of plot fields"));
+    };
+    fields.insert("type".into(), json!("plot"));
+    spec_node("plot", json)
+}
+
 fn image_node(lua: &Lua, def: Value) -> mlua::Result<CustomNode> {
     let def = match def {
         Value::String(path) => {
@@ -298,6 +309,10 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
     ui.set(
         "chart",
         lua.create_function(|lua, def: Table| to_lua(lua, &chart_node(lua, def)?))?,
+    )?;
+    ui.set(
+        "plot",
+        lua.create_function(|lua, def: Table| to_lua(lua, &plot_node(lua, def)?))?,
     )?;
     ui.set(
         "code",

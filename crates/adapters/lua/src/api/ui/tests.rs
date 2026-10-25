@@ -128,6 +128,29 @@ fn charts_default_to_bars() {
 }
 
 #[test]
+fn plots_take_the_show_plot_fields() {
+    let got = tree(
+        r#"return app.ui.block("p", app.ui.plot({
+             title = "Wave",
+             x_range = { min = 0, max = 10 },
+             functions = { { kind = "explicit", expr = "a sin(x)" } },
+             params = { { name = "a", min = 0, max = 2, value = 1 } },
+           }))"#,
+    );
+    let CustomNode::Plot(spec) = got else {
+        panic!("not a plot: {got:?}");
+    };
+    assert_eq!(spec.title.as_deref(), Some("Wave"));
+    assert_eq!(spec.params[0].name, "a");
+    let typo =
+        error_of(r#"return app.ui.plot({ functions = { { kind = "explicit", expr = "sinx" } } })"#);
+    assert!(
+        typo.contains("app.ui.plot") && typo.contains("unknown name"),
+        "{typo}"
+    );
+}
+
+#[test]
 fn invalid_trees_raise_errors() {
     let short_row =
         error_of(r#"return app.ui.table({ columns = { "a", "b" }, rows = { { 1 } } })"#);
