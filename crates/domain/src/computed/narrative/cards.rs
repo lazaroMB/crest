@@ -7,7 +7,7 @@
 
 use super::{display, equals, raw, significance};
 use crate::computed::apa::{self, ApaLine};
-use crate::computed::{Computed, ComputedBody, ContingencyTest};
+use crate::computed::{Alternative, Computed, ComputedBody, ContingencyTest, PowerTarget};
 
 /// The APA line of a phase-2 template, if it has one.
 pub(super) fn apa_line(
@@ -138,6 +138,50 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 significance(raw(computed, "p_value")?),
             ))
         }
+        ("power", ComputedBody::Power(p)) => {
+            let sym = p.test.effect_symbol();
+            let side = match p.alternative {
+                Alternative::TwoSided => "two-sided",
+                Alternative::Less | Alternative::Greater => "one-sided",
+            };
+            let design = format!("a {side} {}", p.test.label());
+            let per = if p.test.n_per_group() {
+                " per group"
+            } else {
+                ""
+            };
+            let effect = display(computed, "effect")?;
+            let alpha = display(computed, "alpha")?;
+            let power = display(computed, "power")?;
+            Some(match p.solved_for {
+                PowerTarget::N => {
+                    let total = display(computed, "n_total")
+                        .map(|t| format!(" ({t} in total)"))
+                        .unwrap_or_default();
+                    format!(
+                        "To detect {sym} = {effect} with power {power} at α = {alpha} in \
+                         {design}, n = {}{per} is needed: recruit {}{per}{total}.",
+                        display(computed, "n")?,
+                        display(computed, "n_required")?,
+                    )
+                }
+                PowerTarget::Power => format!(
+                    "With n = {}{per} and {sym} = {effect}, {design} at α = {alpha} has power \
+                     {power}.",
+                    display(computed, "n")?,
+                ),
+                PowerTarget::Effect => format!(
+                    "With n = {}{per}, power {power} and α = {alpha}, {design} detects effects \
+                     from {sym} = {effect}.",
+                    display(computed, "n")?,
+                ),
+                PowerTarget::Alpha => format!(
+                    "For power {power} with n = {}{per} and {sym} = {effect}, {design} needs \
+                     α = {alpha}.",
+                    display(computed, "n")?,
+                ),
+            })
+        }
         _ => None,
     }
 }
@@ -173,6 +217,38 @@ mod tests {
             text_slots: Vec::new(),
         });
         c
+    }
+
+    #[test]
+    fn a_sample_size_says_how_many_to_recruit() {
+        let c = computed(
+            "power",
+            &[
+                ("n", 25.52, "25.52"),
+                ("n_required", 26.0, "26"),
+                ("n_total", 52.0, "52"),
+                ("effect", 0.8, "0.800"),
+                ("alpha", 0.05, ".050"),
+                ("power", 0.8, ".800"),
+            ],
+        );
+        let body = ComputedBody::Power(crate::computed::PowerBody {
+            test: crate::computed::PowerTest::TwoSampleT,
+            solved_for: PowerTarget::N,
+            alternative: Alternative::TwoSided,
+            n: 25.52,
+            effect: 0.8,
+            alpha: 0.05,
+            power: 0.8,
+            groups: None,
+            curve: Curve::default(),
+        });
+        assert_eq!(
+            sentence("power", &c, &body).unwrap(),
+            "To detect d = 0.800 with power .800 at α = .050 in a two-sided two-sample t-test, \
+             n = 25.52 per group is needed: recruit 26 per group (52 in total)."
+        );
+        assert_eq!(apa_line("power", &c, &body), None);
     }
 
     #[test]

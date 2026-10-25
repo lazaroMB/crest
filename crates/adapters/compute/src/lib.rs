@@ -12,8 +12,8 @@
 //! every value matched.
 //!
 //! The phase-2 cards run here too: distributions (histogram, density,
-//! box/violin, QQ, ECDF) and contingency tables (residuals, χ² or an exact
-//! r×c Fisher test). Resampling and simulation draw from a seeded ChaCha20
+//! box/violin, QQ, ECDF), contingency tables (residuals, χ² or an exact
+//! r×c Fisher test) and power (noncentral t and F, as R's `pwr`). Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -35,6 +35,7 @@ mod envelope;
 mod linalg;
 mod math;
 mod ols;
+mod power;
 mod rank;
 mod reproduce;
 mod rng;
@@ -45,8 +46,8 @@ use std::time::SystemTime;
 
 use application::ports::compute::{
     CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ContingencyRequest,
-    ConvertRequest, CorrelateRequest, DescribeRequest, DistributionRequest, RegressRequest,
-    TestRequest,
+    ConvertRequest, CorrelateRequest, DescribeRequest, DistributionRequest, PowerRequest,
+    RegressRequest, TestRequest,
 };
 use domain::computed::Computed;
 
@@ -98,6 +99,7 @@ impl StatsEngine {
             ComputeRequest::Convert(r) => calc::convert(r, id)?,
             ComputeRequest::Distribution(r) => distribution::run(r, id)?,
             ComputeRequest::Contingency(r) => contingency::run(r, id)?,
+            ComputeRequest::Power(r) => power::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -119,6 +121,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Convert(_) => "convert",
         ComputeRequest::Distribution(_) => "distribution",
         ComputeRequest::Contingency(_) => "contingency",
+        ComputeRequest::Power(_) => "power",
     }
 }
 
@@ -153,6 +156,10 @@ impl ComputePort for StatsEngine {
 
     fn contingency(&self, request: &ContingencyRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Contingency(request.clone()), None)
+    }
+
+    fn power(&self, request: &PowerRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Power(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -18,14 +18,14 @@ use domain::computed::{
     Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine, CalcSheetBody, Computed,
     ComputedBody, ComputedValue, ContingencyBody, ContingencyTest, CorrelationBody,
     CorrelationMethod, Curve, DescriptiveBody, Diagnostics, DistributionBody, DistributionGroup,
-    Engine, FitStats, Histogram, Narrative, PAdjust, Quantity, QuantityBody, RegressionBody,
-    TestBody, TestKind, VariableKind, VariableSummary,
+    Engine, FitStats, Histogram, Narrative, PAdjust, PowerBody, PowerTarget, Quantity,
+    QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
 };
 
 use crate::ports::compute::{
     CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
     ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet, DescribeRequest,
-    DistributionRequest, REQUEST_PARAM, RegressRequest, TestRequest,
+    DistributionRequest, PowerRequest, REQUEST_PARAM, RegressRequest, TestRequest,
 };
 
 /// Name of the fake engine.
@@ -150,6 +150,22 @@ impl FakeCompute {
                 "Pearson's χ² test",
                 "contingency",
                 contingency_body(),
+            ),
+            ComputeRequest::Power(r) => (
+                "stats.power",
+                "Power analysis",
+                "power",
+                ComputedBody::Power(PowerBody {
+                    test: r.test,
+                    solved_for: PowerTarget::N,
+                    alternative: r.alternative,
+                    n: 25.5,
+                    effect: r.effect.unwrap_or(0.8),
+                    alpha: r.alpha.unwrap_or(0.05),
+                    power: r.power.unwrap_or(0.8),
+                    groups: r.groups,
+                    curve: Curve::default(),
+                }),
             ),
             ComputeRequest::Distribution(r) => (
                 "stats.distribution",
@@ -402,6 +418,10 @@ impl ComputePort for FakeCompute {
 
     fn contingency(&self, request: &ContingencyRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Contingency(request.clone()), None)
+    }
+
+    fn power(&self, request: &PowerRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Power(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

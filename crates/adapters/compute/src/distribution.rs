@@ -18,13 +18,12 @@ use domain::computed::{
     UncertaintyKind, WarningSeverity,
 };
 use serde_json::Value;
-use statrs::function::beta::inv_beta_reg;
 
 use crate::checks::shapiro_wilk;
 use crate::data::{self, key_part};
 use crate::describe::{mean, quantile, variance};
 use crate::envelope::{self, auto_decimals, bounded, count, number, p_value, warning};
-use crate::math::qnorm;
+use crate::math::{inv_beta, qnorm};
 use crate::reproduce::{py_col, py_frame, py_str, r_col, r_frame, r_name, r_str};
 
 /// Points of the density curve.
@@ -234,8 +233,8 @@ pub fn qq(sorted: &[f64], level: f64) -> Vec<QqPoint> {
             let rank = (i + 1) as f64;
             let theoretical = qnorm((rank - 0.375) / (nf + 0.25));
             let (a, b) = (rank, nf + 1.0 - rank);
-            let lo_p = inv_beta_reg(a, b, alpha / 2.0);
-            let hi_p = inv_beta_reg(a, b, 1.0 - alpha / 2.0);
+            let lo_p = inv_beta(a, b, alpha / 2.0);
+            let hi_p = inv_beta(a, b, 1.0 - alpha / 2.0);
             QqPoint {
                 theoretical,
                 sample: sorted[i],
