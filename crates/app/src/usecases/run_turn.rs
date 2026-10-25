@@ -548,6 +548,7 @@ impl AgentService {
             }),
             context: None,
             cancel: opts.cancel,
+            open_forms: std::sync::Mutex::default(),
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
@@ -665,6 +666,9 @@ struct TurnRun<'a> {
     /// Context reported by the last model call, for compaction.
     context: Option<ContextMark>,
     cancel: CancelToken,
+    /// `Form` blocks of calls still waiting for the user; an interrupted
+    /// turn marks them cancelled, not answered.
+    open_forms: std::sync::Mutex<Vec<Block>>,
 }
 
 /// Context size reported by a model call.
@@ -790,6 +794,7 @@ impl TurnRun<'_> {
                         is_error: true,
                     });
                 }
+                self.withdraw_open_forms();
                 self.turn.messages.push(Message::new(Role::User, results));
                 return Ok(StopReason::Interrupted);
             }
@@ -805,6 +810,23 @@ impl TurnRun<'_> {
             self.emit(DomainEvent::BlockAdded {
                 block: Block::new(BlockKind::Sources { sources }),
             });
+        }
+    }
+
+    /// Marks the forms of interrupted calls cancelled ("not answered").
+    fn withdraw_open_forms(&self) {
+        let open = std::mem::take(
+            &mut *self
+                .open_forms
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for mut block in open {
+            if let BlockKind::Form(spec) = &mut block.kind
+                && spec.withdraw()
+            {
+                self.emit(DomainEvent::BlockUpdated { block });
+            }
         }
     }
 
@@ -1330,7 +1352,22 @@ impl TurnRun<'_> {
             output: None,
         });
         let started = Instant::now();
+        let form = extra
+            .as_ref()
+            .filter(|b| matches!(b.kind, BlockKind::Form(_)))
+            .cloned();
+        let lock = || {
+            self.open_forms
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(form) = &form {
+            lock().push(form.clone());
+        }
         let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
+        if let Some(form) = &form {
+            lock().retain(|b| b.id != form.id);
+        }
         // Masked before anyone reads it: the model, the timeline, the
         // store and the `after_tool` hooks.
         let mut output = self.service.tools.finish(output);

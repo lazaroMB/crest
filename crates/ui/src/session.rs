@@ -637,6 +637,7 @@ impl Session {
                     data,
                 } => this.inspect_image(*block, media_type, data, window, cx),
                 BlockEvent::Recompute { block } => this.recompute(*block, cx),
+                BlockEvent::FormSubmitted { .. } => this.focus_input(window, cx),
                 BlockEvent::OpenUrl { .. } => {}
             },
         ));

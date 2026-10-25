@@ -123,6 +123,7 @@ pub fn form_spec(input: AskUser) -> Result<FormSpec, ToolError> {
         submit_label: input.submit_label.filter(|l| !l.trim().is_empty()),
         state: FormState::Pending,
         answer: None,
+        reason: None,
     };
     spec.validate().map_err(|err| invalid(err.to_string()))?;
     Ok(spec)
@@ -180,6 +181,7 @@ impl TypedTool for AskUserTool {
                     FormResponse::Cancelled { reason } => {
                         let mut done = spec;
                         done.state = FormState::Cancelled;
+                        done.reason.clone_from(&reason);
                         let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
                         let text = format!(
                             "{}: the user closed the form without answering{why}. Do not ask \

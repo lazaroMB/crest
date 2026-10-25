@@ -336,3 +336,58 @@ async fn cancelling_at_the_iteration_limit_is_an_interruption() {
     assert_eq!(h.tool_results(), [("done".to_owned(), false)]);
     assert_resendable(&h.session);
 }
+
+/// A form port nobody answers; it notes when it was asked.
+#[derive(Default)]
+struct Unanswered(std::sync::atomic::AtomicBool);
+
+#[async_trait]
+impl crate::ports::form::FormPort for Unanswered {
+    async fn ask(&self, _req: crate::ports::form::FormRequest) -> crate::ports::form::FormResponse {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        futures::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn an_interrupted_form_is_marked_not_answered() {
+    use domain::form::{FormState, NOT_ANSWERED};
+
+    let port = Arc::new(Unanswered::default());
+    let asked = Arc::clone(&port);
+    let script = vec![ScriptedResponse::tool_use(
+        "toolu_1",
+        "ask_user",
+        json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "boolean"}}}}),
+    )];
+    let mut h = Harness::with(script, PermissionMode::Ask, move |tools| {
+        tools
+            .register_typed(crate::tools::form::AskUserTool::new(port))
+            .unwrap();
+    });
+    let outcome =
+        run_and_cancel(&mut h, || asked.0.load(std::sync::atomic::Ordering::SeqCst)).await;
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    let forms: Vec<_> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                match block.kind {
+                    BlockKind::Form(spec) => Some((spec.state, spec.reason)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [
+            (FormState::Pending, None),
+            (FormState::Cancelled, Some(NOT_ANSWERED.to_owned()))
+        ]
+    );
+    assert_resendable(&h.session);
+}

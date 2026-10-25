@@ -41,6 +41,12 @@ pub enum BlockEvent {
         /// The block.
         block: BlockId,
     },
+    /// The form of block `block` was submitted and is read-only now: the
+    /// focus goes back to the prompt.
+    FormSubmitted {
+        /// The block.
+        block: BlockId,
+    },
 }
 
 /// The emitter of every [`BlockEvent`].

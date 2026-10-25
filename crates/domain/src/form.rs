@@ -37,7 +37,15 @@ pub struct FormSpec {
     /// The submitted values by field name, once submitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<BTreeMap<String, Value>>,
+    /// Why a cancelled form was cancelled, when known (e.g.
+    /// [`NOT_ANSWERED`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
+
+/// Reason of a form withdrawn before the user answered it: its turn was
+/// interrupted, or the session was resumed with it still open.
+pub const NOT_ANSWERED: &str = "not answered";
 
 /// Lifecycle of a form.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -176,6 +184,17 @@ fn ordered<T: PartialOrd + Copy>(min: Option<T>, value: Option<T>, max: Option<T
 }
 
 impl FormSpec {
+    /// Marks a pending form cancelled with reason [`NOT_ANSWERED`];
+    /// returns whether it was pending.
+    pub fn withdraw(&mut self) -> bool {
+        if self.state != FormState::Pending {
+            return false;
+        }
+        self.state = FormState::Cancelled;
+        self.reason = Some(NOT_ANSWERED.into());
+        true
+    }
+
     /// Checks that field names are unique and non-empty, every choice field
     /// has distinct options that include its defaults, and bounds are
     /// ordered with the default inside them.
@@ -425,6 +444,19 @@ mod tests {
             ]
         }))
         .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn withdrawing_cancels_only_pending_forms() {
+        let mut pending = form();
+        assert!(pending.withdraw());
+        assert_eq!(pending.state, FormState::Cancelled);
+        assert_eq!(pending.reason.as_deref(), Some(NOT_ANSWERED));
+        assert!(!pending.withdraw());
+        let mut done = form();
+        done.state = FormState::Submitted;
+        assert!(!done.withdraw());
+        assert_eq!(done.reason, None);
     }
 
     #[test]

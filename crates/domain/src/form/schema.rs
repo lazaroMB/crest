@@ -573,6 +573,7 @@ mod tests {
             submit_label: None,
             state: Default::default(),
             answer: None,
+            reason: None,
         };
         assert_eq!(spec.validate(), Ok(()));
     }

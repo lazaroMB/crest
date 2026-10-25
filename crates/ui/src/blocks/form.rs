@@ -35,6 +35,7 @@ use gpui_component::radio::Radio;
 use gpui_component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use serde_json::Value;
 
+use super::sources::BlockEvent;
 use crate::form::PendingForm;
 use crate::timeline::TimelineEntry;
 
@@ -354,6 +355,12 @@ impl FormView {
                 self.error = None;
                 self.respond(FormResponse::Submitted { answer }, window, cx);
                 self.sent = true;
+                // Read-only from now on: the prompt takes the focus, after
+                // the click that submitted has been handled.
+                let block = self.id;
+                cx.defer(move |cx| {
+                    super::sources::events::emit(BlockEvent::FormSubmitted { block }, cx);
+                });
             }
             Err(errors) => {
                 self.errors = errors;
@@ -739,7 +746,10 @@ impl Render for FormView {
                             .debug_selector(|| "form-cancelled".to_owned())
                             .text_sm()
                             .text_color(muted)
-                            .child("Cancelled: the form was closed without an answer."),
+                            .child(SharedString::from(match &self.spec.reason {
+                                Some(reason) => format!("Cancelled ({reason})."),
+                                None => "Cancelled: the form was closed without an answer.".into(),
+                            })),
                     )
                     .into_any_element();
             }

@@ -143,7 +143,10 @@ fn ask(
             done.state = FormState::Submitted;
             done.answer = Some(answer.clone());
         }
-        Err(_) => done.state = FormState::Cancelled,
+        Err(reason) => {
+            done.state = FormState::Cancelled;
+            done.reason = Some(reason.clone());
+        }
     }
     block.kind = BlockKind::Form(done);
     events.0.emit(DomainEvent::BlockUpdated { block });

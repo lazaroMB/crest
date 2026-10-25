@@ -4488,6 +4488,13 @@ expression: "schemars::schema_for!(Block)"
             "null"
           ],
           "additionalProperties": true
+        },
+        "reason": {
+          "description": "Why a cancelled form was cancelled, when known (e.g.\n[`NOT_ANSWERED`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

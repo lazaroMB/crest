@@ -317,3 +317,52 @@ fn long_text_wraps_inside_the_card(cx: &mut TestAppContext) {
         );
     }
 }
+
+#[gpui::test]
+fn a_submit_hands_the_focus_to_the_prompt_and_a_withdrawn_form_says_why(cx: &mut TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::blocks::sources::{BlockEvent, block_events};
+
+    let (cx, view, block) = window(cx);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let recorded = Rc::clone(&events);
+    cx.update(|_, cx| {
+        let emitter = block_events(cx);
+        cx.subscribe(&emitter, move |_, event: &BlockEvent, _| {
+            recorded.borrow_mut().push(event.clone());
+        })
+        .detach();
+    });
+    let mut answer = ask(cx, &view, &block);
+    cx.simulate_input("run 1");
+    draw(cx, &view);
+    click(cx, "form-submit");
+    draw(cx, &view);
+    cx.run_until_parked();
+    assert!(matches!(
+        answer.try_recv(),
+        Ok(Some(FormResponse::Submitted { .. }))
+    ));
+    assert_eq!(
+        *events.borrow(),
+        [BlockEvent::FormSubmitted { block: block.id }]
+    );
+
+    let mut withdrawn = spec();
+    assert!(withdrawn.withdraw());
+    view.update(cx, |view, cx| {
+        view.apply(
+            &DomainEvent::BlockUpdated {
+                block: Block {
+                    id: block.id,
+                    kind: BlockKind::Form(withdrawn),
+                },
+            },
+            cx,
+        );
+    });
+    draw(cx, &view);
+    assert!(cx.debug_bounds("form-cancelled").is_some());
+}

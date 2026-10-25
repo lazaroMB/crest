@@ -3,8 +3,10 @@
 //! The stored session brings back the conversation history (sent to the
 //! model on the next turn), the timeline to redraw and the "allow always"
 //! rules granted during it, which go back into the shared permission
-//! policy.
+//! policy. A form still pending in it was never answered (nobody waits
+//! for it any more): it comes back cancelled, "not answered".
 
+use domain::block::{Block, BlockKind};
 use domain::permission::PermissionRule;
 
 use crate::ports::store::{SessionStorePort, StoreError, StoredSession};
@@ -19,7 +21,25 @@ pub async fn resume_latest(
     store: &dyn SessionStorePort,
     workspace_root: &str,
 ) -> Result<Option<StoredSession>, StoreError> {
-    store.latest_for_workspace(workspace_root).await
+    let mut stored = store.latest_for_workspace(workspace_root).await?;
+    if let Some(stored) = &mut stored {
+        withdraw_pending_forms(&mut stored.timeline);
+    }
+    Ok(stored)
+}
+
+/// Marks every pending `Form` of `timeline` cancelled, not answered;
+/// returns how many there were.
+pub fn withdraw_pending_forms(timeline: &mut [Block]) -> usize {
+    let mut withdrawn = 0;
+    for block in timeline {
+        if let BlockKind::Form(spec) = &mut block.kind
+            && spec.withdraw()
+        {
+            withdrawn += 1;
+        }
+    }
+    withdrawn
 }
 
 /// Adds the `rules` of a resumed session to `permissions`, after the rules
@@ -50,6 +70,42 @@ mod tests {
             permission_rules: Vec::new(),
             prompt_history: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn pending_forms_come_back_not_answered() {
+        use domain::form::{FormSpec, FormState, NOT_ANSWERED};
+        let form = |state| {
+            Block::new(BlockKind::Form(FormSpec {
+                title: "t".into(),
+                description: None,
+                fields: Vec::new(),
+                submit_label: None,
+                state,
+                answer: None,
+                reason: None,
+            }))
+        };
+        let store = InMemorySessionStore::new();
+        let mut session = stored("/ws", 10);
+        session.timeline = vec![form(FormState::Pending), form(FormState::Submitted)];
+        store.save(&session).await.unwrap();
+        let resumed = resume_latest(&store, "/ws").await.unwrap().unwrap();
+        let states: Vec<_> = resumed
+            .timeline
+            .iter()
+            .map(|b| match &b.kind {
+                BlockKind::Form(spec) => (spec.state, spec.reason.clone()),
+                _ => panic!("a form"),
+            })
+            .collect();
+        assert_eq!(
+            states,
+            [
+                (FormState::Cancelled, Some(NOT_ANSWERED.to_owned())),
+                (FormState::Submitted, None)
+            ]
+        );
     }
 
     #[tokio::test]
