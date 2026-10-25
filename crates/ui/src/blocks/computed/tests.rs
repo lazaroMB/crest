@@ -120,7 +120,10 @@ fn other_cards() -> Vec<(Computed, ComputedBody)> {
         max: Some(33.9),
         skew: Some(0.61),
         kurtosis: Some(-0.37),
-        histogram: None,
+        histogram: Some(domain::computed::Histogram {
+            edges: vec![10.0, 20.0, 30.0, 34.0],
+            counts: vec![14, 16, 2],
+        }),
         levels: Vec::new(),
     };
     let describe = ComputedBody::Descriptive(DescriptiveBody {
@@ -157,8 +160,8 @@ fn other_cards() -> Vec<(Computed, ComputedBody)> {
             durbin_watson: Some(1.25),
             ..Diagnostics::default()
         },
-        fitted: Vec::new(),
-        residuals: Vec::new(),
+        fitted: (0..32).map(|i| 10.0 + f64::from(i) * 0.7).collect(),
+        residuals: (0..32).map(|i| (f64::from(i) * 1.3).sin() * 3.0).collect(),
     });
     let correlation = ComputedBody::Correlation(CorrelationBody {
         method: CorrelationMethod::Pearson,
@@ -313,8 +316,18 @@ fn draws_every_card_body(cx: &mut TestAppContext) {
         "computed-sentence",
         "computed-recompute",
         "computed-assumptions",
+        "regression-plots",
     ] {
         assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+    }
+    // Both residual plots are drawn by the plot painter.
+    let card = view.read_with(cx, |view, _| view.state().entries()[2].block.id);
+    for name in ["residuals", "qq"] {
+        let selector = format!("plot-canvas-computed-body-{card}-{name}");
+        assert!(
+            cx.debug_bounds(selector.clone().leak()).is_some(),
+            "{selector}"
+        );
     }
 }
 
