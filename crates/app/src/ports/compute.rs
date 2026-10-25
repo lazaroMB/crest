@@ -17,6 +17,7 @@
 //! Engines are CPU-bound and synchronous: async callers run them on a
 //! blocking thread.
 
+mod solve;
 mod stats;
 
 use domain::computed::{
@@ -25,6 +26,7 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use self::solve::*;
 pub use self::stats::*;
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
@@ -415,6 +417,8 @@ pub enum ComputeRequest {
     Bootstrap(BootstrapRequest),
     /// [`ComputePort::forecast`].
     Forecast(ForecastRequest),
+    /// [`ComputePort::optimize`].
+    Optimize(OptimizeRequest),
 }
 
 impl ComputeRequest {
@@ -444,7 +448,11 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&r.data),
             Self::Bootstrap(r) => Some(&r.data),
             Self::Forecast(r) => Some(&r.data),
-            Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
+            Self::Calc(_)
+            | Self::Convert(_)
+            | Self::Power(_)
+            | Self::AbTest(_)
+            | Self::Optimize(_) => None,
         }
     }
 
@@ -460,7 +468,11 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&mut r.data),
             Self::Bootstrap(r) => Some(&mut r.data),
             Self::Forecast(r) => Some(&mut r.data),
-            Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
+            Self::Calc(_)
+            | Self::Convert(_)
+            | Self::Power(_)
+            | Self::AbTest(_)
+            | Self::Optimize(_) => None,
         }
     }
 }
@@ -567,6 +579,15 @@ pub trait ComputePort: Send + Sync {
     /// horizon.
     fn forecast(&self, request: &ForecastRequest) -> ComputeResult;
 
+    /// A linear or mixed-integer program: solution, slacks, binding
+    /// constraints, duals and reduced costs.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an expression that does not parse or
+    /// is not linear, or an unknown variable.
+    fn optimize(&self, request: &OptimizeRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -596,6 +617,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::AbTest(r) => self.ab_test(r),
             ComputeRequest::Bootstrap(r) => self.bootstrap(r),
             ComputeRequest::Forecast(r) => self.forecast(r),
+            ComputeRequest::Optimize(r) => self.optimize(r),
         }
     }
 }

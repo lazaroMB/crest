@@ -540,6 +540,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Forecast(super::forecast::tests::body()),
             &["forecast", "trend", "seasonal-2", "remainder"],
         ),
+        (
+            card("solve.lp", "Linear program"),
+            ComputedBody::Optimization(super::optimization::tests::body()),
+            &["region"],
+        ),
         // Later cards go above this line.
     ]
 }

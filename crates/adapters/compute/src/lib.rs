@@ -16,7 +16,9 @@
 //! r×c Fisher test), power (noncentral t and F, as R's `pwr`) and A/B
 //! tests (lift intervals, sample-ratio and peeking checks), seeded bootstraps
 //! (percentile, BCa, basic, normal, with MCSE) and forecasts (MSTL and
-//! AutoETS from `augurs`, with a hold-out check). Resampling and simulation draw from a seeded ChaCha20
+//! AutoETS from `augurs`, with a hold-out check). The solver cards run as
+//! `crest-solve` (ids `so_*`): LP/MILP on `microlp` with duals from the dual
+//! program. Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -37,10 +39,12 @@ mod data;
 mod describe;
 mod distribution;
 mod envelope;
+mod exprs;
 mod forecast;
 mod linalg;
 mod math;
 mod ols;
+mod optimize;
 mod power;
 mod rank;
 mod reproduce;
@@ -53,7 +57,7 @@ use std::time::SystemTime;
 use application::ports::compute::*;
 use domain::computed::Computed;
 
-pub use envelope::{BACKEND, CALC_BACKEND, CALC_ENGINE_NAME, ENGINE_NAME};
+pub use envelope::{BACKEND, CALC_BACKEND, CALC_ENGINE_NAME, ENGINE_NAME, SOLVE_ENGINE_NAME};
 
 /// The time source; injected so tests get fixed timestamps.
 pub type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
@@ -105,6 +109,7 @@ impl StatsEngine {
             ComputeRequest::AbTest(r) => ab_test::run(r, id)?,
             ComputeRequest::Bootstrap(r) => bootstrap::run(r, id)?,
             ComputeRequest::Forecast(r) => forecast::run(r, id)?,
+            ComputeRequest::Optimize(r) => optimize::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -130,6 +135,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::AbTest(_) => "ab_test",
         ComputeRequest::Bootstrap(_) => "bootstrap",
         ComputeRequest::Forecast(_) => "forecast",
+        ComputeRequest::Optimize(_) => "optimize",
     }
 }
 
@@ -182,10 +188,16 @@ impl ComputePort for StatsEngine {
         self.execute(&ComputeRequest::Forecast(request.clone()), None)
     }
 
+    fn optimize(&self, request: &OptimizeRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Optimize(request.clone()), None)
+    }
+
     fn recompute(&self, envelope: &Computed) -> ComputeResult {
-        if envelope.engine.name != ENGINE_NAME && envelope.engine.name != CALC_ENGINE_NAME {
+        if ![ENGINE_NAME, CALC_ENGINE_NAME, SOLVE_ENGINE_NAME]
+            .contains(&envelope.engine.name.as_str())
+        {
             return Err(ComputeError::NotRecomputable(format!(
-                "envelope {} comes from {}, not {ENGINE_NAME} or {CALC_ENGINE_NAME}",
+                "envelope {} comes from {}, not {ENGINE_NAME}, {CALC_ENGINE_NAME} or {SOLVE_ENGINE_NAME}",
                 envelope.id, envelope.engine.name
             )));
         }

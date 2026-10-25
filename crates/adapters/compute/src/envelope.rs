@@ -19,6 +19,10 @@ pub const CALC_ENGINE_NAME: &str = "crest-calc";
 /// The units library underneath.
 pub const CALC_BACKEND: &str = "numbat 1.24.0";
 
+/// Engine name of the solver cards (LP, equations, Monte Carlo, cash
+/// flow, decision matrix).
+pub const SOLVE_ENGINE_NAME: &str = "crest-solve";
+
 /// The engine record: crate version and target platform.
 pub fn engine() -> Engine {
     Engine {
@@ -38,6 +42,15 @@ pub fn calc_engine() -> Engine {
     }
 }
 
+/// The engine record of the solver cards; each sets its own backend.
+pub fn solve_engine() -> Engine {
+    Engine {
+        name: SOLVE_ENGINE_NAME.into(),
+        backend: None,
+        ..engine()
+    }
+}
+
 fn platform() -> String {
     format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
 }
@@ -47,13 +60,15 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
-/// A deterministic id for a request: `st_` (statistics) or `ca_` (calc
-/// sheets and conversions) and 12 hex digits of its hash.
+/// A deterministic id for a request: `st_` (statistics), `ca_` (calc
+/// sheets and conversions) or `so_` (solver cards) and 12 hex digits of
+/// its hash.
 pub fn derive_id(request: &ComputeRequest) -> String {
     let bytes = serde_json::to_vec(request).unwrap_or_default();
     let hex = blake3::hash(&bytes).to_hex();
     let prefix = match request {
         ComputeRequest::Calc(_) | ComputeRequest::Convert(_) => "ca",
+        ComputeRequest::Optimize(_) => "so",
         _ => "st",
     };
     format!("{prefix}_{}", &hex.as_str()[..12])

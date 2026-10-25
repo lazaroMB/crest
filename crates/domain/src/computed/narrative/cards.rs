@@ -330,8 +330,89 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 display(computed, "next")?,
             ))
         }
+        ("optimization", ComputedBody::Optimization(o)) => {
+            use crate::computed::{OptimizationStatus, Sense};
+            let sense = match o.sense {
+                Sense::Maximize => "maximum",
+                Sense::Minimize => "minimum",
+            };
+            match o.status {
+                OptimizationStatus::Infeasible => {
+                    return Some(
+                        "The problem is infeasible: no point meets every constraint.".into(),
+                    );
+                }
+                OptimizationStatus::Unbounded => {
+                    return Some(format!(
+                        "The problem is unbounded: the objective has no {sense}."
+                    ));
+                }
+                OptimizationStatus::Stopped => {
+                    return Some("The solver stopped before finding a feasible point.".into());
+                }
+                OptimizationStatus::Optimal | OptimizationStatus::Feasible => {}
+            }
+            let values: Vec<String> = o
+                .variables
+                .iter()
+                .filter_map(|v| {
+                    let decimals = if v.integer { 0 } else { 4 };
+                    v.value
+                        .map(|x| format!("{} = {}", v.name, trim(&apa::number(x, decimals))))
+                })
+                .take(8)
+                .collect();
+            let more = o.variables.len().saturating_sub(8);
+            let more = if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            };
+            let binding: Vec<String> = o
+                .constraints
+                .iter()
+                .filter(|k| k.binding)
+                .take(3)
+                .map(|k| match k.dual {
+                    Some(d) if d.abs() > 1e-12 => format!(
+                        "'{}' binds: one more unit of its right-hand side changes the objective \
+                         by {}",
+                        k.name,
+                        trim(&apa::number(d, 4))
+                    ),
+                    _ => format!("'{}' binds at no marginal value", k.name),
+                })
+                .collect();
+            let binding = if binding.is_empty() {
+                " No constraint binds.".to_owned()
+            } else {
+                format!(" {}.", binding.join("; "))
+            };
+            let proven = if o.status == OptimizationStatus::Feasible {
+                " (not proven optimal)"
+            } else {
+                ""
+            };
+            Some(format!(
+                "The {sense} of {} is {}{proven} at {}{more}.{binding}",
+                o.objective_expr,
+                display(computed, "objective")
+                    .map(|t| trim(&t))
+                    .unwrap_or_default(),
+                values.join(", ")
+            ))
+        }
         _ => None,
     }
+}
+
+/// `3.5000` as `3.5`, `2.0000` as `2`: trailing zeros of a decimal number
+/// dropped (minus sign kept).
+fn trim(text: &str) -> String {
+    if !text.contains('.') {
+        return text.to_owned();
+    }
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -273,6 +273,29 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("forecast", "forecast CSV", csv));
+    }
+    if let ComputedBody::Optimization(o) = body {
+        let opt = |x: Option<f64>| x.map(|x| x.to_string()).unwrap_or_default();
+        let mut csv = String::from("kind,name,value,slack_or_lower,dual_or_reduced_cost\n");
+        for v in &o.variables {
+            csv.push_str(&format!(
+                "variable,{},{},{},{}\n",
+                csv_field(&v.name),
+                opt(v.value),
+                opt(v.lower),
+                opt(v.reduced_cost)
+            ));
+        }
+        for k in &o.constraints {
+            csv.push_str(&format!(
+                "constraint,{},{},{},{}\n",
+                csv_field(&k.name),
+                opt(k.activity),
+                opt(k.slack),
+                opt(k.dual)
+            ));
+        }
+        formats.push(CopyFormat::new("solution", "solution CSV", csv));
     }
     formats
 }

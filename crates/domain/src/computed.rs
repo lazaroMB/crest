@@ -25,6 +25,7 @@ pub mod distribution;
 pub mod forecast;
 pub mod lint;
 pub mod narrative;
+pub mod optimization;
 pub mod power;
 pub mod slots;
 
@@ -42,6 +43,9 @@ pub use self::distribution::{
     QqPoint,
 };
 pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
+pub use self::optimization::{
+    ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
+};
 pub use self::power::{PowerBody, PowerTarget, PowerTest};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
@@ -616,6 +620,8 @@ pub enum ComputedBody {
     Bootstrap(BootstrapBody),
     /// A time-series decomposition and forecast.
     Forecast(ForecastBody),
+    /// A linear or mixed-integer program.
+    Optimization(OptimizationBody),
 }
 
 impl ComputedBody {
@@ -648,6 +654,7 @@ impl ComputedBody {
             Self::AbTest(body) => body.validate(),
             Self::Bootstrap(body) => body.validate(),
             Self::Forecast(body) => body.validate(),
+            Self::Optimization(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }
