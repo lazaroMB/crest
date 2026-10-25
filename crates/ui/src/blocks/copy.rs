@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -348,6 +348,22 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("periods", "periods CSV", csv));
+    }
+    if let ComputedBody::DecisionMatrix(d) = body {
+        let mut csv = String::from("option");
+        for c in &d.criteria {
+            csv.push(',');
+            csv.push_str(&csv_field(&c.name));
+        }
+        csv.push_str(",total,rank\n");
+        for o in &d.options {
+            csv.push_str(&csv_field(&o.name));
+            for x in &o.normalized {
+                csv.push_str(&format!(",{x}"));
+            }
+            csv.push_str(&format!(",{},{}\n", o.total, o.rank));
+        }
+        formats.push(CopyFormat::new("matrix", "matrix CSV", csv));
     }
     formats
 }

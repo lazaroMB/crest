@@ -1,6 +1,7 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
 //! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`,
-//! `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`, and what the model is
+//! `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`,
+//! `decision_matrix`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -283,6 +284,48 @@ discounted payback, and the NPV-vs-rate curve; you get the values as slots to ci
 /// `cash_flow`.
 pub type CashFlowTool = UnitsTool<CashFlow>;
 
+/// `decision_matrix`.
+#[derive(Debug, Clone, Copy)]
+pub struct Decide;
+
+impl UnitsKind for Decide {
+    type Request = DecideRequest;
+    const NAME: &'static str = "decision_matrix";
+    const DESCRIPTION: &'static str = "\
+Scores options against weighted criteria with crest's deterministic engine: each criterion has \
+a `weight` and a `direction` (`benefit` or `cost`), each option one score per criterion; scores \
+are normalised (`min_max` by default) and summed with the weights rescaled to 100%. The user \
+sees the matrix with totals and ranks, ties flagged, and for every criterion how far its \
+weight can move before another option takes first place; you get the totals and margins as \
+slots to cite.";
+    fn wrap(request: DecideRequest) -> ComputeRequest {
+        ComputeRequest::Decide(request)
+    }
+    fn subject(request: &DecideRequest) -> String {
+        format!(
+            "{} options × {} criteria",
+            request.options.len(),
+            request.criteria.len()
+        )
+    }
+    fn check(request: &DecideRequest) -> Result<(), String> {
+        if request.options.len() < 2 || request.criteria.is_empty() {
+            return Err("give at least two options and one criterion".into());
+        }
+        let k = request.criteria.len();
+        if let Some(o) = request.options.iter().find(|o| o.scores.len() != k) {
+            return Err(format!(
+                "option {} needs {k} scores, one per criterion",
+                o.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `decision_matrix`.
+pub type DecisionMatrixTool = UnitsTool<Decide>;
+
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]
 pub struct Power;
@@ -429,6 +472,17 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                 "Tornado order (largest swing first): {}.",
                 order.join(", ")
             );
+        }
+        ComputedBody::DecisionMatrix(d) => {
+            let ranking: Vec<String> = {
+                let mut options: Vec<_> = d.options.iter().collect();
+                options.sort_by_key(|o| o.rank);
+                options
+                    .iter()
+                    .map(|o| format!("{}. {}", o.rank, o.name))
+                    .collect()
+            };
+            let _ = writeln!(out, "Ranking: {}.", ranking.join(", "));
         }
         ComputedBody::Forecast(f) => {
             let _ = writeln!(

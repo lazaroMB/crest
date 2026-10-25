@@ -71,7 +71,8 @@ pub fn derive_id(request: &ComputeRequest) -> String {
         ComputeRequest::Optimize(_)
         | ComputeRequest::Solve(_)
         | ComputeRequest::Simulate(_)
-        | ComputeRequest::CashFlow(_) => "so",
+        | ComputeRequest::CashFlow(_)
+        | ComputeRequest::Decide(_) => "so",
         _ => "st",
     };
     format!("{prefix}_{}", &hex.as_str()[..12])

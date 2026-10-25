@@ -22,6 +22,7 @@ pub mod apa;
 pub mod bootstrap;
 pub mod cash_flow;
 pub mod contingency;
+pub mod decision_matrix;
 pub mod distribution;
 pub mod equations;
 pub mod forecast;
@@ -42,6 +43,10 @@ pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
 pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::cash_flow::{CashFlowBody, CashFlowRow};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
+pub use self::decision_matrix::{
+    CriterionDirection, DecisionCriterion, DecisionMatrixBody, DecisionOption, Normalization,
+    WeightSensitivity, WeightThreshold,
+};
 pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
     QqPoint,
@@ -634,6 +639,8 @@ pub enum ComputedBody {
     Simulation(SimulationBody),
     /// A cash flow's NPV, IRR and MIRR.
     CashFlow(CashFlowBody),
+    /// A weighted decision matrix.
+    DecisionMatrix(DecisionMatrixBody),
 }
 
 impl ComputedBody {
@@ -670,6 +677,7 @@ impl ComputedBody {
             Self::Equations(body) => body.validate(),
             Self::Simulation(body) => body.validate(),
             Self::CashFlow(body) => body.validate(),
+            Self::DecisionMatrix(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

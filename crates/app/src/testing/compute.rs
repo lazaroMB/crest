@@ -296,6 +296,36 @@ impl FakeCompute {
                     npv_curve: Curve::default(),
                 }),
             ),
+            ComputeRequest::Decide(r) => (
+                "solve.decision_matrix",
+                "Decision matrix",
+                "decision_matrix",
+                ComputedBody::DecisionMatrix(DecisionMatrixBody {
+                    normalization: r.normalization,
+                    criteria: r
+                        .criteria
+                        .iter()
+                        .map(|c| DecisionCriterion {
+                            name: c.name.clone(),
+                            raw_weight: c.weight,
+                            weight: c.weight,
+                            direction: c.direction,
+                        })
+                        .collect(),
+                    options: r
+                        .options
+                        .iter()
+                        .map(|o| DecisionOption {
+                            name: o.name.clone(),
+                            scores: o.scores.clone(),
+                            normalized: o.scores.clone(),
+                            total: 0.0,
+                            rank: 1,
+                        })
+                        .collect(),
+                    sensitivity: Vec::new(),
+                }),
+            ),
             ComputeRequest::Power(r) => (
                 "stats.power",
                 "Power analysis",
@@ -595,6 +625,10 @@ impl ComputePort for FakeCompute {
 
     fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult {
         self.answer(&ComputeRequest::CashFlow(request.clone()), None)
+    }
+
+    fn decide(&self, request: &DecideRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Decide(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

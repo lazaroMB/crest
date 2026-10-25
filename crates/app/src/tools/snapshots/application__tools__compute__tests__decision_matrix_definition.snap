@@ -1,0 +1,122 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(DecisionMatrixTool::new(ports))"
+---
+{
+  "name": "decision_matrix",
+  "description": "Scores options against weighted criteria with crest's deterministic engine: each criterion has a `weight` and a `direction` (`benefit` or `cost`), each option one score per criterion; scores are normalised (`min_max` by default) and summed with the weights rescaled to 100%. The user sees the matrix with totals and ranks, ties flagged, and for every criterion how far its weight can move before another option takes first place; you get the totals and margins as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "criteria": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/CriterionInput"
+        },
+        "description": "The criteria."
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/OptionInput"
+        },
+        "description": "The options."
+      },
+      "normalization": {
+        "$ref": "#/$defs/Normalization",
+        "description": "`min_max` (default), `max` or `none`.",
+        "default": "min_max"
+      }
+    },
+    "required": [
+      "criteria",
+      "options"
+    ],
+    "description": "Input of `decide`: a weighted decision matrix with ranks and weight\nsensitivity.",
+    "title": "DecideRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "CriterionInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, e.g. `price`."
+          },
+          "weight": {
+            "type": "number",
+            "format": "double",
+            "description": "Weight (any non-negative scale; normalised to sum 1)."
+          },
+          "direction": {
+            "$ref": "#/$defs/CriterionDirection",
+            "description": "`benefit` (default: more is better) or `cost` (less is better).",
+            "default": "benefit"
+          }
+        },
+        "required": [
+          "name",
+          "weight"
+        ],
+        "description": "One criterion of a decision matrix."
+      },
+      "CriterionDirection": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "benefit",
+            "description": "Higher scores are better."
+          },
+          {
+            "type": "string",
+            "const": "cost",
+            "description": "Lower scores are better (price, risk)."
+          }
+        ],
+        "description": "Whether more of a criterion is better."
+      },
+      "OptionInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "scores": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "One score per criterion, in criterion order."
+          }
+        },
+        "required": [
+          "name",
+          "scores"
+        ],
+        "description": "One option of a decision matrix."
+      },
+      "Normalization": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "min_max",
+            "description": "(x − min)/(max − min), reversed for a cost: the best option 1, the\nworst 0."
+          },
+          {
+            "type": "string",
+            "const": "max",
+            "description": "x/max, or min/x for a cost (positive scores)."
+          },
+          {
+            "type": "string",
+            "const": "none",
+            "description": "The raw scores (already on one scale); a cost counts negatively."
+          }
+        ],
+        "description": "How raw scores are put on a common scale."
+      }
+    }
+  }
+}

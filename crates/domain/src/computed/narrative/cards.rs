@@ -548,6 +548,52 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 display(computed, "npv")?,
             ))
         }
+        ("decision_matrix", ComputedBody::DecisionMatrix(d)) => {
+            let mut order: Vec<&crate::computed::DecisionOption> = d.options.iter().collect();
+            order.sort_by_key(|a| a.rank);
+            let (first, second) = (order.first()?, order.get(1)?);
+            let lead = if first.rank == second.rank {
+                format!(
+                    "{} and {} tie for first place with {}",
+                    first.name,
+                    second.name,
+                    apa::number(first.total, 3)
+                )
+            } else {
+                format!(
+                    "{} ranks first with {}, {} ahead of {}",
+                    first.name,
+                    apa::number(first.total, 3),
+                    display(computed, "margin")?,
+                    second.name
+                )
+            };
+            let sensitive = d
+                .sensitivity
+                .iter()
+                .flat_map(|s| {
+                    [s.lower.as_ref(), s.upper.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .map(move |t| ((t.weight - s.weight).abs(), s, t))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, s, t)| {
+                    format!(
+                        " The ranking is most sensitive to {}: at a weight of {}% instead of \
+                         {}%, {} takes the lead.",
+                        s.criterion,
+                        apa::number(t.weight * 100.0, 1),
+                        apa::number(s.weight * 100.0, 1),
+                        t.new_leader
+                    )
+                })
+                .unwrap_or_else(|| " No single weight change moves first place.".into());
+            Some(format!(
+                "{lead} (weighted sum of {} scores).{sensitive}",
+                d.normalization.label()
+            ))
+        }
         _ => None,
     }
 }
