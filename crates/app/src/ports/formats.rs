@@ -3,8 +3,8 @@
 //! timing diagrams (WaveDrom WaveJSON), dataset previews (CSV, TSV, JSON
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
 //! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
-//! (JSON lines, logfmt, text) and SQL query plans (PostgreSQL `EXPLAIN
-//! (FORMAT JSON)`).
+//! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
+//! (FORMAT JSON)`) and HTTP archives (HAR).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -14,6 +14,7 @@
 
 use domain::dataset::{DatasetFormat, DatasetSpec};
 use domain::devops::flame::FlameSpec;
+use domain::devops::har::HarSpec;
 use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::trace::TraceSpec;
@@ -162,6 +163,17 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         path: Option<&str>,
     ) -> Result<QueryPlanSpec, FormatError>;
+
+    /// An HTTP archive (HAR 1.2, as DevTools, proxies and clients export
+    /// it): requests in start order with timing phases, headers and body
+    /// previews. At most [`domain::devops::har::MAX_ENTRIES`] requests are
+    /// kept.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed JSON or a file without
+    /// `log.entries`.
+    fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError>;
 }
 
 #[cfg(test)]

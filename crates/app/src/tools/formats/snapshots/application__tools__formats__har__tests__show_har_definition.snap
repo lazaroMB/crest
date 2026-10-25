@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats/har.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_har",
+  "description": "Shows an HTTP archive (HAR) of the workspace in the user's timeline: a waterfall with each request's phases (blocked, DNS, connect, TLS, send, wait, receive), a request list with status, type, method and host chips and a text filter, and an inspector for headers, query, bodies and timing (secrets masked until the user reveals them, copy as curl). Returns the counts, bytes, page timings, time per phase and the slowest and failed requests (URLs redacted, no header values): do not repeat the list in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A HAR file of the workspace, as exported by browser DevTools\n(\"Save all as HAR\"), mitmproxy, Charles, Fiddler or an HTTP client."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the waterfall; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_har`.",
+    "title": "ShowHar",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

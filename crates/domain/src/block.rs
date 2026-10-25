@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
 use crate::devops::flame::FlameSpec;
+use crate::devops::har::HarSpec;
 use crate::devops::logs::LogSpec;
 use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::trace::TraceSpec;
@@ -126,6 +127,7 @@ impl Block {
             BlockKind::FlameGraph(spec) => spec.validate(),
             BlockKind::Logs(spec) => spec.validate(),
             BlockKind::QueryPlan(spec) => spec.validate(),
+            BlockKind::Har(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -283,6 +285,9 @@ pub enum BlockKind {
     Logs(Box<LogSpec>),
     /// A SQL query plan on a tree table (tool `show_query_plan`).
     QueryPlan(Box<QueryPlanSpec>),
+    /// An HTTP archive as a waterfall, request list and inspector (tool
+    /// `show_har`).
+    Har(Box<HarSpec>),
 }
 
 /// Lifecycle of a tool call.

@@ -228,6 +228,14 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::Har(har) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[har: {} requests, {} failed]",
+                har.entries.len(),
+                har.failed().len()
+            ),
+        ),
         BlockKind::QueryPlan(plan) => w.line(
             Some(Style::Dim),
             &match plan.execution_time {

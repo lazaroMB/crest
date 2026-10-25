@@ -12,7 +12,9 @@
 //! every profile is `main;work 70` and `main;idle 30` samples; every log
 //! is an info line and two `db down` errors of service `db`; every query
 //! plan is a `Hash Join` (100 ms, 5000 rows for 50 planned) over a hot
-//! `Seq Scan on orders` (70 ms) and a `Hash`.
+//! `Seq Scan on orders` (70 ms) and a `Hash`; every HAR is a `GET /` of
+//! `app.test` (200, 120 ms, 2 kB, with an `Authorization` header) and a
+//! failed `POST /api/pay?token=...` (503, 300 ms).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -22,6 +24,7 @@ use domain::block::{Cell, Column, SourceRef, TableSpec};
 use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
 use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
+use domain::devops::har::{HarEntry, HarHeader, HarSpec, HarTimings};
 use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::{PlanEngine, PlanNode, QueryPlanSpec};
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
@@ -355,5 +358,49 @@ impl FormatsPort for FakeFormats {
         };
         spec.analyse();
         Ok(spec)
+    }
+
+    fn parse_har(&self, _bytes: &[u8], path: &str) -> Result<HarSpec, FormatError> {
+        self.record("parse_har", path)?;
+        let entry = |method: &str, url: &str, status, start, wait: f64| HarEntry {
+            method: method.to_owned(),
+            url: url.to_owned(),
+            status,
+            resource_type: "fetch".into(),
+            start,
+            time: 20.0 + wait,
+            timings: HarTimings {
+                connect: Some(10.0),
+                send: Some(10.0),
+                wait: Some(wait),
+                ..HarTimings::default()
+            },
+            transfer_size: Some(2_000),
+            ..HarEntry::default()
+        };
+        let mut home = entry("GET", "https://app.test/", 200, 0.0, 100.0);
+        home.resource_type = "document".into();
+        home.request_headers = vec![HarHeader {
+            name: "Authorization".into(),
+            value: "Bearer s3cret".into(),
+        }];
+        Ok(HarSpec {
+            title: None,
+            path: Some(path.to_owned()),
+            creator: Some("WebInspector 537.36".into()),
+            started_at: Some(1_792_847_107.0),
+            pages: Vec::new(),
+            entries: vec![
+                home,
+                entry(
+                    "POST",
+                    "https://app.test/api/pay?token=abc",
+                    503,
+                    150.0,
+                    280.0,
+                ),
+            ],
+            total_entries: 2,
+        })
     }
 }

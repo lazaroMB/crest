@@ -545,6 +545,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "An HTTP archive as a waterfall, request list and inspector (tool\n`show_har`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "har"
+        }
+      },
+      "$ref": "#/$defs/HarSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -7899,6 +7913,382 @@ expression: "schemars::schema_for!(Block)"
       },
       "required": [
         "nodes"
+      ]
+    },
+    "HarPage": {
+      "description": "A page load the requests belong to.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id the entries refer to.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Title (often the URL).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Start, in ms from the first request.",
+          "type": "number",
+          "format": "double"
+        },
+        "on_content_load": {
+          "description": "`DOMContentLoaded`, in ms from the page start.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "on_load": {
+          "description": "`load`, in ms from the page start.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "start"
+      ]
+    },
+    "HarEntry": {
+      "description": "One request and its response.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "`GET`, `POST`...",
+          "type": "string"
+        },
+        "url": {
+          "description": "The full URL as requested.",
+          "type": "string"
+        },
+        "http_version": {
+          "description": "`HTTP/1.1`, `h2`...",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Response status; 0 when there was no response (blocked, aborted,\nfailed).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "status_text": {
+          "description": "Reason phrase.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resource_type": {
+          "description": "`document`, `script`, `stylesheet`, `image`, `font`, `xhr`,\n`fetch`, `media`, `websocket` or `other`.",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "Media type of the response.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Start, in ms from the start of the first request.",
+          "type": "number",
+          "format": "double"
+        },
+        "time": {
+          "description": "Total time, in ms.",
+          "type": "number",
+          "format": "double"
+        },
+        "timings": {
+          "description": "Where the time went.",
+          "$ref": "#/$defs/HarTimings",
+          "default": {}
+        },
+        "request_headers": {
+          "description": "Request headers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "response_headers": {
+          "description": "Response headers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "query": {
+          "description": "Query string parameters.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "request_body": {
+          "description": "The posted body.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_body": {
+          "description": "The response body.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transfer_size": {
+          "description": "Bytes on the wire (headers and compressed body).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "content_size": {
+          "description": "Size of the decoded response body.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "server_ip": {
+          "description": "IP address of the server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redirect_url": {
+          "description": "Target of a redirect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Why the request failed (`net::ERR_...`), when the file says.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page": {
+          "description": "Id of the page it belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "url",
+        "resource_type",
+        "start",
+        "time"
+      ]
+    },
+    "HarTimings": {
+      "description": "Where a request's time went, in ms (`None` when the phase did not\napply, `-1` in the file).",
+      "type": "object",
+      "properties": {
+        "blocked": {
+          "description": "Queued, waiting for a connection.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "dns": {
+          "description": "DNS lookup.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "connect": {
+          "description": "TCP connect, without the TLS handshake (the file's `connect`\nincludes `ssl`; the adapter takes it out).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "ssl": {
+          "description": "TLS handshake.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "send": {
+          "description": "Sending the request.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wait": {
+          "description": "Waiting for the first byte (server time plus a round trip).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "receive": {
+          "description": "Reading the response.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "HarHeader": {
+      "description": "A header, query parameter or form field.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name as written.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value as written.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "HarBody": {
+      "description": "A request or response body.",
+      "type": "object",
+      "properties": {
+        "mime_type": {
+          "description": "Its media type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "description": "Size in bytes, when the file gave it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "text": {
+          "description": "The first [`MAX_BODY_PREVIEW`] bytes of the text; `None` when the\nfile did not keep it or it is binary.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "The text was cut to the preview size.",
+          "type": "boolean"
+        },
+        "base64": {
+          "description": "The file stored it base64-encoded (binary); no preview is kept.",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarSpec": {
+      "description": "The requests of a HAR file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "creator": {
+          "description": "What wrote it (`WebInspector 537.36`, `Firefox 131.0`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at": {
+          "description": "Wall clock of the first request, in seconds since the epoch.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "pages": {
+          "description": "Page loads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarPage"
+          }
+        },
+        "entries": {
+          "description": "Requests in start order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarEntry"
+          }
+        },
+        "total_entries": {
+          "description": "Requests in the file; more than `entries` when it was cut at\n[`MAX_ENTRIES`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "entries",
+        "total_entries"
       ]
     }
   }

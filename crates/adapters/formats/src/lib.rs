@@ -13,10 +13,12 @@
 //!   serde);
 //! - profiles from folded stacks and pprof ([`flame`], prost + flate2);
 //! - log files in JSON lines, logfmt or text ([`logs`]);
-//! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json).
+//! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json);
+//! - HTTP archives ([`har`], own serde).
 
 pub mod dataset;
 pub mod flame;
+pub mod har;
 pub mod junit;
 pub mod libtest;
 pub mod logs;
@@ -31,6 +33,7 @@ use application::ports::formats::{
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::flame::FlameSpec;
+use domain::devops::har::HarSpec;
 use domain::devops::logs::LogSpec;
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::trace::TraceSpec;
@@ -102,5 +105,9 @@ impl FormatsPort for Formats {
         path: Option<&str>,
     ) -> Result<QueryPlanSpec, FormatError> {
         query_plan::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError> {
+        har::parse(bytes, path).map_err(FormatError::Invalid)
     }
 }

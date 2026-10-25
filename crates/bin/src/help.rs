@@ -183,7 +183,7 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_molecule" | "show_plate" | "stats_distribution" | "stats_contingency"
         | "stats_power" | "stats_ab_test" | "stats_bootstrap" | "stats_forecast" | "solve_lp"
         | "solve_equations" | "monte_carlo" | "cash_flow" | "decision_matrix" | "show_trace"
-        | "show_flamegraph" | "show_logs" | "show_query_plan" => "read",
+        | "show_flamegraph" | "show_logs" | "show_query_plan" | "show_har" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }
