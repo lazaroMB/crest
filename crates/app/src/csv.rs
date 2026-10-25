@@ -88,7 +88,8 @@ pub fn number(text: &str) -> Option<f64> {
 }
 
 /// Cells that mean "missing": empty, `NA` (R), `NaN`, `null`, `None`.
-fn is_missing(text: &str) -> bool {
+#[must_use]
+pub fn is_missing(text: &str) -> bool {
     matches!(
         text.trim(),
         "" | "NA" | "N/A" | "NaN" | "nan" | "null" | "NULL" | "None"

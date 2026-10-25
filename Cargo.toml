@@ -107,6 +107,13 @@ numbat = { version = "=1.24.0", default-features = false }
 # (adapter-formats relaxes JSON5-style input itself).
 quick-xml = "=0.41.0"
 wavedrom = { version = "=0.1.0", default-features = false, features = ["serde_json"] }
+# Dataset previews: Parquet through its record API (no arrow) with the
+# codecs pandas/pyarrow and polars write by default (snappy, zstd, gzip,
+# lz4); no async, no object store, no encryption.
+bytes = "1.12.1"
+parquet = { version = "=60.0.0", default-features = false, features = ["snap", "zstd", "flate2-zlib-rs", "lz4"] }
+# 2D molecules: SMILES parsing, formula/mass and SVG depiction (pure Rust).
+chematic = { version = "=1.2.1", default-features = false, features = ["smiles", "depict", "chem"] }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
