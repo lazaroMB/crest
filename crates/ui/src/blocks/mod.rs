@@ -24,6 +24,7 @@ pub mod plot;
 pub mod shell;
 pub mod sources;
 pub mod stage;
+pub mod svg;
 pub mod table;
 pub mod thinking;
 

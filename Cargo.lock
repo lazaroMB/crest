@@ -8856,11 +8856,13 @@ dependencies = [
  "ratex-parser",
  "ratex-render",
  "ratex-types",
+ "resvg 0.46.0",
  "rusty-mermaid",
  "rusty-mermaid-core",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "usvg 0.46.0",
  "uuid",
  "wgpu",
 ]
