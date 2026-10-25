@@ -559,6 +559,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A Terraform plan's resource changes on a tree table (tool\n`show_terraform_plan`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "terraform_plan"
+        }
+      },
+      "$ref": "#/$defs/TerraformPlanSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -8289,6 +8303,321 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "entries",
         "total_entries"
+      ]
+    },
+    "PlanSource": {
+      "description": "Where the plan came from.",
+      "oneOf": [
+        {
+          "description": "`terraform show -json <planfile>`: attribute values included.",
+          "type": "string",
+          "const": "show"
+        },
+        {
+          "description": "The `planned_change` lines of `terraform plan -json`: actions only.",
+          "type": "string",
+          "const": "stream"
+        }
+      ]
+    },
+    "ResourceChange": {
+      "description": "One resource with a planned change.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Full address (`module.net.aws_subnet.private[1]`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Resource type (`aws_instance`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data": {
+          "description": "`data` for a data source.",
+          "type": "boolean"
+        },
+        "provider": {
+          "description": "The provider (`registry.terraform.io/hashicorp/aws`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "description": "What happens to it.",
+          "$ref": "#/$defs/PlanAction"
+        },
+        "reason": {
+          "description": "Why (`replace_because_cannot_update`, `delete_because_no_resource_config`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_address": {
+          "description": "The resource moves from this address.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attributes": {
+          "description": "The attributes that change (all set ones for a create or\ndestroy), at most [`MAX_ATTRS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AttrChange"
+          }
+        },
+        "attributes_total": {
+          "description": "Attribute changes before the cap at [`MAX_ATTRS`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "address",
+        "action"
+      ]
+    },
+    "PlanAction": {
+      "description": "What happens to a resource or output.",
+      "oneOf": [
+        {
+          "description": "Destroyed.",
+          "type": "string",
+          "const": "delete"
+        },
+        {
+          "description": "Destroyed and created again (in either order).",
+          "type": "string",
+          "const": "replace"
+        },
+        {
+          "description": "Changed in place.",
+          "type": "string",
+          "const": "update"
+        },
+        {
+          "description": "Created.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "A data source read during apply.",
+          "type": "string",
+          "const": "read"
+        },
+        {
+          "description": "Removed from the state without being destroyed (`removed` block).",
+          "type": "string",
+          "const": "forget"
+        },
+        {
+          "description": "Nothing to do.",
+          "type": "string",
+          "const": "no_op"
+        }
+      ]
+    },
+    "AttrChange": {
+      "description": "One attribute that differs (or, for a create or destroy, is set).",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Flattened path: `tags.Name`, `ingress[0].port`, `tags[\"a.b\"]`.",
+          "type": "string"
+        },
+        "before": {
+          "description": "The value before.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "after": {
+          "description": "The value after.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "forces_replacement": {
+          "description": "Changing it forces the resource to be replaced.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "AttrValue": {
+      "description": "One side of an attribute change.",
+      "oneOf": [
+        {
+          "description": "Not set on this side.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "absent"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A value (a scalar, or an empty list or map).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "known"
+            },
+            "value": true
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "Marked sensitive: the value is not kept.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sensitive"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Known only after apply.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "OutputChange": {
+      "description": "A root module output that changes.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Output name.",
+          "type": "string"
+        },
+        "action": {
+          "description": "What happens to it.",
+          "$ref": "#/$defs/PlanAction"
+        },
+        "before": {
+          "description": "The value before.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "after": {
+          "description": "The value after.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "action"
+      ]
+    },
+    "TerraformPlanSpec": {
+      "description": "A Terraform plan.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Which JSON it was.",
+          "$ref": "#/$defs/PlanSource",
+          "default": "show"
+        },
+        "terraform_version": {
+          "description": "Terraform (or OpenTofu) version that wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resources": {
+          "description": "Resources that change, in the plan's order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceChange"
+          }
+        },
+        "unchanged": {
+          "description": "Resources with nothing to do.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "drift": {
+          "description": "Addresses changed outside Terraform since the last apply.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputs": {
+          "description": "Outputs that change.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OutputChange"
+          }
+        },
+        "errored": {
+          "description": "Planning failed part way (the plan is incomplete).",
+          "type": "boolean"
+        },
+        "applyable": {
+          "description": "Whether the plan can be applied, when the file says.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resources"
       ]
     }
   }

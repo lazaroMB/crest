@@ -493,6 +493,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
             CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
         ],
+        BlockKind::TerraformPlan(spec) => vec![
+            CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
+            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
+        ],
         BlockKind::Har(spec) => vec![
             CopyFormat::new("requests", "requests CSV", spec.to_csv()),
             CopyFormat::new(

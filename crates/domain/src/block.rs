@@ -20,6 +20,7 @@ use crate::devops::flame::FlameSpec;
 use crate::devops::har::HarSpec;
 use crate::devops::logs::LogSpec;
 use crate::devops::query_plan::QueryPlanSpec;
+use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
@@ -128,6 +129,7 @@ impl Block {
             BlockKind::Logs(spec) => spec.validate(),
             BlockKind::QueryPlan(spec) => spec.validate(),
             BlockKind::Har(spec) => spec.validate(),
+            BlockKind::TerraformPlan(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -288,6 +290,9 @@ pub enum BlockKind {
     /// An HTTP archive as a waterfall, request list and inspector (tool
     /// `show_har`).
     Har(Box<HarSpec>),
+    /// A Terraform plan's resource changes on a tree table (tool
+    /// `show_terraform_plan`).
+    TerraformPlan(Box<TerraformPlanSpec>),
 }
 
 /// Lifecycle of a tool call.

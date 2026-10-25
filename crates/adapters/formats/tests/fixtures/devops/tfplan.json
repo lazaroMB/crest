@@ -1,0 +1,85 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "aws_instance.web",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {"ami": "ami-0aa", "id": "i-123", "instance_type": "t3.micro", "tags": {"Name": "web", "kubernetes.io/role": "node"}},
+        "after": {"ami": "ami-0bb", "instance_type": "t3.micro", "tags": {"Name": "web", "kubernetes.io/role": "node"}},
+        "after_unknown": {"id": true, "tags": {}},
+        "before_sensitive": {"tags": {}},
+        "after_sensitive": {"tags": {}},
+        "replace_paths": [["ami"]]
+      },
+      "action_reason": "replace_because_cannot_update"
+    },
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "main",
+      "change": {
+        "actions": ["update"],
+        "before": {"password": "hunter2", "allocated_storage": 20, "ingress": [{"port": 5432, "cidr_blocks": ["10.0.0.0/16"]}]},
+        "after": {"password": "correct-horse", "allocated_storage": 50, "ingress": [{"port": 5432, "cidr_blocks": ["10.0.0.0/16", "10.1.0.0/16"]}]},
+        "after_unknown": {},
+        "before_sensitive": {"password": true},
+        "after_sensitive": {"password": true}
+      }
+    },
+    {
+      "address": "module.logs.aws_s3_bucket.this[0]",
+      "module_address": "module.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "this",
+      "index": 0,
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"bucket": "acme-logs", "force_destroy": false, "tags": null, "lifecycle_rule": []},
+        "after_unknown": {"arn": true, "id": true, "lifecycle_rule": []},
+        "before_sensitive": false,
+        "after_sensitive": {"lifecycle_rule": []}
+      }
+    },
+    {
+      "address": "aws_iam_role.old",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "old",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "old-role"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": false
+      },
+      "action_reason": "delete_because_no_resource_config"
+    },
+    {
+      "address": "aws_vpc.main",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {"actions": ["no-op"], "before": {"cidr_block": "10.0.0.0/16"}, "after": {"cidr_block": "10.0.0.0/16"}, "after_unknown": {}}
+    }
+  ],
+  "resource_drift": [
+    {"address": "aws_security_group.web", "change": {"actions": ["update"]}}
+  ],
+  "output_changes": {
+    "web_ip": {"actions": ["create"], "before": null, "after": null, "after_unknown": true, "before_sensitive": false, "after_sensitive": false},
+    "db_password": {"actions": ["update"], "before": "hunter2", "after": "correct-horse", "after_unknown": false, "before_sensitive": true, "after_sensitive": true},
+    "region": {"actions": ["no-op"], "before": "us-east-1", "after": "us-east-1"}
+  },
+  "errored": false,
+  "applyable": true
+}

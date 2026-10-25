@@ -1,6 +1,7 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
-//! `show_query_plan` and `show_har` tools from Lua. Each returns a block (wrapped like
+//! `show_query_plan`, `show_har` and `show_terraform_plan` tools from
+//! Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -11,6 +12,7 @@
 //! return app.formats.logs{ path = 'logs/app.log', format = 'logfmt' }
 //! return app.formats.query_plan{ path = 'plans/slow.json' }
 //! return app.formats.har{ path = 'net/checkout.har' }
+//! return app.formats.terraform_plan{ path = 'infra/plan.json' }
 //! ```
 //!
 //! | Function | Block |
@@ -22,6 +24,7 @@
 //! | `logs{ path, format }` | a log file on a filterable list (`json`, `logfmt` or `text`; guessed when absent) |
 //! | `query_plan{ path or plan, title }` | a PostgreSQL `EXPLAIN (FORMAT JSON)` plan on a tree table |
 //! | `har{ path, title }` | an HTTP archive as a waterfall with a request inspector |
+//! | `terraform_plan{ path, title }` | a Terraform plan (`terraform show -json`) as a tree of resource changes |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -250,6 +253,23 @@ fn har(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Har(Box::new(spec)))
 }
 
+fn terraform_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "terraform_plan";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_terraform_plan(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::TerraformPlan(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -279,6 +299,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => flamegraph(lua, &args),
             _ => Err(error("flamegraph", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "terraform_plan",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => terraform_plan(lua, &args),
+            _ => Err(error("terraform_plan", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -327,6 +354,7 @@ mod tests {
             .with_file("logs/app.log", "info hi\n")
             .with_file("plans/q.json", "[]")
             .with_file("net/app.har", "{}")
+            .with_file("infra/plan.json", "{}")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -405,6 +433,15 @@ mod tests {
             panic!("not a HAR: {out:?}");
         };
         assert_eq!(spec.entries.len(), 2);
+        let out = run_code(
+            "return app.formats.terraform_plan{ path = 'infra/plan.json' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::TerraformPlan(spec)) = out else {
+            panic!("not a plan: {out:?}");
+        };
+        assert_eq!(spec.resources.len(), 3);
     }
 
     #[test]
