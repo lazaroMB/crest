@@ -38,6 +38,20 @@ expression: definition(ShowPlateTool)
         ],
         "description": "Title shown above the plate.",
         "default": null
+      },
+      "scale": {
+        "$ref": "#/$defs/PlateScale",
+        "description": "Colour scale: `sequential` (default), `diverging` around `center`\n(fold changes, z-scores, % of control) or `log` (concentrations,\ncounts spanning decades; values at or below 0 are not coloured).",
+        "default": "sequential"
+      },
+      "center": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Centre of a diverging scale; 0 when the values straddle 0, else\ntheir median.",
+        "default": null
       }
     },
     "required": [
@@ -75,6 +89,26 @@ expression: definition(ShowPlateTool)
           "well"
         ],
         "description": "One well of a plate."
+      },
+      "PlateScale": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "sequential",
+            "description": "Faint at the minimum to solid at the maximum."
+          },
+          {
+            "type": "string",
+            "const": "diverging",
+            "description": "Two hues away from a centre (fold changes, z-scores, % of control)."
+          },
+          {
+            "type": "string",
+            "const": "log",
+            "description": "Sequential over `log10` of the values (concentrations, counts);\nwells at or below 0 are not coloured."
+          }
+        ],
+        "description": "The colour scale of a plate map."
       }
     }
   }

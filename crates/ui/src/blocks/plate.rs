@@ -2,15 +2,19 @@
 //! microplate as a heatmap.
 //!
 //! Row letters run down the left, column numbers across the top. A well
-//! with a value is filled on a sequential scale of the theme's first
-//! chart colour, from faint (the plate's minimum) to solid (its maximum),
-//! with a legend underneath; a listed well without a value is outlined;
-//! an unlisted well is muted. Labels sit inside the wells of a 96-well
-//! plate, where there is room; every well has a tooltip with its name,
-//! label and value.
+//! with a value is filled on the plate's scale ([`PlateRange`]):
+//! sequential in the theme's first chart colour from faint (the minimum)
+//! to solid (the maximum), the same over `log10` of the values, or
+//! diverging, the info colour below the centre and the danger colour
+//! above it, faint near it. A legend sits underneath. A listed well
+//! without a value (or with one a log scale cannot show) is outlined; an
+//! unlisted well is muted. Labels sit inside the wells of a 96-well
+//! plate, and of a 384-well one in a smaller font when they fit
+//! ([`label_fits`]); every well has a tooltip with its name, label and
+//! value.
 
 use domain::block::BlockKind;
-use domain::science::{PlateSpec, Well, parse_well, plate_dimensions};
+use domain::science::{PlateRange, PlateScale, PlateSpec, Well, parse_well, plate_dimensions};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
@@ -52,35 +56,42 @@ pub fn layout(spec: &PlateSpec) -> Vec<Vec<Option<&Well>>> {
     grid
 }
 
-/// Smallest and largest finite value on the plate.
+/// Font size of the labels inside the wells of a plate of `format`.
 #[must_use]
-pub fn value_range(spec: &PlateSpec) -> Option<(f64, f64)> {
-    let values = spec
-        .wells
-        .iter()
-        .filter_map(|w| w.value)
-        .filter(|v| v.is_finite());
-    let lo = values.clone().reduce(f64::min)?;
-    let hi = values.reduce(f64::max)?;
-    Some((lo, hi))
+pub fn label_font(format: u16) -> f32 {
+    if format == 384 { 8.0 } else { 12.0 }
 }
 
-/// Where `value` sits on the scale, 0–1; the middle when every value is
-/// the same.
+/// Whether `label` fits in a well `size` pixels wide at `font` pixels
+/// (about 0.6 em per character). Labels of 96-well plates are always
+/// shown, clipped to the well.
 #[must_use]
-pub fn scale(value: f64, lo: f64, hi: f64) -> f32 {
-    if hi > lo {
-        #[allow(clippy::cast_possible_truncation)]
-        let t = ((value - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
-        t
-    } else {
-        0.5
+pub fn label_fits(label: &str, format: u16) -> bool {
+    if format != 384 {
+        return true;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let width = label.chars().count() as f32 * label_font(format) * 0.6;
+    width <= well_size(format) - 2.0
+}
+
+/// The colour of a well at scale position `t` (see
+/// [`PlateRange::position`]): the sequential base from faint to solid, or
+/// for a diverging scale `low` below the centre and `high` above it.
+fn shade(scale: PlateScale, t: f64, base: Hsla, low: Hsla, high: Hsla) -> Hsla {
+    #[allow(clippy::cast_possible_truncation)]
+    let t = t as f32;
+    let ramp = |color: Hsla, t: f32| color.opacity(FAINT + (1.0 - FAINT) * t);
+    match scale {
+        PlateScale::Diverging if t < 0.0 => ramp(low, -t),
+        PlateScale::Diverging => ramp(high, t),
+        PlateScale::Sequential | PlateScale::Log => ramp(base, t),
     }
 }
 
-/// The scale's colour at `t`: the base colour from faint to solid.
-fn ramp(base: Hsla, t: f32) -> Hsla {
-    base.opacity(FAINT + (1.0 - FAINT) * t)
+/// Whether text on a well at position `t` needs the background colour.
+fn dark(t: f64) -> bool {
+    t.abs() > 0.55
 }
 
 /// The tooltip of a well: name, label and value.
@@ -96,6 +107,15 @@ pub fn tooltip_text(name: &str, well: Option<&Well>, value_label: Option<&str>) 
     if let Some(value) = well.value {
         let unit = value_label.map(|l| format!(" {l}")).unwrap_or_default();
         text.push_str(&format!(" · {value}{unit}"));
+    }
+    text
+}
+
+/// [`tooltip_text`], noting a value a log scale does not colour.
+fn well_tooltip(name: &str, well: Option<&Well>, spec: &PlateSpec) -> String {
+    let mut text = tooltip_text(name, well, spec.value_label.as_deref());
+    if spec.scale == PlateScale::Log && well.and_then(|w| w.value).is_some_and(|v| v <= 0.0) {
+        text.push_str(" (not shown on the log scale)");
     }
     text
 }
@@ -130,9 +150,9 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
     };
     let theme = cx.theme();
     let size = well_size(spec.format);
-    let labels_inside = spec.format == 96;
-    let range = value_range(spec);
-    let base = theme.chart_1;
+    let range = PlateRange::of(spec);
+    let (base, low, high) = (theme.chart_1, theme.info, theme.danger);
+    let font = label_font(spec.format);
     let block = entry.block.id;
     let grid = layout(spec);
     let cols = grid.first().map_or(0, Vec::len);
@@ -163,7 +183,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
             )
             .children(row.iter().enumerate().map(|(c, well)| {
                 let name = format!("{letter}{}", c + 1);
-                let tip = tooltip_text(&name, *well, spec.value_label.as_deref());
+                let tip = well_tooltip(&name, *well, spec);
                 let selector = format!("plate-well-{name}");
                 let mut cell = div()
                     .id(ElementId::Name(SharedString::from(format!(
@@ -183,41 +203,65 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                 match well {
                     None => cell = cell.bg(theme.muted),
                     Some(well) => {
-                        let t = match (well.value, range) {
-                            (Some(v), Some((lo, hi))) => Some(scale(v, lo, hi)),
-                            _ => None,
-                        };
+                        let t = well.value.zip(range).and_then(|(v, r)| r.position(v));
                         cell = match t {
-                            Some(t) => cell.bg(ramp(base, t)).text_color(if t > 0.55 {
-                                theme.background
-                            } else {
-                                theme.foreground
-                            }),
+                            Some(t) => cell.bg(shade(spec.scale, t, base, low, high)).text_color(
+                                if dark(t) {
+                                    theme.background
+                                } else {
+                                    theme.foreground
+                                },
+                            ),
                             None => cell.border_1().border_color(theme.border),
                         };
-                        if labels_inside && let Some(label) = &well.label {
-                            cell = cell.child(SharedString::from(label.clone()));
+                        if let Some(label) = &well.label
+                            && label_fits(label, spec.format)
+                        {
+                            cell = cell
+                                .text_size(px(font))
+                                .child(SharedString::from(label.clone()));
                         }
                     }
                 }
                 cell
             }))
     });
-    let legend = range.map(|(lo, hi)| {
+    let legend = range.map(|range| {
+        let diverging = range.scale == PlateScale::Diverging;
         #[allow(clippy::cast_precision_loss)]
         let swatches = (0..LEGEND_STEPS).map(|i| {
-            let t = i as f32 / (LEGEND_STEPS - 1) as f32;
-            div().w(px(14.)).h(px(10.)).bg(ramp(base, t))
+            let u = i as f64 / (LEGEND_STEPS - 1) as f64;
+            let t = if diverging { 2.0 * u - 1.0 } else { u };
+            div()
+                .w(px(14.))
+                .h(px(10.))
+                .bg(shade(range.scale, t, base, low, high))
         });
+        // A diverging legend runs from the centre minus the reach to the
+        // centre plus it.
+        let reach = (range.hi - range.center)
+            .abs()
+            .max((range.center - range.lo).abs());
+        let (from, to) = if diverging {
+            (range.center - reach, range.center + reach)
+        } else {
+            (range.lo, range.hi)
+        };
+        let note = match range.scale {
+            PlateScale::Sequential => None,
+            PlateScale::Log => Some("log scale".to_owned()),
+            PlateScale::Diverging => Some(format!("centre {}", short_number(range.center))),
+        };
         h_flex()
             .gap_1()
             .text_xs()
             .text_color(theme.muted_foreground)
             .debug_selector(|| "plate-legend".to_owned())
-            .child(short_number(lo))
+            .child(short_number(from))
             .child(h_flex().children(swatches))
-            .child(short_number(hi))
+            .child(short_number(to))
             .when_some(spec.value_label.clone(), |this, label| this.child(label))
+            .when_some(note, |this, note| this.child(note))
     });
     let title = spec.title.clone().unwrap_or_else(|| {
         let (r, c) = plate_dimensions(spec.format).unwrap_or_default();
@@ -271,6 +315,8 @@ mod tests {
                 well("A1", Some("blank, 1"), Some(0.04)),
                 well("B2", None, None),
             ],
+            scale: PlateScale::Sequential,
+            center: None,
         }
     }
 
@@ -281,9 +327,18 @@ mod tests {
         assert_eq!((grid.len(), grid[0].len()), (8, 12));
         assert_eq!(grid[7][11].map(|w| w.value), Some(Some(1.2)));
         assert!(grid[0][1].is_none());
-        assert_eq!(value_range(&spec), Some((0.04, 1.2)));
-        assert!((scale(1.2, 0.04, 1.2) - 1.0).abs() < 1e-6);
-        assert!((scale(5.0, 5.0, 5.0) - 0.5).abs() < 1e-6);
+        let range = PlateRange::of(&spec).unwrap();
+        assert_eq!((range.lo, range.hi), (0.04, 1.2));
+        assert_eq!(range.position(1.2), Some(1.0));
+        // 384-well labels show when short enough.
+        assert!(label_fits("c+", 384) && !label_fits("blank, 1", 384));
+        assert!(label_fits("blank, 1", 96));
+        let mut log = spec.clone();
+        log.scale = PlateScale::Log;
+        log.wells.push(well("C3", None, Some(0.0)));
+        assert!(
+            well_tooltip("C3", log.wells.last(), &log).ends_with("(not shown on the log scale)")
+        );
         assert_eq!(
             tooltip_text("A1", grid[0][0], Some("OD600")),
             "A1 · blank, 1 · 0.04 OD600"
@@ -299,11 +354,19 @@ mod tests {
     fn draws_wells_and_legend(cx: &mut TestAppContext) {
         cx.update(gpui_component::init);
         let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let mut diverging = spec();
+        diverging.format = 384;
+        diverging.scale = PlateScale::Diverging;
+        diverging.wells.push(well("P24", Some("x"), Some(-3.0)));
+        let mut log = spec();
+        log.scale = PlateScale::Log;
         view.update(cx, |view, cx| {
             view.apply_all(
-                [DomainEvent::BlockAdded {
-                    block: Block::new(BlockKind::Plate(spec())),
-                }],
+                [spec(), diverging, log]
+                    .into_iter()
+                    .map(|spec| DomainEvent::BlockAdded {
+                        block: Block::new(BlockKind::Plate(spec)),
+                    }),
                 cx,
             );
         });

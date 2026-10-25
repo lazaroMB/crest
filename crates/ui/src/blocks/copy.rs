@@ -420,6 +420,8 @@ mod tests {
                 label: None,
                 value: Some(3.0),
             }],
+            scale: domain::science::PlateScale::Sequential,
+            center: None,
         };
         let plate = formats(&BlockKind::Plate(plate));
         assert_eq!(plate[0].text, "well,label,value\nA2,,3\n");
