@@ -15,9 +15,13 @@
 //! - log files in JSON lines, logfmt or text ([`logs`]);
 //! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json);
 //! - HTTP archives ([`har`], own serde);
-//! - Terraform / OpenTofu plans ([`terraform`], serde_json).
+//! - Terraform / OpenTofu plans ([`terraform`], serde_json);
+//! - Graphviz DOT ([`dot`], own reduced parser) and ER diagrams from SQL
+//!   DDL ([`er`], sqlparser).
 
 pub mod dataset;
+pub mod dot;
+pub mod er;
 pub mod flame;
 pub mod har;
 pub mod junit;
@@ -34,6 +38,7 @@ use application::ports::formats::{
     DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
 };
 use domain::dataset::DatasetSpec;
+use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
 use domain::devops::logs::LogSpec;
@@ -120,5 +125,18 @@ impl FormatsPort for Formats {
         path: &str,
     ) -> Result<TerraformPlanSpec, FormatError> {
         terraform::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_dot(&self, text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError> {
+        dot::parse(text, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_ddl(
+        &self,
+        sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError> {
+        er::parse(sql, dialect, path).map_err(FormatError::Invalid)
     }
 }

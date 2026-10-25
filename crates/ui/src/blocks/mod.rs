@@ -12,6 +12,7 @@ pub mod computed;
 pub mod copy;
 pub mod custom;
 pub mod dataset;
+pub mod diagram;
 pub mod diff;
 pub mod findings;
 pub mod flame;
@@ -83,6 +84,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::QueryPlan(_) => query_plan::render(entry, window, cx),
         BlockKind::Har(_) => har::render(entry, window, cx),
         BlockKind::TerraformPlan(_) => terraform::render(entry, window, cx),
+        BlockKind::Diagram(_) => diagram::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

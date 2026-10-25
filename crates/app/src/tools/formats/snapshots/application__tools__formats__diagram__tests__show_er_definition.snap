@@ -1,0 +1,49 @@
+---
+source: crates/app/src/tools/formats/diagram.rs
+expression: "definition(ShowErTool::new(ports))"
+---
+{
+  "name": "show_er",
+  "description": "Shows an entity-relationship diagram drawn from SQL DDL (a schema dump or migrations in `path`, or `sql`) in the user's timeline: a node per table, an edge per foreign key labelled with its columns, and a table list with column types and PK / FK badges; focus a table to see its columns. Statements that do not parse are skipped and reported. Returns the tables with their keys and the foreign keys: do not repeat the schema in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A SQL file of the workspace with `CREATE TABLE` (and `ALTER TABLE\n... ADD CONSTRAINT`) statements: a schema dump (`pg_dump\n--schema-only`, `mysqldump --no-data`, `sqlite3 .schema`) or\nmigrations. Give this or `sql`.",
+        "default": null
+      },
+      "sql": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The DDL inline. Give this or `path`.",
+        "default": null
+      },
+      "dialect": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "SQL dialect: generic (default), postgresql, mysql, sqlite, mssql,\nsnowflake, bigquery, duckdb, clickhouse, hive, redshift or ansi.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the diagram; defaults to the file name.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_er`.",
+    "title": "ShowEr",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

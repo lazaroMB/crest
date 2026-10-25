@@ -4,7 +4,8 @@
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
 //! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
-//! (FORMAT JSON)`), HTTP archives (HAR) and Terraform plans.
+//! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans and diagrams
+//! (Graphviz DOT, ER from SQL DDL).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -13,6 +14,7 @@
 //! CPU-bound and synchronous: async callers run it on a blocking thread.
 
 use domain::dataset::{DatasetFormat, DatasetSpec};
+use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
 use domain::devops::logs::{LogFormat, LogSpec};
@@ -189,6 +191,32 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         path: &str,
     ) -> Result<TerraformPlanSpec, FormatError>;
+
+    /// A Graphviz DOT graph (the first of the text) on the graph widget:
+    /// nodes, edges, clusters as groups, `label`, `color` (as the node
+    /// kind) and `rankdir`. `path` names the file, when there is one.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for text that is not DOT or breaks its
+    /// grammar.
+    fn parse_dot(&self, text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError>;
+
+    /// An ER diagram from SQL DDL: a node per `CREATE TABLE` (columns in
+    /// its attributes and in [`DiagramSpec::tables`]), an edge per foreign
+    /// key. `dialect` is a `sqlparser` dialect name (generic when
+    /// absent); statements that do not parse are skipped with a warning.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unknown dialect or SQL without a
+    /// table.
+    fn parse_ddl(
+        &self,
+        sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError>;
 }
 
 #[cfg(test)]

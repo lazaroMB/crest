@@ -493,6 +493,14 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
             CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
         ],
+        BlockKind::Diagram(spec) if spec.tables.is_empty() => {
+            vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
+        }
+        BlockKind::Diagram(spec) => vec![
+            CopyFormat::new("mermaid", "Mermaid", spec.to_mermaid()),
+            CopyFormat::new("dot", "DOT", spec.graph.to_dot()),
+            CopyFormat::new("tables", "tables", spec.tables_tree().to_text()),
+        ],
         BlockKind::TerraformPlan(spec) => vec![
             CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
             CopyFormat::new("changes", "changes CSV", spec.to_csv()),

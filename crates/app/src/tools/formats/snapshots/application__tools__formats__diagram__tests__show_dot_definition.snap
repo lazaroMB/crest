@@ -1,0 +1,41 @@
+---
+source: crates/app/src/tools/formats/diagram.rs
+expression: "definition(ShowDotTool::new(ports.clone()))"
+---
+{
+  "name": "show_dot",
+  "description": "Shows a Graphviz DOT graph (a workspace file in `path`, or `source`) as an interactive node-link graph in the user's timeline: layered layout in the graph's rankdir, clusters as boxes, nodes colored by their DOT color, edge labels, pan, zoom and a click to focus a node's neighbourhood. Returns the node, edge and cluster counts, the most connected nodes, sources, sinks and whether it has cycles: do not repeat the graph in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A Graphviz `.dot` / `.gv` file of the workspace (from cargo\ndepgraph, terraform graph, pydeps, Bazel query --output graph...).\nGive this or `source`.",
+        "default": null
+      },
+      "source": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "DOT source inline (`digraph { a -> b }`). Give this or `path`.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the graph; defaults to the graph's label or name.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_dot`.",
+    "title": "ShowDot",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

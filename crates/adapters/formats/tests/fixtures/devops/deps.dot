@@ -1,0 +1,25 @@
+// cargo-depgraph style output, trimmed
+digraph "crest deps" {
+    rankdir = LR;
+    graph [label="crate graph"];
+    node [shape=box, color=gray];
+    edge [color=black];
+
+    subgraph cluster_core {
+        label = "core\nlayer";
+        domain [label="domain\n0.14"];
+        application [label=<<b>app</b>>, color=blue];
+    }
+    subgraph cluster_edge {
+        label = "adapters";
+        "adapter-formats"; "adapter-lua" [color="blue"];
+        subgraph cluster_inner { label = "ui"; ui; }
+    }
+    bin [label="crest" + " bin"];
+    application -> domain [label="uses", penwidth=2];
+    "adapter-formats" -> { application domain };
+    "adapter-lua" -> application -> domain;
+    bin -> ui:n -> application;
+    ui -> domain [weight=3];
+    /* a comment; with -> arrows */
+}
