@@ -7,7 +7,9 @@
 
 use super::{display, equals, raw, significance};
 use crate::computed::apa::{self, ApaLine};
-use crate::computed::{Alternative, Computed, ComputedBody, ContingencyTest, PowerTarget};
+use crate::computed::{
+    Alternative, BootStatistic, Computed, ComputedBody, ContingencyTest, PowerTarget,
+};
 
 /// The APA line of a phase-2 template, if it has one.
 pub(super) fn apa_line(
@@ -57,6 +59,25 @@ pub(super) fn apa_line(
             }
             _ => None,
         },
+        "bootstrap" => {
+            let ComputedBody::Bootstrap(b) = body else {
+                return None;
+            };
+            let symbol = match b.statistic {
+                BootStatistic::Mean | BootStatistic::TrimmedMean => "M",
+                BootStatistic::Median => "Mdn",
+                BootStatistic::Sd => "SD",
+                BootStatistic::MeanDifference => "ΔM",
+                BootStatistic::MedianDifference => "ΔMdn",
+                BootStatistic::Correlation => "r",
+            };
+            let estimate = computed.value("estimate")?;
+            let mut line = ApaLine::new().stat(symbol, &[], &estimate.display_text());
+            if let Some(ci) = &estimate.ci {
+                line = line.ci(ci, b.statistic == BootStatistic::Correlation);
+            }
+            Some(line)
+        }
         "ab_test" => {
             let mut line = ApaLine::new();
             if let Some(z) = display(computed, "statistic") {
@@ -229,6 +250,49 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 significance(raw(computed, "p_value")?),
                 apa::bounded(1.0 - t.conf_level, 2),
                 t.method.label()
+            ))
+        }
+        ("bootstrap", ComputedBody::Bootstrap(b)) => {
+            let estimate = computed.value("estimate")?;
+            let versus = b
+                .versus
+                .as_ref()
+                .map(|v| match b.statistic {
+                    BootStatistic::Correlation => format!(" and {v}"),
+                    _ => format!(" ({v})"),
+                })
+                .unwrap_or_default();
+            let interval = estimate
+                .ci
+                .as_ref()
+                .map(|ci| {
+                    format!(
+                        "{}% {} interval {} to {}",
+                        apa::number(ci.level * 100.0, 0),
+                        ci.method.as_deref().unwrap_or("bootstrap"),
+                        apa::number(ci.lo, estimate.decimals.unwrap_or(2)),
+                        apa::number(ci.hi, estimate.decimals.unwrap_or(2))
+                    )
+                })
+                .unwrap_or_else(|| "no interval".into());
+            let mcse = match (display(computed, "lo_mcse"), display(computed, "hi_mcse")) {
+                (Some(lo), Some(hi)) => {
+                    format!(" Another seed moves the endpoints by about ±{lo} and ±{hi} (MCSE).")
+                }
+                _ => String::new(),
+            };
+            Some(format!(
+                "The {} of {}{versus} is {} ({interval}; bootstrap SE {}, bias {}) from {} \
+                 resamples with seed {}.{mcse}",
+                b.statistic.label(),
+                b.variable,
+                estimate.display_text(),
+                display(computed, "se")?,
+                display(computed, "bias")?,
+                display(computed, "resamples")?,
+                computed
+                    .seed
+                    .map_or_else(|| "?".to_owned(), |s| s.to_string()),
             ))
         }
         _ => None,

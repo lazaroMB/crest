@@ -22,6 +22,7 @@
 //! | `distribution{ data, variable, by, bin_rule, bins, bandwidth_rule, bandwidth, conf_level }` | histogram, density, box/violin, QQ, ECDF |
 //! | `power{ test, n, effect, p1, p2, alpha, power, groups, alternative, solve_for }` | power or sample size |
 //! | `ab_test{ control = { name, visitors, conversions }, treatment = {...}, expected_split, conf_level, alternative, looks, planned_visitors, minimum_lift }` | A/B test |
+//! | `bootstrap{ data, y, statistic, group, y2, levels, trim, resamples, seed, conf_level }` | seeded bootstrap |
 //! | `contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | contingency table, χ² or Fisher |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
@@ -271,6 +272,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "contingency",
         "power",
         "ab_test",
+        "bootstrap",
     ] {
         let origin = Arc::clone(origin);
         compute.set(

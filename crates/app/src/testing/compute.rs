@@ -15,17 +15,18 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
 use domain::computed::{
-    AbArm, AbMethod, AbTestBody, Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine,
-    CalcSheetBody, Computed, ComputedBody, ComputedValue, ContingencyBody, ContingencyTest,
-    CorrelationBody, CorrelationMethod, Curve, DescriptiveBody, Diagnostics, DistributionBody,
-    DistributionGroup, Engine, FitStats, Histogram, Narrative, PAdjust, PowerBody, PowerTarget,
-    Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
+    AbArm, AbMethod, AbTestBody, Alternative, BandwidthRule, BinRule, BootstrapBody, BoxSummary,
+    CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedValue, ContingencyBody,
+    ContingencyTest, CorrelationBody, CorrelationMethod, Curve, DescriptiveBody, Diagnostics,
+    DistributionBody, DistributionGroup, Engine, FitStats, Histogram, Narrative, PAdjust,
+    PowerBody, PowerTarget, Quantity, QuantityBody, RegressionBody, TestBody, TestKind,
+    VariableKind, VariableSummary,
 };
 
 use crate::ports::compute::{
-    AbTestRequest, CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest,
-    ComputeResult, ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet, DescribeRequest,
-    DistributionRequest, PowerRequest, REQUEST_PARAM, RegressRequest, TestRequest,
+    AbTestRequest, BootstrapRequest, CalcRequest, ColumnValues, ComputeError, ComputePort,
+    ComputeRequest, ComputeResult, ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet,
+    DescribeRequest, DistributionRequest, PowerRequest, REQUEST_PARAM, RegressRequest, TestRequest,
 };
 
 /// Name of the fake engine.
@@ -176,6 +177,26 @@ impl FakeCompute {
                     method: AbMethod::ZTest,
                     looks: r.looks,
                     sample_ratio_mismatch: false,
+                }),
+            ),
+            ComputeRequest::Bootstrap(r) => (
+                "stats.bootstrap",
+                "Bootstrap",
+                "bootstrap",
+                ComputedBody::Bootstrap(BootstrapBody {
+                    statistic: r.statistic,
+                    variable: r.y.clone(),
+                    versus: None,
+                    observed: 1.0,
+                    resamples: r.resamples,
+                    conf_level: r.conf_level,
+                    histogram: Histogram {
+                        edges: vec![0.0, 1.0, 2.0],
+                        counts: vec![1, 1],
+                    },
+                    intervals: Vec::new(),
+                    z0: None,
+                    acceleration: None,
                 }),
             ),
             ComputeRequest::Power(r) => (
@@ -453,6 +474,10 @@ impl ComputePort for FakeCompute {
 
     fn ab_test(&self, request: &AbTestRequest) -> ComputeResult {
         self.answer(&ComputeRequest::AbTest(request.clone()), None)
+    }
+
+    fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bootstrap(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

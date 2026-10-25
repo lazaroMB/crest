@@ -146,6 +146,20 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A bootstrap of one statistic.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "bootstrap"
+        }
+      },
+      "$ref": "#/$defs/BootstrapBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1743,6 +1757,185 @@ expression: "schemars::schema_for!(ComputedBody)"
         "method",
         "looks",
         "sample_ratio_mismatch"
+      ]
+    },
+    "BootStatistic": {
+      "description": "The statistic a bootstrap resamples.",
+      "oneOf": [
+        {
+          "description": "Mean of `y`.",
+          "type": "string",
+          "const": "mean"
+        },
+        {
+          "description": "Median of `y`.",
+          "type": "string",
+          "const": "median"
+        },
+        {
+          "description": "Standard deviation of `y`.",
+          "type": "string",
+          "const": "sd"
+        },
+        {
+          "description": "Mean of `y` without the lowest and highest `trim` share.",
+          "type": "string",
+          "const": "trimmed_mean"
+        },
+        {
+          "description": "Mean of the first group minus the mean of the second.",
+          "type": "string",
+          "const": "mean_difference"
+        },
+        {
+          "description": "Median of the first group minus the median of the second.",
+          "type": "string",
+          "const": "median_difference"
+        },
+        {
+          "description": "Pearson correlation of `y` and `y2` (pairs resampled).",
+          "type": "string",
+          "const": "correlation"
+        }
+      ]
+    },
+    "BootInterval": {
+      "description": "One bootstrap interval.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "How it was formed.",
+          "$ref": "#/$defs/BootMethod"
+        },
+        "lo": {
+          "description": "Lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo_mcse": {
+          "description": "Monte Carlo SE of the lower bound, when the method has one.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "hi_mcse": {
+          "description": "Monte Carlo SE of the upper bound.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "method",
+        "lo",
+        "hi"
+      ]
+    },
+    "BootMethod": {
+      "description": "How a bootstrap interval was formed.",
+      "oneOf": [
+        {
+          "description": "Quantiles of the replicates.",
+          "type": "string",
+          "const": "percentile"
+        },
+        {
+          "description": "Bias-corrected and accelerated quantiles (Efron 1987).",
+          "type": "string",
+          "const": "bca"
+        },
+        {
+          "description": "Basic (reverse percentile): 2θ̂ minus the quantiles.",
+          "type": "string",
+          "const": "basic"
+        },
+        {
+          "description": "θ̂ − bias ± z·SE.",
+          "type": "string",
+          "const": "normal"
+        }
+      ]
+    },
+    "BootstrapBody": {
+      "description": "Body of a bootstrap card.",
+      "type": "object",
+      "properties": {
+        "statistic": {
+          "description": "What was resampled.",
+          "$ref": "#/$defs/BootStatistic"
+        },
+        "variable": {
+          "description": "The variable (and the second variable or the groups).",
+          "type": "string"
+        },
+        "versus": {
+          "description": "Second variable or the two groups, e.g. `am: 1 − 0`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed": {
+          "description": "The statistic on the data.",
+          "type": "number",
+          "format": "double"
+        },
+        "resamples": {
+          "description": "Number of resamples.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "conf_level": {
+          "description": "Level of the intervals.",
+          "type": "number",
+          "format": "double"
+        },
+        "histogram": {
+          "description": "Distribution of the replicates.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "intervals": {
+          "description": "The intervals, percentile and BCa first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BootInterval"
+          }
+        },
+        "z0": {
+          "description": "BCa bias correction z₀.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "acceleration": {
+          "description": "BCa acceleration a (jackknife).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "statistic",
+        "variable",
+        "observed",
+        "resamples",
+        "conf_level",
+        "histogram",
+        "intervals"
       ]
     }
   }

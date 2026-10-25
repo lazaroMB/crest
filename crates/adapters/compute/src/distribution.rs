@@ -46,7 +46,7 @@ fn invalid(text: impl Into<String>) -> ComputeError {
 }
 
 /// The shared bins: (edges, width) over `pooled` (sorted, non-empty).
-fn bins(pooled: &[f64], rule: BinRule, fixed: Option<u32>) -> (Vec<f64>, f64, BinRule) {
+pub fn bins(pooled: &[f64], rule: BinRule, fixed: Option<u32>) -> (Vec<f64>, f64, BinRule) {
     let (min, max) = (pooled[0], pooled[pooled.len() - 1]);
     if max == min {
         return (vec![min - 0.5, max + 0.5], 1.0, rule);
@@ -83,7 +83,7 @@ fn bins(pooled: &[f64], rule: BinRule, fixed: Option<u32>) -> (Vec<f64>, f64, Bi
 }
 
 /// Counts of `xs` in the bins of `edges` (the last bin is closed).
-fn histogram(xs: &[f64], edges: &[f64]) -> Histogram {
+pub fn histogram(xs: &[f64], edges: &[f64]) -> Histogram {
     let bins = edges.len() - 1;
     let (min, width) = (edges[0], (edges[bins] - edges[0]) / bins as f64);
     let mut counts = vec![0u64; bins];

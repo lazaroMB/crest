@@ -522,22 +522,29 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::AbTest(super::ab_test::tests::body()),
             &["rates"],
         ),
+        (
+            {
+                let mut c = card("stats.bootstrap", "Bootstrap of the mean");
+                c.seed = Some(1);
+                c.rng = Some("chacha20".into());
+                c
+            },
+            ComputedBody::Bootstrap(super::bootstrap::tests::body()),
+            &["replicates"],
+        ),
         // Later cards go above this line.
     ]
 }
 
 #[gpui::test]
 fn draws_the_phase_two_cards_with_their_plots(cx: &mut TestAppContext) {
-    let cards = phase_two_cards();
-    let plots: Vec<&[&str]> = cards.iter().map(|c| c.2).collect();
-    let (cx, view, blocks, _) = window(
-        cx,
-        cards.into_iter().map(|(c, body, _)| (c, body)).collect(),
-    );
-    view.read_with(cx, |view, _| assert_eq!(view.state().len(), blocks.len()));
-    for (block, names) in blocks.iter().zip(plots) {
+    // One window per card: the timeline follows its end, so a long one
+    // would not draw the first cards.
+    for (envelope, body, names) in phase_two_cards() {
+        let (cx, _view, blocks, _) = window(cx, vec![(envelope, body)]);
+        assert!(cx.debug_bounds("computed-card").is_some());
         for name in names {
-            let selector = format!("plot-canvas-computed-body-{}-{name}", block.id);
+            let selector = format!("plot-canvas-computed-body-{}-{name}", blocks[0].id);
             assert!(
                 cx.debug_bounds(selector.clone().leak()).is_some(),
                 "{selector}"
