@@ -128,6 +128,11 @@ ratex-parser = "=0.1.15"
 ratex-layout = "=0.1.15"
 ratex-render = { version = "=0.1.15", features = ["embed-fonts"] }
 ratex-types = "=0.1.15"
+# ANSI escapes in shell output (SGR colors; the rest is dropped).
+anstyle-parse = "=1.0.0"
+# SVG images rasterized off the UI thread (the versions gpui-pre uses).
+resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+usvg = { version = "=0.46.0", default-features = false }
 # Frames of GPUI's RenderImage (the version gpui-pre uses).
 image = { version = "0.25.10", default-features = false }
 
