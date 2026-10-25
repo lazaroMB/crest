@@ -6,7 +6,7 @@ use application::usecases::cancel::CancelToken;
 use application::usecases::run_turn::TurnError;
 use domain::conversation::StopReason;
 
-use super::{HeadlessSink, StdinApproval, Terminal};
+use super::{HeadlessSink, StdinApproval, StdinForm, Terminal};
 use crate::args::Args;
 use crate::root::{App, Config, Frontend, Overrides, build_app};
 
@@ -36,11 +36,14 @@ impl Exit {
     }
 }
 
-/// The terminal front end: events and approvals over `terminal`.
+/// The terminal front end: events, approvals and forms over `terminal`.
+/// Forms read through the approval's input; without a terminal on stdin
+/// they are cancelled.
 #[must_use]
 pub fn frontend(terminal: &Terminal, approval: StdinApproval) -> Frontend {
     Frontend {
         events: Arc::new(HeadlessSink::new(terminal.clone())),
+        form: Arc::new(StdinForm::stdin(terminal.clone(), approval.clone())),
         approval: Arc::new(approval),
     }
 }

@@ -75,6 +75,7 @@ use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
+use ui::form::UiForm;
 use ui::help::HelpSnapshot;
 use ui::session::{
     ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
@@ -1577,9 +1578,11 @@ pub fn session_parts(
 ) -> anyhow::Result<SessionParts> {
     let (sink, events) = ChannelSink::channel();
     let (approval, approvals) = UiApproval::channel();
+    let (form, forms) = UiForm::channel();
     let frontend = Frontend {
         events: Arc::new(sink.clone()),
         approval: Arc::new(approval),
+        form: Arc::new(form),
     };
     let api_keys: Arc<dyn ApiKeyPort> = overrides
         .api_keys
@@ -1678,6 +1681,7 @@ pub fn session_parts(
             (parts, workspace)
         }
     };
+    parts.forms = Some(forms);
     parts.workspace_label = workspace_label(&workspace);
     parts.workspace_dir = Some(workspace);
     Ok(parts)
