@@ -8838,6 +8838,7 @@ dependencies = [
 name = "ui"
 version = "0.16.0"
 dependencies = [
+ "anstyle-parse",
  "application",
  "async-trait",
  "base64 0.23.1",

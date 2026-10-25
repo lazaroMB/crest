@@ -6,6 +6,7 @@
 //! because some keep GPUI state per block (a table's `TableView`, a
 //! diagram's pan and zoom) that is created and updated while drawing.
 
+pub mod ansi;
 pub mod chart;
 pub mod computed;
 pub mod custom;
