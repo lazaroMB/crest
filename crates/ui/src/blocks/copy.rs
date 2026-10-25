@@ -11,6 +11,9 @@
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
 //! | shell | the output without ANSI escapes |
+//! | dataset | column profile CSV, preview rows CSV |
+//! | molecule | SMILES, canonical SMILES, formula, SVG |
+//! | plate | `well,label,value` CSV |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
@@ -18,6 +21,7 @@
 use domain::block::{BlockKind, Cell, ChartSpec, SourceRef, TableSpec};
 use domain::computed::{Computed, ComputedBody, narrative};
 use domain::report::{FindingsSpec, TestOutcome, TestReportSpec};
+use domain::science::MoleculeSpec;
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div,
@@ -176,6 +180,23 @@ pub fn computed(envelope: &Computed, body: &ComputedBody) -> Vec<CopyFormat> {
     formats
 }
 
+/// The copy forms of a molecule: the SMILES as given and what was
+/// computed from it.
+#[must_use]
+pub fn molecule(spec: &MoleculeSpec) -> Vec<CopyFormat> {
+    let mut formats = vec![CopyFormat::new("smiles", "SMILES", spec.smiles.clone())];
+    for (key, label, value) in [
+        ("canonical", "canonical SMILES", &spec.canonical),
+        ("formula", "formula", &spec.formula),
+        ("svg", "SVG", &spec.svg),
+    ] {
+        if let Some(value) = value {
+            formats.push(CopyFormat::new(key, label, value.clone()));
+        }
+    }
+    formats
+}
+
 /// The forms `kind` can be copied in; empty for kinds without any.
 #[must_use]
 pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
@@ -216,6 +237,14 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Shell { stdout, stderr, .. } => {
             let plain = super::ansi::parse(&format!("{stdout}{stderr}")).text;
             vec![CopyFormat::new("plain", "plain output", plain)]
+        }
+        BlockKind::Dataset(spec) => vec![
+            CopyFormat::new("profile", "profile CSV", super::dataset::profile_csv(spec)),
+            CopyFormat::new("csv", "preview CSV", csv(&spec.preview)),
+        ],
+        BlockKind::Molecule(spec) => molecule(spec),
+        BlockKind::Plate(spec) => {
+            vec![CopyFormat::new("csv", "CSV", super::plate::plate_csv(spec))]
         }
         _ => Vec::new(),
     }
@@ -312,6 +341,46 @@ mod tests {
         let formats = formats(&BlockKind::Chart(chart));
         assert_eq!(formats[0].key, "csv");
         assert_eq!(formats[0].text, ",bytes\nrs,1200\nmd,300\n");
+    }
+
+    #[test]
+    fn lab_blocks_copy_their_values() {
+        let spec = MoleculeSpec {
+            smiles: "OCC".into(),
+            name: None,
+            svg: None,
+            formula: Some("C2H6O".into()),
+            mw: Some(46.07),
+            charge: Some(0),
+            canonical: Some("CCO".into()),
+            error: None,
+            claimed_formula: None,
+            claimed_matches: None,
+        };
+        let keys: Vec<_> = formats(&BlockKind::Molecule(spec))
+            .iter()
+            .map(|f| (f.key, f.text.clone()))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                ("smiles", "OCC".to_owned()),
+                ("canonical", "CCO".to_owned()),
+                ("formula", "C2H6O".to_owned())
+            ]
+        );
+        let plate = domain::science::PlateSpec {
+            title: None,
+            format: 96,
+            value_label: None,
+            wells: vec![domain::science::Well {
+                well: "a2".into(),
+                label: None,
+                value: Some(3.0),
+            }],
+        };
+        let plate = formats(&BlockKind::Plate(plate));
+        assert_eq!(plate[0].text, "well,label,value\nA2,,3\n");
     }
 
     #[test]
