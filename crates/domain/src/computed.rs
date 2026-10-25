@@ -22,6 +22,7 @@ pub mod contingency;
 pub mod distribution;
 pub mod lint;
 pub mod narrative;
+pub mod power;
 pub mod slots;
 
 use std::collections::BTreeMap;
@@ -35,6 +36,7 @@ pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
     QqPoint,
 };
+pub use self::power::{PowerBody, PowerTarget, PowerTest};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -600,6 +602,8 @@ pub enum ComputedBody {
     Distribution(DistributionBody),
     /// A contingency table with residuals and a test of independence.
     Contingency(ContingencyBody),
+    /// A power or sample-size calculation.
+    Power(PowerBody),
 }
 
 impl ComputedBody {
@@ -628,6 +632,7 @@ impl ComputedBody {
             Self::Correlation(body) => body.validate(),
             Self::Distribution(body) => body.validate(),
             Self::Contingency(body) => body.validate(),
+            Self::Power(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

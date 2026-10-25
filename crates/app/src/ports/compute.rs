@@ -25,7 +25,9 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use self::stats::{ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DistributionRequest};
+pub use self::stats::{
+    ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DistributionRequest, PowerRequest,
+};
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
 pub const REQUEST_PARAM: &str = "request";
@@ -407,6 +409,8 @@ pub enum ComputeRequest {
     Distribution(DistributionRequest),
     /// [`ComputePort::contingency`].
     Contingency(ContingencyRequest),
+    /// [`ComputePort::power`].
+    Power(PowerRequest),
 }
 
 impl ComputeRequest {
@@ -423,8 +427,8 @@ impl ComputeRequest {
             .map_err(|e| ComputeError::NotRecomputable(format!("stored request: {e}")))
     }
 
-    /// The data the request reads; `None` for calc sheets and
-    /// conversions, which read none.
+    /// The data the request reads; `None` for calc sheets, conversions
+    /// and the other requests that read none.
     #[must_use]
     pub fn data(&self) -> Option<&DataSet> {
         match self {
@@ -434,7 +438,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&r.data),
             Self::Distribution(r) => Some(&r.data),
             Self::Contingency(r) => Some(&r.data),
-            Self::Calc(_) | Self::Convert(_) => None,
+            Self::Calc(_) | Self::Convert(_) | Self::Power(_) => None,
         }
     }
 
@@ -448,7 +452,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&mut r.data),
             Self::Distribution(r) => Some(&mut r.data),
             Self::Contingency(r) => Some(&mut r.data),
-            Self::Calc(_) | Self::Convert(_) => None,
+            Self::Calc(_) | Self::Convert(_) | Self::Power(_) => None,
         }
     }
 }
@@ -519,6 +523,15 @@ pub trait ComputePort: Send + Sync {
     /// given, or they are malformed.
     fn contingency(&self, request: &ContingencyRequest) -> ComputeResult;
 
+    /// Power or sample size of a t-test, ANOVA or proportion test (the
+    /// missing one of n, effect, power and α).
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] when not exactly one quantity is missing
+    /// or a value is out of range.
+    fn power(&self, request: &PowerRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -544,6 +557,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Convert(r) => self.convert(r),
             ComputeRequest::Distribution(r) => self.distribution(r),
             ComputeRequest::Contingency(r) => self.contingency(r),
+            ComputeRequest::Power(r) => self.power(r),
         }
     }
 }

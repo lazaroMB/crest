@@ -7,11 +7,11 @@
 use adapter_compute::StatsEngine;
 use application::ports::compute::{
     ComputePort, ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DataColumn, DataSet,
-    DistributionRequest,
+    DistributionRequest, PowerRequest,
 };
 use domain::computed::{
     Alternative, BandwidthRule, BinRule, Computed, ComputedBody, ComputedStatus, ContingencyBody,
-    ContingencyTest,
+    ContingencyTest, PowerTest,
 };
 
 /// Asserts `actual` rounds to `printed` at the printed digits.
@@ -267,4 +267,124 @@ fn contingency_switches_to_fisher_and_matches_fisher_test() {
     assert_eq!(contingency(&body).test, ContingencyTest::FisherExact);
     printed(v(&c, "p_value"), "0.7827");
     assert_eq!(c.seed, None);
+}
+
+// --- Power -----------------------------------------------------------------------
+
+fn power(test: PowerTest) -> PowerRequest {
+    PowerRequest {
+        test,
+        n: None,
+        effect: None,
+        p1: None,
+        p2: None,
+        alpha: None,
+        power: None,
+        groups: None,
+        alternative: Alternative::TwoSided,
+        solve_for: None,
+    }
+}
+
+#[test]
+fn power_matches_pwr() {
+    let solve = |request: PowerRequest, key: &str| {
+        let (c, body) = engine().power(&request).unwrap();
+        assert_eq!(body.validate(), Ok(()));
+        assert_ne!(c.status, ComputedStatus::Error, "{:?}", c.error);
+        v(&c, key)
+    };
+    // pwr.t.test(d = 0.8, power = 0.8): n = 25.52458 per group.
+    let mut r = power(PowerTest::TwoSampleT);
+    r.effect = Some(0.8);
+    r.power = Some(0.8);
+    near(solve(r.clone(), "n"), 25.524_571_8, 1e-6);
+    assert_eq!(solve(r.clone(), "n_required"), 26.0);
+    assert_eq!(solve(r.clone(), "n_total"), 52.0);
+    // d = 0.5: n = 63.76561; d = 0.3: n = 175.38 (pwr prints 175.3851 at
+    // uniroot's tolerance).
+    r.effect = Some(0.5);
+    near(solve(r.clone(), "n"), 63.765_610_2, 1e-6);
+    r.effect = Some(0.3);
+    near(solve(r.clone(), "n"), 175.384_669_5, 1e-5);
+    // pwr.t.test(n = 20, d = 0.75): power = 0.6374.
+    let mut r = power(PowerTest::TwoSampleT);
+    r.n = Some(20.0);
+    r.effect = Some(0.75);
+    near(solve(r.clone(), "power"), 0.637_401_721, 1e-8);
+    // n = 30, power = 0.8: d = 0.7356.
+    r.n = Some(30.0);
+    r.effect = None;
+    r.power = Some(0.8);
+    near(solve(r.clone(), "effect"), 0.735_621_07, 1e-7);
+    // n = 25, d = 0.8, power = 0.8: alpha = 0.05343.
+    r.n = Some(25.0);
+    r.effect = Some(0.8);
+    near(solve(r, "alpha"), 0.053_428_059, 1e-7);
+    // pwr.t.test(d = 0.2, n = 60, sig.level = 0.10, type = "one.sample"):
+    // power = 0.4555818.
+    let mut r = power(PowerTest::OneSampleT);
+    r.n = Some(60.0);
+    r.effect = Some(0.2);
+    r.alpha = Some(0.1);
+    near(solve(r, "power"), 0.455_581_764, 1e-8);
+    // Paired, greater, n = 30, d = 0.5: power = 0.8483.
+    let mut r = power(PowerTest::PairedT);
+    r.n = Some(30.0);
+    r.effect = Some(0.5);
+    r.alternative = Alternative::Greater;
+    near(solve(r, "power"), 0.848_254_191, 1e-8);
+}
+
+#[test]
+fn power_of_anova_and_proportions_matches_pwr() {
+    let solve = |request: PowerRequest, key: &str| {
+        let (c, _) = engine().power(&request).unwrap();
+        v(&c, key)
+    };
+    // pwr.anova.test(f = 0.28, k = 4, n = 20): power = 0.5149793.
+    let mut r = power(PowerTest::Anova);
+    r.groups = Some(4);
+    r.effect = Some(0.28);
+    r.n = Some(20.0);
+    near(solve(r.clone(), "power"), 0.514_979_292, 1e-8);
+    // ... power = 0.80: n = 35.75789 per group.
+    r.n = None;
+    r.power = Some(0.8);
+    near(solve(r, "n"), 35.757_894_5, 1e-6);
+    // pwr.anova.test(k = 5, f = 0.25, power = 0.8): n = 39.1534.
+    let mut r = power(PowerTest::Anova);
+    r.groups = Some(5);
+    r.effect = Some(0.25);
+    r.power = Some(0.8);
+    near(solve(r, "n"), 39.153_399_3, 1e-6);
+    // pwr.2p.test(h = 0.3, n = 80): power = 0.4751.
+    let mut r = power(PowerTest::TwoProportions);
+    r.effect = Some(0.3);
+    r.n = Some(80.0);
+    near(solve(r, "power"), 0.475_100_871, 1e-8);
+    // pwr.2p.test(h = ES.h(0.65, 0.45), power = 0.9, alternative =
+    // "greater"): n = 104.4935.
+    let mut r = power(PowerTest::TwoProportions);
+    r.p1 = Some(0.65);
+    r.p2 = Some(0.45);
+    r.power = Some(0.9);
+    r.alternative = Alternative::Greater;
+    near(solve(r, "n"), 104.493_436, 1e-5);
+    // pwr.p.test(h = 0.2, n = 60): power = 0.3408.
+    let mut r = power(PowerTest::OneProportion);
+    r.effect = Some(0.2);
+    r.n = Some(60.0);
+    near(solve(r, "power"), 0.340_845_124, 1e-8);
+
+    // Two missing quantities, or none, are refused.
+    let mut r = power(PowerTest::TwoSampleT);
+    r.effect = Some(0.5);
+    assert!(engine().power(&r).is_err());
+    r.n = Some(10.0);
+    r.power = Some(0.8);
+    r.alpha = Some(0.05);
+    assert!(engine().power(&r).is_err());
+    let anova = power(PowerTest::Anova);
+    assert!(engine().power(&anova).is_err());
 }

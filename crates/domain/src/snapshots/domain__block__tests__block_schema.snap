@@ -3208,6 +3208,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A power or sample-size calculation.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "power"
+            }
+          },
+          "$ref": "#/$defs/PowerBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -4579,6 +4593,127 @@ expression: "schemars::schema_for!(Block)"
         "column_percent",
         "std_residuals",
         "test"
+      ]
+    },
+    "PowerTest": {
+      "description": "The design a power analysis is for.",
+      "oneOf": [
+        {
+          "description": "Two-sample t-test, equal groups; effect Cohen's d.",
+          "type": "string",
+          "const": "two_sample_t"
+        },
+        {
+          "description": "One-sample t-test; effect Cohen's d.",
+          "type": "string",
+          "const": "one_sample_t"
+        },
+        {
+          "description": "Paired t-test; effect d of the differences.",
+          "type": "string",
+          "const": "paired_t"
+        },
+        {
+          "description": "One-way ANOVA with `groups` equal groups; effect Cohen's f.",
+          "type": "string",
+          "const": "anova"
+        },
+        {
+          "description": "Two proportions, equal groups; effect Cohen's h.",
+          "type": "string",
+          "const": "two_proportions"
+        },
+        {
+          "description": "One proportion against a null value; effect Cohen's h.",
+          "type": "string",
+          "const": "one_proportion"
+        }
+      ]
+    },
+    "PowerTarget": {
+      "description": "The quantity a power analysis solved for.",
+      "oneOf": [
+        {
+          "description": "Sample size (per group where the design has groups).",
+          "type": "string",
+          "const": "n"
+        },
+        {
+          "description": "Power, 1 − β.",
+          "type": "string",
+          "const": "power"
+        },
+        {
+          "description": "The smallest effect detectable.",
+          "type": "string",
+          "const": "effect"
+        },
+        {
+          "description": "Significance level.",
+          "type": "string",
+          "const": "alpha"
+        }
+      ]
+    },
+    "PowerBody": {
+      "description": "Body of a power card.",
+      "type": "object",
+      "properties": {
+        "test": {
+          "description": "The design.",
+          "$ref": "#/$defs/PowerTest"
+        },
+        "solved_for": {
+          "description": "What was solved for; the other three were given.",
+          "$ref": "#/$defs/PowerTarget"
+        },
+        "alternative": {
+          "description": "Direction of the alternative.",
+          "$ref": "#/$defs/Alternative"
+        },
+        "n": {
+          "description": "Sample size (per group when [`PowerTest::n_per_group`]), unrounded.",
+          "type": "number",
+          "format": "double"
+        },
+        "effect": {
+          "description": "Effect size (`d`, `f` or `h`).",
+          "type": "number",
+          "format": "double"
+        },
+        "alpha": {
+          "description": "Significance level.",
+          "type": "number",
+          "format": "double"
+        },
+        "power": {
+          "description": "Power, 1 − β.",
+          "type": "number",
+          "format": "double"
+        },
+        "groups": {
+          "description": "Number of groups (ANOVA).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "curve": {
+          "description": "Power (y) against n (x) at the effect and α above.",
+          "$ref": "#/$defs/Curve"
+        }
+      },
+      "required": [
+        "test",
+        "solved_for",
+        "alternative",
+        "n",
+        "effect",
+        "alpha",
+        "power",
+        "curve"
       ]
     },
     "FormField": {

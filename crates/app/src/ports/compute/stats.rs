@@ -106,3 +106,44 @@ pub struct ContingencyRequest {
     #[serde(default = "default_simulations")]
     pub simulations: u32,
 }
+
+/// Input of `power`: a power or sample-size calculation. Give three of
+/// `n`, `effect` (or the proportions `p1`, `p2`), `power` and `alpha`;
+/// the missing one is solved for (or name it in `solve_for`). `alpha`
+/// defaults to 0.05 unless it is the one solved for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PowerRequest {
+    /// The design: `two_sample_t`, `one_sample_t`, `paired_t`, `anova`,
+    /// `two_proportions` or `one_proportion`.
+    pub test: domain::computed::PowerTest,
+    /// Sample size: per group for two-sample t, ANOVA and two
+    /// proportions, else in total (pairs for paired t).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub n: Option<f64>,
+    /// Effect size: Cohen's d (t-tests), f (ANOVA) or h (proportions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<f64>,
+    /// Proportions instead of `effect`: the two group proportions, or the
+    /// expected proportion and (in `p2`) the null value for
+    /// `one_proportion`; h = 2·asin√p1 − 2·asin√p2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p1: Option<f64>,
+    /// Second proportion; see `p1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p2: Option<f64>,
+    /// Significance level (default 0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
+    /// Power, 1 − β, e.g. 0.8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<f64>,
+    /// Number of groups (ANOVA, at least 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groups: Option<u32>,
+    /// Direction of the alternative (default two_sided).
+    #[serde(default)]
+    pub alternative: domain::computed::Alternative,
+    /// What to solve for, when it is not clear from what is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solve_for: Option<domain::computed::PowerTarget>,
+}

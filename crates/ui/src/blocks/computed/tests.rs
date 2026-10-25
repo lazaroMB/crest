@@ -512,6 +512,12 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Contingency(super::contingency::tests::body()),
             &[],
         ),
+        (
+            card("stats.power", "Power analysis: two-sample t-test"),
+            ComputedBody::Power(super::power::tests::body()),
+            &["curve"],
+        ),
+        // Later cards go above this line.
     ]
 }
 

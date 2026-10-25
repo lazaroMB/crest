@@ -46,7 +46,9 @@ use serde_json::{Value, json};
 
 mod cards;
 
-pub use self::cards::{Contingency, Distribution, StatsContingencyTool, StatsDistributionTool};
+pub use self::cards::{
+    Contingency, Distribution, Power, StatsContingencyTool, StatsDistributionTool, StatsPowerTool,
+};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -744,7 +746,8 @@ APA line, so do not repeat the card.
 
 To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), call \
 `stats_distribution`; for a cross-table of two categorical variables (χ² or Fisher, \
-residuals), `stats_contingency`.
+residuals), `stats_contingency`. Before a study, or to judge a non-significant result, \
+compute power or the sample size with `stats_power`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -773,7 +776,8 @@ pub fn register_compute_tools(
     registry.register_typed(CalcTool::new(ports.clone()))?;
     registry.register_typed(ConvertTool::new(ports.clone()))?;
     registry.register_typed(StatsDistributionTool::new(ports.clone()))?;
-    registry.register_typed(StatsContingencyTool::new(ports.clone()))
+    registry.register_typed(StatsContingencyTool::new(ports.clone()))?;
+    registry.register_typed(StatsPowerTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -849,7 +853,11 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "stats_contingency_definition",
-            definition(StatsContingencyTool::new(ports))
+            definition(StatsContingencyTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "stats_power_definition",
+            definition(StatsPowerTool::new(ports))
         );
     }
 
@@ -1141,6 +1149,7 @@ mod tests {
                 "stats_correlate",
                 "stats_describe",
                 "stats_distribution",
+                "stats_power",
                 "stats_regress",
                 "stats_test"
             ]

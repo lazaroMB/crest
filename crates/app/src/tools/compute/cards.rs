@@ -1,5 +1,5 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
-//! and what the model is
+//! `stats_power`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -10,8 +10,10 @@ use std::fmt::Write as _;
 
 use domain::computed::ComputedBody;
 
-use super::{StatsKind, StatsTool};
-use crate::ports::compute::{ComputeRequest, ContingencyRequest, DistributionRequest};
+use super::{StatsKind, StatsTool, UnitsKind, UnitsTool};
+use crate::ports::compute::{
+    ComputeRequest, ContingencyRequest, DistributionRequest, PowerRequest,
+};
 
 /// `stats_distribution`.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +76,49 @@ you get the values as slots to cite.";
 
 /// `stats_contingency`.
 pub type StatsContingencyTool = StatsTool<Contingency>;
+
+/// `stats_power`.
+#[derive(Debug, Clone, Copy)]
+pub struct Power;
+
+impl UnitsKind for Power {
+    type Request = PowerRequest;
+    const NAME: &'static str = "stats_power";
+    const DESCRIPTION: &'static str = "\
+Power and sample-size calculator with crest's deterministic engine (the formulas of R's pwr: \
+noncentral t for t-tests, noncentral F for one-way ANOVA, arcsine h for proportions). Give \
+three of `n`, `effect` (Cohen's d, f or h; or `p1` and `p2` for proportions), `power` and \
+`alpha` (default .05); the fourth is solved for. Designs: two_sample_t, one_sample_t, \
+paired_t, anova (with `groups`), two_proportions, one_proportion. The user sees the \
+quantities and the power curve; you get them as slots to cite.";
+    fn wrap(request: PowerRequest) -> ComputeRequest {
+        ComputeRequest::Power(request)
+    }
+    fn subject(request: &PowerRequest) -> String {
+        request.test.label().to_owned()
+    }
+    fn check(request: &PowerRequest) -> Result<(), String> {
+        let finite = [
+            request.n,
+            request.effect,
+            request.p1,
+            request.p2,
+            request.alpha,
+            request.power,
+        ]
+        .into_iter()
+        .flatten()
+        .all(f64::is_finite);
+        if finite {
+            Ok(())
+        } else {
+            Err("every number must be finite".into())
+        }
+    }
+}
+
+/// `stats_power`.
+pub type StatsPowerTool = UnitsTool<Power>;
 
 /// Lines for the model about a phase-2 card that the slots do not say.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
@@ -188,5 +233,22 @@ mod tests {
             .await;
         assert!(without.is_err(), "columns without data are refused");
         assert_eq!(engine.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn power_takes_parameters_only() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(StatsPowerTool::new(ports(Arc::clone(&engine))));
+        let input = json!({ "test": "two_sample_t", "effect": 0.8, "power": 0.8 });
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "two-sample t-test");
+        let out = prepared.run.await.unwrap();
+        assert!(!out.is_error, "{}", out.text_content());
+        let ComputeRequest::Power(request) = &engine.requests()[0] else {
+            panic!("not a power request");
+        };
+        assert_eq!(request.effect, Some(0.8));
+        let bad = tool.prepare(json!({ "effect": 0.5 }), &ctx()).await;
+        assert!(bad.is_err(), "a design is needed");
     }
 }
