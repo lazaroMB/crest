@@ -235,6 +235,30 @@ impl FakeCompute {
                     constraints: Vec::new(),
                 }),
             ),
+            ComputeRequest::Solve(r) => (
+                "solve.equations",
+                "Equation solver",
+                "equations",
+                ComputedBody::Equations(EquationsBody {
+                    method: SolveMethod::Newton,
+                    converged: true,
+                    unknowns: r
+                        .unknowns
+                        .iter()
+                        .map(|u| SolvedUnknown {
+                            name: u.name.clone(),
+                            value: 1.0,
+                        })
+                        .collect(),
+                    roots: Vec::new(),
+                    plug_back: Vec::new(),
+                    residual_norm: 0.0,
+                    iterations: 1,
+                    tolerance: r.tolerance,
+                    condition_number: None,
+                    curve: None,
+                }),
+            ),
             ComputeRequest::Power(r) => (
                 "stats.power",
                 "Power analysis",
@@ -522,6 +546,10 @@ impl ComputePort for FakeCompute {
 
     fn optimize(&self, request: &OptimizeRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Optimize(request.clone()), None)
+    }
+
+    fn solve(&self, request: &SolveRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Solve(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -545,6 +545,14 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Optimization(super::optimization::tests::body()),
             &["region"],
         ),
+        (
+            card(
+                "solve.equations",
+                "Equation solver: sign-change scan with bisection",
+            ),
+            ComputedBody::Equations(super::equations::tests::body()),
+            &["curve"],
+        ),
         // Later cards go above this line.
     ]
 }

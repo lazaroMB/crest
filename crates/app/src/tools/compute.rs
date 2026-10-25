@@ -47,9 +47,9 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Bootstrap, Contingency, Distribution, ForecastKind, Lp, Power, SolveLpTool,
-    StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
-    StatsForecastTool, StatsPowerTool,
+    AbTest, Bootstrap, Contingency, Distribution, Equations, ForecastKind, Lp, Power,
+    SolveEquationsTool, SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool,
+    StatsDistributionTool, StatsForecastTool, StatsPowerTool,
 };
 
 use super::registry::{
@@ -755,7 +755,7 @@ compute power or the sample size with `stats_power`; to compare two conversion r
 
 To optimise a linear model (resource allocation, blending, scheduling, knapsack), call \
 `solve_lp` with the objective, variables and constraints instead of reasoning out the \
-optimum.
+optimum. To solve an equation or a system numerically, call `solve_equations`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -789,7 +789,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsAbTestTool::new(ports.clone()))?;
     registry.register_typed(StatsBootstrapTool::new(ports.clone()))?;
     registry.register_typed(StatsForecastTool::new(ports.clone()))?;
-    registry.register_typed(SolveLpTool::new(ports.clone()))
+    registry.register_typed(SolveLpTool::new(ports.clone()))?;
+    registry.register_typed(SolveEquationsTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -883,7 +884,14 @@ mod tests {
             "stats_forecast_definition",
             definition(StatsForecastTool::new(ports.clone()))
         );
-        insta::assert_json_snapshot!("solve_lp_definition", definition(SolveLpTool::new(ports)));
+        insta::assert_json_snapshot!(
+            "solve_lp_definition",
+            definition(SolveLpTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "solve_equations_definition",
+            definition(SolveEquationsTool::new(ports))
+        );
     }
 
     #[tokio::test]
@@ -1170,6 +1178,7 @@ mod tests {
             [
                 "calc",
                 "convert",
+                "solve_equations",
                 "solve_lp",
                 "stats_ab_test",
                 "stats_bootstrap",

@@ -1,6 +1,6 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
 //! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`,
-//! `solve_lp`, and what the model is
+//! `solve_lp`, `solve_equations`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -173,6 +173,43 @@ to cite. Infeasible and unbounded problems are reported as such.";
 
 /// `solve_lp`.
 pub type SolveLpTool = UnitsTool<Lp>;
+
+/// `solve_equations`.
+#[derive(Debug, Clone, Copy)]
+pub struct Equations;
+
+impl UnitsKind for Equations {
+    type Request = SolveRequest;
+    const NAME: &'static str = "solve_equations";
+    const DESCRIPTION: &'static str = "\
+Solves an equation or a small square system numerically with crest's deterministic engine. \
+Equations are `lhs = rhs` in calculator notation (`x^2 + y^2 = 4`, `cos(x) = x`, `2x - y = 1`) \
+over the named `unknowns`. With one unknown and a `range` it finds every root crossing zero \
+in the range; otherwise damped Newton starts from each unknown's `guess`. The user sees the \
+solution, each equation plugged back (both sides and their difference), iterations and the \
+condition number; you get the values as slots to cite.";
+    fn wrap(request: SolveRequest) -> ComputeRequest {
+        ComputeRequest::Solve(request)
+    }
+    fn subject(request: &SolveRequest) -> String {
+        match request.equations.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} equations", many.len()),
+        }
+    }
+    fn check(request: &SolveRequest) -> Result<(), String> {
+        if request.equations.is_empty() || request.unknowns.is_empty() {
+            return Err("give the equations and their unknowns".into());
+        }
+        if request.equations.len() != request.unknowns.len() {
+            return Err("give as many equations as unknowns".into());
+        }
+        Ok(())
+    }
+}
+
+/// `solve_equations`.
+pub type SolveEquationsTool = UnitsTool<Equations>;
 
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]

@@ -1,0 +1,83 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(SolveEquationsTool::new(ports))"
+---
+{
+  "name": "solve_equations",
+  "description": "Solves an equation or a small square system numerically with crest's deterministic engine. Equations are `lhs = rhs` in calculator notation (`x^2 + y^2 = 4`, `cos(x) = x`, `2x - y = 1`) over the named `unknowns`. With one unknown and a `range` it finds every root crossing zero in the range; otherwise damped Newton starts from each unknown's `guess`. The user sees the solution, each equation plugged back (both sides and their difference), iterations and the condition number; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "equations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The equations, `lhs = rhs` (`x^2 + y^2 = 4`, `cos(x) = x`); an\nexpression without `=` means `= 0`."
+      },
+      "unknowns": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Unknown"
+        },
+        "description": "The unknowns, as many as equations."
+      },
+      "range": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "number",
+          "format": "double"
+        },
+        "minItems": 2,
+        "maxItems": 2,
+        "description": "For one unknown: `[low, high]` to search for every root."
+      },
+      "tolerance": {
+        "type": "number",
+        "format": "double",
+        "description": "Largest |lhs − rhs| accepted (default 1e-10).",
+        "default": 0.0000000001
+      },
+      "max_iterations": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Most Newton iterations (default 100).",
+        "default": 100
+      }
+    },
+    "required": [
+      "equations",
+      "unknowns"
+    ],
+    "description": "Input of `solve`: equations in as many unknowns, solved numerically.\nWith one unknown and a `range`, every root in the range is found (sign\nchanges on a fine grid, refined by bisection); otherwise damped Newton\nstarts from the guesses.",
+    "title": "SolveRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Unknown": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, as the equations use it."
+          },
+          "guess": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Starting value of Newton's method (default 1)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "One unknown of an equation system."
+      }
+    }
+  }
+}

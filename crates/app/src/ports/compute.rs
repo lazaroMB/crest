@@ -419,6 +419,8 @@ pub enum ComputeRequest {
     Forecast(ForecastRequest),
     /// [`ComputePort::optimize`].
     Optimize(OptimizeRequest),
+    /// [`ComputePort::solve`].
+    Solve(SolveRequest),
 }
 
 impl ComputeRequest {
@@ -452,7 +454,8 @@ impl ComputeRequest {
             | Self::Convert(_)
             | Self::Power(_)
             | Self::AbTest(_)
-            | Self::Optimize(_) => None,
+            | Self::Optimize(_)
+            | Self::Solve(_) => None,
         }
     }
 
@@ -472,7 +475,8 @@ impl ComputeRequest {
             | Self::Convert(_)
             | Self::Power(_)
             | Self::AbTest(_)
-            | Self::Optimize(_) => None,
+            | Self::Optimize(_)
+            | Self::Solve(_) => None,
         }
     }
 }
@@ -588,6 +592,15 @@ pub trait ComputePort: Send + Sync {
     /// is not linear, or an unknown variable.
     fn optimize(&self, request: &OptimizeRequest) -> ComputeResult;
 
+    /// An equation or small system solved numerically, with residuals and
+    /// the plug-back check.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an equation that does not parse, or
+    /// unknowns that do not match the equations.
+    fn solve(&self, request: &SolveRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -618,6 +631,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Bootstrap(r) => self.bootstrap(r),
             ComputeRequest::Forecast(r) => self.forecast(r),
             ComputeRequest::Optimize(r) => self.optimize(r),
+            ComputeRequest::Solve(r) => self.solve(r),
         }
     }
 }
