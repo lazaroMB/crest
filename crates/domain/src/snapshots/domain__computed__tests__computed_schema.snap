@@ -612,6 +612,13 @@ expression: "schemars::schema_for!(Computed)"
             "string",
             "null"
           ]
+        },
+        "shell": {
+          "description": "A shell command of a standalone tool, e.g. `numbat -e '…'`.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

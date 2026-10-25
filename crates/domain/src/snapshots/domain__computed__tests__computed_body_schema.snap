@@ -906,12 +906,26 @@ expression: "schemars::schema_for!(ComputedBody)"
             "null"
           ]
         },
+        "dimension": {
+          "description": "Physical dimension of the result, e.g. `Length` or `Energy`;\n`None` for a plain number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "error": {
           "description": "Evaluation error, e.g. a dimension mismatch.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "notes": {
+          "description": "How the engine read an ambiguous name, e.g. `ton read as the metric\ntonne (1000 kg)`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -946,6 +960,14 @@ expression: "schemars::schema_for!(ComputedBody)"
         "unit": {
           "description": "Unit, e.g. `km/h`.",
           "type": "string"
+        },
+        "uncertainty": {
+          "description": "Standard uncertainty of `value`, in `unit`.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [
