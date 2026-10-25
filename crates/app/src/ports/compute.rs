@@ -17,11 +17,15 @@
 //! Engines are CPU-bound and synchronous: async callers run them on a
 //! blocking thread.
 
+mod stats;
+
 use domain::computed::{
     Alternative, Computed, ComputedBody, CorrelationMethod, InputRef, PAdjust, TestKind,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub use self::stats::DistributionRequest;
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
 pub const REQUEST_PARAM: &str = "request";
@@ -212,7 +216,7 @@ impl TestChoice {
     }
 }
 
-fn default_conf_level() -> f64 {
+pub(crate) fn default_conf_level() -> f64 {
     0.95
 }
 
@@ -399,6 +403,8 @@ pub enum ComputeRequest {
     Calc(CalcRequest),
     /// [`ComputePort::convert`].
     Convert(ConvertRequest),
+    /// [`ComputePort::distribution`].
+    Distribution(DistributionRequest),
 }
 
 impl ComputeRequest {
@@ -424,6 +430,7 @@ impl ComputeRequest {
             Self::Test(r) => Some(&r.data),
             Self::Regress(r) => Some(&r.data),
             Self::Correlate(r) => Some(&r.data),
+            Self::Distribution(r) => Some(&r.data),
             Self::Calc(_) | Self::Convert(_) => None,
         }
     }
@@ -436,6 +443,7 @@ impl ComputeRequest {
             Self::Test(r) => Some(&mut r.data),
             Self::Regress(r) => Some(&mut r.data),
             Self::Correlate(r) => Some(&mut r.data),
+            Self::Distribution(r) => Some(&mut r.data),
             Self::Calc(_) | Self::Convert(_) => None,
         }
     }
@@ -489,6 +497,15 @@ pub trait ComputePort: Send + Sync {
     /// mismatch.
     fn convert(&self, request: &ConvertRequest) -> ComputeResult;
 
+    /// Histogram, kernel density, box/violin, normal QQ and ECDF of one
+    /// variable, per group.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an unknown or non-numeric column or
+    /// bad bin and bandwidth settings.
+    fn distribution(&self, request: &DistributionRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -512,6 +529,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Correlate(r) => self.correlate(r),
             ComputeRequest::Calc(r) => self.calc(r),
             ComputeRequest::Convert(r) => self.convert(r),
+            ComputeRequest::Distribution(r) => self.distribution(r),
         }
     }
 }

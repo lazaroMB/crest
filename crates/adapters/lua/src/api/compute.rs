@@ -19,6 +19,7 @@
 //! | `correlate{ data, variables, method, adjustment, conf_level }` | correlation matrix |
 //! | `calc{ lines, significant_digits }` | calc sheet with units (`lines = { 'v = 100 km/h', … }`) |
 //! | `convert{ value, from, to, uncertainty, significant_digits }` | unit conversion |
+//! | `distribution{ data, variable, by, bin_rule, bins, bandwidth_rule, bandwidth, conf_level }` | histogram, density, box/violin, QQ, ECDF |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -263,6 +264,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "correlate",
         "calc",
         "convert",
+        "distribution",
     ] {
         let origin = Arc::clone(origin);
         compute.set(

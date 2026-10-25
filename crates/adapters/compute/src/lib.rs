@@ -11,8 +11,12 @@
 //! envelope, so [`ComputePort::recompute`] re-runs it and records whether
 //! every value matched.
 //!
-//! Reference tests (`tests/reference.rs`) check the engine against NIST
-//! StRD certified values and examples from R's documentation.
+//! The phase-2 cards run here too: distributions (histogram, density,
+//! box/violin, QQ, ECDF).
+//!
+//! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
+//! engine against NIST StRD certified values and examples from R's
+//! documentation.
 //!
 //! The same adapter runs `crest-calc` (module `calc`): calc sheets and unit
 //! conversions on numbat, with envelopes of kinds `calc.sheet` and
@@ -23,6 +27,7 @@ mod checks;
 mod correlate;
 mod data;
 mod describe;
+mod distribution;
 mod envelope;
 mod linalg;
 mod math;
@@ -36,7 +41,7 @@ use std::time::SystemTime;
 
 use application::ports::compute::{
     CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ConvertRequest,
-    CorrelateRequest, DescribeRequest, RegressRequest, TestRequest,
+    CorrelateRequest, DescribeRequest, DistributionRequest, RegressRequest, TestRequest,
 };
 use domain::computed::Computed;
 
@@ -86,6 +91,7 @@ impl StatsEngine {
             ComputeRequest::Correlate(r) => correlate::run(r, id)?,
             ComputeRequest::Calc(r) => calc::sheet(r, id)?,
             ComputeRequest::Convert(r) => calc::convert(r, id)?,
+            ComputeRequest::Distribution(r) => distribution::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -105,6 +111,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Correlate(_) => "correlate",
         ComputeRequest::Calc(_) => "calc",
         ComputeRequest::Convert(_) => "convert",
+        ComputeRequest::Distribution(_) => "distribution",
     }
 }
 
@@ -131,6 +138,10 @@ impl ComputePort for StatsEngine {
 
     fn convert(&self, request: &ConvertRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Convert(request.clone()), None)
+    }
+
+    fn distribution(&self, request: &DistributionRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Distribution(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

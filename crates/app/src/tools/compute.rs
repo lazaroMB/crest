@@ -1,7 +1,8 @@
 //! Compute tools, thin [`TypedTool`]s over the [`ComputePort`]: the
 //! statistics tools `stats_describe`, `stats_test`, `stats_regress` and
 //! `stats_correlate`, and the unit tools `calc` (a calc sheet) and
-//! `convert` (one unit conversion), whose input is the port request as is.
+//! `convert` (one unit conversion), whose input is the port request as is,
+//! and the card tools of [`cards`] (distribution, ...).
 //! [`register_compute_tools`] adds them and [`COMPUTE_TOOLS_PROMPT`] tells
 //! the model to compute with them and to cite numbers through slots.
 //!
@@ -42,6 +43,10 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+
+mod cards;
+
+pub use self::cards::{Distribution, StatsDistributionTool};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -141,6 +146,12 @@ pub trait StatsKind: Send + Sync + 'static {
     fn wrap(request: Self::Request) -> ComputeRequest;
     /// What the call is about, for the timeline.
     fn subject(request: &Self::Request) -> String;
+    /// Whether the request needs `data` (a contingency table given as
+    /// counts does not).
+    fn needs_data(request: &Self::Request) -> bool {
+        let _ = request;
+        true
+    }
 }
 
 /// `stats_describe`.
@@ -183,6 +194,9 @@ expected counts) and says why. Shapes: numeric `y` split by a two-level `group`;
 effect size and the APA line; you get the values as slots to cite.";
     fn wrap(request: TestRequest) -> ComputeRequest {
         ComputeRequest::Test(request)
+    }
+    fn needs_data(request: &TestRequest) -> bool {
+        request.table.is_none()
     }
     fn subject(request: &TestRequest) -> String {
         let y = request.y.as_deref().unwrap_or("table");
@@ -362,8 +376,8 @@ impl<K: StatsKind> TypedTool for StatsTool<K> {
     ) -> Result<PreparedCall, ToolError> {
         let StatsInput { data, request } = input;
         let mut subject = K::subject(&request);
+        let needs_data = K::needs_data(&request);
         let mut request = K::wrap(request);
-        let has_table = matches!(&request, ComputeRequest::Test(t) if t.table.is_some());
         match (&data.path, data.columns.is_empty()) {
             (Some(_), false) => {
                 return Err(invalid(
@@ -371,7 +385,7 @@ impl<K: StatsKind> TypedTool for StatsTool<K> {
                     "give either `data.path` or `data.columns`, not both",
                 ));
             }
-            (None, true) if !has_table => {
+            (None, true) if needs_data => {
                 return Err(invalid(
                     K::NAME,
                     "no data: give `data.path` (a CSV/TSV file of the workspace) or \
@@ -702,7 +716,7 @@ pub fn summary(computed: &Computed, body: &ComputedBody) -> String {
                 quantity.from.unit, quantity.to.unit, quantity.factor, quantity.dimension
             );
         }
-        _ => {}
+        other => cards::notes(other, &mut out),
     }
     for warning in &computed.warnings {
         let _ = writeln!(out, "Warning [{}]: {}", warning.code, warning.text);
@@ -728,6 +742,8 @@ path of the workspace in `data.path`, or inline `data.columns`). The engine show
 card with the method and why it was chosen, assumption checks, results, a sentence and the \
 APA line, so do not repeat the card.
 
+To look at the shape of a variable (histogram, density, box/violin, QQ, ECDF), call `stats_distribution`.
+
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
 out yourself; for a unit conversion call `convert`. Quote results through their slots.
@@ -738,7 +754,8 @@ Numbers you type yourself are flagged to the user as not coming from an engine. 
 fails, fix the input and call it again.";
 
 /// Registers `stats_describe`, `stats_test`, `stats_regress`,
-/// `stats_correlate`, `calc` and `convert` over `ports`.
+/// `stats_correlate`, `calc`, `convert` and the phase-2 card tools
+/// ([`cards`]) over `ports`.
 ///
 /// # Errors
 ///
@@ -752,7 +769,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsRegressTool::new(ports.clone()))?;
     registry.register_typed(StatsCorrelateTool::new(ports.clone()))?;
     registry.register_typed(CalcTool::new(ports.clone()))?;
-    registry.register_typed(ConvertTool::new(ports.clone()))
+    registry.register_typed(ConvertTool::new(ports.clone()))?;
+    registry.register_typed(StatsDistributionTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -818,7 +836,14 @@ mod tests {
             definition(StatsCorrelateTool::new(ports.clone()))
         );
         insta::assert_json_snapshot!("calc_definition", definition(CalcTool::new(ports.clone())));
-        insta::assert_json_snapshot!("convert_definition", definition(ConvertTool::new(ports)));
+        insta::assert_json_snapshot!(
+            "convert_definition",
+            definition(ConvertTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!(
+            "stats_distribution_definition",
+            definition(StatsDistributionTool::new(ports))
+        );
     }
 
     #[tokio::test]
@@ -1096,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn registers_the_six_tools_named_in_the_prompt() {
+    fn registers_the_tools_named_in_the_prompt() {
         let mut registry = ToolRegistry::new();
         let ports = ports(Arc::new(FakeCompute::new()));
         register_compute_tools(&mut registry, &ports).unwrap();
@@ -1107,6 +1132,7 @@ mod tests {
                 "convert",
                 "stats_correlate",
                 "stats_describe",
+                "stats_distribution",
                 "stats_regress",
                 "stats_test"
             ]
