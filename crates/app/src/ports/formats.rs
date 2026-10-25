@@ -1,5 +1,5 @@
 //! Parsers and renderers of file formats behind the report and lab
-//! blocks: test reports (JUnit XML), static-analysis findings (SARIF),
+//! blocks: test reports (JUnit XML, libtest JSON), static-analysis findings (SARIF),
 //! timing diagrams (WaveDrom WaveJSON), dataset previews (CSV, TSV, JSON
 //! lines, Parquet) and 2D molecules (SMILES).
 //!
@@ -38,12 +38,15 @@ pub enum FormatError {
 
 /// Parses report files and renders diagrams.
 pub trait FormatsPort: Send + Sync {
-    /// A JUnit XML report (`<testsuites>` or a single `<testsuite>`).
-    /// `path` names the file in messages and the title.
+    /// A test report: JUnit XML (`<testsuites>` or a single
+    /// `<testsuite>`), or the JSON lines of libtest / nextest
+    /// (`--format json`, `--message-format libtest-json`), told apart by
+    /// content. `path` names the file in messages and the title.
     ///
     /// # Errors
     ///
-    /// [`FormatError::Invalid`] for malformed XML or a file with no suite.
+    /// [`FormatError::Invalid`] for malformed XML or a file with no suite
+    /// or test result.
     fn parse_test_report(&self, bytes: &[u8], path: &str) -> Result<TestReportSpec, FormatError>;
 
     /// A SARIF 2.1.0 log: every result of every run.

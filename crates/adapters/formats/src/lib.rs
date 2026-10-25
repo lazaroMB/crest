@@ -1,7 +1,9 @@
 //! [`FormatsPort`] adapter: developer file formats behind the report
 //! blocks.
 //!
-//! - JUnit XML test reports ([`junit`], quick-xml);
+//! - test reports: JUnit XML ([`junit`], quick-xml) and the libtest /
+//!   nextest JSON event stream ([`libtest`], serde), told apart by
+//!   content;
 //! - SARIF 2.1.0 static-analysis logs ([`sarif`], serde);
 //! - WaveDrom WaveJSON timing diagrams to SVG ([`wave`], `wavedrom`);
 //! - dataset previews of CSV, TSV, JSON lines and Parquet ([`dataset`],
@@ -10,6 +12,7 @@
 
 pub mod dataset;
 pub mod junit;
+pub mod libtest;
 pub mod molecule;
 pub mod sarif;
 pub mod wave;
@@ -33,7 +36,12 @@ impl Formats {
 
 impl FormatsPort for Formats {
     fn parse_test_report(&self, bytes: &[u8], path: &str) -> Result<TestReportSpec, FormatError> {
-        junit::parse(bytes, path).map_err(FormatError::Invalid)
+        if libtest::is_json_stream(bytes) {
+            libtest::parse(bytes, path)
+        } else {
+            junit::parse(bytes, path)
+        }
+        .map_err(FormatError::Invalid)
     }
 
     fn parse_sarif(&self, bytes: &[u8], path: &str) -> Result<FindingsSpec, FormatError> {

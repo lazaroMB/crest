@@ -123,8 +123,10 @@ pub fn location_text(location: Option<&SourceRef>) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShowTestReport {
-    /// A JUnit XML report of the workspace, e.g.
-    /// `target/nextest/default/junit.xml` or `reports/pytest.xml`.
+    /// A test report of the workspace: JUnit XML, e.g.
+    /// `target/nextest/default/junit.xml` or `reports/pytest.xml`, or the
+    /// JSON lines of `cargo test -- -Z unstable-options --format json` /
+    /// `cargo nextest run --message-format libtest-json` saved to a file.
     pub path: String,
     /// Title shown above the report; defaults to the report's own name or
     /// the file name.
@@ -158,13 +160,15 @@ impl TypedTool for ShowTestReportTool {
     }
 
     fn description(&self) -> &str {
-        "Shows a JUnit XML test report of the workspace as a test report in \
-         the user's timeline: totals by outcome, failures first with their \
-         message and stack trace, durations and links to the test files. \
-         Most runners write one (cargo nextest `--profile ci`, pytest \
-         `--junitxml`, Maven Surefire, Jest/Vitest junit reporters, \
-         gotestsum `--junitfile`). Returns the totals and the failing tests \
-         with their locations: do not repeat the report in your reply."
+        "Shows a test report of the workspace (JUnit XML, or libtest / \
+         nextest JSON lines) as a test report in the user's timeline: \
+         totals by outcome, failures first with their message and stack \
+         trace, durations and links to the test files. Most runners write \
+         JUnit (cargo nextest `--profile ci`, pytest `--junitxml`, Maven \
+         Surefire, Jest/Vitest junit reporters, gotestsum `--junitfile`); \
+         for cargo, redirect the JSON event stream to a file. Returns the \
+         totals and the failing tests with their locations: do not repeat \
+         the report in your reply."
     }
 
     fn effect(&self, _input: &ShowTestReport) -> ToolEffect {
@@ -1024,7 +1028,8 @@ pub const FORMAT_TOOLS_PROMPT: &str = "\
 - `show_test_report`: after a test run that wrote a JUnit XML report, show \
 it instead of pasting the output: the user sees failures first with their \
 traces. Ask the runner for JUnit output when it can write it (cargo nextest, \
-pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum).
+pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum); a saved libtest or \
+nextest JSON event stream works too.
 - `show_findings`: show a SARIF log of a linter or scanner (clippy-sarif, \
 semgrep, CodeQL, ESLint) grouped by file and severity.
 - `show_wavedrom`: draw a digital timing diagram from WaveJSON (clocks, \
