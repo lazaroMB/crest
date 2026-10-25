@@ -57,6 +57,13 @@ pub(super) fn apa_line(
             }
             _ => None,
         },
+        "ab_test" => {
+            let mut line = ApaLine::new();
+            if let Some(z) = display(computed, "statistic") {
+                line = line.stat("z", &[], &z);
+            }
+            Some(line.p(raw(computed, "p_value")?))
+        }
         _ => None,
     }
 }
@@ -181,6 +188,48 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                     display(computed, "n")?,
                 ),
             })
+        }
+        ("ab_test", ComputedBody::AbTest(t)) => {
+            let [a, b] = [t.arms.first()?, t.arms.get(1)?];
+            let lift = computed.value("abs_lift")?;
+            let interval = lift
+                .ci
+                .as_ref()
+                .map(|ci| {
+                    format!(
+                        " ({}% CI {} to {} pp)",
+                        apa::number(ci.level * 100.0, 0),
+                        apa::number(ci.lo * 100.0, 2),
+                        apa::number(ci.hi * 100.0, 2)
+                    )
+                })
+                .unwrap_or_default();
+            let relative = display(computed, "rel_lift")
+                .map(|r| format!(", {r} relative"))
+                .unwrap_or_default();
+            let srm = if t.sample_ratio_mismatch {
+                "Sample-ratio mismatch: the arms did not get the planned share of visitors, so \
+                 the comparison below is not reliable. "
+            } else {
+                ""
+            };
+            let bayes = display(computed, "prob_b_better")
+                .map(|p| format!(" P({} > {}) = {p} with uniform priors.", b.name, a.name))
+                .unwrap_or_default();
+            Some(format!(
+                "{srm}{} converts at {} against {} for {} ({} and {} visitors): a lift of {}{interval}{relative}, \
+                 {} at α = {} ({}).{bayes}",
+                b.name,
+                display(computed, "treatment_rate")?,
+                display(computed, "control_rate")?,
+                a.name,
+                b.visitors,
+                a.visitors,
+                lift.display_text(),
+                significance(raw(computed, "p_value")?),
+                apa::bounded(1.0 - t.conf_level, 2),
+                t.method.label()
+            ))
         }
         _ => None,
     }

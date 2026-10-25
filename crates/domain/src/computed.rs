@@ -17,6 +17,7 @@
 //! See `docs/research/chat-blocks-for-technical-work.md`, "The `Computed`
 //! envelope".
 
+pub mod ab_test;
 pub mod apa;
 pub mod contingency;
 pub mod distribution;
@@ -31,6 +32,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
 pub use self::distribution::{
     BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
@@ -604,6 +606,8 @@ pub enum ComputedBody {
     Contingency(ContingencyBody),
     /// A power or sample-size calculation.
     Power(PowerBody),
+    /// An A/B test of two conversion rates.
+    AbTest(AbTestBody),
 }
 
 impl ComputedBody {
@@ -633,6 +637,7 @@ impl ComputedBody {
             Self::Distribution(body) => body.validate(),
             Self::Contingency(body) => body.validate(),
             Self::Power(body) => body.validate(),
+            Self::AbTest(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

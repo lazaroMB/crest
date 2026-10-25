@@ -15,16 +15,16 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
 use domain::computed::{
-    Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine, CalcSheetBody, Computed,
-    ComputedBody, ComputedValue, ContingencyBody, ContingencyTest, CorrelationBody,
-    CorrelationMethod, Curve, DescriptiveBody, Diagnostics, DistributionBody, DistributionGroup,
-    Engine, FitStats, Histogram, Narrative, PAdjust, PowerBody, PowerTarget, Quantity,
-    QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
+    AbArm, AbMethod, AbTestBody, Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine,
+    CalcSheetBody, Computed, ComputedBody, ComputedValue, ContingencyBody, ContingencyTest,
+    CorrelationBody, CorrelationMethod, Curve, DescriptiveBody, Diagnostics, DistributionBody,
+    DistributionGroup, Engine, FitStats, Histogram, Narrative, PAdjust, PowerBody, PowerTarget,
+    Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
 };
 
 use crate::ports::compute::{
-    CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
-    ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet, DescribeRequest,
+    AbTestRequest, CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest,
+    ComputeResult, ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet, DescribeRequest,
     DistributionRequest, PowerRequest, REQUEST_PARAM, RegressRequest, TestRequest,
 };
 
@@ -150,6 +150,33 @@ impl FakeCompute {
                 "Pearson's χ² test",
                 "contingency",
                 contingency_body(),
+            ),
+            ComputeRequest::AbTest(r) => (
+                "stats.ab_test",
+                "A/B test",
+                "ab_test",
+                ComputedBody::AbTest(AbTestBody {
+                    arms: [&r.control, &r.treatment]
+                        .iter()
+                        .map(|a| {
+                            #[allow(clippy::cast_precision_loss)]
+                            let rate = a.conversions as f64 / a.visitors.max(1) as f64;
+                            AbArm {
+                                name: a.name.clone().unwrap_or_default(),
+                                visitors: a.visitors,
+                                conversions: a.conversions,
+                                rate,
+                                rate_lo: rate,
+                                rate_hi: rate,
+                            }
+                        })
+                        .collect(),
+                    expected_split: r.expected_split,
+                    conf_level: r.conf_level,
+                    method: AbMethod::ZTest,
+                    looks: r.looks,
+                    sample_ratio_mismatch: false,
+                }),
             ),
             ComputeRequest::Power(r) => (
                 "stats.power",
@@ -422,6 +449,10 @@ impl ComputePort for FakeCompute {
 
     fn power(&self, request: &PowerRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Power(request.clone()), None)
+    }
+
+    fn ab_test(&self, request: &AbTestRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::AbTest(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

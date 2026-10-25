@@ -25,9 +25,7 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use self::stats::{
-    ContingencyChoice, ContingencyRequest, DEFAULT_SEED, DistributionRequest, PowerRequest,
-};
+pub use self::stats::*;
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
 pub const REQUEST_PARAM: &str = "request";
@@ -411,6 +409,8 @@ pub enum ComputeRequest {
     Contingency(ContingencyRequest),
     /// [`ComputePort::power`].
     Power(PowerRequest),
+    /// [`ComputePort::ab_test`].
+    AbTest(AbTestRequest),
 }
 
 impl ComputeRequest {
@@ -438,7 +438,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&r.data),
             Self::Distribution(r) => Some(&r.data),
             Self::Contingency(r) => Some(&r.data),
-            Self::Calc(_) | Self::Convert(_) | Self::Power(_) => None,
+            Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
         }
     }
 
@@ -452,7 +452,7 @@ impl ComputeRequest {
             Self::Correlate(r) => Some(&mut r.data),
             Self::Distribution(r) => Some(&mut r.data),
             Self::Contingency(r) => Some(&mut r.data),
-            Self::Calc(_) | Self::Convert(_) | Self::Power(_) => None,
+            Self::Calc(_) | Self::Convert(_) | Self::Power(_) | Self::AbTest(_) => None,
         }
     }
 }
@@ -532,6 +532,15 @@ pub trait ComputePort: Send + Sync {
     /// or a value is out of range.
     fn power(&self, request: &PowerRequest) -> ComputeResult;
 
+    /// An A/B test of two conversion rates: lift with intervals, z or
+    /// Fisher, sample-ratio mismatch and peeking checks.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for conversions above visitors or bad
+    /// levels.
+    fn ab_test(&self, request: &AbTestRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -558,6 +567,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Distribution(r) => self.distribution(r),
             ComputeRequest::Contingency(r) => self.contingency(r),
             ComputeRequest::Power(r) => self.power(r),
+            ComputeRequest::AbTest(r) => self.ab_test(r),
         }
     }
 }

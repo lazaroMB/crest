@@ -147,3 +147,57 @@ pub struct PowerRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solve_for: Option<domain::computed::PowerTarget>,
 }
+
+/// One arm of an A/B test as counted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ArmCounts {
+    /// Arm name (default `A` for control, `B` for treatment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Units exposed (visitors, users, sessions).
+    pub visitors: u64,
+    /// Units that converted.
+    pub conversions: u64,
+}
+
+fn default_split() -> f64 {
+    0.5
+}
+
+fn default_looks() -> u32 {
+    1
+}
+
+/// Input of `ab_test`: two conversion rates compared. The engine tests the
+/// difference (z-test, or Fisher's exact test for small counts), gives the
+/// absolute and relative lift with intervals, P(B > A) under uniform
+/// priors, the minimum detectable effect, and checks the visitor split
+/// (sample-ratio mismatch) and repeated looks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AbTestRequest {
+    /// The control arm (A).
+    pub control: ArmCounts,
+    /// The treatment arm (B).
+    pub treatment: ArmCounts,
+    /// The share of visitors the design sends to the treatment (default
+    /// 0.5), for the sample-ratio check.
+    #[serde(default = "default_split")]
+    pub expected_split: f64,
+    /// Level of the intervals (default 0.95); α = 1 − level.
+    #[serde(default = "default_conf_level")]
+    pub conf_level: f64,
+    /// Direction of the alternative (`greater`: B converts better).
+    #[serde(default)]
+    pub alternative: domain::computed::Alternative,
+    /// How many times the results have been looked at with a view to
+    /// stopping, this look included (default 1).
+    #[serde(default = "default_looks")]
+    pub looks: u32,
+    /// Visitors per arm the test was planned for, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_visitors: Option<u64>,
+    /// The smallest absolute lift that matters (e.g. 0.01 for one
+    /// percentage point): the card adds the power to detect it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_lift: Option<f64>,
+}

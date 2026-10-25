@@ -517,6 +517,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Power(super::power::tests::body()),
             &["curve"],
         ),
+        (
+            card("stats.ab_test", "A/B test: two-proportion z-test"),
+            ComputedBody::AbTest(super::ab_test::tests::body()),
+            &["rates"],
+        ),
         // Later cards go above this line.
     ]
 }

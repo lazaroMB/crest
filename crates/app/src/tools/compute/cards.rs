@@ -1,5 +1,5 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
-//! `stats_power`, and what the model is
+//! `stats_power`, `stats_ab_test`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -11,9 +11,7 @@ use std::fmt::Write as _;
 use domain::computed::ComputedBody;
 
 use super::{StatsKind, StatsTool, UnitsKind, UnitsTool};
-use crate::ports::compute::{
-    ComputeRequest, ContingencyRequest, DistributionRequest, PowerRequest,
-};
+use crate::ports::compute::*;
 
 /// `stats_distribution`.
 #[derive(Debug, Clone, Copy)]
@@ -119,6 +117,54 @@ quantities and the power curve; you get them as slots to cite.";
 
 /// `stats_power`.
 pub type StatsPowerTool = UnitsTool<Power>;
+
+/// `stats_ab_test`.
+#[derive(Debug, Clone, Copy)]
+pub struct AbTest;
+
+impl UnitsKind for AbTest {
+    type Request = AbTestRequest;
+    const NAME: &'static str = "stats_ab_test";
+    const DESCRIPTION: &'static str = "\
+Analyses an A/B test from its counts with crest's deterministic engine: each arm's conversion \
+rate with a Wilson interval, the absolute lift (Newcombe interval) and relative lift, the \
+two-proportion z-test (Fisher's exact test for small counts), P(B > A) under uniform priors, \
+the minimum detectable lift, a sample-ratio-mismatch check against `expected_split`, and a \
+warning when the results were looked at several times (`looks`). The user sees the card; you \
+get the values as slots to cite.";
+    fn wrap(request: AbTestRequest) -> ComputeRequest {
+        ComputeRequest::AbTest(request)
+    }
+    fn subject(request: &AbTestRequest) -> String {
+        let name = |a: &crate::ports::compute::ArmCounts, d: &str| {
+            a.name.clone().unwrap_or_else(|| d.to_owned())
+        };
+        format!(
+            "{} vs {}",
+            name(&request.treatment, "B"),
+            name(&request.control, "A")
+        )
+    }
+    fn check(request: &AbTestRequest) -> Result<(), String> {
+        for (arm, which) in [
+            (&request.control, "control"),
+            (&request.treatment, "treatment"),
+        ] {
+            if arm.visitors == 0 || arm.conversions > arm.visitors {
+                return Err(format!(
+                    "the {which} arm needs visitors > 0 and conversions ≤ visitors"
+                ));
+            }
+        }
+        if request.minimum_lift.is_some_and(|l| !l.is_finite()) {
+            return Err("`minimum_lift` must be a finite number".into());
+        }
+        Ok(())
+    }
+}
+
+/// `stats_ab_test`.
+pub type StatsAbTestTool = UnitsTool<AbTest>;
 
 /// Lines for the model about a phase-2 card that the slots do not say.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
@@ -250,5 +296,25 @@ mod tests {
         assert_eq!(request.effect, Some(0.8));
         let bad = tool.prepare(json!({ "effect": 0.5 }), &ctx()).await;
         assert!(bad.is_err(), "a design is needed");
+    }
+
+    #[tokio::test]
+    async fn an_ab_test_checks_its_counts_first() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(StatsAbTestTool::new(ports(Arc::clone(&engine))));
+        let input = json!({
+            "control": { "visitors": 1000, "conversions": 100 },
+            "treatment": { "name": "new", "visitors": 1000, "conversions": 120 },
+            "looks": 3
+        });
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "new vs A");
+        assert!(!prepared.run.await.unwrap().is_error);
+        let bad = json!({
+            "control": { "visitors": 10, "conversions": 11 },
+            "treatment": { "visitors": 10, "conversions": 1 }
+        });
+        assert!(tool.prepare(bad, &ctx()).await.is_err());
+        assert_eq!(engine.requests().len(), 1);
     }
 }

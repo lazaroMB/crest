@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -227,6 +227,21 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             csv.push_str(&format!("{n},{power}\n"));
         }
         formats.push(CopyFormat::new("curve", "power curve CSV", csv));
+    }
+    if let ComputedBody::AbTest(t) = body {
+        let mut csv = String::from("arm,visitors,conversions,rate,rate_lo,rate_hi\n");
+        for arm in &t.arms {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                csv_field(&arm.name),
+                arm.visitors,
+                arm.conversions,
+                arm.rate,
+                arm.rate_lo,
+                arm.rate_hi
+            ));
+        }
+        formats.push(CopyFormat::new("arms", "arms CSV", csv));
     }
     formats
 }
