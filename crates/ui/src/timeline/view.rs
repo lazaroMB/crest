@@ -209,7 +209,8 @@ impl TimelineView {
             cx.stop_propagation();
             return;
         }
-        if m.control || m.alt || m.platform {
+        // Arrows and Enter typed in a widget's filter stay there.
+        if m.control || m.alt || m.platform || crate::widgets::owns_focus(window, cx) {
             return;
         }
         let action = match event.keystroke.key.as_str() {

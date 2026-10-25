@@ -706,6 +706,9 @@ pub enum CustomNode {
     /// Rows of spans on a time axis, with zoom, pan and a tooltip
     /// (traces, Gantt charts, waveforms).
     Timeline(Box<crate::widget::timeline::TimelineSpec>),
+    /// Records (log lines, requests) with a text or regex filter, level
+    /// and field chips, follow mode and rows that open to their fields.
+    FilterList(Box<crate::widget::list::ListSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -769,6 +772,7 @@ impl CustomNode {
             Self::Model3d(spec) => Ok(spec.mesh.validate()?),
             Self::Plot(spec) => spec.validate(),
             Self::Timeline(spec) => spec.validate(),
+            Self::FilterList(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }

@@ -181,6 +181,30 @@ fn timelines_take_rows_of_spans() {
 }
 
 #[test]
+fn filter_lists_take_items_and_facets() {
+    let got = tree(
+        r#"return app.ui.block("l", app.ui.filter_list({
+             facets = { "service" },
+             items = {
+               { level = "error", ts = "12:00", text = "boom", fields = { service = "db" } },
+               { text = "ok", fields = {} },
+             },
+           }))"#,
+    );
+    let CustomNode::FilterList(spec) = got else {
+        panic!("not a filter list: {got:?}");
+    };
+    assert_eq!(spec.items.len(), 2);
+    assert_eq!(spec.items[0].field_text("service").as_deref(), Some("db"));
+    assert!(spec.columns.is_empty());
+    let twice = error_of(r#"return app.ui.filter_list({ items = {}, facets = { "a", "a" } })"#);
+    assert!(
+        twice.contains("app.ui.filter_list") && twice.contains("appears twice"),
+        "{twice}"
+    );
+}
+
+#[test]
 fn invalid_trees_raise_errors() {
     let short_row =
         error_of(r#"return app.ui.table({ columns = { "a", "b" }, rows = { { 1 } } })"#);
