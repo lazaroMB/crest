@@ -14,20 +14,9 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
-use domain::computed::{
-    AbArm, AbMethod, AbTestBody, Alternative, BandwidthRule, BinRule, BootstrapBody, BoxSummary,
-    CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedValue, ContingencyBody,
-    ContingencyTest, CorrelationBody, CorrelationMethod, Curve, DescriptiveBody, Diagnostics,
-    DistributionBody, DistributionGroup, Engine, FitStats, Histogram, Narrative, PAdjust,
-    PowerBody, PowerTarget, Quantity, QuantityBody, RegressionBody, TestBody, TestKind,
-    VariableKind, VariableSummary,
-};
+use domain::computed::*;
 
-use crate::ports::compute::{
-    AbTestRequest, BootstrapRequest, CalcRequest, ColumnValues, ComputeError, ComputePort,
-    ComputeRequest, ComputeResult, ContingencyRequest, ConvertRequest, CorrelateRequest, DataSet,
-    DescribeRequest, DistributionRequest, PowerRequest, REQUEST_PARAM, RegressRequest, TestRequest,
-};
+use crate::ports::compute::*;
 
 /// Name of the fake engine.
 pub const FAKE_ENGINE: &str = "fake";
@@ -197,6 +186,26 @@ impl FakeCompute {
                     intervals: Vec::new(),
                     z0: None,
                     acceleration: None,
+                }),
+            ),
+            ComputeRequest::Forecast(r) => (
+                "stats.forecast",
+                "Forecast",
+                "forecast",
+                ComputedBody::Forecast(ForecastBody {
+                    variable: r.y.clone(),
+                    time: Vec::new(),
+                    model: "fake".into(),
+                    values: vec![1.0, 2.0],
+                    trend: Vec::new(),
+                    seasonal: Vec::new(),
+                    remainder: Vec::new(),
+                    forecast: vec![3.0],
+                    lo80: vec![2.5],
+                    hi80: vec![3.5],
+                    lo95: vec![2.0],
+                    hi95: vec![4.0],
+                    holdout: None,
                 }),
             ),
             ComputeRequest::Power(r) => (
@@ -478,6 +487,10 @@ impl ComputePort for FakeCompute {
 
     fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Bootstrap(request.clone()), None)
+    }
+
+    fn forecast(&self, request: &ForecastRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Forecast(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

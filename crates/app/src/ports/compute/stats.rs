@@ -246,3 +246,33 @@ pub struct BootstrapRequest {
     #[serde(default = "default_conf_level")]
     pub conf_level: f64,
 }
+
+fn default_horizon() -> usize {
+    12
+}
+
+/// Input of `forecast`: a time series decomposed (MSTL: trend, one
+/// seasonal component per period, remainder) and forecast with 80% and
+/// 95% intervals (AutoETS on the deseasonalised series), with the
+/// accuracy on a held-out tail.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ForecastRequest {
+    /// The data, one row per time step in order.
+    pub data: DataSet,
+    /// The numeric column to forecast.
+    pub y: String,
+    /// A column of time labels (dates, periods), only shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    /// Seasonal periods in observations, e.g. `[12]` for monthly data,
+    /// `[24, 168]` for hourly; empty for no seasonality.
+    #[serde(default)]
+    pub periods: Vec<usize>,
+    /// Steps to forecast (default 12).
+    #[serde(default = "default_horizon")]
+    pub horizon: usize,
+    /// Observations held out to measure accuracy (default: the horizon,
+    /// at most a fifth of the series; 0 to skip).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holdout: Option<usize>,
+}

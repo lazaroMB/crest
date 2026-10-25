@@ -7,7 +7,7 @@
 use adapter_compute::StatsEngine;
 use application::ports::compute::{
     AbTestRequest, ArmCounts, BootstrapRequest, ComputePort, ContingencyChoice, ContingencyRequest,
-    DEFAULT_SEED, DataColumn, DataSet, DistributionRequest, PowerRequest,
+    DEFAULT_SEED, DataColumn, DataSet, DistributionRequest, ForecastRequest, PowerRequest,
 };
 use domain::computed::{
     AbMethod, Alternative, BandwidthRule, BinRule, BootMethod, BootStatistic, Computed,
@@ -574,4 +574,87 @@ fn bootstrap_sentence_names_the_interval_and_the_seed() {
         .unwrap()
         .plain();
     assert!(line.starts_with("Mdn = "), "{line}");
+}
+
+// --- Forecast ---------------------------------------------------------------------
+
+/// A monthly series: level 10, slope 0.5, a seasonal swing of 3 and a small
+/// irregular part.
+fn monthly(n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|t| {
+            let t = t as f64;
+            10.0 + 0.5 * t
+                + 3.0 * (2.0 * std::f64::consts::PI * t / 12.0).sin()
+                + 0.2 * (1.7 * t).sin()
+        })
+        .collect()
+}
+
+fn forecast_request(y: &[f64], periods: Vec<usize>) -> ForecastRequest {
+    ForecastRequest {
+        data: DataSet::inline(vec![DataColumn::numeric("sales", y)]),
+        y: "sales".into(),
+        time: None,
+        periods,
+        horizon: 12,
+        holdout: None,
+    }
+}
+
+#[test]
+fn forecast_decomposes_and_forecasts_a_seasonal_series() {
+    let y = monthly(96);
+    let (c, body) = engine().forecast(&forecast_request(&y, vec![12])).unwrap();
+    assert_ne!(c.status, ComputedStatus::Error, "{:?}", c.error);
+    let ComputedBody::Forecast(f) = &body else {
+        panic!("not a forecast");
+    };
+    assert_eq!(body.validate(), Ok(()));
+    // The components add up to the series (single precision).
+    for (t, observed) in y.iter().enumerate() {
+        let sum = f.trend[t] + f.seasonal[0].values[t] + f.remainder[t];
+        near(sum, *observed, 1e-3);
+    }
+    assert!(v(&c, "seasonal_strength_12") > 0.9);
+    assert!(v(&c, "trend_strength") > 0.9);
+    // Held out 12 months, forecast from the first 84: accurate.
+    assert_eq!(v(&c, "holdout"), 12.0);
+    assert!(v(&c, "mape") < 3.0, "MAPE {}", v(&c, "mape"));
+    // The intervals nest and widen with the horizon.
+    for i in 0..12 {
+        assert!(f.lo95[i] <= f.lo80[i] && f.lo80[i] <= f.forecast[i]);
+        assert!(f.forecast[i] <= f.hi80[i] && f.hi80[i] <= f.hi95[i]);
+    }
+    assert!(f.hi95[11] - f.lo95[11] >= f.hi95[0] - f.lo95[0]);
+    // The forecast continues the trend: next year is above this one.
+    assert!(f.forecast[11] > y[95] - 6.0);
+    assert!(c.warnings.iter().any(|w| w.code == "extrapolation"));
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("MAPE"), "{sentence}");
+}
+
+#[test]
+fn forecast_without_periods_and_too_short_series() {
+    let y: Vec<f64> = (0..40)
+        .map(|t| 5.0 + 0.3 * f64::from(t) + 0.1 * (f64::from(t) * 2.3).sin())
+        .collect();
+    let (c, body) = engine()
+        .forecast(&forecast_request(&y, Vec::new()))
+        .unwrap();
+    assert_ne!(c.status, ComputedStatus::Error, "{:?}", c.error);
+    let ComputedBody::Forecast(f) = &body else {
+        panic!("not a forecast");
+    };
+    assert!(f.trend.is_empty() && f.seasonal.is_empty());
+    assert_eq!(f.forecast.len(), 12);
+    let (c, _) = engine()
+        .forecast(&forecast_request(&monthly(20), vec![12]))
+        .unwrap();
+    assert_eq!(c.status, ComputedStatus::Error);
+    let mut bad = forecast_request(&y, vec![1]);
+    assert!(engine().forecast(&bad).is_err());
+    bad.periods = Vec::new();
+    bad.horizon = 0;
+    assert!(engine().forecast(&bad).is_err());
 }

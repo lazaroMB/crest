@@ -15,7 +15,8 @@
 //! box/violin, QQ, ECDF), contingency tables (residuals, χ² or an exact
 //! r×c Fisher test), power (noncentral t and F, as R's `pwr`) and A/B
 //! tests (lift intervals, sample-ratio and peeking checks), seeded bootstraps
-//! (percentile, BCa, basic, normal, with MCSE). Resampling and simulation draw from a seeded ChaCha20
+//! (percentile, BCa, basic, normal, with MCSE) and forecasts (MSTL and
+//! AutoETS from `augurs`, with a hold-out check). Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -36,6 +37,7 @@ mod data;
 mod describe;
 mod distribution;
 mod envelope;
+mod forecast;
 mod linalg;
 mod math;
 mod ols;
@@ -102,6 +104,7 @@ impl StatsEngine {
             ComputeRequest::Power(r) => power::run(r, id)?,
             ComputeRequest::AbTest(r) => ab_test::run(r, id)?,
             ComputeRequest::Bootstrap(r) => bootstrap::run(r, id)?,
+            ComputeRequest::Forecast(r) => forecast::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -126,6 +129,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Power(_) => "power",
         ComputeRequest::AbTest(_) => "ab_test",
         ComputeRequest::Bootstrap(_) => "bootstrap",
+        ComputeRequest::Forecast(_) => "forecast",
     }
 }
 
@@ -172,6 +176,10 @@ impl ComputePort for StatsEngine {
 
     fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Bootstrap(request.clone()), None)
+    }
+
+    fn forecast(&self, request: &ForecastRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Forecast(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

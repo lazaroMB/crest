@@ -532,6 +532,14 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Bootstrap(super::bootstrap::tests::body()),
             &["replicates"],
         ),
+        (
+            card(
+                "stats.forecast",
+                "Forecast: MSTL (periods 2) + AutoETS trend",
+            ),
+            ComputedBody::Forecast(super::forecast::tests::body()),
+            &["forecast", "trend", "seasonal-2", "remainder"],
+        ),
         // Later cards go above this line.
     ]
 }

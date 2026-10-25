@@ -1,0 +1,146 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsForecastTool::new(ports))"
+---
+{
+  "name": "stats_forecast",
+  "description": "Decomposes and forecasts a time series with crest's deterministic engine (augurs): MSTL splits it into trend, one seasonal component per period in `periods` (e.g. [12] for monthly data) and remainder; AutoETS forecasts `horizon` steps with 80% and 95% intervals. The last `holdout` observations are forecast by a model fitted without them, for an honest MAPE/sMAPE/MAE. Rows must be equally spaced time steps in order, without gaps. The user sees the fan chart and the components; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "y": {
+        "type": "string",
+        "description": "The numeric column to forecast."
+      },
+      "time": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A column of time labels (dates, periods), only shown."
+      },
+      "periods": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "description": "Seasonal periods in observations, e.g. `[12]` for monthly data,\n`[24, 168]` for hourly; empty for no seasonality.",
+        "default": []
+      },
+      "horizon": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0,
+        "description": "Steps to forecast (default 12).",
+        "default": 12
+      },
+      "holdout": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0,
+        "description": "Observations held out to measure accuracy (default: the horizon,\nat most a fifth of the series; 0 to skip)."
+      }
+    },
+    "required": [
+      "data",
+      "y"
+    ],
+    "description": "Input of `forecast`: a time series decomposed (MSTL: trend, one\nseasonal component per period, remainder) and forecast with 80% and\n95% intervals (AutoETS on the deseasonalised series), with the\naccuracy on a held-out tail.",
+    "title": "ForecastRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      }
+    }
+  }
+}

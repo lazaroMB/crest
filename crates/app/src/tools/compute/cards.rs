@@ -1,5 +1,6 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
-//! `stats_power`, `stats_ab_test`, `stats_bootstrap`, and what the model is
+//! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`, and
+//! what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -104,6 +105,31 @@ you get the values as slots to cite.";
 
 /// `stats_bootstrap`.
 pub type StatsBootstrapTool = StatsTool<Bootstrap>;
+
+/// `stats_forecast`.
+#[derive(Debug, Clone, Copy)]
+pub struct ForecastKind;
+
+impl StatsKind for ForecastKind {
+    type Request = ForecastRequest;
+    const NAME: &'static str = "stats_forecast";
+    const DESCRIPTION: &'static str = "\
+Decomposes and forecasts a time series with crest's deterministic engine (augurs): MSTL splits \
+it into trend, one seasonal component per period in `periods` (e.g. [12] for monthly data) and \
+remainder; AutoETS forecasts `horizon` steps with 80% and 95% intervals. The last `holdout` \
+observations are forecast by a model fitted without them, for an honest MAPE/sMAPE/MAE. Rows \
+must be equally spaced time steps in order, without gaps. The user sees the fan chart and the \
+components; you get the values as slots to cite.";
+    fn wrap(request: ForecastRequest) -> ComputeRequest {
+        ComputeRequest::Forecast(request)
+    }
+    fn subject(request: &ForecastRequest) -> String {
+        format!("{}, {} steps", request.y, request.horizon)
+    }
+}
+
+/// `stats_forecast`.
+pub type StatsForecastTool = StatsTool<ForecastKind>;
 
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]
@@ -235,6 +261,15 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                     cells.join(", ")
                 );
             }
+        }
+        ComputedBody::Forecast(f) => {
+            let _ = writeln!(
+                out,
+                "Model: {}; the forecast covers t = {} to {} (t counts rows from 0).",
+                f.model,
+                f.values.len(),
+                f.values.len() + f.forecast.len().saturating_sub(1)
+            );
         }
         _ => {}
     }
