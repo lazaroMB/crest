@@ -1,6 +1,6 @@
-//! Painting a plot: the grid at the ticks, the zero lines, every layer
-//! (curves as GPUI paths, points as ringed dots) clipped to the plot area,
-//! and the labels. Positions in the layout are relative to `origin`, the
+//! Painting a plot: the grid at the ticks (fainter minor lines on log
+//! axes), the zero lines, every layer (curves as GPUI paths, points as
+//! ringed dots) clipped to the plot area, and the labels. Positions in the layout are relative to `origin`, the
 //! element's top-left corner on screen.
 
 use gpui::{
@@ -31,6 +31,15 @@ pub fn paint_grid(
     window: &mut Window,
 ) {
     let plot = &layout.plot;
+    let minor = grid.opacity(0.45);
+    for &x in &layout.x_minor {
+        let line = Rect::new(x.round(), plot.y, 1.0, plot.h);
+        window.paint_quad(fill(to_bounds(&line, origin), minor));
+    }
+    for &y in &layout.y_minor {
+        let line = Rect::new(plot.x, y.round(), plot.w, 1.0);
+        window.paint_quad(fill(to_bounds(&line, origin), minor));
+    }
     for tick in &layout.x_ticks {
         let line = Rect::new(tick.pos.round(), plot.y, 1.0, plot.h);
         window.paint_quad(fill(to_bounds(&line, origin), grid));
@@ -39,15 +48,16 @@ pub fn paint_grid(
         let line = Rect::new(plot.x, tick.pos.round(), plot.w, 1.0);
         window.paint_quad(fill(to_bounds(&line, origin), grid));
     }
+    // Zero lines on linear axes (0 on a log axis is the value 1).
     let view = layout.view;
-    if view.x.0 < 0.0 && view.x.1 > 0.0 {
+    if layout.axes.x.is_linear() && view.x.0 < 0.0 && view.x.1 > 0.0 {
         let x = layout.to_px((0.0, view.y.0)).0.round();
         window.paint_quad(fill(
             to_bounds(&Rect::new(x, plot.y, 1.0, plot.h), origin),
             axis,
         ));
     }
-    if view.y.0 < 0.0 && view.y.1 > 0.0 {
+    if layout.axes.y.is_linear() && view.y.0 < 0.0 && view.y.1 > 0.0 {
         let y = layout.to_px((view.x.0, 0.0)).1.round();
         window.paint_quad(fill(
             to_bounds(&Rect::new(plot.x, y, plot.w, 1.0), origin),

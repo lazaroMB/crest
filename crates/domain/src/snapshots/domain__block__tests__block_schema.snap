@@ -1475,6 +1475,36 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "AxisScale": {
+      "description": "How an axis maps values to positions.",
+      "oneOf": [
+        {
+          "description": "Equal steps for equal differences.",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "Equal steps for equal ratios (base 10); only positive values show.",
+          "type": "string",
+          "const": "log"
+        }
+      ]
+    },
+    "PlotAspect": {
+      "description": "The shape of a plot area.",
+      "oneOf": [
+        {
+          "description": "Height follows the width.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "One unit (axis unit, so a decade on a log axis) is as long on both\naxes: circles stay round.",
+          "type": "string",
+          "const": "equal"
+        }
+      ]
+    },
     "PlotSpec": {
       "description": "A plot of functions and series.",
       "type": "object",
@@ -1545,6 +1575,18 @@ expression: "schemars::schema_for!(Block)"
             "$ref": "#/$defs/XySeries"
           },
           "default": []
+        },
+        "x_scale": {
+          "description": "Scale of the x axis.",
+          "$ref": "#/$defs/AxisScale"
+        },
+        "y_scale": {
+          "description": "Scale of the y axis.",
+          "$ref": "#/$defs/AxisScale"
+        },
+        "aspect": {
+          "description": "Shape of the plot area.",
+          "$ref": "#/$defs/PlotAspect"
         }
       }
     },

@@ -2,15 +2,18 @@
 //! or fitted robustly so an asymptote does not flatten the curve), curves
 //! sampled adaptively with gaps at discontinuities, implicit curves traced
 //! by marching squares, and the clipping that keeps far-off points out of
-//! the paths. Everything is in data coordinates; [`super::axes`] maps it
-//! to pixels.
+//! the paths. Everything is in axis units (data values, or their `log10`
+//! on a logarithmic axis, where non-positive values are skipped);
+//! [`super::axes`] maps it to pixels.
 
 use std::cell::RefCell;
 
 use domain::plot::expr::Expr;
-use domain::plot::{CompiledFunction, FunctionKind, PlotRange, PlotSpec, SeriesStyle};
+use domain::plot::{
+    AxisScale, CompiledFunction, FunctionKind, PlotAspect, PlotRange, PlotSpec, SeriesStyle,
+};
 
-use super::axes::{View, nice_range, widen};
+use super::axes::{Axes, View, nice_range, widen};
 
 /// A point in data coordinates.
 pub type Pt = (f64, f64);
@@ -37,6 +40,8 @@ pub const BISECTIONS: u32 = 10;
 pub const FIT_SAMPLES: usize = 400;
 /// The x range when neither the spec nor the data give one.
 pub const DEFAULT_X: (f64, f64) = (-10.0, 10.0);
+/// The same on a log axis, in decades: `1..1000`.
+pub const DEFAULT_LOG_X: (f64, f64) = (0.0, 3.0);
 
 /// Distance from `a` to `b` in fractions of `view`.
 fn view_distance(view: &View, a: Pt, b: Pt) -> f64 {
@@ -359,7 +364,12 @@ pub struct Layer {
 /// Everything a plot draws for one set of parameter values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
+    /// The view, in axis units.
     pub view: View,
+    /// The axes' scales and shape.
+    pub axes: Axes,
+    /// Series points left out for being non-positive on a log axis.
+    pub skipped: usize,
     pub layers: Vec<Layer>,
     /// Explicit functions by layer index, for the hover readout.
     pub explicit: Vec<(usize, CompiledFunction)>,
@@ -368,7 +378,18 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// `f(x)` of an explicit function with the scene's parameters.
+    /// A data point in axis units (NaN where a log axis cannot show it).
+    pub fn to_axis(&self, (x, y): Pt) -> Pt {
+        (self.axes.x.forward(x), self.axes.y.forward(y))
+    }
+
+    /// The data point at `p` in axis units.
+    pub fn from_axis(&self, (u, v): Pt) -> Pt {
+        (self.axes.x.inverse(u), self.axes.y.inverse(v))
+    }
+
+    /// `f(x)` of an explicit function with the scene's parameters, `x`
+    /// and the result in data units.
     pub fn eval_explicit(&self, f: &CompiledFunction, x: f64) -> f64 {
         let mut vars = Vec::with_capacity(self.values.len() + 1);
         vars.push(x);
@@ -388,14 +409,32 @@ fn eval_with(f: &Expr, buf: &mut Vec<f64>, vars: &[f64], params: &[f64]) -> f64 
 /// The scene of `spec` with its functions `compiled` and parameter values
 /// `values` (in the order of `spec.params`).
 pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> Scene {
+    let axes = Axes {
+        x: spec.x_scale,
+        y: spec.y_scale,
+        equal: spec.aspect == PlotAspect::Equal,
+    };
+    let (tx, ty) = (|v| axes.x.forward(v), |v| axes.y.forward(v));
+    let (ix, iy) = (|u| axes.x.inverse(u), |u| axes.y.inverse(u));
     let param = |f: &Expr, vars: &[f64]| {
         let mut buf = Vec::with_capacity(vars.len() + values.len());
         eval_with(f, &mut buf, vars, values)
     };
+    // In axis units.
     let parametric_at = |f: &CompiledFunction, t: f64| -> Pt {
         let y = f.y_expr.as_ref().map_or(f64::NAN, |y| param(y, &[t]));
-        (param(&f.expr, &[t]), y)
+        (tx(param(&f.expr, &[t])), ty(y))
     };
+    // A fitted log range covers whole decades.
+    let fit = |scale: AxisScale, (lo, hi): (f64, f64), share: f64, target: usize| match scale {
+        AxisScale::Log if hi - lo >= 1.0 => (lo.floor(), hi.ceil()),
+        AxisScale::Log => padded((lo, hi), share),
+        AxisScale::Linear => {
+            let r = padded((lo, hi), share);
+            nice_range(r.0, r.1, target)
+        }
+    };
+    let axis_range = |scale: AxisScale, r: PlotRange| (scale.forward(r.min), scale.forward(r.max));
     // Parametric samples fit both axes.
     let mut px = Vec::new();
     let mut py = Vec::new();
@@ -410,28 +449,27 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
             py.push(y);
         }
     }
-    let series_x = spec.series.iter().flat_map(|s| s.x.iter().copied());
-    let series_y = spec.series.iter().flat_map(|s| s.y.iter().copied());
+    let series_x = spec.series.iter().flat_map(|s| s.x.iter().map(|&v| tx(v)));
+    let series_y = spec.series.iter().flat_map(|s| s.y.iter().map(|&v| ty(v)));
     let x = match spec.x_range {
-        Some(r) => range_of(r),
+        Some(r) => axis_range(axes.x, r),
         None => {
             let mut xs: Vec<f64> = series_x.chain(px).collect();
-            match robust_range(&mut xs).map(|r| padded(r, 0.04)) {
-                Some((lo, hi)) => nice_range(lo, hi, 6),
+            match robust_range(&mut xs) {
+                Some(r) => fit(axes.x, r, 0.04, 6),
+                None if axes.x == AxisScale::Log => DEFAULT_LOG_X,
                 None => DEFAULT_X,
             }
         }
     };
     let y = match spec.y_range {
-        Some(r) => range_of(r),
+        Some(r) => axis_range(axes.y, r),
         None => {
             let mut ys = py;
             for f in compiled.iter().filter(|f| f.kind == FunctionKind::Explicit) {
                 for i in 0..=FIT_SAMPLES {
-                    ys.push(param(
-                        &f.expr,
-                        &[x.0 + (x.1 - x.0) * i as f64 / FIT_SAMPLES as f64],
-                    ));
+                    let u = x.0 + (x.1 - x.0) * i as f64 / FIT_SAMPLES as f64;
+                    ys.push(ty(param(&f.expr, &[ix(u)])));
                 }
             }
             let curves = robust_range(&mut ys);
@@ -441,14 +479,8 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
                 Some(acc.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))))
             });
             match (curves, data) {
-                (Some(a), Some(b)) => {
-                    let r = padded((a.0.min(b.0), a.1.max(b.1)), 0.05);
-                    nice_range(r.0, r.1, 5)
-                }
-                (Some(r), None) | (None, Some(r)) => {
-                    let r = padded(r, 0.05);
-                    nice_range(r.0, r.1, 5)
-                }
+                (Some(a), Some(b)) => fit(axes.y, (a.0.min(b.0), a.1.max(b.1)), 0.05, 5),
+                (Some(r), None) | (None, Some(r)) => fit(axes.y, r, 0.05, 5),
                 // Only implicit curves: the same span as x, around 0.
                 (None, None) => {
                     let half = 0.5 * (x.1 - x.0);
@@ -478,7 +510,11 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
         let mark = match f.kind {
             FunctionKind::Explicit => {
                 explicit.push((layers.len(), f.clone()));
-                Mark::Lines(clip(curve(|x| (x, param(&f.expr, &[x])), view.x, &view)))
+                Mark::Lines(clip(curve(
+                    |u| (u, ty(param(&f.expr, &[ix(u)]))),
+                    view.x,
+                    &view,
+                )))
             }
             FunctionKind::Parametric => Mark::Lines(clip(curve(
                 |t| parametric_at(f, t),
@@ -488,7 +524,9 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
             FunctionKind::Implicit => {
                 // `contour` takes `Fn`, so the reused buffer lives in a cell.
                 let buf = RefCell::new(Vec::with_capacity(2 + values.len()));
-                let g = |x: f64, y: f64| eval_with(&f.expr, &mut buf.borrow_mut(), &[x, y], values);
+                let g = |u: f64, v: f64| {
+                    eval_with(&f.expr, &mut buf.borrow_mut(), &[ix(u), iy(v)], values)
+                };
                 Mark::Segments(contour(g, &view, GRID_X, GRID_Y))
             }
         };
@@ -498,8 +536,15 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
             mark,
         });
     }
+    let mut skipped = 0;
     for s in &spec.series {
-        let points: Vec<Pt> = s.x.iter().copied().zip(s.y.iter().copied()).collect();
+        let all: Vec<Pt> =
+            s.x.iter()
+                .zip(&s.y)
+                .map(|(&x, &y)| (tx(x), ty(y)))
+                .collect();
+        let points: Vec<Pt> = all.iter().copied().filter(|&p| finite(p)).collect();
+        skipped += all.len() - points.len();
         let mark = match s.style {
             SeriesStyle::Scatter => Mark::Points(points),
             SeriesStyle::Line => Mark::Lines(clip(vec![points])),
@@ -512,6 +557,8 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
     }
     Scene {
         view,
+        axes,
+        skipped,
         layers,
         explicit,
         values: values.to_vec(),
@@ -684,6 +731,32 @@ mod tests {
         assert!((scene.eval_explicit(f, 1.0) - 1f64.tan()).abs() < 1e-12);
         let doubled = super::scene(&spec, &compiled, &[2.0, 2.0]);
         assert!((doubled.eval_explicit(f, 1.0) - 2.0 * 1f64.tan()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn log_axes_work_in_decades_and_skip_non_positive_points() {
+        let spec = spec(json!({
+            "x_scale": "log", "y_scale": "log",
+            "functions": [{"kind": "explicit", "expr": "x^2"}],
+            "series": [{"name": "s", "x": [1, 10, 100, -1, 5], "y": [1, 100, 10000, 3, 0]}]
+        }));
+        let compiled = spec.compile().unwrap();
+        let s = scene(&spec, &compiled, &[]);
+        // Whole decades around 1..100 on x and 1..10000 on y.
+        assert_eq!(s.view.x, (0.0, 2.0));
+        assert_eq!(s.view.y, (0.0, 4.0));
+        assert_eq!(s.skipped, 2);
+        let Mark::Points(points) = &s.layers[1].mark else {
+            panic!("points");
+        };
+        assert_eq!(points, &[(0.0, 0.0), (1.0, 2.0), (2.0, 4.0)]);
+        // x^2 is a straight line of slope 2 in log-log axes.
+        let Mark::Lines(lines) = &s.layers[0].mark else {
+            panic!("lines");
+        };
+        assert!(lines[0].iter().all(|&(u, v)| (v - 2.0 * u).abs() < 1e-9));
+        assert_eq!(s.from_axis((1.0, 2.0)), (10.0, 100.0));
+        assert!(s.axes.x == AxisScale::Log && !s.axes.equal);
     }
 
     #[test]

@@ -112,6 +112,7 @@ pub fn residuals_plot(body: &RegressionBody) -> Option<PlotSpec> {
         functions: Vec::new(),
         params: Vec::new(),
         series: vec![series("residuals", &pairs, SeriesStyle::Scatter)],
+        ..PlotSpec::default()
     })
 }
 
@@ -139,6 +140,7 @@ pub fn qq_plot(body: &RegressionBody) -> Option<PlotSpec> {
         functions: Vec::new(),
         params: Vec::new(),
         series: all,
+        ..PlotSpec::default()
     })
 }
 

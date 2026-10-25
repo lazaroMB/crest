@@ -128,3 +128,49 @@ fn invalid_and_data_only_plots_still_draw(cx: &mut TestAppContext) {
             .is_some()
     );
 }
+
+#[gpui::test]
+fn log_and_equal_aspect_plots_draw_and_hover(cx: &mut TestAppContext) {
+    let log: PlotSpec = serde_json::from_value(json!({
+        "x_scale": "log", "y_scale": "log",
+        "functions": [{"kind": "explicit", "expr": "x^2"}],
+        "series": [{"name": "s", "x": [1, 10, 100, 0], "y": [1, 90, 11000, 4]}]
+    }))
+    .unwrap_or_else(|e| panic!("{e}"));
+    let circle: PlotSpec = serde_json::from_value(json!({
+        "aspect": "equal",
+        "x_range": {"min": -2, "max": 2},
+        "y_range": {"min": -1, "max": 1},
+        "functions": [{"kind": "implicit", "expr": "x^2 + y^2 - 1"}]
+    }))
+    .unwrap_or_else(|e| panic!("{e}"));
+    let (cx, ids) = window(cx, vec![log, circle]);
+    let view = cx
+        .update(|_, cx| crate::blocks::existing_block_state::<PlotView>(ids[0], cx))
+        .unwrap_or_else(|| panic!("plot view kept"));
+    let scene = view
+        .read_with(cx, |v, _| v.scene())
+        .unwrap_or_else(|| panic!("scene"));
+    assert_eq!(scene.skipped, 1);
+    assert_eq!(
+        skipped_note(scene.skipped).as_deref(),
+        Some("1 point not shown: it is not positive on a log axis.")
+    );
+    let canvas = cx
+        .debug_bounds(format!("plot-canvas-{}", ids[0]).leak())
+        .unwrap_or_else(|| panic!("log plot drawn"));
+    for fx in [0.2, 0.5, 0.8] {
+        let at = gpui::point(
+            canvas.origin.x + canvas.size.width * fx,
+            canvas.origin.y + canvas.size.height * 0.5,
+        );
+        cx.simulate_mouse_move(at, None, Modifiers::none());
+        cx.run_until_parked();
+    }
+    // The equal-aspect plot is about half as tall as wide (4 by 2 units).
+    let equal = cx
+        .debug_bounds(format!("plot-canvas-{}", ids[1]).leak())
+        .unwrap_or_else(|| panic!("equal plot drawn"));
+    let ratio = equal.size.height / equal.size.width;
+    assert!(ratio > 0.4 && ratio < 0.65, "{ratio}");
+}

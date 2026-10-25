@@ -32,7 +32,7 @@ use gpui_component::plot::{Plot, PlotElement, TooltipState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use self::axes::{PlotLayout, plan, readout, step_decimals};
+use self::axes::{PlotLayout, axis_readout, plan, step_decimals};
 use self::paint::{paint_grid, paint_labels, paint_layers};
 use self::sample::{Mark, Scene, scene};
 use super::chart::paint::LabelFont;
@@ -78,19 +78,23 @@ impl PlotCanvas {
             .unwrap_or_default()
     }
 
-    /// The explicit functions' values at `x` with their layer, and the
-    /// data point nearest to `cursor` within [`HOVER_RADIUS`].
+    /// The explicit functions' values at `x` (axis units in and out) with
+    /// their layer, and the data point nearest to `cursor` within
+    /// [`HOVER_RADIUS`].
     fn readings(
         &self,
         layout: &PlotLayout,
         x: f64,
         cursor: (f32, f32),
     ) -> (Vec<(usize, f64)>, Option<NearPoint>) {
-        let values = self
-            .scene
+        let scene = &self.scene;
+        let data_x = scene.axes.x.inverse(x);
+        let values = scene
             .explicit
             .iter()
-            .map(|(layer, f): &(usize, CompiledFunction)| (*layer, self.scene.eval_explicit(f, x)))
+            .map(|(layer, f): &(usize, CompiledFunction)| {
+                (*layer, scene.axes.y.forward(scene.eval_explicit(f, data_x)))
+            })
             .collect();
         let mut nearest: Option<(f32, usize, (f64, f64))> = None;
         for (ix, layer) in self.scene.layers.iter().enumerate() {
@@ -106,6 +110,34 @@ impl PlotCanvas {
             }
         }
         (values, nearest.map(|(_, ix, p)| (ix, p)))
+    }
+
+    /// The hover dots for `readings` at `x` (drawn at `cursor_x`), each in
+    /// its layer's color: one per explicit function in view, then the
+    /// nearest data point.
+    fn hover_dots(
+        &self,
+        layout: &PlotLayout,
+        x: f64,
+        cursor_x: Pixels,
+        values: &[(usize, f64)],
+        nearest: Option<NearPoint>,
+    ) -> Vec<(Point<Pixels>, Hsla)> {
+        let view = layout.view;
+        let layer_color = |ix: usize| self.color(self.scene.layers.get(ix).map_or(ix, |l| l.color));
+        let mut dots: Vec<(Point<Pixels>, Hsla)> = values
+            .iter()
+            .filter(|(_, y)| y.is_finite() && *y >= view.y.0 && *y <= view.y.1)
+            .map(|&(ix, y)| {
+                let (_, py) = layout.to_px((x, y));
+                (point(cursor_x, px(py)), layer_color(ix))
+            })
+            .collect();
+        if let Some((ix, p)) = nearest {
+            let (px_x, px_y) = layout.to_px(p);
+            dots.push((point(px(px_x), px(px_y)), layer_color(ix)));
+        }
+        dots
     }
 }
 
@@ -132,6 +164,7 @@ impl Plot for PlotCanvas {
             self.titles.y.as_deref(),
             bounds.size.width.as_f32(),
             &measure,
+            self.scene.axes,
         ));
         vec![]
     }
@@ -173,19 +206,11 @@ impl Plot for PlotCanvas {
         }
         let (x, _) = layout.to_data(mx, my);
         let (values, nearest) = self.readings(layout, x, (mx, my));
-        let view = layout.view;
-        let mut dots: Vec<Point<Pixels>> = values
+        let dots = self
+            .hover_dots(layout, x, position.x, &values, nearest)
             .into_iter()
-            .filter(|(_, y)| y.is_finite() && *y >= view.y.0 && *y <= view.y.1)
-            .map(|(_, y)| {
-                let (_, py) = layout.to_px((x, y));
-                point(position.x, px(py))
-            })
+            .map(|(at, _)| at)
             .collect();
-        if let Some((_, p)) = nearest {
-            let (px_x, px_y) = layout.to_px(p);
-            dots.push(point(px(px_x), px(px_y)));
-        }
         Some(TooltipState::new(
             mx.max(0.0) as usize,
             point(position.x, position.y),
@@ -207,17 +232,23 @@ impl Plot for PlotCanvas {
         let (x, y) = layout.to_data(px_x, px_y);
         let (values, nearest) = self.readings(layout, x, (px_x, px_y));
         let plot = &layout.plot;
+        let dots = self.hover_dots(layout, x, state.cross_line.x, &values, nearest);
+        let axes = layout.axes;
+        let (x_text, y_text) = (
+            |v: f64| axis_readout(v, axes.x, layout.x_step),
+            |v: f64| axis_readout(v, axes.y, layout.y_step),
+        );
         let mut tooltip = Tooltip::new(cursor, bounds.size)
             .gap(px(8.))
             .cross_line(CrossLine::new(state.cross_line).span(plot.y, plot.h))
-            .dots(state.dots.iter().map(|&at| {
+            .dots(dots.into_iter().map(|(at, color)| {
                 Dot::new(at)
                     .size(px(HOVER_DOT))
                     .halo(px(HOVER_HALO))
                     .stroke(surface)
-                    .fill(cx.theme().foreground)
+                    .fill(color)
             }))
-            .title(format!("x = {}", readout(x, layout.x_step)));
+            .title(format!("x = {}", x_text(x)));
         let label = |ix: usize| {
             self.scene
                 .layers
@@ -227,26 +258,18 @@ impl Plot for PlotCanvas {
         };
         for (ix, value) in &values {
             let color = self.scene.layers.get(*ix).map_or(0, |l| l.color);
-            tooltip = tooltip.row(
-                self.color(color),
-                label(*ix),
-                readout(*value, layout.y_step),
-            );
+            tooltip = tooltip.row(self.color(color), label(*ix), y_text(*value));
         }
         if let Some((ix, (px_, py_))) = nearest {
             let color = self.scene.layers.get(ix).map_or(0, |l| l.color);
             tooltip = tooltip.row(
                 self.color(color),
                 label(ix),
-                format!(
-                    "({}, {})",
-                    readout(px_, layout.x_step),
-                    readout(py_, layout.y_step)
-                ),
+                format!("({}, {})", x_text(px_), y_text(py_)),
             );
         }
         if values.is_empty() && nearest.is_none() {
-            tooltip = tooltip.plain_row("y", readout(y, layout.y_step));
+            tooltip = tooltip.plain_row("y", y_text(y));
         }
         Some(tooltip.into_any_element())
     }
@@ -268,7 +291,7 @@ fn plot_frame(
     let colors: Rc<[Hsla]> = (0..scene.layers.len().max(1))
         .map(|ix| series_color(ix, cx))
         .collect();
-    let view = scene.view;
+    let (view, axes) = (scene.view, scene.axes);
     let canvas = PlotCanvas {
         id,
         scene,
@@ -287,6 +310,7 @@ fn plot_frame(
                 titles.y.as_deref(),
                 width.as_f32(),
                 &measure,
+                axes,
             );
             px(layout.height)
         },
@@ -337,6 +361,12 @@ fn plot_with_legend(
         y: spec.y_label.clone(),
     };
     let legend = legend(&scene, cx);
+    let note = skipped_note(scene.skipped).map(|text| {
+        div()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(SharedString::from(text))
+    });
     let frame = plot_frame(
         scene,
         titles,
@@ -348,7 +378,19 @@ fn plot_with_legend(
         .gap_2()
         .child(div().w_full().debug_selector(move || selector).child(frame))
         .children(legend)
+        .children(note)
         .into_any_element()
+}
+
+/// The note under a plot whose log axes left out `skipped` points.
+pub fn skipped_note(skipped: usize) -> Option<String> {
+    match skipped {
+        0 => None,
+        1 => Some("1 point not shown: it is not positive on a log axis.".to_owned()),
+        n => Some(format!(
+            "{n} points not shown: they are not positive on a log axis."
+        )),
+    }
 }
 
 /// `spec` drawn once without sliders (with its parameters' values), or
