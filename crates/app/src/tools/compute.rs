@@ -16,17 +16,26 @@
 //! the values as slots (`⟦st_….p_value⟧`) it can cite, never the data. A
 //! bad request, an unreadable file or a computation that failed comes back
 //! as an `is_error` result with the reason.
+//!
+//! `stats_test` counts the hypothesis tests of each session ([`TestTally`]):
+//! from the [`SESSION_TESTS_WARN_FROM`]th on, each new test carries a
+//! `multiple_comparisons` warning with the count, suggesting Holm or
+//! Benjamini-Hochberg. The p-values are never changed. The tally lives as
+//! long as the tool (the app run), so a resumed session counts afresh.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use domain::block::BlockKind;
 use domain::computed::{
-    AssumptionStatus, Computed, ComputedBody, ComputedStatus, narrative, slots,
+    AssumptionStatus, Computed, ComputedBody, ComputedStatus, ComputedWarning, WarningSeverity,
+    narrative, slots,
 };
+use domain::conversation::SessionId;
 use domain::permission::ToolEffect;
 use futures::FutureExt;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -42,7 +51,9 @@ use crate::ports::compute::{
     DataSet, DescribeRequest, RegressRequest, TestRequest,
 };
 use crate::ports::fs::FileSystemPort;
-use crate::usecases::compute::{Offload, load_file, offloaded, set_provenance};
+use crate::usecases::compute::{
+    Offload, SESSION_TESTS_WARNING, load_file, offloaded, set_provenance,
+};
 
 /// Who the tools record as having asked for the computation.
 pub const REQUESTED_BY: &str = "assistant";
@@ -242,9 +253,53 @@ pub struct ComputeToolPorts {
     pub offload: Offload,
 }
 
+/// The test of a session from which each new one warns about multiple
+/// comparisons.
+pub const SESSION_TESTS_WARN_FROM: usize = 3;
+
+/// Code of the warning on tests from the [`SESSION_TESTS_WARN_FROM`]th.
+pub const MULTIPLE_COMPARISONS: &str = SESSION_TESTS_WARNING;
+
+/// Hypothesis tests run so far, per session.
+#[derive(Debug, Default)]
+pub struct TestTally(Mutex<HashMap<SessionId, usize>>);
+
+impl TestTally {
+    /// Counts one more test in `session` and returns how many it has run.
+    pub fn record(&self, session: SessionId) -> usize {
+        let mut counts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let count = counts.entry(session).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// Tests run so far in `session`.
+    #[must_use]
+    pub fn count(&self, session: SessionId) -> usize {
+        let counts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        counts.get(&session).copied().unwrap_or(0)
+    }
+}
+
+/// The warning on the `count`th test of a session, from the
+/// [`SESSION_TESTS_WARN_FROM`]th on.
+#[must_use]
+pub fn session_tests_warning(count: usize) -> Option<ComputedWarning> {
+    (count >= SESSION_TESTS_WARN_FROM).then(|| ComputedWarning {
+        code: MULTIPLE_COMPARISONS.into(),
+        severity: WarningSeverity::Warn,
+        text: format!(
+            "this is hypothesis test {count} of this session; with several tests some come \
+             out significant by chance, so adjust the family of p-values (Holm, or \
+             Benjamini-Hochberg for the false discovery rate) before calling any significant"
+        ),
+    })
+}
+
 /// A statistics tool of kind `K`.
 pub struct StatsTool<K> {
     ports: ComputeToolPorts,
+    tally: Arc<TestTally>,
     kind: PhantomData<K>,
 }
 
@@ -254,8 +309,15 @@ impl<K> StatsTool<K> {
     pub fn new(ports: ComputeToolPorts) -> Self {
         Self {
             ports,
+            tally: Arc::default(),
             kind: PhantomData,
         }
+    }
+
+    /// The per-session test count this tool keeps.
+    #[must_use]
+    pub fn tally(&self) -> Arc<TestTally> {
+        Arc::clone(&self.tally)
     }
 }
 
@@ -321,6 +383,7 @@ impl<K: StatsKind> TypedTool for StatsTool<K> {
         }
         let ports = self.ports.clone();
         let agent = format!("assistant-turn-{}", ctx.turn_id);
+        let session = Some((Arc::clone(&self.tally), ctx.session_id));
         let run = async move {
             let loaded = match &data.path {
                 Some(path) => match load_file(ports.fs.as_ref(), path, data.delimiter).await {
@@ -332,19 +395,22 @@ impl<K: StatsKind> TypedTool for StatsTool<K> {
             if let Some(slot) = request.data_mut() {
                 *slot = loaded;
             }
-            Ok(card(&ports, request, &agent, data.delimiter).await)
+            Ok(card(&ports, request, &agent, data.delimiter, session).await)
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
 }
 
 /// Runs `request` on the engine off the executor and turns the envelope
-/// into a card plus the model's summary, or an `is_error` output.
+/// into a card plus the model's summary, or an `is_error` output. A
+/// hypothesis test counts in `session`'s tally and warns from the
+/// [`SESSION_TESTS_WARN_FROM`]th.
 async fn card(
     ports: &ComputeToolPorts,
     request: ComputeRequest,
     agent: &str,
     delimiter: Option<char>,
+    session: Option<(Arc<TestTally>, SessionId)>,
 ) -> ToolOutput {
     let engine = Arc::clone(&ports.engine);
     let Some(result) = offloaded(&ports.offload, move || engine.run(&request)).await else {
@@ -361,6 +427,16 @@ async fn card(
         ));
     }
     set_provenance(&mut computed, agent, REQUESTED_BY);
+    if let (ComputedBody::Test(_), Some((tally, session))) = (&body, session) {
+        let count = tally.record(session);
+        let warned = computed
+            .warnings
+            .iter()
+            .any(|w| w.code == MULTIPLE_COMPARISONS);
+        if let Some(warning) = session_tests_warning(count).filter(|_| !warned) {
+            computed.warnings.push(warning);
+        }
+    }
     if let Some(delimiter) = delimiter {
         computed
             .method
@@ -535,7 +611,7 @@ impl<K: UnitsKind> TypedTool for UnitsTool<K> {
         let request = K::wrap(input);
         let ports = self.ports.clone();
         let agent = format!("assistant-turn-{}", ctx.turn_id);
-        let run = async move { Ok(card(&ports, request, &agent, None).await) };
+        let run = async move { Ok(card(&ports, request, &agent, None, None).await) };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
 }
@@ -959,6 +1035,64 @@ mod tests {
             "{}",
             out.text_content()
         );
+    }
+
+    #[tokio::test]
+    async fn the_third_test_of_a_session_warns_about_multiple_comparisons() {
+        let tool = StatsTestTool::new(ports(Arc::new(FakeCompute::new())));
+        let tally = tool.tally();
+        let tool = Typed(tool);
+        let table = json!({ "table": [[3, 1], [1, 3]], "test": "fisher" });
+        let session = SessionId::new();
+        let mut cards = Vec::new();
+        for _ in 0..4 {
+            let ctx = ToolContext::new(session, TurnId::new(), ToolUseId::new("toolu_t"));
+            let out = tool
+                .prepare(table.clone(), &ctx)
+                .await
+                .unwrap()
+                .run
+                .await
+                .unwrap();
+            let Some(BlockKind::Computed { envelope, .. }) = out.block_update.clone() else {
+                panic!("a card");
+            };
+            cards.push((envelope, out.text_content()));
+        }
+        assert_eq!(tally.count(session), 4);
+        let warned = |c: &Computed| {
+            c.warnings
+                .iter()
+                .filter(|w| w.code == MULTIPLE_COMPARISONS)
+                .map(|w| w.text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(warned(&cards[0].0).is_empty() && warned(&cards[1].0).is_empty());
+        let third = warned(&cards[2].0);
+        assert_eq!(third.len(), 1);
+        assert!(
+            third[0].contains("test 3") && third[0].contains("Holm"),
+            "{third:?}"
+        );
+        assert!(warned(&cards[3].0)[0].contains("test 4"));
+        // The model sees it; the p-values stay as the engine gave them.
+        assert!(cards[2].1.contains("Holm"), "{}", cards[2].1);
+        assert_eq!(cards[0].0.values, cards[2].0.values);
+
+        // Another session starts its own count.
+        let other = ToolContext::new(SessionId::new(), TurnId::new(), ToolUseId::new("toolu_o"));
+        let out = tool
+            .prepare(table, &other)
+            .await
+            .unwrap()
+            .run
+            .await
+            .unwrap();
+        let Some(BlockKind::Computed { envelope, .. }) = out.block_update else {
+            panic!("a card");
+        };
+        assert!(warned(&envelope).is_empty());
+        assert_eq!(session_tests_warning(2), None);
     }
 
     #[test]
