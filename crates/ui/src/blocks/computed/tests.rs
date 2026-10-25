@@ -497,3 +497,33 @@ fn assumptions_open_when_one_fails_and_toggle(cx: &mut TestAppContext) {
     click(cx, "computed-assumptions");
     card.read_with(cx, |card, _| assert_eq!(card.assumptions, Some(false)));
 }
+
+/// One card per phase-2 body, with the selectors of the plots it draws.
+fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
+    let card = |kind: &str, method: &str| Computed::new("st_p2", kind, method, engine());
+    vec![(
+        card("stats.distribution", "Distribution of mpg"),
+        ComputedBody::Distribution(super::distribution::tests::body()),
+        &["histogram", "box", "qq", "ecdf"],
+    )]
+}
+
+#[gpui::test]
+fn draws_the_phase_two_cards_with_their_plots(cx: &mut TestAppContext) {
+    let cards = phase_two_cards();
+    let plots: Vec<&[&str]> = cards.iter().map(|c| c.2).collect();
+    let (cx, view, blocks, _) = window(
+        cx,
+        cards.into_iter().map(|(c, body, _)| (c, body)).collect(),
+    );
+    view.read_with(cx, |view, _| assert_eq!(view.state().len(), blocks.len()));
+    for (block, names) in blocks.iter().zip(plots) {
+        for name in names {
+            let selector = format!("plot-canvas-computed-body-{}-{name}", block.id);
+            assert!(
+                cx.debug_bounds(selector.clone().leak()).is_some(),
+                "{selector}"
+            );
+        }
+    }
+}

@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -173,11 +173,35 @@ pub fn computed(envelope: &Computed, body: &ComputedBody) -> Vec<CopyFormat> {
             formats.push(CopyFormat::new(key, label, line.clone()));
         }
     }
+    formats.extend(computed_body(body));
     formats.push(CopyFormat::new(
         "json",
         "JSON",
         serde_json::to_string_pretty(envelope).unwrap_or_default(),
     ));
+    formats
+}
+
+/// The tables of a phase-2 card body as CSV, e.g. the histogram bins of a
+/// distribution.
+#[must_use]
+pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
+    let mut formats = Vec::new();
+    if let ComputedBody::Distribution(d) = body {
+        let mut csv = String::from("group,lo,hi,count\n");
+        for group in &d.groups {
+            let name = csv_field(group.name.as_deref().unwrap_or(&d.variable));
+            let h = &group.histogram;
+            for (i, count) in h.counts.iter().enumerate() {
+                csv.push_str(&format!(
+                    "{name},{},{},{count}\n",
+                    h.edges[i],
+                    h.edges[i + 1]
+                ));
+            }
+        }
+        formats.push(CopyFormat::new("bins", "bins CSV", csv));
+    }
     formats
 }
 

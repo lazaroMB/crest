@@ -9,8 +9,9 @@
 //! 2. the assumption checklist, open when a check fails (a calc sheet
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
-//!    [`regression`], [`correlation`], and [`calc`] for the calc sheet and
-//!    the quantity card), numbers right-aligned in the monospace font;
+//!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
+//!    the quantity card, and the phase-2 cards: [`distribution`], ...),
+//!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
 //!    the envelope by [`narrative`];
@@ -31,6 +32,7 @@
 pub mod calc;
 pub mod correlation;
 pub mod descriptive;
+pub mod distribution;
 pub mod grid;
 pub mod regression;
 pub mod test;
@@ -489,6 +491,7 @@ impl ComputedCard {
             ComputedBody::Regression(body) => regression::render(&id, body, window, cx),
             ComputedBody::Correlation(body) => correlation::render(&id, body, cx),
             ComputedBody::CalcSheet(body) => calc::calc_sheet(body, window, cx),
+            ComputedBody::Distribution(body) => distribution::render(&id, body, window, cx),
             ComputedBody::Quantity(body) => calc::quantity(
                 body,
                 self.envelope
@@ -631,10 +634,10 @@ impl ComputedCard {
         // line has its own button next to it.
         let formats = super::copy::computed(&self.envelope, &self.body);
         for format in formats.into_iter().filter(|f| f.key != "apa") {
-            let tooltip = if format.key == "json" {
-                "Copy the envelope"
-            } else {
-                "Copy the reproduce command"
+            let tooltip = match format.key {
+                "json" => "Copy the envelope".to_owned(),
+                "lua" | "python" | "r" | "shell" => "Copy the reproduce command".to_owned(),
+                _ => format!("Copy the {}", format.label),
             };
             let text = format.text;
             row = row.child(

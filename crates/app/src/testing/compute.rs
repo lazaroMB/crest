@@ -15,15 +15,17 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
 use domain::computed::{
-    Alternative, CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedValue, CorrelationBody,
-    CorrelationMethod, DescriptiveBody, Diagnostics, Engine, FitStats, Narrative, PAdjust,
-    Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
+    Alternative, BandwidthRule, BinRule, BoxSummary, CalcLine, CalcSheetBody, Computed,
+    ComputedBody, ComputedValue, CorrelationBody, CorrelationMethod, Curve, DescriptiveBody,
+    Diagnostics, DistributionBody, DistributionGroup, Engine, FitStats, Histogram, Narrative,
+    PAdjust, Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind,
+    VariableSummary,
 };
 
 use crate::ports::compute::{
     CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
-    ConvertRequest, CorrelateRequest, DataSet, DescribeRequest, REQUEST_PARAM, RegressRequest,
-    TestRequest,
+    ConvertRequest, CorrelateRequest, DataSet, DescribeRequest, DistributionRequest, REQUEST_PARAM,
+    RegressRequest, TestRequest,
 };
 
 /// Name of the fake engine.
@@ -143,6 +145,12 @@ impl FakeCompute {
                 "convert",
                 convert_body(r),
             ),
+            ComputeRequest::Distribution(r) => (
+                "stats.distribution",
+                "Distribution",
+                "distribution",
+                distribution_body(&r.variable),
+            ),
         };
         let engine = Engine {
             name: FAKE_ENGINE.into(),
@@ -223,6 +231,39 @@ fn describe_body(data: &DataSet) -> ComputedBody {
     ComputedBody::Descriptive(DescriptiveBody {
         by: None,
         variables,
+    })
+}
+
+fn distribution_body(variable: &str) -> ComputedBody {
+    ComputedBody::Distribution(DistributionBody {
+        variable: variable.to_owned(),
+        unit: None,
+        by: None,
+        bin_rule: BinRule::FreedmanDiaconis,
+        bin_width: 1.0,
+        bandwidth_rule: BandwidthRule::Silverman,
+        conf_level: 0.95,
+        groups: vec![DistributionGroup {
+            name: None,
+            n: 2,
+            histogram: Histogram {
+                edges: vec![0.0, 1.0],
+                counts: vec![2],
+            },
+            kde: Curve::default(),
+            bandwidth: 0.5,
+            boxplot: BoxSummary {
+                lower_hinge: 0.25,
+                median: 0.5,
+                upper_hinge: 0.75,
+                whisker_lo: 0.0,
+                whisker_hi: 1.0,
+                outliers: Vec::new(),
+            },
+            qq: Vec::new(),
+            ecdf: Vec::new(),
+            dkw_epsilon: 0.9,
+        }],
     })
 }
 
@@ -331,6 +372,10 @@ impl ComputePort for FakeCompute {
 
     fn convert(&self, request: &ConvertRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Convert(request.clone()), None)
+    }
+
+    fn distribution(&self, request: &DistributionRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Distribution(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

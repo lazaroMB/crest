@@ -90,6 +90,20 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Histogram, density, box/violin, QQ and ECDF of one variable.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "distribution"
+        }
+      },
+      "$ref": "#/$defs/DistributionBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1046,6 +1060,298 @@ expression: "schemars::schema_for!(ComputedBody)"
         "factor",
         "exact",
         "dimension"
+      ]
+    },
+    "BinRule": {
+      "description": "How the histogram bins were chosen.",
+      "oneOf": [
+        {
+          "description": "Freedman-Diaconis: width 2·IQR·n^(−1/3) (Sturges when the IQR is 0).",
+          "type": "string",
+          "const": "freedman_diaconis"
+        },
+        {
+          "description": "Sturges: ⌈log₂ n⌉ + 1 bins.",
+          "type": "string",
+          "const": "sturges"
+        },
+        {
+          "description": "Scott: width 3.49·SD·n^(−1/3).",
+          "type": "string",
+          "const": "scott"
+        },
+        {
+          "description": "A bin count given in the request.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "BandwidthRule": {
+      "description": "How the kernel bandwidth was chosen.",
+      "oneOf": [
+        {
+          "description": "Silverman's rule of thumb, 0.9·min(SD, IQR/1.34)·n^(−1/5) (R's\n`bw.nrd0`).",
+          "type": "string",
+          "const": "silverman"
+        },
+        {
+          "description": "Scott's rule, 1.06·min(SD, IQR/1.34)·n^(−1/5) (R's `bw.nrd`).",
+          "type": "string",
+          "const": "scott"
+        },
+        {
+          "description": "A bandwidth given in the request.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "DistributionGroup": {
+      "description": "The distribution of one group.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Group value; `None` without `by`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n": {
+          "description": "Non-missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "histogram": {
+          "description": "Binned counts.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "kde": {
+          "description": "Gaussian kernel density estimate.",
+          "$ref": "#/$defs/Curve"
+        },
+        "bandwidth": {
+          "description": "Kernel bandwidth.",
+          "type": "number",
+          "format": "double"
+        },
+        "boxplot": {
+          "description": "Box-plot summary.",
+          "$ref": "#/$defs/BoxSummary"
+        },
+        "qq": {
+          "description": "Normal QQ points, in ascending order of the sample.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QqPoint"
+          },
+          "default": []
+        },
+        "ecdf": {
+          "description": "Steps of the empirical CDF: at `x` it rises to `p`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EcdfStep"
+          },
+          "default": []
+        },
+        "dkw_epsilon": {
+          "description": "Half-width of the Dvoretzky-Kiefer-Wolfowitz band around the ECDF.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "n",
+        "histogram",
+        "kde",
+        "bandwidth",
+        "boxplot",
+        "dkw_epsilon"
+      ]
+    },
+    "Curve": {
+      "description": "A curve as matching x and y coordinates.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Abscissas, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "y": {
+          "description": "Ordinates, one per abscissa.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "BoxSummary": {
+      "description": "The five numbers of a Tukey box plot (as R's `boxplot.stats`), plus\nthe points outside.",
+      "type": "object",
+      "properties": {
+        "lower_hinge": {
+          "description": "Lower hinge (Tukey's, as `fivenum`).",
+          "type": "number",
+          "format": "double"
+        },
+        "median": {
+          "description": "Median.",
+          "type": "number",
+          "format": "double"
+        },
+        "upper_hinge": {
+          "description": "Upper hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "whisker_lo": {
+          "description": "Smallest value within 1.5 hinge spreads below the lower hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "whisker_hi": {
+          "description": "Largest value within 1.5 hinge spreads above the upper hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "outliers": {
+          "description": "Values beyond the whiskers, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "lower_hinge",
+        "median",
+        "upper_hinge",
+        "whisker_lo",
+        "whisker_hi"
+      ]
+    },
+    "QqPoint": {
+      "description": "One point of a normal QQ plot with its pointwise band.",
+      "type": "object",
+      "properties": {
+        "theoretical": {
+          "description": "Standard normal quantile of the plotting position.",
+          "type": "number",
+          "format": "double"
+        },
+        "sample": {
+          "description": "The sample value (an order statistic).",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower band bound for this order statistic under the fitted normal.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper band bound.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "theoretical",
+        "sample",
+        "lo",
+        "hi"
+      ]
+    },
+    "EcdfStep": {
+      "description": "One step of an empirical CDF.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "A distinct sample value.",
+          "type": "number",
+          "format": "double"
+        },
+        "p": {
+          "description": "Share of values ≤ `x`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "p"
+      ]
+    },
+    "DistributionBody": {
+      "description": "Body of a distribution card.",
+      "type": "object",
+      "properties": {
+        "variable": {
+          "description": "The variable described.",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Its unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "description": "Grouping column, when split by group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bin_rule": {
+          "description": "How the bins were chosen.",
+          "$ref": "#/$defs/BinRule"
+        },
+        "bin_width": {
+          "description": "Width of every bin.",
+          "type": "number",
+          "format": "double"
+        },
+        "bandwidth_rule": {
+          "description": "How the kernel bandwidths were chosen.",
+          "$ref": "#/$defs/BandwidthRule"
+        },
+        "conf_level": {
+          "description": "Coverage of the QQ and ECDF bands, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "groups": {
+          "description": "One entry per group (one in all when there is no `by`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DistributionGroup"
+          }
+        }
+      },
+      "required": [
+        "variable",
+        "bin_rule",
+        "bin_width",
+        "bandwidth_rule",
+        "conf_level",
+        "groups"
       ]
     }
   }

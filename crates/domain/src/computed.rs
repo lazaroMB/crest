@@ -18,6 +18,7 @@
 //! envelope".
 
 pub mod apa;
+pub mod distribution;
 pub mod lint;
 pub mod narrative;
 pub mod slots;
@@ -27,6 +28,11 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use self::distribution::{
+    BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
+    QqPoint,
+};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -588,6 +594,8 @@ pub enum ComputedBody {
     CalcSheet(CalcSheetBody),
     /// A unit conversion.
     Quantity(QuantityBody),
+    /// Histogram, density, box/violin, QQ and ECDF of one variable.
+    Distribution(DistributionBody),
 }
 
 impl ComputedBody {
@@ -614,6 +622,7 @@ impl ComputedBody {
                 }
             }
             Self::Correlation(body) => body.validate(),
+            Self::Distribution(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }
