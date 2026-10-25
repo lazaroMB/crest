@@ -4139,6 +4139,10 @@ expression: "schemars::schema_for!(Block)"
           "format": "uint64",
           "minimum": 0
         },
+        "distinct_capped": {
+          "description": "Whether counting stopped at a cap: there are at least `distinct`\nvalues.",
+          "type": "boolean"
+        },
         "min": {
           "description": "Smallest value.",
           "anyOf": [

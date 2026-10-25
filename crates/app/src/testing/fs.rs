@@ -254,6 +254,20 @@ impl FileSystemPort for InMemoryFs {
         Ok(bytes.clone())
     }
 
+    async fn read_head(&self, path: &WorkspacePath, max: u64) -> Result<(Vec<u8>, u64), FsError> {
+        self.check_access(path)?;
+        let files = self.lock();
+        let Some(bytes) = files.get(path) else {
+            return Err(if is_dir(&files, path) {
+                FsError::IsDirectory { path: path.clone() }
+            } else {
+                FsError::NotFound { path: path.clone() }
+            });
+        };
+        let keep = usize::try_from(max).unwrap_or(usize::MAX).min(bytes.len());
+        Ok((bytes[..keep].to_vec(), bytes.len() as u64))
+    }
+
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
         self.check_inside(path)?;
         let files = self.lock();

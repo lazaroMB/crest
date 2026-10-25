@@ -4,17 +4,24 @@
 //! By default every test report is one suite `fake` with a passed and a
 //! failed case (at `src/lib.rs:3`, or the absolute path given with
 //! [`FakeFormats::with_location`]), every SARIF log is one warning and
-//! every diagram is a tiny SVG. [`FakeFormats::failing`] makes every call
-//! fail. Calls are recorded as `(method, path or source)`.
+//! every diagram is a tiny SVG, every dataset has an integer `x` and a
+//! text `label` column over three rows, and every molecule is ethanol's
+//! numbers (`C2H6O`, 46.07 g/mol) unless the SMILES is `bad`.
+//! [`FakeFormats::failing`] makes every fallible call fail. Calls are
+//! recorded as `(method, path, source or SMILES)`.
 
 use std::sync::{Mutex, PoisonError};
 
-use domain::block::SourceRef;
+use domain::block::{Cell, Column, SourceRef, TableSpec};
+use domain::computed::Histogram;
+use domain::dataset::{DatasetColumn, DatasetSpec};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
 
-use crate::ports::formats::{FormatError, FormatsPort};
+use domain::science::{MoleculeSpec, formulas_match};
+
+use crate::ports::formats::{DatasetRequest, FormatError, FormatsPort};
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -51,7 +58,7 @@ impl FakeFormats {
         self
     }
 
-    /// The calls so far, as `(method, path or source)`.
+    /// The calls so far, as `(method, path, source or SMILES)`.
     pub fn calls(&self) -> Vec<(String, String)> {
         self.calls
             .lock()
@@ -123,5 +130,86 @@ impl FormatsPort for FakeFormats {
     fn render_wavedrom(&self, source: &str) -> Result<String, FormatError> {
         self.record("render_wavedrom", source)?;
         Ok(FAKE_SVG.to_owned())
+    }
+
+    fn preview_dataset(
+        &self,
+        _bytes: &[u8],
+        request: &DatasetRequest,
+    ) -> Result<DatasetSpec, FormatError> {
+        self.record("preview_dataset", &request.path)?;
+        let column = |name: &str, dtype: &str, null_percent, min, max, histogram| DatasetColumn {
+            name: name.to_owned(),
+            dtype: dtype.to_owned(),
+            null_percent,
+            distinct: Some(3),
+            distinct_capped: false,
+            min,
+            max,
+            histogram,
+        };
+        let rows: Vec<Vec<Cell>> = [(1.0, "a"), (2.0, "b"), (3.0, "c")]
+            .iter()
+            .take(request.preview_rows)
+            .map(|(x, label)| vec![Cell::Number(*x), Cell::Text((*label).to_owned())])
+            .collect();
+        Ok(DatasetSpec {
+            path: request.path.clone(),
+            format: request.format,
+            rows: (!request.truncated).then_some(3),
+            sampled: request.truncated,
+            columns: vec![
+                column(
+                    "x",
+                    "integer",
+                    0.0,
+                    Some(Cell::Number(1.0)),
+                    Some(Cell::Number(3.0)),
+                    Some(Histogram {
+                        edges: vec![1.0, 2.0, 3.0],
+                        counts: vec![1, 2],
+                    }),
+                ),
+                column("label", "text", 25.0, None, None, None),
+            ],
+            preview: TableSpec {
+                columns: ["x", "label"]
+                    .iter()
+                    .map(|name| Column {
+                        name: (*name).to_owned(),
+                        align: None,
+                    })
+                    .collect(),
+                rows,
+            },
+        })
+    }
+
+    fn depict_molecule(&self, smiles: &str, claimed_formula: Option<&str>) -> MoleculeSpec {
+        // Recorded only: a molecule never fails as a call.
+        let _ = self.record("depict_molecule", smiles);
+        let mut spec = MoleculeSpec {
+            smiles: smiles.to_owned(),
+            name: None,
+            svg: None,
+            formula: None,
+            mw: None,
+            charge: None,
+            canonical: None,
+            error: None,
+            claimed_formula: claimed_formula.map(str::to_owned),
+            claimed_matches: None,
+        };
+        if smiles == "bad" {
+            spec.error = Some("invalid SMILES: unexpected character at position 0".into());
+            return spec;
+        }
+        spec.svg = Some(FAKE_SVG.to_owned());
+        spec.formula = Some("C2H6O".into());
+        spec.mw = Some(46.069);
+        spec.charge = Some(0);
+        spec.canonical = Some("CCO".into());
+        spec.claimed_matches = claimed_formula.and_then(|c| formulas_match(c, "C2H6O"));
+        spec
     }
 }

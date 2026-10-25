@@ -55,6 +55,10 @@ pub struct DatasetColumn {
     /// Number of distinct values, when computed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distinct: Option<u64>,
+    /// Whether counting stopped at a cap: there are at least `distinct`
+    /// values.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub distinct_capped: bool,
     /// Smallest value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<Cell>,
