@@ -4,7 +4,7 @@
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
 //! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
-//! (FORMAT JSON)`) and HTTP archives (HAR).
+//! (FORMAT JSON)`), HTTP archives (HAR) and Terraform plans.
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -17,6 +17,7 @@ use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
 use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::QueryPlanSpec;
+use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -174,6 +175,20 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for malformed JSON or a file without
     /// `log.entries`.
     fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError>;
+
+    /// A Terraform or OpenTofu plan: `terraform show -json <planfile>`
+    /// (resource changes with attribute diffs, sensitive values masked),
+    /// or the JSON lines of `terraform plan -json` (actions only).
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed JSON or JSON that is not a
+    /// plan.
+    fn parse_terraform_plan(
+        &self,
+        bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError>;
 }
 
 #[cfg(test)]

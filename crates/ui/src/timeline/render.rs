@@ -45,6 +45,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Logs(_) => "logs",
         BlockKind::QueryPlan(_) => "query_plan",
         BlockKind::Har(_) => "har",
+        BlockKind::TerraformPlan(_) => "terraform_plan",
     }
 }
 

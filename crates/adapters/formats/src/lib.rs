@@ -14,7 +14,8 @@
 //! - profiles from folded stacks and pprof ([`flame`], prost + flate2);
 //! - log files in JSON lines, logfmt or text ([`logs`]);
 //! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json);
-//! - HTTP archives ([`har`], own serde).
+//! - HTTP archives ([`har`], own serde);
+//! - Terraform / OpenTofu plans ([`terraform`], serde_json).
 
 pub mod dataset;
 pub mod flame;
@@ -25,6 +26,7 @@ pub mod logs;
 pub mod molecule;
 pub mod query_plan;
 pub mod sarif;
+pub mod terraform;
 pub mod trace;
 pub mod wave;
 
@@ -36,6 +38,7 @@ use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
 use domain::devops::logs::LogSpec;
 use domain::devops::query_plan::QueryPlanSpec;
+use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -109,5 +112,13 @@ impl FormatsPort for Formats {
 
     fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError> {
         har::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_terraform_plan(
+        &self,
+        bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError> {
+        terraform::parse(bytes, path).map_err(FormatError::Invalid)
     }
 }

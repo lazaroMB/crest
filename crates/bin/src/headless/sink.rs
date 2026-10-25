@@ -228,6 +228,10 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::TerraformPlan(plan) => w.line(
+            Some(Style::Dim),
+            &format!("[terraform plan: {}]", plan.counts_text()),
+        ),
         BlockKind::Har(har) => w.line(
             Some(Style::Dim),
             &format!(

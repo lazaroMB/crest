@@ -6,9 +6,10 @@
 //! file), `show_molecule` (a SMILES as a 2D structure with its computed
 //! formula and mass) and `show_plate` (a 96/384-well plate map, pure),
 //! plus the developer/ops viewers of [`devops`] (`show_trace`,
-//! `show_flamegraph`, `show_logs`), [`query_plan`] (`show_query_plan`)
-//! and [`har`] (`show_har`). [`register_format_tools`] adds them and
-//! [`FORMAT_TOOLS_PROMPT`] tells the model when to use each.
+//! `show_flamegraph`, `show_logs`), [`query_plan`] (`show_query_plan`),
+//! [`har`] (`show_har`) and [`terraform`] (`show_terraform_plan`).
+//! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
+//! the model when to use each.
 //!
 //! Files are read through the file port, with the workspace and
 //! sensitive-path guard of `read_file`, and parsed through the
@@ -46,6 +47,7 @@ use crate::usecases::compute::{Offload, offloaded};
 pub mod devops;
 pub mod har;
 pub mod query_plan;
+pub mod terraform;
 
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
@@ -53,6 +55,7 @@ pub use devops::{
 };
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
+pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
@@ -1099,13 +1102,17 @@ and warnings it returns.
 inspector when the question is why a page is slow or which request \
 failed. Its summary hides cookies and tokens; never ask the user to paste \
 them.
+- `show_terraform_plan`: before an apply, show the plan (`terraform show \
+-json tfplan > plan.json`) instead of reading the text output; point out \
+destroys and replacements and what forces them.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
 
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
-/// `show_flamegraph`, `show_logs`, `show_query_plan` and `show_har`.
+/// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har` and
+/// `show_terraform_plan`.
 ///
 /// # Errors
 ///
@@ -1124,7 +1131,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowFlamegraphTool::new(ports.clone()))?;
     registry.register_typed(ShowLogsTool::new(ports.clone()))?;
     registry.register_typed(ShowQueryPlanTool::new(ports.clone()))?;
-    registry.register_typed(ShowHarTool::new(ports.clone()))
+    registry.register_typed(ShowHarTool::new(ports.clone()))?;
+    registry.register_typed(ShowTerraformPlanTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1242,7 +1250,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 11);
+        assert_eq!(registry.names().len(), 12);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

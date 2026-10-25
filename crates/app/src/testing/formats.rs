@@ -14,7 +14,10 @@
 //! plan is a `Hash Join` (100 ms, 5000 rows for 50 planned) over a hot
 //! `Seq Scan on orders` (70 ms) and a `Hash`; every HAR is a `GET /` of
 //! `app.test` (200, 120 ms, 2 kB, with an `Authorization` header) and a
-//! failed `POST /api/pay?token=...` (503, 300 ms).
+//! failed `POST /api/pay?token=...` (503, 300 ms); every Terraform plan
+//! replaces `aws_instance.web` (forced by `ami`), updates a sensitive
+//! `password` of `aws_db_instance.main`, creates `aws_s3_bucket.logs`
+//! and leaves 4 resources unchanged.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -27,6 +30,9 @@ use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
 use domain::devops::har::{HarEntry, HarHeader, HarSpec, HarTimings};
 use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::{PlanEngine, PlanNode, QueryPlanSpec};
+use domain::devops::terraform::{
+    AttrChange, AttrValue, PlanAction, PlanSource, ResourceChange, TerraformPlanSpec,
+};
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
@@ -401,6 +407,65 @@ impl FormatsPort for FakeFormats {
                 ),
             ],
             total_entries: 2,
+        })
+    }
+
+    fn parse_terraform_plan(
+        &self,
+        _bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError> {
+        self.record("parse_terraform_plan", path)?;
+        let known = |v: &str| AttrValue::Known(v.into());
+        let change = |path: &str, before, after, forces| AttrChange {
+            path: path.to_owned(),
+            before,
+            after,
+            forces_replacement: forces,
+        };
+        let resource = |address: &str, action, attributes: Vec<AttrChange>| ResourceChange {
+            address: address.to_owned(),
+            kind: address.split('.').next().map(str::to_owned),
+            data: false,
+            provider: None,
+            action,
+            reason: None,
+            previous_address: None,
+            attributes_total: attributes.len(),
+            attributes,
+        };
+        Ok(TerraformPlanSpec {
+            title: None,
+            path: Some(path.to_owned()),
+            source: PlanSource::Show,
+            terraform_version: Some("1.9.0".into()),
+            resources: vec![
+                resource(
+                    "aws_instance.web",
+                    PlanAction::Replace,
+                    vec![change("ami", known("ami-1"), known("ami-2"), true)],
+                ),
+                resource(
+                    "aws_db_instance.main",
+                    PlanAction::Update,
+                    vec![change(
+                        "password",
+                        AttrValue::Sensitive,
+                        AttrValue::Sensitive,
+                        false,
+                    )],
+                ),
+                resource(
+                    "aws_s3_bucket.logs",
+                    PlanAction::Create,
+                    vec![change("bucket", AttrValue::Absent, known("logs"), false)],
+                ),
+            ],
+            unchanged: 4,
+            drift: Vec::new(),
+            outputs: Vec::new(),
+            errored: false,
+            applyable: Some(true),
         })
     }
 }
