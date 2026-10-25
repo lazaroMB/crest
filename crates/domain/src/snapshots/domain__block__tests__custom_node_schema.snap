@@ -352,6 +352,20 @@ expression: "schemars::schema_for!(CustomNode)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Nodes joined by edges, laid out in layers, by forces or on a grid,\nwith pan, zoom and a click to focus a node's neighbourhood (DOT,\nER diagrams, netlists, networks).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "graph"
+        }
+      },
+      "$ref": "#/$defs/GraphSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1211,6 +1225,194 @@ expression: "schemars::schema_for!(CustomNode)"
       },
       "required": [
         "items"
+      ]
+    },
+    "LayoutKind": {
+      "description": "How the nodes are placed.",
+      "oneOf": [
+        {
+          "description": "Layers in the edges' direction (Sugiyama): flows, dependencies,\nplans.",
+          "type": "string",
+          "const": "layered"
+        },
+        {
+          "description": "A seeded spring embedding: networks without a direction.",
+          "type": "string",
+          "const": "force"
+        },
+        {
+          "description": "Rows and columns in node order (grouped): loose collections.",
+          "type": "string",
+          "const": "grid"
+        }
+      ]
+    },
+    "FlowDirection": {
+      "description": "Which way a layered layout flows.",
+      "oneOf": [
+        {
+          "description": "Top to bottom.",
+          "type": "string",
+          "const": "down"
+        },
+        {
+          "description": "Left to right.",
+          "type": "string",
+          "const": "right"
+        }
+      ]
+    },
+    "GraphNode": {
+      "description": "One node.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id, referenced by edges.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Text in the box; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
+          "description": "Id of the group (cluster) the node belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Class of the node (`table`, `service`, `resistor`); nodes of one\nkind share a color.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attrs": {
+          "description": "Extra fields shown when the node is focused.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "GraphEdge": {
+      "description": "One edge, from node id to node id.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Id of the source node.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Id of the target node.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Text drawn along the edge.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "weight": {
+          "description": "Strength (a count, a cost); thicker edges are heavier.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "GraphGroup": {
+      "description": "A named group of nodes, drawn as a box around them.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id the nodes' `group` refers to.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Caption of the box; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "GraphSpec": {
+      "description": "Nodes joined by edges, with a layout.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption above the graph.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directed": {
+          "description": "Edges have arrowheads (true by default).",
+          "type": "boolean"
+        },
+        "layout": {
+          "description": "How the nodes are placed.",
+          "$ref": "#/$defs/LayoutKind",
+          "default": "layered"
+        },
+        "direction": {
+          "description": "Flow of a layered layout.",
+          "$ref": "#/$defs/FlowDirection",
+          "default": "down"
+        },
+        "seed": {
+          "description": "Seed of the force layout (the same seed gives the same picture).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "nodes": {
+          "description": "The nodes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          }
+        },
+        "edges": {
+          "description": "The edges.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "default": []
+        },
+        "groups": {
+          "description": "Captions of the groups nodes refer to; a group not listed is\ncaptioned with its id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphGroup"
+          }
+        }
+      },
+      "required": [
+        "nodes"
       ]
     }
   }

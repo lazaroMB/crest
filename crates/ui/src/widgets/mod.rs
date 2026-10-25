@@ -9,6 +9,7 @@
 //! waveforms) call the same `view`/`render` functions with a spec their
 //! parser built.
 
+pub mod graph;
 pub mod list;
 pub mod timeline;
 

@@ -181,6 +181,39 @@ fn timelines_take_rows_of_spans() {
 }
 
 #[test]
+fn graphs_take_nodes_edges_and_groups() {
+    let got = tree(
+        r#"return app.ui.block("g", app.ui.graph({
+             layout = "force", seed = 3, directed = false,
+             nodes = {
+               { id = "a", label = "A", group = "g", kind = "svc", attrs = { port = 80 } },
+               { id = "b" },
+             },
+             edges = { { from = "a", to = "b", label = "calls", weight = 2 } },
+             groups = { { id = "g", label = "Group" } },
+           }))"#,
+    );
+    let CustomNode::Graph(spec) = got else {
+        panic!("not a graph: {got:?}");
+    };
+    assert_eq!(spec.nodes.len(), 2);
+    assert_eq!(spec.layout.name(), "force");
+    assert_eq!(spec.seed, Some(3));
+    assert!(!spec.directed);
+    assert_eq!(spec.edges[0].weight, Some(2.0));
+    assert_eq!(spec.group_label("g"), "Group");
+    let empty = tree(r#"return app.ui.block("e", app.ui.graph({ nodes = {}, edges = {} }))"#);
+    assert!(matches!(empty, CustomNode::Graph(spec) if spec.nodes.is_empty()));
+    let unknown = error_of(
+        r#"return app.ui.graph({ nodes = { { id = "a" } }, edges = { { from = "a", to = "z" } } })"#,
+    );
+    assert!(
+        unknown.contains("app.ui.graph") && unknown.contains("unknown node"),
+        "{unknown}"
+    );
+}
+
+#[test]
 fn filter_lists_take_items_and_facets() {
     let got = tree(
         r#"return app.ui.block("l", app.ui.filter_list({
