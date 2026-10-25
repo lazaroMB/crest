@@ -24,7 +24,7 @@ use application::ports::form::{FormRequest, FormResponse};
 use domain::block::{BlockId, BlockKind};
 use domain::form::{FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable as _,
+    AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, FocusHandle, Focusable as _,
     FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
     Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window, div,
 };
@@ -90,6 +90,11 @@ pub struct FormView {
     focus_handle: FocusHandle,
     restore_focus: Option<FocusHandle>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A box whose text wraps at the form's width instead of overflowing it.
+fn wrapping() -> Div {
+    div().w_full().min_w_0().whitespace_normal()
 }
 
 fn label_of(field: &FormField) -> &str {
@@ -443,10 +448,11 @@ impl FormView {
             (FieldInput::Area(state), _) => {
                 Textarea::new(state).disabled(disabled).into_any_element()
             }
-            (FieldInput::Toggle(checked), _) => div()
+            (FieldInput::Toggle(checked), _) => wrapping()
                 .debug_selector(move || format!("form-option-{index}-0"))
                 .child(
                     Checkbox::new(self.element_id("toggle", index))
+                        .w_full()
                         .checked(*checked)
                         .disabled(disabled)
                         .label(SharedString::from(label_of(field).to_owned()))
@@ -463,6 +469,7 @@ impl FormView {
                 .children(options.iter().enumerate().map(|(i, option)| {
                     let selector = format!("form-option-{index}-{i}");
                     let radio = Radio::new(self.element_id(&format!("choice{index}"), i))
+                        .w_full()
                         .label(SharedString::from(option_label(option).to_owned()))
                         .checked(*selected == Some(i))
                         .disabled(disabled)
@@ -472,7 +479,9 @@ impl FormView {
                             }
                             this.clear_error_at(index, cx);
                         }));
-                    div().debug_selector(move || selector.clone()).child(radio)
+                    wrapping()
+                        .debug_selector(move || selector.clone())
+                        .child(radio)
                 }))
                 .into_any_element(),
             (FieldInput::Choices(picked), FieldKind::MultiEnum { options, .. }) => v_flex()
@@ -480,6 +489,7 @@ impl FormView {
                 .children(options.iter().enumerate().map(|(i, option)| {
                     let selector = format!("form-option-{index}-{i}");
                     let checkbox = Checkbox::new(self.element_id(&format!("choices{index}"), i))
+                        .w_full()
                         .label(SharedString::from(option_label(option).to_owned()))
                         .checked(picked.get(i).copied().unwrap_or(false))
                         .disabled(disabled)
@@ -491,7 +501,7 @@ impl FormView {
                             }
                             this.clear_error_at(index, cx);
                         }));
-                    div()
+                    wrapping()
                         .debug_selector(move || selector.clone())
                         .child(checkbox)
                 }))
@@ -511,14 +521,20 @@ impl FormView {
         let field = &self.spec.fields[index];
         let input = self.render_input(index, field, &self.inputs[index], cx);
         let theme = cx.theme();
-        let mut column = v_flex().gap_1();
+        let mut column = v_flex().w_full().min_w_0().gap_1();
         // A checkbox carries its own label.
         if !matches!(field.kind, FieldKind::Boolean { .. }) {
-            let mut label = h_flex().gap_1().child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(label_of(field).to_owned())),
-            );
+            let mut label = h_flex()
+                .debug_selector(move || format!("form-label-{index}"))
+                .w_full()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    wrapping()
+                        .flex_1()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(SharedString::from(label_of(field).to_owned())),
+                );
             if field.required {
                 label = label.child(div().text_color(theme.danger).child("*"));
             }
@@ -526,7 +542,7 @@ impl FormView {
         }
         if let Some(description) = &field.description {
             column = column.child(
-                div()
+                wrapping()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(description.clone())),
@@ -535,7 +551,7 @@ impl FormView {
         column = column.child(input);
         if let Some(problem) = self.errors.get(&field.name) {
             column = column.child(
-                div()
+                wrapping()
                     .debug_selector(|| "form-field-error".to_owned())
                     .text_xs()
                     .text_color(theme.danger)
@@ -553,17 +569,22 @@ impl FormView {
             .gap_1()
             .children(self.spec.fields.iter().map(|field| {
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .gap_2()
                     .items_start()
                     .child(
                         div()
-                            .min_w_32()
+                            .flex_none()
+                            .w_32()
+                            .whitespace_normal()
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(label_of(field).to_owned())),
                     )
-                    .child(div().flex_1().whitespace_normal().child(SharedString::from(
-                        answer_text(field, answer.get(&field.name)),
-                    )))
+                    .child(wrapping().flex_1().child(SharedString::from(answer_text(
+                        field,
+                        answer.get(&field.name),
+                    ))))
             }))
             .into_any_element()
     }
@@ -588,7 +609,7 @@ impl FormView {
             .items_center()
             .justify_end()
             .children(note.map(|note| {
-                div()
+                wrapping()
                     .flex_1()
                     .text_xs()
                     .text_color(theme.muted_foreground)
@@ -685,6 +706,8 @@ impl Render for FormView {
         let mut card = v_flex()
             .id(self.element_id("card", 0))
             .debug_selector(|| "form-card".to_owned())
+            .w_full()
+            .min_w_0()
             .track_focus(&self.focus_handle)
             .tab_group()
             .on_key_down(cx.listener(Self::on_key))
@@ -695,13 +718,13 @@ impl Render for FormView {
             .border_color(border)
             .bg(background)
             .child(
-                div()
+                wrapping()
                     .font_weight(FontWeight::BOLD)
                     .child(SharedString::from(self.spec.title.clone())),
             );
         if let Some(description) = &self.spec.description {
             card = card.child(
-                div()
+                wrapping()
                     .text_sm()
                     .text_color(muted)
                     .child(SharedString::from(description.clone())),
@@ -712,7 +735,7 @@ impl Render for FormView {
             FormState::Cancelled => {
                 return card
                     .child(
-                        div()
+                        wrapping()
                             .debug_selector(|| "form-cancelled".to_owned())
                             .text_sm()
                             .text_color(muted)
@@ -723,9 +746,14 @@ impl Render for FormView {
             FormState::Pending => {}
         }
         if let Some(error) = &self.error {
-            card = card.child(div().text_sm().text_color(danger).child(SharedString::from(
-                format!("The answer was rejected: {error}"),
-            )));
+            card = card.child(
+                wrapping()
+                    .text_sm()
+                    .text_color(danger)
+                    .child(SharedString::from(format!(
+                        "The answer was rejected: {error}"
+                    ))),
+            );
         }
         for index in 0..self.spec.fields.len() {
             card = card.child(self.render_field(index, cx));

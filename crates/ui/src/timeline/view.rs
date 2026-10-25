@@ -389,8 +389,11 @@ impl TimelineView {
         let selected = self.state.selected() == Some(ix);
         let width = block_width(&entry.block.kind);
         let footer = self.reply_footer(ix, view.clone());
+        // `min_w_0`: content that does not wrap on its own (a form's
+        // labels) must not widen the block past the window.
         let block = div()
             .w_full()
+            .min_w_0()
             .max_w(width.max_width())
             .px_2()
             .py_1()
