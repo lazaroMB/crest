@@ -423,6 +423,7 @@ mod tests {
             },
             expanded: true,
             alt_view: false,
+            numbers: Default::default(),
         };
         let spec = MermaidSpec {
             source: source.to_owned(),

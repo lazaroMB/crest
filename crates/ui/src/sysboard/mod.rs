@@ -908,6 +908,7 @@ impl SysBoardView {
                     },
                     expanded: true,
                     alt_view: false,
+                    numbers: Default::default(),
                 };
                 section = section.child(crate::blocks::mermaid::render(&entry, window, cx));
                 panel = panel.child(section);

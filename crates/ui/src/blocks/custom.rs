@@ -70,6 +70,7 @@ impl Walk<'_> {
             block: Block { id, kind },
             expanded: true,
             alt_view: self.entry.alt_view,
+            numbers: Default::default(),
         }
     }
 
@@ -256,6 +257,7 @@ pub fn render_node(
         },
         expanded: true,
         alt_view: false,
+        numbers: Default::default(),
     };
     render_tree(&entry, tree, window, cx)
 }

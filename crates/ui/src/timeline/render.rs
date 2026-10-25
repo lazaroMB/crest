@@ -1,8 +1,9 @@
 //! How each block kind is drawn in the timeline.
 //!
-//! `Text`, `ToolCall` and `Error` have their own look; every other kind is a
-//! `[<type>]` placeholder until its block view lands (tasks T3.x add an arm
-//! to [`render_block`]).
+//! `Text`, `ToolCall` and `Error` have their own look (a `Text` block shows
+//! its number slots resolved and, under a finished reply, the chip of
+//! numbers not from an engine); every other kind goes to
+//! [`crate::blocks::render`].
 
 use domain::block::{BlockId, BlockKind, ToolStatus};
 use gpui::{
@@ -123,9 +124,27 @@ pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) ->
     match &entry.block.kind {
         // Streaming re-renders the same keyed TextView: its state sees the
         // longer text as an append and only reparses the tail.
+        // Number slots show the engine's values; a finished reply with
+        // numbers typed by the model gets the "not from an engine" chip.
         BlockKind::Text { markdown } => {
-            TextView::markdown(element_id("text", id), SharedString::from(markdown.clone()))
-                .into_any_element()
+            let shown = entry.numbers.resolved.as_ref().unwrap_or(markdown);
+            let text =
+                TextView::markdown(element_id("text", id), SharedString::from(shown.clone()))
+                    .into_any_element();
+            if entry.numbers.unverified.is_empty() {
+                text
+            } else {
+                v_flex()
+                    .gap_1()
+                    .child(text)
+                    .child(super::numbers::render(
+                        id,
+                        &entry.numbers.unverified,
+                        window,
+                        cx,
+                    ))
+                    .into_any_element()
+            }
         }
         BlockKind::ToolCall {
             name,
