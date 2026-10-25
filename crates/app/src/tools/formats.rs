@@ -564,7 +564,12 @@ pub const SHOW_DATASET: &str = "show_dataset";
 /// Reads a dataset: a Parquet file whole (up to [`MAX_PARQUET_BYTES`]),
 /// a text file's head (up to [`MAX_TEXT_HEAD_BYTES`]). Returns the bytes
 /// and whether they are only the head.
-async fn read_dataset(
+///
+/// # Errors
+///
+/// A message for the caller: a bad path, a file the guard refuses or that
+/// cannot be read, or a Parquet file over the limit.
+pub async fn read_dataset(
     fs: &dyn FileSystemPort,
     path: &str,
     format: DatasetFormat,

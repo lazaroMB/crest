@@ -95,7 +95,7 @@ impl std::fmt::Debug for Events {
 }
 
 /// What the capability APIs (and `app.modal`) need from the host.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Context {
     /// Workspace root: the working directory of `app.shell.run`.
     pub(crate) workspace: Option<PathBuf>,
@@ -110,6 +110,20 @@ pub(crate) struct Context {
     pub(crate) next_modal: std::sync::atomic::AtomicU64,
     /// What `app.compute` runs on, once the binary provided it.
     compute: Mutex<Option<crate::api::compute::ComputeServices>>,
+    /// What `app.formats` runs on, once the binary provided it.
+    formats: Mutex<Option<crate::api::formats::FormatsServices>>,
+    /// Where `app.ask` asks, once the binary provided it.
+    forms: Mutex<Option<Arc<dyn application::ports::form::FormPort>>>,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("workspace", &self.workspace)
+            .field("keyring", &self.keyring)
+            .field("events", &self.events)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Context {
@@ -130,7 +144,35 @@ impl Context {
             events: None,
             next_modal: std::sync::atomic::AtomicU64::new(1),
             compute: Mutex::new(None),
+            formats: Mutex::new(None),
+            forms: Mutex::new(None),
         }
+    }
+
+    /// Gives `app.formats` its parsers and file port.
+    pub(crate) fn provide_formats(&self, services: crate::api::formats::FormatsServices) {
+        *self.formats.lock().unwrap_or_else(PoisonError::into_inner) = Some(services);
+    }
+
+    /// What `app.formats` runs on, if it was provided.
+    pub(crate) fn formats(&self) -> Option<crate::api::formats::FormatsServices> {
+        self.formats
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Gives `app.ask` the front end's forms.
+    pub(crate) fn provide_forms(&self, port: Arc<dyn application::ports::form::FormPort>) {
+        *self.forms.lock().unwrap_or_else(PoisonError::into_inner) = Some(port);
+    }
+
+    /// Where `app.ask` asks, if it was provided.
+    pub(crate) fn forms(&self) -> Option<Arc<dyn application::ports::form::FormPort>> {
+        self.forms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Gives `app.compute` its engine and file port.
