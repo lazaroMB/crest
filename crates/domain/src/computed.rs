@@ -28,6 +28,7 @@ pub mod lint;
 pub mod narrative;
 pub mod optimization;
 pub mod power;
+pub mod simulation;
 pub mod slots;
 
 use std::collections::BTreeMap;
@@ -49,6 +50,7 @@ pub use self::optimization::{
     ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
 };
 pub use self::power::{PowerBody, PowerTarget, PowerTest};
+pub use self::simulation::{SimInputSummary, SimulationBody, TornadoBar};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -626,6 +628,8 @@ pub enum ComputedBody {
     Optimization(OptimizationBody),
     /// An equation or a small system solved numerically.
     Equations(EquationsBody),
+    /// A Monte Carlo simulation, tornado and Fermi estimate.
+    Simulation(SimulationBody),
 }
 
 impl ComputedBody {
@@ -660,6 +664,7 @@ impl ComputedBody {
             Self::Forecast(body) => body.validate(),
             Self::Optimization(body) => body.validate(),
             Self::Equations(body) => body.validate(),
+            Self::Simulation(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

@@ -910,3 +910,141 @@ fn equation_solver_reports_failure_and_bad_systems() {
             .is_err()
     );
 }
+
+// --- Monte Carlo ------------------------------------------------------------------------
+
+fn sim_input(name: &str, distribution: SimDistribution) -> SimInput {
+    SimInput {
+        name: name.into(),
+        distribution,
+        source: None,
+        unit: None,
+    }
+}
+
+fn simulate(inputs: Vec<SimInput>, model: Option<&str>, samples: u32) -> SimulateRequest {
+    SimulateRequest {
+        inputs,
+        model: model.map(str::to_owned),
+        output: None,
+        unit: None,
+        samples,
+        seed: 7,
+    }
+}
+
+fn simulation(body: &ComputedBody) -> &SimulationBody {
+    match body {
+        ComputedBody::Simulation(s) => s,
+        other => panic!("not a simulation: {other:?}"),
+    }
+}
+
+#[test]
+fn monte_carlo_matches_closed_forms_within_its_mcse() {
+    // X ~ N(10, 2), Y ~ N(5, 1): X + Y ~ N(15, √5).
+    let request = simulate(
+        vec![
+            sim_input(
+                "x",
+                SimDistribution::Normal {
+                    mean: 10.0,
+                    sd: 2.0,
+                },
+            ),
+            sim_input("y", SimDistribution::Normal { mean: 5.0, sd: 1.0 }),
+        ],
+        Some("x + y"),
+        50_000,
+    );
+    let (c, body) = engine().simulate(&request).unwrap();
+    let mcse = v(&c, "mcse");
+    near(mcse, 5f64.sqrt() / 50_000f64.sqrt(), 1e-3);
+    near(v(&c, "mean"), 15.0, 4.0 * mcse);
+    near(v(&c, "sd"), 5f64.sqrt(), 0.03);
+    near(
+        v(&c, "p95") - v(&c, "p5"),
+        2.0 * 1.644_853_6 * 5f64.sqrt(),
+        0.1,
+    );
+    let m = simulation(&body);
+    // The tornado: x swings 2 × 1.2816 × 2, y half that; x first.
+    assert_eq!(m.tornado[0].input, "x");
+    near(m.tornado[0].swing, 2.0 * 1.281_551_565_5 * 2.0, 1e-9);
+    near(m.tornado[1].swing, 2.0 * 1.281_551_565_5, 1e-9);
+    near(m.base, 15.0, 1e-12);
+    assert_eq!(m.convergence.x.len(), m.convergence_mcse.len());
+    assert_eq!(c.seed, Some(7));
+    let (again, _) = engine().recompute(&c).unwrap();
+    assert_eq!(again.verification.matched, Some(true));
+
+    // Triangular [0, 3, 6] has mean 3; PERT [0, 2, 10] has mean (0 + 8 + 10)/6 = 3.
+    let request = simulate(
+        vec![
+            sim_input(
+                "t",
+                SimDistribution::Triangular {
+                    min: 0.0,
+                    mode: 3.0,
+                    max: 6.0,
+                },
+            ),
+            sim_input(
+                "p",
+                SimDistribution::Pert {
+                    min: 0.0,
+                    mode: 2.0,
+                    max: 10.0,
+                },
+            ),
+        ],
+        Some("t - p"),
+        40_000,
+    );
+    let (c, _) = engine().simulate(&request).unwrap();
+    near(v(&c, "mean"), 0.0, 4.0 * v(&c, "mcse"));
+}
+
+#[test]
+fn fermi_estimate_is_exact_for_lognormal_factors() {
+    // Piano tuners in Chicago (Fermi's classic): people, people per
+    // household, share with a piano, tunings per piano per year, per
+    // tuner per year (as 1/x).
+    let ln = |low, high| SimDistribution::Lognormal { low, high };
+    let mut inputs = vec![
+        sim_input("people", ln(2.5e6, 3.5e6)),
+        sim_input("pianos_per_person", ln(0.01, 0.05)),
+        sim_input("tunings_per_piano", ln(0.5, 2.0)),
+        sim_input("tuner_per_tuning", ln(1.0 / 1500.0, 1.0 / 500.0)),
+    ];
+    inputs[0].source = Some("census".into());
+    let (c, body) = engine().simulate(&simulate(inputs, None, 100_000)).unwrap();
+    let m = simulation(&body);
+    assert!(m.fermi);
+    // The exact median is the product of the factor medians.
+    let median: f64 = [
+        (2.5e6, 3.5e6),
+        (0.01, 0.05),
+        (0.5, 2.0),
+        (1.0 / 1500.0, 1.0 / 500.0),
+    ]
+    .iter()
+    .map(|(lo, hi): &(f64, f64)| (lo * hi).sqrt())
+    .product();
+    near(v(&c, "analytic_p50"), median, 1e-9 * median);
+    near(v(&c, "p50") / median, 1.0, 0.02);
+    near(v(&c, "p95") / v(&c, "analytic_p95"), 1.0, 0.03);
+    assert!(c.warnings.iter().any(|w| w.code == "unsourced_estimates"));
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("lognormal"), "{sentence}");
+
+    let bad = simulate(
+        vec![sim_input(
+            "x",
+            SimDistribution::Uniform { min: 2.0, max: 1.0 },
+        )],
+        None,
+        1000,
+    );
+    assert!(engine().simulate(&bad).is_err());
+}

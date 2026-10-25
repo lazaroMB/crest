@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], ...),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], ...),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -42,6 +42,7 @@ pub mod grid;
 pub mod optimization;
 pub mod power;
 pub mod regression;
+pub mod simulation;
 pub mod test;
 
 use domain::block::{BlockId, BlockKind};
@@ -505,6 +506,9 @@ impl ComputedCard {
             ComputedBody::Forecast(body) => forecast::render(&id, &self.envelope, body, window, cx),
             ComputedBody::Optimization(body) => optimization::render(&id, body, window, cx),
             ComputedBody::Equations(body) => equations::render(&id, body, window, cx),
+            ComputedBody::Simulation(body) => {
+                simulation::render(&id, &self.envelope, body, window, cx)
+            }
             ComputedBody::Bootstrap(body) => {
                 bootstrap::render(&id, &self.envelope, body, window, cx)
             }

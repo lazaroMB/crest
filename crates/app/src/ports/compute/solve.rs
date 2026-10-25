@@ -101,3 +101,103 @@ pub struct SolveRequest {
     #[serde(default = "default_iterations")]
     pub max_iterations: u32,
 }
+
+/// The distribution of a Monte Carlo input, tagged by `type`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SimDistribution {
+    /// Always `value`.
+    Fixed {
+        /// The value.
+        value: f64,
+    },
+    /// Uniform on [`min`, `max`].
+    Uniform {
+        /// Lower end.
+        min: f64,
+        /// Upper end.
+        max: f64,
+    },
+    /// Normal with `mean` and `sd`.
+    Normal {
+        /// Mean.
+        mean: f64,
+        /// Standard deviation.
+        sd: f64,
+    },
+    /// Lognormal with 90% of its mass in [`low`, `high`] (both > 0): the
+    /// usual Fermi range "between low and high".
+    Lognormal {
+        /// 5th percentile.
+        low: f64,
+        /// 95th percentile.
+        high: f64,
+    },
+    /// Triangular on [`min`, `max`] with peak at `mode`.
+    Triangular {
+        /// Lower end.
+        min: f64,
+        /// Most likely value.
+        mode: f64,
+        /// Upper end.
+        max: f64,
+    },
+    /// PERT (a scaled beta) on [`min`, `max`] with peak at `mode`.
+    Pert {
+        /// Lower end.
+        min: f64,
+        /// Most likely value.
+        mode: f64,
+        /// Upper end.
+        max: f64,
+    },
+}
+
+/// One input of a Monte Carlo model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimInput {
+    /// Name, as the model uses it.
+    pub name: String,
+    /// Its distribution.
+    pub distribution: SimDistribution,
+    /// Where the estimate comes from (a reference, "guess"), shown on the
+    /// card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Unit, shown only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+fn default_samples() -> u32 {
+    10_000
+}
+
+fn default_sim_seed() -> u64 {
+    super::DEFAULT_SEED
+}
+
+/// Input of `simulate`: a Monte Carlo model, its tornado of one-at-a-time
+/// swings, and (without `model`) a Fermi estimate: the product of the
+/// inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimulateRequest {
+    /// The uncertain inputs, assumed independent.
+    pub inputs: Vec<SimInput>,
+    /// The output as an expression of the inputs (`price * volume -
+    /// cost`); without it the output is the product of the inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Name of the output (default `result`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// Unit of the output, shown only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Draws (default 10000, at most 1000000).
+    #[serde(default = "default_samples")]
+    pub samples: u32,
+    /// Seed of the generator.
+    #[serde(default = "default_sim_seed")]
+    pub seed: u64,
+}

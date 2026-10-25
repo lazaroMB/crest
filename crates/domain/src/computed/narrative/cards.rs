@@ -445,6 +445,61 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 }
             })
         }
+        ("simulation", ComputedBody::Simulation(m)) => {
+            let unit = m.unit.as_ref().map(|u| format!(" {u}")).unwrap_or_default();
+            let range = format!(
+                "{}{unit} to {}{unit}",
+                display(computed, "p5")?,
+                display(computed, "p95")?
+            );
+            let driver = m
+                .tornado
+                .first()
+                .map(|bar| {
+                    format!(
+                        " {} moves it most: from {} to {} between its 10th and 90th percentiles.",
+                        bar.input,
+                        apa::significant(bar.at_p10, 4),
+                        apa::significant(bar.at_p90, 4)
+                    )
+                })
+                .unwrap_or_default();
+            let seed = computed
+                .seed
+                .map_or_else(|| "?".to_owned(), |s| s.to_string());
+            Some(if m.fermi {
+                let exact = match (
+                    display(computed, "analytic_p5"),
+                    display(computed, "analytic_p50"),
+                    display(computed, "analytic_p95"),
+                ) {
+                    (Some(lo), Some(mid), Some(hi)) => format!(
+                        " As a product of lognormal ranges it is lognormal: median {mid}, 90% \
+                         range {lo} to {hi} exactly."
+                    ),
+                    _ => String::new(),
+                };
+                format!(
+                    "The Fermi estimate of {} = {} is about {}{unit} (90% range {range}; {} \
+                     draws, seed {seed}).{exact}{driver}",
+                    m.output,
+                    m.model,
+                    display(computed, "p50")?,
+                    m.samples
+                )
+            } else {
+                format!(
+                    "Over {} draws (seed {seed}), {} = {} has mean {}{unit} ± {} (MCSE), median \
+                     {}{unit} and 90% of outcomes between {range}.{driver}",
+                    m.samples,
+                    m.output,
+                    m.model,
+                    display(computed, "mean")?,
+                    display(computed, "mcse")?,
+                    display(computed, "p50")?,
+                )
+            })
+        }
         _ => None,
     }
 }

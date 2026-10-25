@@ -47,9 +47,9 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Bootstrap, Contingency, Distribution, Equations, ForecastKind, Lp, Power,
-    SolveEquationsTool, SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool,
-    StatsDistributionTool, StatsForecastTool, StatsPowerTool,
+    AbTest, Bootstrap, Contingency, Distribution, Equations, ForecastKind, Lp, Power, Simulate,
+    SimulateTool, SolveEquationsTool, SolveLpTool, StatsAbTestTool, StatsBootstrapTool,
+    StatsContingencyTool, StatsDistributionTool, StatsForecastTool, StatsPowerTool,
 };
 
 use super::registry::{
@@ -755,7 +755,8 @@ compute power or the sample size with `stats_power`; to compare two conversion r
 
 To optimise a linear model (resource allocation, blending, scheduling, knapsack), call \
 `solve_lp` with the objective, variables and constraints instead of reasoning out the \
-optimum. To solve an equation or a system numerically, call `solve_equations`.
+optimum. To solve an equation or a system numerically, call `solve_equations`. For a \
+quantity built from uncertain inputs (a business case, a Fermi estimate), call `simulate`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -790,7 +791,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsBootstrapTool::new(ports.clone()))?;
     registry.register_typed(StatsForecastTool::new(ports.clone()))?;
     registry.register_typed(SolveLpTool::new(ports.clone()))?;
-    registry.register_typed(SolveEquationsTool::new(ports.clone()))
+    registry.register_typed(SolveEquationsTool::new(ports.clone()))?;
+    registry.register_typed(SimulateTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -890,8 +892,9 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "solve_equations_definition",
-            definition(SolveEquationsTool::new(ports))
+            definition(SolveEquationsTool::new(ports.clone()))
         );
+        insta::assert_json_snapshot!("simulate_definition", definition(SimulateTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1178,6 +1181,7 @@ mod tests {
             [
                 "calc",
                 "convert",
+                "simulate",
                 "solve_equations",
                 "solve_lp",
                 "stats_ab_test",

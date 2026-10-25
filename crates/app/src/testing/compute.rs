@@ -259,6 +259,27 @@ impl FakeCompute {
                     curve: None,
                 }),
             ),
+            ComputeRequest::Simulate(r) => (
+                "solve.monte_carlo",
+                "Monte Carlo simulation",
+                "simulation",
+                ComputedBody::Simulation(SimulationBody {
+                    output: r.output.clone().unwrap_or_else(|| "result".into()),
+                    unit: r.unit.clone(),
+                    model: r.model.clone().unwrap_or_default(),
+                    fermi: r.model.is_none(),
+                    samples: r.samples,
+                    inputs: Vec::new(),
+                    histogram: Histogram {
+                        edges: vec![0.0, 1.0],
+                        counts: vec![1],
+                    },
+                    convergence: Curve::default(),
+                    convergence_mcse: Vec::new(),
+                    base: 1.0,
+                    tornado: Vec::new(),
+                }),
+            ),
             ComputeRequest::Power(r) => (
                 "stats.power",
                 "Power analysis",
@@ -550,6 +571,10 @@ impl ComputePort for FakeCompute {
 
     fn solve(&self, request: &SolveRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Solve(request.clone()), None)
+    }
+
+    fn simulate(&self, request: &SimulateRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Simulate(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

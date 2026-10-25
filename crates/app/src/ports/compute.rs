@@ -421,6 +421,8 @@ pub enum ComputeRequest {
     Optimize(OptimizeRequest),
     /// [`ComputePort::solve`].
     Solve(SolveRequest),
+    /// [`ComputePort::simulate`].
+    Simulate(SimulateRequest),
 }
 
 impl ComputeRequest {
@@ -455,7 +457,8 @@ impl ComputeRequest {
             | Self::Power(_)
             | Self::AbTest(_)
             | Self::Optimize(_)
-            | Self::Solve(_) => None,
+            | Self::Solve(_)
+            | Self::Simulate(_) => None,
         }
     }
 
@@ -476,7 +479,8 @@ impl ComputeRequest {
             | Self::Power(_)
             | Self::AbTest(_)
             | Self::Optimize(_)
-            | Self::Solve(_) => None,
+            | Self::Solve(_)
+            | Self::Simulate(_) => None,
         }
     }
 }
@@ -601,6 +605,15 @@ pub trait ComputePort: Send + Sync {
     /// unknowns that do not match the equations.
     fn solve(&self, request: &SolveRequest) -> ComputeResult;
 
+    /// A seeded Monte Carlo simulation of a model of uncertain inputs, with
+    /// its tornado; without a model, a Fermi estimate.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for a bad distribution or a model that
+    /// does not parse.
+    fn simulate(&self, request: &SimulateRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -632,6 +645,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Forecast(r) => self.forecast(r),
             ComputeRequest::Optimize(r) => self.optimize(r),
             ComputeRequest::Solve(r) => self.solve(r),
+            ComputeRequest::Simulate(r) => self.simulate(r),
         }
     }
 }
