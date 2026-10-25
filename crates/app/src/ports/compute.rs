@@ -353,8 +353,9 @@ fn default_significant_digits() -> u32 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CalcRequest {
     /// The lines, in order, e.g. `["m_car = 1200 kg", "v = 100 km/h",
-    /// "E = 1/2 m_car v^2 -> kJ"]`. Names must not clash with units or
+    /// "E = 0.5 * m_car * v^2 -> kJ"]`. Names must not clash with units or
     /// constants (`m`, `g`, `h`, `c` are units); use `m_car`, `g_0`, …
+    /// Juxtaposition binds tighter than `/`: `1/2 m` is `1/(2 m)`.
     pub lines: Vec<String>,
     /// Significant digits of the displayed results (default 6).
     #[serde(default = "default_significant_digits")]
