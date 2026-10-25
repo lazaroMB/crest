@@ -1,6 +1,6 @@
 [package]
 name = "adapter-compute"
-description = "ComputePort adapter: the crest-stats engine (descriptives, tests, OLS, correlation)"
+description = "ComputePort adapter: crest-stats (descriptives, tests, OLS, correlation) and crest-calc (numbat units)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ publish.workspace = true
 application.workspace = true
 blake3.workspace = true
 domain.workspace = true
+numbat.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 statrs.workspace = true

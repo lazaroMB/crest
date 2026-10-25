@@ -409,3 +409,77 @@ fn one_sample_and_signed_rank() {
     assert_eq!(c.value("statistic").unwrap().v, 53.5);
     assert_eq!(c.method.params["p_method"], "normal_approx");
 }
+
+#[test]
+fn calc_sheets_and_conversions_are_crest_calc_envelopes_that_recompute() {
+    use application::ports::compute::{CalcRequest, ConvertRequest};
+    let engine = fixed_engine();
+    let request = CalcRequest {
+        lines: vec![
+            "v = 100 km/h".into(),
+            "t_1 = 90 min".into(),
+            "dist = v * t_1 -> km".into(),
+        ],
+        significant_digits: 6,
+    };
+    let (sheet, body) = engine.calc(&request).unwrap();
+    assert_eq!(sheet.validate(), Ok(()));
+    assert!(sheet.id.starts_with("ca_"), "{}", sheet.id);
+    assert_eq!(sheet.kind, "calc.sheet");
+    assert_eq!(sheet.engine.name, "crest-calc");
+    assert_eq!(sheet.engine.backend.as_deref(), Some("numbat 1.24.0"));
+    assert!(matches!(body, ComputedBody::CalcSheet(_)));
+    assert_eq!(
+        sheet.value("dist").map(|v| v.display_text()).as_deref(),
+        Some("150 km")
+    );
+    assert_eq!(
+        sheet.reproduce.lua.as_deref(),
+        Some(
+            "app.compute.calc{lines = {'v = 100 km/h', 't_1 = 90 min', 'dist = v * t_1 -> km'}, \
+             significant_digits = 6}"
+        )
+    );
+    assert!(sheet.environment_hash.is_some());
+    let (again, _) = engine.recompute(&sheet).unwrap();
+    assert_eq!(again.id, sheet.id);
+    assert_eq!(again.verification.matched, Some(true));
+
+    let convert = ConvertRequest {
+        value: Some(65.0),
+        from: "mi/h".into(),
+        to: "km/h".into(),
+        uncertainty: None,
+        significant_digits: 6,
+    };
+    let (converted, body) = engine.convert(&convert).unwrap();
+    assert_eq!(converted.kind, "calc.convert");
+    let ComputedBody::Quantity(quantity) = body else {
+        panic!("not a quantity");
+    };
+    assert!(quantity.exact);
+    assert_eq!(
+        converted
+            .value("result")
+            .map(|v| v.display_text())
+            .as_deref(),
+        Some("104.607 km/h")
+    );
+    assert!(
+        converted
+            .reproduce
+            .python
+            .as_deref()
+            .unwrap()
+            .contains("pint")
+    );
+    let (again, _) = engine.recompute(&converted).unwrap();
+    assert_eq!(again.verification.matched, Some(true));
+    assert!(matches!(
+        engine.convert(&ConvertRequest {
+            to: "kg".into(),
+            ..convert
+        }),
+        Err(ComputeError::Invalid(_))
+    ));
+}

@@ -14,6 +14,11 @@ pub const ENGINE_NAME: &str = "crest-stats";
 /// The library underneath.
 pub const BACKEND: &str = "statrs 0.19.1";
 
+/// Engine name of calc sheets and conversions.
+pub const CALC_ENGINE_NAME: &str = "crest-calc";
+/// The units library underneath.
+pub const CALC_BACKEND: &str = "numbat 1.24.0";
+
 /// The engine record: crate version and target platform.
 pub fn engine() -> Engine {
     Engine {
@@ -21,6 +26,15 @@ pub fn engine() -> Engine {
         version: env!("CARGO_PKG_VERSION").into(),
         backend: Some(BACKEND.into()),
         platform: Some(platform()),
+    }
+}
+
+/// The engine record of calc sheets and conversions.
+pub fn calc_engine() -> Engine {
+    Engine {
+        name: CALC_ENGINE_NAME.into(),
+        backend: Some(CALC_BACKEND.into()),
+        ..engine()
     }
 }
 
@@ -33,11 +47,16 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
-/// A deterministic id for a request: `st_` and 12 hex digits of its hash.
+/// A deterministic id for a request: `st_` (statistics) or `ca_` (calc
+/// sheets and conversions) and 12 hex digits of its hash.
 pub fn derive_id(request: &ComputeRequest) -> String {
     let bytes = serde_json::to_vec(request).unwrap_or_default();
     let hex = blake3::hash(&bytes).to_hex();
-    format!("st_{}", &hex.as_str()[..12])
+    let prefix = match request {
+        ComputeRequest::Calc(_) | ComputeRequest::Convert(_) => "ca",
+        _ => "st",
+    };
+    format!("{prefix}_{}", &hex.as_str()[..12])
 }
 
 /// The input record of `data`: its source with the hash of the canonical
@@ -214,7 +233,7 @@ pub fn finish(
         "{} {} {} {}",
         computed.engine.name,
         computed.engine.version,
-        BACKEND,
+        computed.engine.backend.as_deref().unwrap_or(BACKEND),
         platform()
     );
     computed.environment_hash = Some(hash(env.as_bytes()));

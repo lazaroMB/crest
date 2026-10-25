@@ -549,7 +549,11 @@ pub fn run(
         application::ports::compute::ComputeRequest::Correlate(request.clone()),
     )
     .unwrap_or_default();
-    computed.reproduce.lua = Some(crate::reproduce::lua("correlate", &request_json, data));
+    computed.reproduce.lua = Some(crate::reproduce::lua(
+        "correlate",
+        &request_json,
+        Some(data),
+    ));
     let body = ComputedBody::Correlation(CorrelationBody {
         method: request.method,
         adjustment: request.adjustment,
