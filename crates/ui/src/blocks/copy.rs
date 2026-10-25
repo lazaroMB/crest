@@ -14,11 +14,12 @@
 //! | dataset | column profile CSV, preview rows CSV |
 //! | molecule | SMILES, canonical SMILES, formula, SVG |
 //! | plate | `well,label,value` CSV |
+//! | custom | its widgets: timeline → spans CSV |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
 
-use domain::block::{BlockKind, Cell, ChartSpec, SourceRef, TableSpec};
+use domain::block::{BlockKind, Cell, ChartSpec, CustomNode, SourceRef, TableSpec};
 use domain::computed::{Computed, ComputedBody, narrative};
 use domain::report::{FindingsSpec, TestOutcome, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -197,6 +198,41 @@ pub fn molecule(spec: &MoleculeSpec) -> Vec<CopyFormat> {
     formats
 }
 
+/// The copy forms of one widget node of a `Custom` tree.
+fn widget(node: &CustomNode) -> Vec<CopyFormat> {
+    match node {
+        CustomNode::Timeline(spec) => {
+            vec![CopyFormat::new("spans", "spans CSV", spec.to_csv())]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The copy forms of the widgets in a `Custom` tree, depth first; when
+/// two widgets have a form with the same key, the first one's is kept.
+#[must_use]
+pub fn custom(tree: &CustomNode) -> Vec<CopyFormat> {
+    fn walk(node: &CustomNode, out: &mut Vec<CopyFormat>) {
+        match node {
+            CustomNode::Row { children }
+            | CustomNode::Col { children }
+            | CustomNode::List { items: children } => {
+                children.iter().for_each(|child| walk(child, out));
+            }
+            other => {
+                for format in widget(other) {
+                    if !out.iter().any(|f| f.key == format.key) {
+                        out.push(format);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, &mut out);
+    out
+}
+
 /// The forms `kind` can be copied in; empty for kinds without any.
 #[must_use]
 pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
@@ -246,6 +282,7 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Plate(spec) => {
             vec![CopyFormat::new("csv", "CSV", super::plate::plate_csv(spec))]
         }
+        BlockKind::Custom { tree, .. } => custom(tree),
         _ => Vec::new(),
     }
 }

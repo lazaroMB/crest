@@ -34,6 +34,7 @@
 //! | `link(text, url)` or `link(url)` | link opened in the browser |
 //! | `diff(unified)` | colored unified diff |
 //! | `csv(text, { header, delimiter })` | the CSV as a table node |
+//! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
 
 use std::sync::Arc;
 
@@ -172,6 +173,45 @@ fn plot_node(lua: &Lua, def: Table) -> mlua::Result<CustomNode> {
     };
     fields.insert("type".into(), json!("plot"));
     spec_node("plot", json)
+}
+
+/// Fields of the widget specs that hold lists. An empty Lua table has no
+/// way to say it is a list and converts to `{}`; under these keys it is
+/// read as `[]`. Maps (`attrs`, `fields`, `values`) keep `{}`.
+const LIST_FIELDS: [&str; 12] = [
+    "rows", "spans", "markers", "items", "columns", "facets", "nodes", "edges", "groups", "roots",
+    "children", "badges",
+];
+
+/// Turns `{}` into `[]` under [`LIST_FIELDS`], at any depth.
+fn empty_lists(json: &mut Json) {
+    match json {
+        Json::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if LIST_FIELDS.contains(&key.as_str())
+                    && value.as_object().is_some_and(serde_json::Map::is_empty)
+                {
+                    *value = Json::Array(Vec::new());
+                } else {
+                    empty_lists(value);
+                }
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(empty_lists),
+        _ => {}
+    }
+}
+
+/// `app.ui.<function>{...}`: a table shaped like the widget spec of node
+/// type `kind` (see [`CustomNode`]), validated.
+fn widget_node(lua: &Lua, function: &str, kind: &str, def: Table) -> mlua::Result<CustomNode> {
+    let mut json = convert::to_json(lua, Value::Table(def))?;
+    empty_lists(&mut json);
+    let Some(fields) = json.as_object_mut() else {
+        return Err(error(function, "expected a table of fields"));
+    };
+    fields.insert("type".into(), json!(kind));
+    spec_node(function, json)
 }
 
 fn image_node(lua: &Lua, def: Value) -> mlua::Result<CustomNode> {
@@ -313,6 +353,12 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
     ui.set(
         "plot",
         lua.create_function(|lua, def: Table| to_lua(lua, &plot_node(lua, def)?))?,
+    )?;
+    ui.set(
+        "timeline",
+        lua.create_function(|lua, def: Table| {
+            to_lua(lua, &widget_node(lua, "timeline", "timeline", def)?)
+        })?,
     )?;
     ui.set(
         "code",
