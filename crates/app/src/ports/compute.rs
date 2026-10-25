@@ -423,6 +423,8 @@ pub enum ComputeRequest {
     Solve(SolveRequest),
     /// [`ComputePort::simulate`].
     Simulate(SimulateRequest),
+    /// [`ComputePort::cash_flow`].
+    CashFlow(CashFlowRequest),
 }
 
 impl ComputeRequest {
@@ -458,7 +460,8 @@ impl ComputeRequest {
             | Self::AbTest(_)
             | Self::Optimize(_)
             | Self::Solve(_)
-            | Self::Simulate(_) => None,
+            | Self::Simulate(_)
+            | Self::CashFlow(_) => None,
         }
     }
 
@@ -480,7 +483,8 @@ impl ComputeRequest {
             | Self::AbTest(_)
             | Self::Optimize(_)
             | Self::Solve(_)
-            | Self::Simulate(_) => None,
+            | Self::Simulate(_)
+            | Self::CashFlow(_) => None,
         }
     }
 }
@@ -614,6 +618,15 @@ pub trait ComputePort: Send + Sync {
     /// does not parse.
     fn simulate(&self, request: &SimulateRequest) -> ComputeResult;
 
+    /// NPV, IRR(s), MIRR and payback of a cash flow, in decimal
+    /// arithmetic.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for fewer than two flows or a rate at or
+    /// below −100%.
+    fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -646,6 +659,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Optimize(r) => self.optimize(r),
             ComputeRequest::Solve(r) => self.solve(r),
             ComputeRequest::Simulate(r) => self.simulate(r),
+            ComputeRequest::CashFlow(r) => self.cash_flow(r),
         }
     }
 }

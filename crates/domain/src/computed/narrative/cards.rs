@@ -500,6 +500,54 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 )
             })
         }
+        ("cash_flow", ComputedBody::CashFlow(c)) => {
+            let unit = c
+                .currency
+                .as_ref()
+                .map(|u| format!(" {u}"))
+                .unwrap_or_default();
+            let period = c.period_label.as_deref().unwrap_or("period");
+            let pct = |r: f64| format!("{}%", apa::number(r * 100.0, 2));
+            let irr = match c.irrs.as_slice() {
+                [] => " No rate makes the NPV zero, so there is no IRR.".to_owned(),
+                [_] => format!(" The IRR is {}.", display(computed, "irr")?),
+                many => format!(
+                    " The NPV is zero at {}: with {} sign changes there is no single IRR.",
+                    many.iter()
+                        .map(|r| pct(*r))
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    c.sign_changes
+                ),
+            };
+            let mirr = display(computed, "mirr")
+                .map(|m| {
+                    format!(
+                        " The MIRR is {m} (finance {}, reinvestment {}).",
+                        pct(c.finance_rate),
+                        pct(c.reinvest_rate)
+                    )
+                })
+                .unwrap_or_default();
+            let payback = match (
+                display(computed, "payback"),
+                display(computed, "discounted_payback"),
+            ) {
+                (Some(p), Some(d)) => {
+                    format!(" It pays back after {p} {period}s ({d} discounted).")
+                }
+                (Some(p), None) => {
+                    format!(" It pays back after {p} {period}s, but never once discounted.")
+                }
+                _ => " It never pays back.".to_owned(),
+            };
+            Some(format!(
+                "At {} per {period}, the NPV of the {} flows is {}{unit}.{irr}{mirr}{payback}",
+                pct(c.rate),
+                c.rows.len(),
+                display(computed, "npv")?,
+            ))
+        }
         _ => None,
     }
 }

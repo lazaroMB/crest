@@ -20,7 +20,8 @@
 //! `crest-solve` (ids `so_*`): LP/MILP on `microlp` with duals from the dual
 //! program, and the equation solver (bracket scan or damped Newton, with a
 //! plug-back check) and seeded Monte Carlo models with a tornado and Fermi
-//! estimates. Resampling and simulation draw from a seeded ChaCha20
+//! estimates, and cash flows in decimal arithmetic (NPV, every IRR, MIRR,
+//! payback). Resampling and simulation draw from a seeded ChaCha20
 //! stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -34,6 +35,7 @@
 mod ab_test;
 mod bootstrap;
 mod calc;
+mod cash_flow;
 mod checks;
 mod contingency;
 mod correlate;
@@ -116,6 +118,7 @@ impl StatsEngine {
             ComputeRequest::Optimize(r) => optimize::run(r, id)?,
             ComputeRequest::Solve(r) => equations::run(r, id)?,
             ComputeRequest::Simulate(r) => simulate::run(r, id)?,
+            ComputeRequest::CashFlow(r) => cash_flow::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -144,6 +147,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Optimize(_) => "optimize",
         ComputeRequest::Solve(_) => "solve",
         ComputeRequest::Simulate(_) => "simulate",
+        ComputeRequest::CashFlow(_) => "cash_flow",
     }
 }
 
@@ -206,6 +210,10 @@ impl ComputePort for StatsEngine {
 
     fn simulate(&self, request: &SimulateRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Simulate(request.clone()), None)
+    }
+
+    fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::CashFlow(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

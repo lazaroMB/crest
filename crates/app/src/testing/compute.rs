@@ -280,6 +280,22 @@ impl FakeCompute {
                     tornado: Vec::new(),
                 }),
             ),
+            ComputeRequest::CashFlow(r) => (
+                "solve.cash_flow",
+                "Cash flow",
+                "cash_flow",
+                ComputedBody::CashFlow(CashFlowBody {
+                    rate: r.rate,
+                    finance_rate: r.finance_rate.unwrap_or(r.rate),
+                    reinvest_rate: r.reinvest_rate.unwrap_or(r.rate),
+                    currency: r.currency.clone(),
+                    period_label: r.period.clone(),
+                    rows: Vec::new(),
+                    irrs: Vec::new(),
+                    sign_changes: 1,
+                    npv_curve: Curve::default(),
+                }),
+            ),
             ComputeRequest::Power(r) => (
                 "stats.power",
                 "Power analysis",
@@ -575,6 +591,10 @@ impl ComputePort for FakeCompute {
 
     fn simulate(&self, request: &SimulateRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Simulate(request.clone()), None)
+    }
+
+    fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::CashFlow(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

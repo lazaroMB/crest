@@ -1048,3 +1048,85 @@ fn fermi_estimate_is_exact_for_lognormal_factors() {
     );
     assert!(engine().simulate(&bad).is_err());
 }
+
+// --- Cash flow ---------------------------------------------------------------------------
+
+fn cash(flows: &[f64], rate: f64) -> CashFlowRequest {
+    CashFlowRequest {
+        flows: flows.to_vec(),
+        rate,
+        finance_rate: None,
+        reinvest_rate: None,
+        currency: Some("USD".into()),
+        period: Some("year".into()),
+    }
+}
+
+#[test]
+fn cash_flow_matches_excel_npv_irr_and_mirr() {
+    // Excel NPV(10%, −10000, 3000, 4200, 6800) = 1188.44 discounts the
+    // first flow; with it at period 0 the NPV is 1188.44 × 1.1 = 1307.29.
+    let (c, body) = engine()
+        .cash_flow(&cash(&[-10_000.0, 3000.0, 4200.0, 6800.0], 0.1))
+        .unwrap();
+    near(v(&c, "npv"), 1_307.287_754, 1e-6);
+    assert_eq!(c.value("npv").unwrap().display_text(), "1307.29 USD");
+    near(v(&c, "npv") / 1.1, 1_188.443_412, 1e-6);
+    let ComputedBody::CashFlow(f) = &body else {
+        panic!("not a cash flow");
+    };
+    assert_eq!(f.rows.len(), 4);
+    near(f.rows[3].discount_factor, 1.0 / 1.331, 1e-15);
+    // Excel IRR: −70000, 12000, 15000, 18000, 21000 → −2.1%; with 26000
+    // more → 8.66% (both to the 12th digit by scipy brentq).
+    let (c, _) = engine()
+        .cash_flow(&cash(
+            &[-70_000.0, 12_000.0, 15_000.0, 18_000.0, 21_000.0],
+            0.1,
+        ))
+        .unwrap();
+    near(v(&c, "irr"), -0.021_244_848_273, 1e-12);
+    let (c, body) = engine()
+        .cash_flow(&cash(
+            &[-70_000.0, 12_000.0, 15_000.0, 18_000.0, 21_000.0, 26_000.0],
+            0.1,
+        ))
+        .unwrap();
+    near(v(&c, "irr"), 0.086_630_948_037, 1e-12);
+    assert_eq!(v(&c, "sign_changes"), 1.0);
+    // Payback: −70000 + 12000 + 15000 + 18000 + 21000 = −4000 after year 4,
+    // so 4 + 4000/26000.
+    near(v(&c, "payback"), 4.0 + 4000.0 / 26_000.0, 1e-12);
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("The IRR is 8.66%"), "{sentence}");
+    // Excel MIRR: −120000, 39000, 30000, 21000, 37000, 46000 at finance 10%,
+    // reinvestment 12% → 12.61%; 14% → 13.48%; the first three years → −4.80%.
+    let flows = [-120_000.0, 39_000.0, 30_000.0, 21_000.0, 37_000.0, 46_000.0];
+    let mut request = cash(&flows, 0.1);
+    request.reinvest_rate = Some(0.12);
+    let (c, _) = engine().cash_flow(&request).unwrap();
+    near(v(&c, "mirr"), 0.126_094_130_366, 1e-12);
+    request.reinvest_rate = Some(0.14);
+    let (c, _) = engine().cash_flow(&request).unwrap();
+    near(v(&c, "mirr"), 0.134_759_110_828, 1e-12);
+    request.flows.truncate(4);
+    request.reinvest_rate = Some(0.12);
+    let (c, _) = engine().cash_flow(&request).unwrap();
+    near(v(&c, "mirr"), -0.048_044_655_250, 1e-12);
+}
+
+#[test]
+fn cash_flow_with_two_sign_changes_has_two_irrs() {
+    // −100 + 230/(1 + r) − 132/(1 + r)² = 0 at r = 10% and r = 20%.
+    let (c, body) = engine()
+        .cash_flow(&cash(&[-100.0, 230.0, -132.0], 0.15))
+        .unwrap();
+    assert!(c.value("irr").is_none());
+    near(v(&c, "irr_1"), 0.1, 1e-15);
+    near(v(&c, "irr_2"), 0.2, 1e-15);
+    assert!(c.warnings.iter().any(|w| w.code == "multiple_irr"));
+    let sentence = domain::computed::narrative::sentence(&c, &body).unwrap();
+    assert!(sentence.contains("no single IRR"), "{sentence}");
+    assert!(engine().cash_flow(&cash(&[1.0], 0.1)).is_err());
+    assert!(engine().cash_flow(&cash(&[-1.0, 2.0], -1.0)).is_err());
+}

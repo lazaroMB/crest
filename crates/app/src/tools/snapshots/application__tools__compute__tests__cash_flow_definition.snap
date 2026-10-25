@@ -1,0 +1,63 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(CashFlowTool::new(ports))"
+---
+{
+  "name": "cash_flow",
+  "description": "Analyses a cash flow with crest's deterministic engine in decimal arithmetic: net `flows` per period from period 0 (undiscounted; outflows negative) at a discount `rate` (a fraction). The user sees the period table, NPV, every IRR (with a warning when the flows change sign more than once, so there is no single IRR), MIRR at `finance_rate`/`reinvest_rate`, simple and discounted payback, and the NPV-vs-rate curve; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "flows": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "double"
+        },
+        "description": "Net cash flow of each period, from period 0: `[-1000, 300, 400,\n500]` (outflows negative)."
+      },
+      "rate": {
+        "type": "number",
+        "format": "double",
+        "description": "Discount rate per period as a fraction, e.g. 0.08."
+      },
+      "finance_rate": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Finance rate of the MIRR (default `rate`)."
+      },
+      "reinvest_rate": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Reinvestment rate of the MIRR (default `rate`)."
+      },
+      "currency": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Currency of the amounts, shown only, e.g. `EUR`."
+      },
+      "period": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Name of a period, e.g. `year` (default `period`)."
+      }
+    },
+    "required": [
+      "flows",
+      "rate"
+    ],
+    "description": "Input of `cash_flow`: net cash flows per period, the first at period 0\n(not discounted). The engine computes in decimal arithmetic: NPV at\n`rate`, every IRR, MIRR, simple and discounted payback, and the NPV\ncurve over the rate.",
+    "title": "CashFlowRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

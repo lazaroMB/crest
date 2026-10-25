@@ -201,3 +201,28 @@ pub struct SimulateRequest {
     #[serde(default = "default_sim_seed")]
     pub seed: u64,
 }
+
+/// Input of `cash_flow`: net cash flows per period, the first at period 0
+/// (not discounted). The engine computes in decimal arithmetic: NPV at
+/// `rate`, every IRR, MIRR, simple and discounted payback, and the NPV
+/// curve over the rate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CashFlowRequest {
+    /// Net cash flow of each period, from period 0: `[-1000, 300, 400,
+    /// 500]` (outflows negative).
+    pub flows: Vec<f64>,
+    /// Discount rate per period as a fraction, e.g. 0.08.
+    pub rate: f64,
+    /// Finance rate of the MIRR (default `rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finance_rate: Option<f64>,
+    /// Reinvestment rate of the MIRR (default `rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reinvest_rate: Option<f64>,
+    /// Currency of the amounts, shown only, e.g. `EUR`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Name of a period, e.g. `year` (default `period`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<String>,
+}

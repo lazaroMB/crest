@@ -47,9 +47,10 @@ use serde_json::{Value, json};
 mod cards;
 
 pub use self::cards::{
-    AbTest, Bootstrap, Contingency, Distribution, Equations, ForecastKind, Lp, Power, Simulate,
-    SimulateTool, SolveEquationsTool, SolveLpTool, StatsAbTestTool, StatsBootstrapTool,
-    StatsContingencyTool, StatsDistributionTool, StatsForecastTool, StatsPowerTool,
+    AbTest, Bootstrap, CashFlow, CashFlowTool, Contingency, Distribution, Equations, ForecastKind,
+    Lp, Power, Simulate, SimulateTool, SolveEquationsTool, SolveLpTool, StatsAbTestTool,
+    StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool, StatsForecastTool,
+    StatsPowerTool,
 };
 
 use super::registry::{
@@ -756,7 +757,8 @@ compute power or the sample size with `stats_power`; to compare two conversion r
 To optimise a linear model (resource allocation, blending, scheduling, knapsack), call \
 `solve_lp` with the objective, variables and constraints instead of reasoning out the \
 optimum. To solve an equation or a system numerically, call `solve_equations`. For a \
-quantity built from uncertain inputs (a business case, a Fermi estimate), call `simulate`.
+quantity built from uncertain inputs (a business case, a Fermi estimate), call `monte_carlo`. \
+For NPV, IRR or payback of a series of cash flows, call `cash_flow`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -792,7 +794,8 @@ pub fn register_compute_tools(
     registry.register_typed(StatsForecastTool::new(ports.clone()))?;
     registry.register_typed(SolveLpTool::new(ports.clone()))?;
     registry.register_typed(SolveEquationsTool::new(ports.clone()))?;
-    registry.register_typed(SimulateTool::new(ports.clone()))
+    registry.register_typed(SimulateTool::new(ports.clone()))?;
+    registry.register_typed(CashFlowTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -894,7 +897,11 @@ mod tests {
             "solve_equations_definition",
             definition(SolveEquationsTool::new(ports.clone()))
         );
-        insta::assert_json_snapshot!("simulate_definition", definition(SimulateTool::new(ports)));
+        insta::assert_json_snapshot!(
+            "monte_carlo_definition",
+            definition(SimulateTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!("cash_flow_definition", definition(CashFlowTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1180,8 +1187,9 @@ mod tests {
             registry.names(),
             [
                 "calc",
+                "cash_flow",
                 "convert",
-                "simulate",
+                "monte_carlo",
                 "solve_equations",
                 "solve_lp",
                 "stats_ab_test",
