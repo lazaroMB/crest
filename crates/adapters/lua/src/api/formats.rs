@@ -1,16 +1,23 @@
-//! `app.formats`: the file-format blocks of the `show_dataset` and
-//! `show_molecule` tools from Lua. Each returns a block (wrapped like
+//! `app.formats`: the file-format blocks of the `show_dataset`,
+//! `show_molecule`, `show_trace`, `show_flamegraph` and `show_logs` tools
+//! from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
 //! return app.formats.dataset{ path = 'data/cars.csv', rows = 10 }
 //! return app.formats.molecule{ smiles = 'CCO', name = 'ethanol' }
+//! return app.formats.trace{ path = 'traces/checkout.json' }
+//! return app.formats.flamegraph{ path = 'cpu.pb.gz', sample_type = 'cpu' }
+//! return app.formats.logs{ path = 'logs/app.log', format = 'logfmt' }
 //! ```
 //!
 //! | Function | Block |
 //! | --- | --- |
 //! | `dataset{ path, rows }` | a data file's shape, column statistics and first rows (CSV, TSV, JSON lines, Parquet) |
 //! | `molecule{ smiles, name, claimed_formula }` | a 2D structure with its computed formula, mass and charge |
+//! | `trace{ path, title }` | a trace waterfall (OTLP, Jaeger or Zipkin JSON) |
+//! | `flamegraph{ path, sample_type, title }` | a flame graph (folded stacks or pprof) |
+//! | `logs{ path, format }` | a log file on a filterable list (`json`, `logfmt` or `text`; guessed when absent) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -20,12 +27,13 @@
 
 use std::sync::Arc;
 
-use application::ports::formats::{DatasetRequest, FormatsPort};
+use application::ports::formats::{DatasetRequest, FormatsPort, LogRequest, ProfileRequest};
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
-    DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS, dataset_format, read_dataset,
+    DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS, dataset_format, read_dataset, read_log, read_report,
 };
 use domain::block::BlockKind;
+use domain::devops::logs::LogFormat;
 use mlua::{Lua, Table, Value};
 use serde_json::json;
 
@@ -128,6 +136,77 @@ fn molecule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Molecule(spec))
 }
 
+fn trace(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "trace";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_trace(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Trace(Box::new(spec)))
+}
+
+fn flamegraph(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "flamegraph";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = ProfileRequest {
+        path: path.clone(),
+        sample_type: text(args, F, "sample_type")?,
+    };
+    let mut spec = services
+        .formats
+        .parse_profile(&bytes, &request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::FlameGraph(Box::new(spec)))
+}
+
+fn logs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "logs";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let format = match text(args, F, "format")?.as_deref() {
+        None => None,
+        Some("json") => Some(LogFormat::Json),
+        Some("logfmt") => Some(LogFormat::Logfmt),
+        Some("text") => Some(LogFormat::Text),
+        Some(other) => {
+            return Err(error(
+                F,
+                format!("`format` must be json, logfmt or text, got {other:?}"),
+            ));
+        }
+    };
+    let (bytes, truncated) = context(lua)?
+        .block_on(read_log(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = LogRequest {
+        path: path.clone(),
+        format,
+        truncated,
+    };
+    let spec = services
+        .formats
+        .parse_logs(&bytes, &request)
+        .map_err(|e| error(F, e))?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Logs(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -143,6 +222,27 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => molecule(lua, &args),
             _ => Err(error("molecule", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "trace",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => trace(lua, &args),
+            _ => Err(error("trace", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "flamegraph",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => flamegraph(lua, &args),
+            _ => Err(error("flamegraph", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "logs",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => logs(lua, &args),
+            _ => Err(error("logs", "expected a table of arguments")),
         })?,
     )?;
     Ok(formats)
@@ -165,6 +265,9 @@ mod tests {
         callbacks::install(&lua, CallbackIds::default())?;
         let fs = InMemoryFs::new(test_root())
             .with_file("data/cars.csv", "mpg,am\n21,m\n22.8,a\n")
+            .with_file("traces/t.json", "{}")
+            .with_file("cpu.folded", "main 1\n")
+            .with_file("logs/app.log", "info hi\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -204,6 +307,45 @@ mod tests {
             panic!("not a molecule: {out:?}");
         };
         assert_eq!(spec.name.as_deref(), Some("ethanol"));
+    }
+
+    #[test]
+    fn traces_profiles_and_logs_return_their_blocks() {
+        let formats = Arc::new(FakeFormats::new());
+        let out = run_code(
+            "return app.formats.trace{ path = 'traces/t.json', title = 'checkout' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Trace(spec)) = out else {
+            panic!("not a trace: {out:?}");
+        };
+        assert_eq!(spec.title.as_deref(), Some("checkout"));
+        let out = run_code(
+            "return app.formats.flamegraph{ path = 'cpu.folded' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        assert!(
+            matches!(out, PluginOutput::Block(BlockKind::FlameGraph(_))),
+            "{out:?}"
+        );
+        let out = run_code(
+            "return app.formats.logs{ path = 'logs/app.log', format = 'text' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Logs(spec)) = out else {
+            panic!("not logs: {out:?}");
+        };
+        assert_eq!(spec.format, LogFormat::Text);
+        let bad = run_code(
+            "return app.formats.logs{ path = 'logs/app.log', format = 'xml' }",
+            Some(formats),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("json, logfmt or text"), "{bad}");
     }
 
     #[test]

@@ -21,8 +21,11 @@
 
 use domain::block::{BlockKind, Cell, ChartSpec, CustomNode, SourceRef, TableSpec};
 use domain::computed::{Computed, ComputedBody, narrative};
+use domain::devops::flame::FlameSpec;
+use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestOutcome, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::widget::timeline::{TimeUnit, format_duration};
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div,
@@ -475,8 +478,54 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             vec![CopyFormat::new("csv", "CSV", super::plate::plate_csv(spec))]
         }
         BlockKind::Custom { tree, .. } => custom(tree),
+        BlockKind::Trace(spec) => vec![
+            CopyFormat::new("spans", "spans CSV", spec.timeline.to_csv()),
+            CopyFormat::new("critical", "critical path", critical_path_text(spec)),
+        ],
+        BlockKind::FlameGraph(spec) => vec![
+            CopyFormat::new("folded", "folded stacks", spec.to_folded()),
+            CopyFormat::new("top", "self-time CSV", frame_stats_csv(spec)),
+        ],
+        BlockKind::Logs(spec) => {
+            vec![CopyFormat::new("lines", "lines", spec.list.all_text())]
+        }
         _ => Vec::new(),
     }
+}
+
+/// The critical path of a trace, one `service: name<TAB>duration` line
+/// per span, root first.
+#[must_use]
+pub fn critical_path_text(spec: &TraceSpec) -> String {
+    let times = spec.times(None);
+    spec.critical_path
+        .iter()
+        .filter_map(|id| spec.timeline.rows.iter().position(|r| &r.id == id))
+        .map(|ix| {
+            format!(
+                "{}{}\t{}\n",
+                "  ".repeat(spec.timeline.rows[ix].depth as usize),
+                spec.span_name(ix),
+                format_duration(times[ix].duration, TimeUnit::Ms)
+            )
+        })
+        .collect()
+}
+
+/// Self and total value per function of a flame graph as CSV, most self
+/// first.
+#[must_use]
+pub fn frame_stats_csv(spec: &FlameSpec) -> String {
+    let mut out = format!("function,self_{0},total_{0}\n", spec.unit.replace(' ', "_"));
+    for stat in spec.frame_stats() {
+        out.push_str(&format!(
+            "{},{},{}\n",
+            csv_field(&stat.name),
+            stat.self_value,
+            stat.total
+        ));
+    }
+    out
 }
 
 /// The copy row of the selected block, or `None` when it has no forms or
@@ -611,6 +660,40 @@ mod tests {
             super::super::computed::cash_flow::tests::body(),
         ));
         assert_eq!(flows[0].1.lines().count(), 4);
+    }
+
+    #[test]
+    fn devops_blocks_copy_spans_stacks_and_lines() {
+        use domain::devops::flame::{FlameTree, ProfileFormat};
+        let mut tree = FlameTree::new();
+        tree.add(["main", "work"], 3);
+        tree.add(["main"], 1);
+        let flame = tree.finish(ProfileFormat::Folded, "cpu nanoseconds");
+        let forms = formats(&BlockKind::FlameGraph(Box::new(flame)));
+        assert_eq!(forms[0].text, "main 1\nmain;work 3\n");
+        assert_eq!(
+            forms[1].text,
+            "function,self_cpu_nanoseconds,total_cpu_nanoseconds\nwork,3,3\nmain,1,4\n"
+        );
+        let trace: TraceSpec = serde_json::from_value(serde_json::json!({
+            "format": "otlp", "traces": 1, "total_spans": 2,
+            "timeline": {"rows": [
+                {"id": "a", "label": "GET /", "spans": [{"start": 0, "end": 10,
+                    "attrs": {"service": "api"}}]},
+                {"id": "b", "label": "query", "depth": 1, "spans": [{"start": 2, "end": 7}]}
+            ]},
+            "critical_path": ["a", "b"]
+        }))
+        .unwrap();
+        assert_eq!(
+            critical_path_text(&trace),
+            "api: GET /\t10 ms\n  query\t5 ms\n"
+        );
+        let keys: Vec<_> = formats(&BlockKind::Trace(Box::new(trace)))
+            .iter()
+            .map(|f| f.key)
+            .collect();
+        assert_eq!(keys, ["spans", "critical"]);
     }
 
     #[test]

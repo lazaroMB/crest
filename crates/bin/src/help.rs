@@ -182,7 +182,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_test_report" | "show_findings" | "show_wavedrom" | "show_dataset"
         | "show_molecule" | "show_plate" | "stats_distribution" | "stats_contingency"
         | "stats_power" | "stats_ab_test" | "stats_bootstrap" | "stats_forecast" | "solve_lp"
-        | "solve_equations" | "monte_carlo" | "cash_flow" | "decision_matrix" => "read",
+        | "solve_equations" | "monte_carlo" | "cash_flow" | "decision_matrix" | "show_trace"
+        | "show_flamegraph" | "show_logs" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

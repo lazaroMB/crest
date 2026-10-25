@@ -16,6 +16,9 @@ use uuid::Uuid;
 
 use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
+use crate::devops::flame::FlameSpec;
+use crate::devops::logs::LogSpec;
+use crate::devops::trace::TraceSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
@@ -118,6 +121,9 @@ impl Block {
             BlockKind::Dataset(spec) => spec.validate(),
             BlockKind::Molecule(spec) => spec.validate(),
             BlockKind::Plate(spec) => spec.validate(),
+            BlockKind::Trace(spec) => spec.validate(),
+            BlockKind::FlameGraph(spec) => spec.validate(),
+            BlockKind::Logs(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -267,6 +273,12 @@ pub enum BlockKind {
     Molecule(MoleculeSpec),
     /// A 96- or 384-well plate map (tool `show_plate`).
     Plate(PlateSpec),
+    /// A distributed trace as a waterfall (tool `show_trace`).
+    Trace(Box<TraceSpec>),
+    /// A profile as a flame graph (tool `show_flamegraph`).
+    FlameGraph(Box<FlameSpec>),
+    /// A log file on a filterable list (tool `show_logs`).
+    Logs(Box<LogSpec>),
 }
 
 /// Lifecycle of a tool call.
@@ -1663,6 +1675,25 @@ mod tests {
                 "dataset",
                 json!({"path": "a.csv", "format": "csv", "columns": [],
                        "preview": {"columns": [{"name": "a"}], "rows": []}}),
+            ),
+            (
+                "trace",
+                json!({"format": "otlp", "traces": 1, "total_spans": 1,
+                       "timeline": {"rows": [{"id": "s1", "label": "GET /",
+                                              "spans": [{"start": 0, "end": 5}]}]},
+                       "critical_path": ["s1"]}),
+            ),
+            (
+                "flame_graph",
+                json!({"format": "folded", "unit": "samples", "nodes": [
+                    {"name": "all", "depth": 0, "start": 0, "total": 3, "self_value": 0},
+                    {"name": "main", "depth": 1, "start": 0, "total": 3, "self_value": 3}
+                ]}),
+            ),
+            (
+                "logs",
+                json!({"format": "logfmt", "total_lines": 1,
+                       "list": {"items": [{"level": "info", "text": "hi"}]}}),
             ),
         ] {
             let mut value = body;
