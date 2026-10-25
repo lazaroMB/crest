@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -309,6 +309,28 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("plug_back", "plug-back CSV", csv));
+    }
+    if let ComputedBody::Simulation(m) = body {
+        let mut csv =
+            String::from("input,distribution,p10,p50,p90,output_at_p10,output_at_p90,swing\n");
+        for i in &m.inputs {
+            let bar = m.tornado.iter().find(|b| b.input == i.name);
+            let opt = |f: fn(&domain::computed::TornadoBar) -> f64| {
+                bar.map(|b| f(b).to_string()).unwrap_or_default()
+            };
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{}\n",
+                csv_field(&i.name),
+                csv_field(&i.distribution),
+                i.p10,
+                i.p50,
+                i.p90,
+                opt(|b| b.at_p10),
+                opt(|b| b.at_p90),
+                opt(|b| b.swing)
+            ));
+        }
+        formats.push(CopyFormat::new("tornado", "tornado CSV", csv));
     }
     formats
 }

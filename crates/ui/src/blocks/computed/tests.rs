@@ -553,6 +553,15 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Equations(super::equations::tests::body()),
             &["curve"],
         ),
+        (
+            {
+                let mut c = card("solve.monte_carlo", "Monte Carlo simulation");
+                c.seed = Some(7);
+                c
+            },
+            ComputedBody::Simulation(super::simulation::tests::body()),
+            &["histogram", "tornado", "convergence"],
+        ),
         // Later cards go above this line.
     ]
 }

@@ -202,6 +202,20 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A Monte Carlo simulation, tornado and Fermi estimate.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "simulation"
+        }
+      },
+      "$ref": "#/$defs/SimulationBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -2535,6 +2549,165 @@ expression: "schemars::schema_for!(ComputedBody)"
         "residual_norm",
         "iterations",
         "tolerance"
+      ]
+    },
+    "SimInputSummary": {
+      "description": "One input as simulated.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "distribution": {
+          "description": "Its distribution in words, e.g. `lognormal, 90% in [2, 8]`.",
+          "type": "string"
+        },
+        "p10": {
+          "description": "10th percentile of the distribution.",
+          "type": "number",
+          "format": "double"
+        },
+        "p50": {
+          "description": "Median.",
+          "type": "number",
+          "format": "double"
+        },
+        "p90": {
+          "description": "90th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "source": {
+          "description": "Where the estimate comes from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "distribution",
+        "p10",
+        "p50",
+        "p90"
+      ]
+    },
+    "TornadoBar": {
+      "description": "One bar of the tornado: the output with one input at its 10th and 90th\npercentiles, the others at their medians.",
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The input moved.",
+          "type": "string"
+        },
+        "at_p10": {
+          "description": "Output at the input's 10th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "at_p90": {
+          "description": "Output at its 90th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "swing": {
+          "description": "|at_p90 − at_p10|.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "input",
+        "at_p10",
+        "at_p90",
+        "swing"
+      ]
+    },
+    "SimulationBody": {
+      "description": "Body of a Monte Carlo card.",
+      "type": "object",
+      "properties": {
+        "output": {
+          "description": "Name of the output.",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Its unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model, e.g. `price * volume - cost`.",
+          "type": "string"
+        },
+        "fermi": {
+          "description": "Whether the output is the product of the inputs (a Fermi estimate).",
+          "type": "boolean",
+          "default": false
+        },
+        "samples": {
+          "description": "Draws.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "inputs": {
+          "description": "The inputs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SimInputSummary"
+          }
+        },
+        "histogram": {
+          "description": "Distribution of the output.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "convergence": {
+          "description": "The running mean (y) after n draws (x).",
+          "$ref": "#/$defs/Curve"
+        },
+        "convergence_mcse": {
+          "description": "Monte Carlo SE of the running mean at each point of `convergence`.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "base": {
+          "description": "The output with every input at its median.",
+          "type": "number",
+          "format": "double"
+        },
+        "tornado": {
+          "description": "Tornado bars, largest swing first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TornadoBar"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "output",
+        "model",
+        "samples",
+        "inputs",
+        "histogram",
+        "convergence",
+        "base"
       ]
     }
   }

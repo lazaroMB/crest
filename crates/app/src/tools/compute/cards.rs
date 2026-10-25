@@ -1,6 +1,6 @@
 //! The phase-2 compute tools: `stats_distribution`, `stats_contingency`,
 //! `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast`,
-//! `solve_lp`, `solve_equations`, and what the model is
+//! `solve_lp`, `solve_equations`, `simulate`, and what the model is
 //! told about each card beyond its slots ([`notes`]).
 //!
 //! Tools that read data are [`StatsKind`]s (their `data` is a
@@ -211,6 +211,41 @@ condition number; you get the values as slots to cite.";
 /// `solve_equations`.
 pub type SolveEquationsTool = UnitsTool<Equations>;
 
+/// `simulate`.
+#[derive(Debug, Clone, Copy)]
+pub struct Simulate;
+
+impl UnitsKind for Simulate {
+    type Request = SimulateRequest;
+    const NAME: &'static str = "simulate";
+    const DESCRIPTION: &'static str = "\
+Runs a seeded Monte Carlo simulation with crest's deterministic engine: each input has a \
+distribution (`fixed`, `uniform`, `normal`, `lognormal` from a 90% range low–high, \
+`triangular`, `pert`) and the output is the `model` expression of the inputs (`price * volume \
+- cost`). The user sees mean ± MCSE, the 5th/50th/95th percentiles, the histogram, the \
+convergence trace and a tornado of each input's swing from its 10th to 90th percentile. \
+Without `model` it is a Fermi estimate: the product of the inputs, each a lognormal range with \
+its `source`, with exact percentiles. You get the values as slots to cite.";
+    fn wrap(request: SimulateRequest) -> ComputeRequest {
+        ComputeRequest::Simulate(request)
+    }
+    fn subject(request: &SimulateRequest) -> String {
+        match &request.model {
+            Some(model) => model.clone(),
+            None => format!("Fermi estimate of {} factors", request.inputs.len()),
+        }
+    }
+    fn check(request: &SimulateRequest) -> Result<(), String> {
+        if request.inputs.is_empty() {
+            return Err("give at least one input".into());
+        }
+        Ok(())
+    }
+}
+
+/// `simulate`.
+pub type SimulateTool = UnitsTool<Simulate>;
+
 /// `stats_power`.
 #[derive(Debug, Clone, Copy)]
 pub struct Power;
@@ -348,6 +383,14 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                 "Status: {}. Shadow prices are the change of the objective per unit increase of \
                  a constraint's right-hand side; ranging is not available.",
                 o.status.label()
+            );
+        }
+        ComputedBody::Simulation(m) if !m.tornado.is_empty() => {
+            let order: Vec<&str> = m.tornado.iter().map(|b| b.input.as_str()).collect();
+            let _ = writeln!(
+                out,
+                "Tornado order (largest swing first): {}.",
+                order.join(", ")
             );
         }
         ComputedBody::Forecast(f) => {

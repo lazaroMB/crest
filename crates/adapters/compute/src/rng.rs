@@ -14,8 +14,6 @@ pub const RNG_NAME: &str = "chacha20";
 #[derive(Debug, Clone)]
 pub struct Rng(ChaCha20Rng);
 
-// `uniform` and `normal` serve the bootstrap and Monte Carlo cards.
-#[allow(dead_code)]
 impl Rng {
     /// The stream of `seed`.
     #[must_use]
