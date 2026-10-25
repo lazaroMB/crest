@@ -19,6 +19,7 @@ pub mod math;
 pub mod measured;
 pub mod mermaid;
 pub mod model_view;
+pub mod plot;
 pub mod shell;
 pub mod sources;
 pub mod stage;
@@ -55,8 +56,8 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Computed { .. } => computed::render(entry, window, cx),
         // Phase 1 chat blocks; each gets its own renderer in a later piece.
         BlockKind::Form(_) => form::render(entry, window, cx),
-        BlockKind::Plot(_)
-        | BlockKind::TestReport(_)
+        BlockKind::Plot(_) => plot::render(entry, window, cx),
+        BlockKind::TestReport(_)
         | BlockKind::Findings(_)
         | BlockKind::Dataset(_)
         | BlockKind::Molecule(_)
