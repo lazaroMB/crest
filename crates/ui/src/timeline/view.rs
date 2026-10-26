@@ -304,10 +304,11 @@ impl TimelineView {
     /// A click on a row selects it and expands or collapses it, unless the
     /// click ended a text selection: then the row keeps its state.
     fn click(&mut self, ix: usize, text_selected: bool, cx: &mut Context<Self>) {
-        if self.state.select(ix).is_some() && !text_selected {
-            if let Some(ix) = self.state.toggle_selected() {
-                self.list.remeasure_items(ix..ix + 1);
-            }
+        if self.state.select(ix).is_some()
+            && !text_selected
+            && let Some(ix) = self.state.toggle_selected()
+        {
+            self.list.remeasure_items(ix..ix + 1);
         }
         cx.notify();
     }
