@@ -1,10 +1,13 @@
 //! Science B viewers on fixture files (all generated for these tests):
-//! GeoJSON maps.
+//! GeoJSON maps and Gantt charts.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, MapRequest};
+use application::ports::formats::{
+    FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
+};
+use domain::gantt::Calendar;
 use domain::science::geomap::{CrsSource, GeometryKind, to_lon_lat};
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -105,4 +108,124 @@ fn legacy_crs_member_and_given_crs_reproject() {
             .parse_geojson(b"{\"type\": \"Nope\"}", &MapRequest::default())
             .is_err()
     );
+}
+
+fn gantt(name: &str, calendar: Calendar) -> Result<domain::gantt::GanttSpec, String> {
+    Formats::new()
+        .schedule_gantt(&GanttRequest {
+            path: Some(format!("plan/{name}")),
+            source: GanttSource::File(fixture(name)),
+            start: None,
+            calendar,
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn cpm_textbook_network() {
+    let spec = gantt("project.csv", Calendar::AllDays).unwrap();
+    spec.validate().unwrap();
+    assert_eq!(spec.project_duration, 14.0);
+    assert_eq!(spec.critical_path, vec!["A", "B", "D", "F"]);
+    let row = |id: &str| spec.tasks.iter().find(|t| t.id == id).unwrap();
+    let times = |id: &str| {
+        let t = row(id);
+        (
+            t.early_start,
+            t.early_finish,
+            t.late_start,
+            t.late_finish,
+            t.total_slack,
+            t.free_slack,
+        )
+    };
+    assert_eq!(times("A"), (0.0, 3.0, 0.0, 3.0, 0.0, 0.0));
+    assert_eq!(times("C"), (3.0, 5.0, 7.0, 9.0, 4.0, 0.0));
+    assert_eq!(times("E"), (5.0, 8.0, 9.0, 12.0, 4.0, 4.0));
+    assert_eq!(times("F"), (12.0, 14.0, 12.0, 14.0, 0.0, 0.0));
+    assert_eq!(row("B").group.as_deref(), Some("build"));
+    assert_eq!(row("C").name.as_deref(), Some("Order steel"));
+    assert!(spec.start.is_none(), "no dates: offsets only");
+    let env = &spec.schedule;
+    assert_eq!(env.values["project_duration"].v, 14.0);
+    assert_eq!(env.values["E.total_slack"].v, 4.0);
+    assert_eq!(env.values["critical_tasks"].v, 4.0);
+    assert_eq!(env.engine.name, "crest-plan");
+}
+
+#[test]
+fn cpm_with_lags_milestones_and_a_weekday_calendar() {
+    let spec = gantt("release.json", Calendar::Weekdays).unwrap();
+    spec.validate().unwrap();
+    assert_eq!(
+        spec.start.as_deref(),
+        Some("2026-11-02"),
+        "the earliest task start"
+    );
+    assert_eq!(spec.project_duration, 13.0);
+    let row = |id: &str| spec.tasks.iter().find(|t| t.id == id).unwrap();
+    assert_eq!(
+        (row("build").early_start, row("build").early_finish),
+        (2.0, 12.0)
+    );
+    // FF+1: test finishes a day after build, so it starts at 13 - 4.
+    assert_eq!(
+        (row("test").early_start, row("test").late_finish),
+        (9.0, 13.0)
+    );
+    assert_eq!(
+        (row("docs").total_slack, row("docs").free_slack),
+        (5.0, 5.0)
+    );
+    assert!(row("release").milestone && row("release").critical);
+    assert_eq!(
+        spec.critical_path,
+        vec!["design", "build", "test", "release"]
+    );
+    // 12 working days after Monday 2 November: Wednesday 18 November.
+    assert_eq!(spec.finish_text(spec.project_duration), "2026-11-18");
+    assert_eq!(
+        spec.schedule.method.params["finish_date"],
+        serde_json::json!("2026-11-18")
+    );
+}
+
+#[test]
+fn cycles_and_unknown_tasks_are_named() {
+    let task = |id: &str, deps: &[&str]| GanttTaskInput {
+        id: id.into(),
+        duration: Some(1.0),
+        depends_on: deps.iter().map(|d| (*d).to_owned()).collect(),
+        ..GanttTaskInput::default()
+    };
+    let run = |tasks: Vec<GanttTaskInput>| {
+        Formats::new()
+            .schedule_gantt(&GanttRequest {
+                path: None,
+                source: GanttSource::Tasks(tasks),
+                start: Some("2026-11-07".into()),
+                calendar: Calendar::Weekdays,
+            })
+            .map_err(|e| e.to_string())
+    };
+    let err = run(vec![
+        task("a", &[]),
+        task("b", &["a", "d"]),
+        task("c", &["b"]),
+        task("d", &["c"]),
+    ])
+    .unwrap_err();
+    assert!(
+        err.contains("cycle") && err.contains("b → c → d → b"),
+        "{err}"
+    );
+    assert!(
+        run(vec![task("a", &["zz"])])
+            .unwrap_err()
+            .contains("unknown task")
+    );
+    // A Saturday start moves to Monday, with a note.
+    let ok = run(vec![task("a", &[])]).unwrap();
+    assert_eq!(ok.start.as_deref(), Some("2026-11-09"));
+    assert!(ok.warnings[0].contains("not a working day"));
 }

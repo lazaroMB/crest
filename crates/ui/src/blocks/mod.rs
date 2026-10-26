@@ -20,6 +20,7 @@ pub mod drawing;
 pub mod findings;
 pub mod flame;
 pub mod form;
+pub mod gantt;
 pub mod geomap;
 pub mod ghs;
 pub mod har;
@@ -113,6 +114,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Molecule3d(_) => molecule3d::render(entry, window, cx),
         BlockKind::Ghs(_) => ghs::render(entry, window, cx),
         BlockKind::GeoMap(_) => geomap::render(entry, window, cx),
+        BlockKind::Gantt(_) => gantt::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

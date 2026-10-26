@@ -62,6 +62,10 @@ pub enum SpanStatus {
     Warning,
     /// Failed.
     Error,
+    /// On a critical path (a Gantt chart's critical tasks).
+    Critical,
+    /// Room a task may slip (a Gantt chart's slack), drawn faint.
+    Slack,
 }
 
 impl SpanStatus {
@@ -72,6 +76,8 @@ impl SpanStatus {
             Self::Ok => "ok",
             Self::Warning => "warning",
             Self::Error => "error",
+            Self::Critical => "critical",
+            Self::Slack => "slack",
         }
     }
 }

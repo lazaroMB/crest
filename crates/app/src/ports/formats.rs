@@ -30,6 +30,7 @@ use domain::engineering::drawing::DrawingSpec;
 use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
+use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 use domain::science::geomap::MapSpec;
@@ -38,6 +39,10 @@ use domain::science::molecule3d::Molecule3dSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 use domain::science::spectrum::SpectrumSpec;
+
+mod sciences;
+
+pub use sciences::*;
 
 /// What [`FormatsPort::preview_dataset`] reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,6 +508,18 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for malformed GeoJSON, an unknown CRS or
     /// coordinates the CRS cannot reproject.
     fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError>;
+
+    /// A project scheduled by the critical path method: tasks with
+    /// durations and FS/SS/FF/SF dependencies with lags, forward and
+    /// backward passes, early/late start and finish, total and free slack
+    /// and the critical path.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unreadable file, a repeated or
+    /// unknown task id, a bad duration or date, or a dependency cycle
+    /// (named).
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError>;
 }
 
 #[cfg(test)]

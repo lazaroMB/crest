@@ -4,7 +4,7 @@
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
 //! `show_reaction`, `show_molecule_grid`, `show_spectrum`,
-//! `show_molecule_3d`, `show_ghs` and `show_map` tools from Lua. Each returns a block (wrapped like
+//! `show_molecule_3d`, `show_ghs`, `show_map` and `show_gantt` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -31,6 +31,7 @@
 //! return app.formats.molecule_3d{ smiles = 'CCO' }
 //! return app.formats.ghs{ query = 'acetone' }
 //! return app.formats.map{ path = 'geo/parks.geojson', color_by = 'kind' }
+//! return app.formats.gantt{ tasks = { { id = 'a', duration = 3 }, { id = 'b', duration = 2, depends_on = { 'a' } } } }
 //! ```
 //!
 //! | Function | Block |
@@ -58,6 +59,7 @@
 //! | `molecule_3d{ smiles or path, name, title }` | ball and stick in the 3D view: a SMILES embedded by the engine, or a MOL/SDF, XYZ or PDB file's coordinates |
 //! | `ghs{ query or cid }` | the GHS hazard card PubChem gives for a name, CAS number or CID, with its source and date (needs the web on; a compound PubChem does not know is a card that says so) |
 //! | `map{ path or geojson, crs, color_by, title }` | GeoJSON on a map with geodesic area, length and box (`geojson`: text or a table; `crs`: an EPSG code or PROJ string over the file's) |
+//! | `gantt{ path or tasks, start, calendar, title }` | a project scheduled by the critical path method on a Gantt chart (`tasks`: `{ id, name, group, duration, start, finish, depends_on, milestone }`; `depends_on` like `'a'`, `'a SS+2'`; `calendar`: `all_days` or `weekdays`); raises on a cycle |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -1210,6 +1212,23 @@ mod tests {
         .unwrap();
         assert!(matches!(out, PluginOutput::Block(BlockKind::GeoMap(_))));
         assert!(run_code("return app.formats.map{}", formats()).is_err());
+        let out = run_code(
+            "return app.formats.gantt{ tasks = { { id = 'a', duration = 3 } }, \
+             calendar = 'weekdays', start = '2026-11-02' }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Gantt(spec)) = out else {
+            panic!("not a Gantt chart: {out:?}");
+        };
+        assert_eq!(spec.critical_path, vec!["design", "build"]);
+        assert!(
+            run_code(
+                "return app.formats.gantt{ tasks = {}, calendar = 'x' }",
+                formats()
+            )
+            .is_err()
+        );
     }
 
     #[test]

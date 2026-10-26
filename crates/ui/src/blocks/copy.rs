@@ -26,6 +26,7 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | Gantt chart | schedule CSV (ES, EF, LS, LF, slack, critical), the critical path |
 //! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
@@ -581,6 +582,14 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::Gantt(spec) => vec![
+            CopyFormat::new("schedule", "schedule CSV", spec.to_csv()),
+            CopyFormat::new(
+                "critical",
+                "critical path",
+                super::gantt::critical_text(spec),
+            ),
+        ],
         BlockKind::GeoMap(spec) => vec![
             CopyFormat::new("features", "features CSV", spec.to_csv()),
             CopyFormat::new("summary", "summary", super::geomap::summary_text(spec)),

@@ -11,6 +11,7 @@ pub mod decision;
 pub mod devops;
 pub mod engineering;
 pub mod form;
+pub mod gantt;
 pub mod git;
 pub mod math;
 pub mod modal;

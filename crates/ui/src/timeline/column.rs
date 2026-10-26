@@ -70,7 +70,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Spectrum(_)
         | BlockKind::Molecule3d(_)
         | BlockKind::Ghs(_)
-        | BlockKind::GeoMap(_) => BlockWidth::Wide,
+        | BlockKind::GeoMap(_)
+        | BlockKind::Gantt(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

@@ -264,6 +264,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 map.crs.label()
             ),
         ),
+        BlockKind::Gantt(plan) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[gantt: {} tasks, {} d, critical {}]",
+                plan.tasks.len(),
+                domain::gantt::days(plan.project_duration),
+                plan.critical_path.join(" → ")
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

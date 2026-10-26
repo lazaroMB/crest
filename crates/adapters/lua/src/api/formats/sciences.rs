@@ -1,7 +1,7 @@
-//! `app.formats` functions of the science B viewers: `map`.
+//! `app.formats` functions of the science B viewers: `map`, `gantt`.
 
-use application::ports::formats::MapRequest;
-use application::tools::formats::read_map;
+use application::ports::formats::{GanttRequest, GanttSource, GanttTaskInput, MapRequest};
+use application::tools::formats::{read_map, read_report};
 use domain::block::BlockKind;
 use mlua::{Lua, Table, Value};
 
@@ -53,6 +53,59 @@ fn map(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::GeoMap(Box::new(spec)))
 }
 
+fn gantt(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "gantt";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?;
+    let tasks: Option<Vec<GanttTaskInput>> = match args.get::<Value>("tasks")? {
+        Value::Nil => None,
+        value @ Value::Table(_) => {
+            let json = convert::to_json(lua, value)?;
+            Some(serde_json::from_value(json).map_err(|e| error(F, format!("`tasks`: {e}")))?)
+        }
+        other => {
+            return Err(error(
+                F,
+                format!("`tasks` must be a list, got {}", other.type_name()),
+            ));
+        }
+    };
+    let source = match (&path, tasks) {
+        (Some(_), Some(_)) => return Err(error(F, "give `path` or `tasks`, not both")),
+        (None, None) => return Err(error(F, "`path` or `tasks` is required")),
+        (Some(path), None) => GanttSource::File(
+            context(lua)?
+                .block_on(read_report(services.fs.as_ref(), path))?
+                .map_err(|e| error(F, e))?,
+        ),
+        (None, Some(tasks)) => GanttSource::Tasks(tasks),
+    };
+    let calendar = match text(args, F, "calendar")? {
+        None => domain::gantt::Calendar::AllDays,
+        Some(name) => {
+            serde_json::from_value(serde_json::Value::String(name.clone())).map_err(|_| {
+                error(
+                    F,
+                    format!("`calendar` is `all_days` or `weekdays`, not {name:?}"),
+                )
+            })?
+        }
+    };
+    let request = GanttRequest {
+        path: path.clone(),
+        source,
+        start: text(args, F, "start")?,
+        calendar,
+    };
+    let mut spec = services
+        .formats
+        .schedule_gantt(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Gantt(Box::new(spec)))
+}
+
 /// Adds the science B functions to the `app.formats` table.
 pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
     formats.set(
@@ -60,6 +113,13 @@ pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => map(lua, &args),
             _ => Err(error("map", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "gantt",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => gantt(lua, &args),
+            _ => Err(error("gantt", "expected a table of arguments")),
         })?,
     )?;
     Ok(())
