@@ -657,6 +657,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A 2D DXF drawing with its layers (tool `show_dxf`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "drawing"
+        }
+      },
+      "$ref": "#/$defs/DrawingSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -10833,6 +10847,429 @@ expression: "schemars::schema_for!(Block)"
         "solids",
         "mesh",
         "tolerance"
+      ]
+    },
+    "Extents": {
+      "description": "A box in drawing units.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "Lower left.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "max": {
+          "description": "Upper right.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ]
+    },
+    "DrawingLayer": {
+      "description": "A layer of the drawing.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "color": {
+          "description": "ACI color (1–255).",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "off": {
+          "description": "Turned off in the file (shown off at first).",
+          "type": "boolean",
+          "default": false
+        },
+        "entities": {
+          "description": "Entities on it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "name",
+        "color"
+      ]
+    },
+    "DrawEntity": {
+      "description": "An entity: a shape on a layer with its own color, or the layer's.",
+      "type": "object",
+      "properties": {
+        "layer": {
+          "description": "Index of its layer in [`DrawingSpec::layers`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "color": {
+          "description": "ACI color (1–255); `None` takes the layer's.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "layer"
+      ],
+      "oneOf": [
+        {
+          "description": "A segment.",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "line"
+            },
+            "a": {
+              "description": "Start.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "b": {
+              "description": "End.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "shape",
+            "a",
+            "b"
+          ]
+        },
+        {
+          "description": "A full circle.",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "circle"
+            },
+            "center": {
+              "description": "Centre.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "radius": {
+              "description": "Radius.",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "shape",
+            "center",
+            "radius"
+          ]
+        },
+        {
+          "description": "A counter-clockwise arc from `start` to `end` degrees.",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "arc"
+            },
+            "center": {
+              "description": "Centre.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "radius": {
+              "description": "Radius.",
+              "type": "number",
+              "format": "double"
+            },
+            "start": {
+              "description": "Start angle in degrees.",
+              "type": "number",
+              "format": "double"
+            },
+            "end": {
+              "description": "End angle in degrees.",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "shape",
+            "center",
+            "radius",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "A polyline (LWPOLYLINE, POLYLINE; ellipses and splines as\napproximations).",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "polyline"
+            },
+            "vertices": {
+              "description": "Vertices.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PolyVertex"
+              }
+            },
+            "closed": {
+              "description": "Whether the last vertex joins the first.",
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "shape",
+            "vertices"
+          ]
+        },
+        {
+          "description": "A single-line or multi-line text.",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "text"
+            },
+            "at": {
+              "description": "Insertion point (lower left of the first line).",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "height": {
+              "description": "Character height in drawing units.",
+              "type": "number",
+              "format": "double"
+            },
+            "rotation": {
+              "description": "Rotation in degrees (the viewer draws text unrotated).",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "text": {
+              "description": "The text, formatting codes removed; lines split by `\\n`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "shape",
+            "at",
+            "height",
+            "text"
+          ]
+        },
+        {
+          "description": "A point marker.",
+          "type": "object",
+          "properties": {
+            "shape": {
+              "type": "string",
+              "const": "point"
+            },
+            "at": {
+              "description": "Where.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "shape",
+            "at"
+          ]
+        }
+      ]
+    },
+    "PolyVertex": {
+      "description": "A polyline vertex: its point and the bulge of the segment that starts\nat it (tan of a quarter of the arc's angle; 0 for a straight segment,\npositive counter-clockwise).",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "X.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Y.",
+          "type": "number",
+          "format": "double"
+        },
+        "bulge": {
+          "description": "Bulge of the segment to the next vertex.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "SkippedKind": {
+      "description": "Entities of one kind left out of the view.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "The DXF entity name (`HATCH`, `DIMENSION`, …).",
+          "type": "string"
+        },
+        "count": {
+          "description": "How many.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind",
+        "count"
+      ]
+    },
+    "DrawingSpec": {
+      "description": "A DXF drawing.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the view; defaults to the file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The file, relative to the workspace.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The AutoCAD release of the file (`R2000`, `R2018`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "units": {
+          "description": "The insertion units of `$INSUNITS` (`mm`, `in`), when set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "header_extents": {
+          "description": "The extents of `$EXTMIN`/`$EXTMAX`, when the file has valid ones.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Extents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layers": {
+          "description": "The layers, in table order (layers only entities name come last).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DrawingLayer"
+          }
+        },
+        "entities": {
+          "description": "What is drawn.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DrawEntity"
+          }
+        },
+        "inserts": {
+          "description": "Block inserts expanded into their entities.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "skipped": {
+          "description": "Entities left out, by kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SkippedKind"
+          },
+          "default": []
+        },
+        "truncated": {
+          "description": "Whether entities were cut at [`MAX_ENTITIES`].",
+          "type": "boolean",
+          "default": false
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "path",
+        "layers",
+        "entities"
       ]
     }
   }

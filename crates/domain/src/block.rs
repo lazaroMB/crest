@@ -25,6 +25,7 @@ use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
 use crate::engineering::cad::CadModelSpec;
+use crate::engineering::drawing::DrawingSpec;
 use crate::engineering::material::MaterialSpec;
 use crate::engineering::netlist::NetlistSpec;
 use crate::engineering::waveform::WaveformSpec;
@@ -151,6 +152,7 @@ impl Block {
             BlockKind::Netlist(spec) => spec.validate(),
             BlockKind::Material(spec) => spec.validate(),
             BlockKind::CadModel(spec) => spec.validate(),
+            BlockKind::Drawing(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -332,6 +334,8 @@ pub enum BlockKind {
     /// A STEP part tessellated into the 3D view, with its solids (tool
     /// `show_step`).
     CadModel(Box<CadModelSpec>),
+    /// A 2D DXF drawing with its layers (tool `show_dxf`).
+    Drawing(Box<DrawingSpec>),
 }
 
 /// Lifecycle of a tool call.

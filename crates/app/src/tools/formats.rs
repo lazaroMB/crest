@@ -10,8 +10,8 @@
 //! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`),
 //! [`diagram`] (`show_dot`, `show_er`), [`bench`] (`show_benchmarks`) and
 //! the engineering viewers [`waveform`] (`show_waveform`), [`netlist`]
-//! (`show_netlist`), [`material`] (`show_material`) and [`step`]
-//! (`show_step`).
+//! (`show_netlist`), [`material`] (`show_material`), [`step`]
+//! (`show_step`) and [`dxf`] (`show_dxf`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -51,6 +51,7 @@ use crate::usecases::compute::{Offload, offloaded};
 pub mod bench;
 pub mod devops;
 pub mod diagram;
+pub mod dxf;
 pub mod har;
 pub mod material;
 pub mod netlist;
@@ -68,6 +69,7 @@ pub use devops::{
     flame_summary, logs_summary, read_log, trace_summary,
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
+pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
@@ -1144,6 +1146,8 @@ unverified. Never present remembered values as sourced.
 - `show_step`: show a STEP part (for example one your CadQuery or \
 build123d script exported) in the 3D view so the user can check it; cite \
 the boxes, solids and faces it returns, and say when faces were not meshed.
+- `show_dxf`: show a 2D DXF drawing with its layers instead of reading the \
+DXF text; cite the extents, units, layers and texts it returns.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1152,7 +1156,8 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
-/// `show_waveform`, `show_netlist`, `show_material` and `show_step`.
+/// `show_waveform`, `show_netlist`, `show_material`, `show_step` and
+/// `show_dxf`.
 ///
 /// # Errors
 ///
@@ -1179,7 +1184,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowWaveformTool::new(ports.clone()))?;
     registry.register_typed(ShowNetlistTool::new(ports.clone()))?;
     registry.register_typed(ShowMaterialTool)?;
-    registry.register_typed(ShowStepTool::new(ports.clone()))
+    registry.register_typed(ShowStepTool::new(ports.clone()))?;
+    registry.register_typed(ShowDxfTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1297,7 +1303,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 19);
+        assert_eq!(registry.names().len(), 20);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

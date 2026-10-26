@@ -11,6 +11,7 @@
 //! stacks, BOM costing) are computed cards, under [`crate::computed`].
 
 pub mod cad;
+pub mod drawing;
 pub mod material;
 pub mod netlist;
 pub mod waveform;

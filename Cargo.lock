@@ -181,6 +181,7 @@ dependencies = [
  "chematic",
  "domain",
  "dxf",
+ "encoding_rs",
  "flate2",
  "ifc-lite-core",
  "parquet",

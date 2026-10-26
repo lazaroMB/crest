@@ -228,7 +228,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_waveform"
         | "show_netlist"
         | "show_material"
-        | "show_step" => "read",
+        | "show_step"
+        | "show_dxf" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

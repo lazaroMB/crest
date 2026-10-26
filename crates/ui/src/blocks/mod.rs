@@ -16,6 +16,7 @@ pub mod custom;
 pub mod dataset;
 pub mod diagram;
 pub mod diff;
+pub mod drawing;
 pub mod findings;
 pub mod flame;
 pub mod form;
@@ -95,6 +96,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Netlist(_) => netlist::render(entry, window, cx),
         BlockKind::Material(_) => material::render(entry, window, cx),
         BlockKind::CadModel(_) => cad::render(entry, window, cx),
+        BlockKind::Drawing(_) => drawing::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }
