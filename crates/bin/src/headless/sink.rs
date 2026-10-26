@@ -246,6 +246,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 netlist.single_pin_nets().len()
             ),
         ),
+        BlockKind::Material(material) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[material: {}, {} properties, {} unverified]",
+                material.full_name(),
+                material.properties.len(),
+                material.unverified().len()
+            ),
+        ),
         BlockKind::Benchmarks(bench) => w.line(
             Some(Style::Dim),
             &format!(

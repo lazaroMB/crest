@@ -9,6 +9,7 @@
 //! engineering calculators (Bode plots, Karnaugh maps, beams, tolerance
 //! stacks, BOM costing) are computed cards, under [`crate::computed`].
 
+pub mod material;
 pub mod netlist;
 pub mod waveform;
 

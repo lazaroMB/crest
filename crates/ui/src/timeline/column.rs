@@ -59,7 +59,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Diagram(_)
         | BlockKind::Benchmarks(_)
         | BlockKind::Waveform(_)
-        | BlockKind::Netlist(_) => BlockWidth::Wide,
+        | BlockKind::Netlist(_)
+        | BlockKind::Material(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

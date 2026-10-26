@@ -629,6 +629,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A material's properties, each with its source or marked\nunverified (tool `show_material`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "material"
+        }
+      },
+      "$ref": "#/$defs/MaterialSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -10299,6 +10313,93 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "format",
         "components"
+      ]
+    },
+    "MaterialProperty": {
+      "description": "One property value.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name (`Young's modulus`, `yield strength`, `density`).",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "Symbol (`E`, `σy`, `ρ`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "The value as given.",
+          "type": "number",
+          "format": "double"
+        },
+        "unit": {
+          "description": "Its unit (`GPa`, `MPa`, `kg/m³`, `1/K`).",
+          "type": "string",
+          "default": ""
+        },
+        "condition": {
+          "description": "Condition or basis (`20 °C`, `minimum`, `typical`, `T6 temper`,\n`A-basis`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Where the value comes from: a datasheet, standard, handbook (with\nedition and table), a URL, or `user` for a value the user gave.\nEmpty: unverified.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "MaterialSpec": {
+      "description": "A material card.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Material name (`aluminium alloy`, `PEEK`).",
+          "type": "string"
+        },
+        "designation": {
+          "description": "Designation or grade (`6061-T6`, `EN AW-6061`, `S355JR`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "condition": {
+          "description": "Form or condition of the whole card (`plate, 6–12 mm`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "properties": {
+          "description": "The properties.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaterialProperty"
+          }
+        },
+        "notes": {
+          "description": "Notes shown under the table.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "properties"
       ]
     }
   }

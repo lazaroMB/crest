@@ -438,3 +438,18 @@ fn plates_are_whole_blocks() {
             .contains("app.ui.plate")
     );
 }
+
+#[test]
+fn materials_are_whole_blocks() {
+    let out = eval(
+        "return app.ui.material{ name = 'PEEK', properties = {
+           { name = 'density', value = 1300, unit = 'kg/m³', source = 'user' },
+           { name = 'tensile strength', value = 100, unit = 'MPa' } } }",
+    )
+    .unwrap();
+    let PluginOutput::Block(BlockKind::Material(spec)) = out else {
+        panic!("not a material: {out:?}");
+    };
+    assert_eq!(spec.unverified().len(), 1);
+    assert!(error_of("app.ui.material{ name = 'x', properties = {} }").contains("app.ui.material"));
+}
