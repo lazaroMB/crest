@@ -41,6 +41,11 @@
 //! | `adaptive_card(card)` | an Adaptive Card (a table or its JSON text) drawn read-only |
 //! | `a2ui(messages)` | an A2UI v0.9 stream (a list of messages, or JSON lines as a string) drawn read-only: inputs show their values, buttons do nothing |
 //!
+//! `app.ui.mime(bundle)` takes a Jupyter MIME bundle (`{ ["text/markdown"]
+//! = "...", ["image/png"] = "<base64>" }`, or `{ data = {...}, metadata =
+//! {...} }`) and returns the block of its richest media type crest draws
+//! (a `Computed` card, a Vega-Lite chart, an image, markdown, math...),
+//! already wrapped like `app.ui.block`.
 //! `app.ui.plate{ format, wells, value_label, title, ... }` (the fields of
 //! `show_plate`) is not a node but a whole block, already wrapped like
 //! `app.ui.block`: return it from a handler to show the plate map.
@@ -54,6 +59,7 @@ use application::interop::{self, CardKind};
 use application::ports::plugin::PluginOutput;
 use domain::block::{BlockKind, CustomNode};
 use domain::engineering::material::MaterialSpec;
+use domain::interop::MimeBundle;
 use domain::science::PlateSpec;
 use mlua::{Lua, Table, Value};
 use serde_json::{Value as Json, json};
@@ -337,6 +343,20 @@ fn interop_node(
     Ok(tree)
 }
 
+/// `app.ui.mime(bundle)`: the block of a MIME bundle, wrapped like
+/// `app.ui.block`.
+fn mime_block(lua: &Lua, plugin: &str, bundle: Value) -> mlua::Result<Value> {
+    let json = convert::to_json(lua, bundle)?;
+    let bundle = MimeBundle::from_value(&json).ok_or_else(|| {
+        error(
+            "mime",
+            "expected a table keyed by media types (type/subtype)",
+        )
+    })?;
+    let view = interop::mime::render(&bundle, plugin).map_err(|e| error("mime", e))?;
+    super::formats::block_value(lua, &view.block(plugin))
+}
+
 /// `app.ui.plate{...}`: a plate map block, wrapped like `app.ui.block`.
 fn plate_block(lua: &Lua, def: Table) -> mlua::Result<Value> {
     let mut json = convert::to_json(lua, Value::Table(def))?;
@@ -495,6 +515,11 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
                 &interop_node(lua, "adaptive_card", CardKind::AdaptiveCard, payload)?,
             )
         })?,
+    )?;
+    let mime_origin = origin.plugin.clone();
+    ui.set(
+        "mime",
+        lua.create_function(move |lua, bundle: Value| mime_block(lua, &mime_origin, bundle))?,
     )?;
     ui.set(
         "plate",

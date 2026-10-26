@@ -495,3 +495,23 @@ fn adaptive_cards_are_drawn_read_only() {
     let err = error_of(r#"return app.ui.adaptive_card({ type = "Nope" })"#);
     assert!(err.contains("not an Adaptive Card"), "{err}");
 }
+
+#[test]
+fn mime_bundles_become_the_richest_block() {
+    let got =
+        eval(r##"return app.ui.mime({ ["text/plain"] = "x", ["text/markdown"] = "# Title" })"##)
+            .unwrap();
+    let PluginOutput::Block(BlockKind::Custom { plugin, name, tree }) = got else {
+        panic!("{got:?}");
+    };
+    assert_eq!(plugin, domain::interop::INTEROP_PLUGIN);
+    assert_eq!(name, "text/markdown · todo");
+    assert_eq!(
+        tree,
+        CustomNode::Markdown {
+            source: "# Title".into()
+        }
+    );
+    let err = error_of(r#"return app.ui.mime({ rows = 1 })"#);
+    assert!(err.contains("media types"), "{err}");
+}

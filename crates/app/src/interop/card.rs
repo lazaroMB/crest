@@ -228,6 +228,20 @@ pub fn image(url: &str, alt: Option<&str>) -> CustomNode {
         } else {
             return note_text("image", alt, "the data: URI is not base64");
         };
+        if media_type == "image/svg+xml" {
+            use base64::Engine as _;
+            let svg = base64::engine::general_purpose::STANDARD
+                .decode(&data)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            if !svg.is_some_and(|svg| svg_is_self_contained(&svg)) {
+                return note_text(
+                    "image",
+                    alt,
+                    "the SVG links files or addresses outside itself",
+                );
+            }
+        }
         return CustomNode::Image {
             source: ImageData::Base64 { data },
             media_type: Some(media_type),
@@ -253,6 +267,40 @@ fn note_text(what: &str, alt: Option<&str>, why: &str) -> CustomNode {
             None => format!("[{what} not shown: {why}]"),
         },
     }
+}
+
+/// Whether an SVG only refers to itself: every `href` (and `xlink:href`)
+/// is a fragment (`#id`) or a `data:` URI, and no CSS `url(...)` or
+/// `@import` points elsewhere. The SVG renderer would otherwise load
+/// files named there.
+#[must_use]
+pub fn svg_is_self_contained(svg: &str) -> bool {
+    let lower = svg.to_ascii_lowercase();
+    let local = |value: &str| {
+        let value = value.trim_start();
+        value.is_empty() || value.starts_with('#') || value.starts_with("data:")
+    };
+    let mut rest = lower.as_str();
+    while let Some(at) = rest.find("href") {
+        let after = rest[at + 4..].trim_start();
+        if let Some(after) = after.strip_prefix('=') {
+            let after = after.trim_start();
+            let value = after.trim_start_matches(['"', '\'']);
+            if !local(value) {
+                return false;
+            }
+        }
+        rest = &rest[at + 4..];
+    }
+    let mut rest = lower.as_str();
+    while let Some(at) = rest.find("url(") {
+        let value = rest[at + 4..].trim_start().trim_start_matches(['"', '\'']);
+        if !local(value) {
+            return false;
+        }
+        rest = &rest[at + 4..];
+    }
+    !lower.contains("@import")
 }
 
 /// `%XX` escapes decoded (other bytes kept).
@@ -456,6 +504,31 @@ mod tests {
         }
         let huge = format!("data:image/png;base64,{}", "A".repeat(MAX_IMAGE_BYTES + 1));
         assert!(matches!(image(&huge, None), CustomNode::Text { .. }));
+    }
+
+    #[test]
+    fn svgs_must_not_reach_outside() {
+        assert!(svg_is_self_contained(
+            r##"<svg><use href="#a"/><image href="data:image/png;base64,AA"/></svg>"##
+        ));
+        assert!(svg_is_self_contained(
+            r##"<svg><rect fill="url(#g)"/></svg>"##
+        ));
+        for bad in [
+            r#"<svg><image href="/home/u/.ssh/id_rsa"/></svg>"#,
+            r#"<svg><image xlink:href = 'file:///etc/passwd'/></svg>"#,
+            r#"<svg><style>rect { fill: url(https://x.test/a) }</style></svg>"#,
+            r#"<svg><style>@import "x.css";</style></svg>"#,
+        ] {
+            assert!(!svg_is_self_contained(bad), "{bad}");
+        }
+        assert!(matches!(
+            image(
+                "data:image/svg+xml,%3Csvg%3E%3Cimage%20href%3D%22%2Fetc%2Fx%22%2F%3E%3C%2Fsvg%3E",
+                None
+            ),
+            CustomNode::Text { .. }
+        ));
     }
 
     #[test]

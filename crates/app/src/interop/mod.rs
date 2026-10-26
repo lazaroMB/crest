@@ -1,6 +1,8 @@
 //! Content in other hosts' formats drawn with crest's blocks, as pure
 //! mappings: A2UI message streams ([`a2ui`]) and Adaptive Cards
-//! ([`adaptive`]) onto `Custom` nodes and forms ([`card`]).
+//! ([`adaptive`]) onto `Custom` nodes and forms ([`card`]), and Jupyter
+//! MIME bundles ([`mime`], with simple Vega-Lite charts) onto the block of
+//! their richest media type.
 //!
 //! Every mapping is strict and bounded: payload size, node count, nesting
 //! and list lengths are capped ([`card::MAX_PAYLOAD_BYTES`] and friends),
@@ -11,6 +13,8 @@
 pub mod a2ui;
 pub mod adaptive;
 pub mod card;
+pub mod mime;
+mod vega;
 
 pub use card::{Card, CardError, CardFormat, plain_text};
 
