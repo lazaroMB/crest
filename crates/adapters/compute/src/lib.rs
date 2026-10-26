@@ -24,7 +24,7 @@
 //! payback) and decision matrices with exact weight sensitivity. The
 //! engineering cards run as `crest-solve` too: Bode / Nyquist plots with
 //! margins (`bode`) and Karnaugh maps by Quine–McCluskey and Petrick
-//! (`karnaugh`). Resampling and simulation draw from a seeded
+//! (`karnaugh`), beams by the stiffness method (`beam`). Resampling and simulation draw from a seeded
 //! ChaCha20 stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -36,6 +36,7 @@
 //! `calc.convert`.
 
 mod ab_test;
+mod beam;
 mod bode;
 mod bootstrap;
 mod calc;
@@ -126,6 +127,7 @@ impl StatsEngine {
             ComputeRequest::Simulate(r) => simulate::run(r, id)?,
             ComputeRequest::CashFlow(r) => cash_flow::run(r, id)?,
             ComputeRequest::Decide(r) => decide::run(r, id)?,
+            ComputeRequest::Beam(r) => beam::run(r, id)?,
             ComputeRequest::Karnaugh(r) => karnaugh::run(r, id)?,
             ComputeRequest::Bode(r) => bode::run(r, id)?,
         };
@@ -158,6 +160,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Simulate(_) => "simulate",
         ComputeRequest::CashFlow(_) => "cash_flow",
         ComputeRequest::Decide(_) => "decide",
+        ComputeRequest::Beam(_) => "beam",
         ComputeRequest::Karnaugh(_) => "karnaugh",
         ComputeRequest::Bode(_) => "bode",
     }
@@ -230,6 +233,10 @@ impl ComputePort for StatsEngine {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn beam(&self, request: &BeamRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Beam(request.clone()), None)
     }
 
     fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult {

@@ -1,4 +1,5 @@
-//! Sentences of the engineering cards: Bode / Nyquist, Karnaugh maps.
+//! Sentences of the engineering cards: Bode / Nyquist, Karnaugh maps,
+//! beams.
 //!
 //! As elsewhere, the words come from fixed templates and every number
 //! from the envelope (`display` of a value) or the engine's body.
@@ -50,6 +51,52 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 display(computed, "sop_literals")?,
                 k.pos_expression
             ))
+        }
+        ("beam", ComputedBody::Beam(b)) => {
+            let reactions: Vec<String> = b
+                .reactions
+                .iter()
+                .map(|r| {
+                    let key = format!("reaction.{}", r.name);
+                    let force = display(computed, &key).unwrap_or_default();
+                    match display(computed, &format!("moment.{}", r.name)) {
+                        Some(m) => format!(
+                            "{} = {force} {} and {m} {}",
+                            r.name,
+                            b.force_unit.symbol(),
+                            b.moment_unit()
+                        ),
+                        None => format!("{} = {force} {}", r.name, b.force_unit.symbol()),
+                    }
+                })
+                .collect();
+            let mut text = format!("Reactions: {}.", reactions.join(", "));
+            let at = |key: &str| display(computed, key).unwrap_or_default();
+            if let Some(m) = display(computed, "max_moment") {
+                text.push_str(&format!(
+                    " The largest sagging moment is {m} {} at x = {} {}.",
+                    b.moment_unit(),
+                    at("max_moment_at"),
+                    b.length_unit.symbol()
+                ));
+            }
+            if let Some(m) = display(computed, "min_moment") {
+                text.push_str(&format!(
+                    " The largest hogging moment is {m} {} at x = {} {}.",
+                    b.moment_unit(),
+                    at("min_moment_at"),
+                    b.length_unit.symbol()
+                ));
+            }
+            if let Some(d) = display(computed, "max_deflection") {
+                text.push_str(&format!(
+                    " The largest deflection is {d} {} at x = {} {}.",
+                    b.length_unit.deflection_unit().symbol(),
+                    at("max_deflection_at"),
+                    b.length_unit.symbol()
+                ));
+            }
+            Some(text)
         }
         _ => None,
     }

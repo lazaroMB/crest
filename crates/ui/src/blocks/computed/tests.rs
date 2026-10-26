@@ -582,6 +582,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Karnaugh(super::karnaugh::tests::body()),
             &[],
         ),
+        (
+            card("solve.beam", "Beam analysis"),
+            ComputedBody::Beam(super::beam::tests::body()),
+            &["shear", "moment", "deflection"],
+        ),
     ]
 }
 

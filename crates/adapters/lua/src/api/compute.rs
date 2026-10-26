@@ -32,6 +32,7 @@
 //! | `decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | decision matrix |
 //! | `bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode / Nyquist, margins |
 //! | `karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map, minimal SOP and POS |
+//! | `beam{ length, length_unit, force_unit, supports = { { at, kind } }, loads = { { kind, at, end, value, end_value } }, e, e_unit, i, i_unit, segments }` | beam reactions, shear, moment, deflection |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -40,7 +41,7 @@
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
 //! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate`,
-//! `cash_flow`, `decide`, `bode` and `karnaugh` read no data.
+//! `cash_flow`, `decide`, `bode`, `karnaugh` and `beam` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -232,6 +233,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             | "decide"
             | "bode"
             | "karnaugh"
+            | "beam"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -303,6 +305,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "decide",
         "bode",
         "karnaugh",
+        "beam",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -498,6 +501,17 @@ mod tests {
             panic!("not a Karnaugh request");
         };
         assert_eq!(k.dont_cares, [0]);
+        run_code(
+            "return app.compute.beam{ length = 6, supports = { { at = 0 }, { at = 6, kind = 'roller' } },
+               loads = { { kind = 'distributed', at = 0, value = 10 } }, force_unit = 'kN' }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Beam(b) = &engine.requests()[2] else {
+            panic!("not a beam request");
+        };
+        assert_eq!(b.supports[1].kind, domain::computed::SupportKind::Roller);
+        assert_eq!(b.segments, 200);
     }
 
     #[test]

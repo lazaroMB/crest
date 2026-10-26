@@ -19,6 +19,7 @@
 
 pub mod ab_test;
 pub mod apa;
+pub mod beam;
 pub mod bode;
 pub mod bootstrap;
 pub mod cash_flow;
@@ -42,6 +43,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
+pub use self::beam::{
+    BeamBody, BeamLoad, BeamLoadKind, BeamReaction, BeamSupport, ForceUnit, InertiaUnit,
+    LengthUnit, ModulusUnit, SupportKind,
+};
 pub use self::bode::{BodeBody, BodePoint, Complex, Crossover, FrequencyUnit};
 pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::cash_flow::{CashFlowBody, CashFlowRow};
@@ -649,6 +654,8 @@ pub enum ComputedBody {
     Bode(BodeBody),
     /// A Boolean function's Karnaugh map with minimal SOP and POS.
     Karnaugh(KarnaughBody),
+    /// A beam's reactions, shear, moment and deflection.
+    Beam(BeamBody),
 }
 
 impl ComputedBody {
@@ -688,6 +695,7 @@ impl ComputedBody {
             Self::DecisionMatrix(body) => body.validate(),
             Self::Bode(body) => body.validate(),
             Self::Karnaugh(body) => body.validate(),
+            Self::Beam(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

@@ -345,6 +345,35 @@ impl FakeCompute {
                     method: CoverMethod::Exact,
                 }),
             ),
+            ComputeRequest::Beam(r) => (
+                "solve.beam",
+                "Beam analysis",
+                "beam",
+                ComputedBody::Beam(BeamBody {
+                    length: r.length,
+                    length_unit: r.length_unit,
+                    force_unit: r.force_unit,
+                    supports: r.supports.clone(),
+                    loads: r.loads.clone(),
+                    reactions: r
+                        .supports
+                        .iter()
+                        .map(|s| BeamReaction {
+                            name: "A".into(),
+                            at: s.at,
+                            kind: s.kind,
+                            force: 1.0,
+                            moment: None,
+                        })
+                        .collect(),
+                    x: vec![0.0, r.length],
+                    shear: vec![1.0, -1.0],
+                    moment: vec![0.0, 0.0],
+                    deflection: Vec::new(),
+                    ei: None,
+                    indeterminacy: 0,
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -678,6 +707,10 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn beam(&self, request: &BeamRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Beam(request.clone()), None)
     }
 
     fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult {
