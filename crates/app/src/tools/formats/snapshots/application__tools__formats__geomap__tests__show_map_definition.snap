@@ -1,0 +1,53 @@
+---
+source: crates/app/src/tools/formats/geomap.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_map",
+  "description": "Shows GeoJSON (`path`, or inline `geojson`) in the user's timeline as a map with pan, zoom, a scale bar, feature picking with a properties inspector and colouring by a property. Coordinates are WGS 84 longitude/latitude unless the file's legacy `crs` member or `crs` (an EPSG code or PROJ string) says otherwise; they are reprojected to Web Mercator for display. The engine measures each feature's box, geodesic area and length on the WGS 84 ellipsoid. Returns the counts, the CRS, the totals with their envelope id and the largest features; cite these numbers, do not estimate areas or distances from coordinates yourself.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A GeoJSON file of the workspace (`.geojson`, `.json`).",
+        "default": null
+      },
+      "geojson": {
+        "description": "Inline GeoJSON instead of `path`: a FeatureCollection, Feature or\ngeometry (an object or its JSON text).",
+        "default": null
+      },
+      "crs": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The CRS the coordinates are in, over the file's own: `EPSG:32632`\nor a PROJ string. Leave it out for WGS 84 longitude/latitude\n(RFC 7946) or a file with a legacy `crs` member.",
+        "default": null
+      },
+      "color_by": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A property to colour the features by (categories or a numeric\nramp); the user can switch it on the map.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the map.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_map`.",
+    "title": "ShowMap",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

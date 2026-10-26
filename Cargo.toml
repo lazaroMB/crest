@@ -160,6 +160,14 @@ ifc-lite-core = "=22.6.0"
 # `circular` (MIT) next to nom 8 and itertools 0.14, already in the tree.
 gb-io = { version = "=0.9.0", default-features = false }
 mzdata = { version = "=0.67.4", default-features = false, features = ["mgf", "mzml", "zlib-rs"] }
+# Maps (show_map): GeoJSON reader (MIT/Apache, without its geo-types
+# conversions), georust's geodesic area and length (MIT/Apache; pulls
+# geo-types, geographiclib-rs, i_overlay, rstar, robust: MIT/Apache) and a
+# pure-Rust PROJ.4 port for reprojection (MIT/Apache, no WKT, no EPSG
+# database: crest bundles the definitions it knows).
+geojson = { version = "=1.0.0", default-features = false }
+geo = { version = "=0.33.1", default-features = false }
+proj4rs = { version = "=0.2.1", default-features = false }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot

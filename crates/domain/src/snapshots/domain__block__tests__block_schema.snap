@@ -769,6 +769,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "GeoJSON features on a map with their geodesic measures (tool\n`show_map`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "geo_map"
+        }
+      },
+      "$ref": "#/$defs/MapSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -12807,6 +12821,276 @@ expression: "schemars::schema_for!(Block)"
         "source_url",
         "fetched_url",
         "retrieved"
+      ]
+    },
+    "MapCrs": {
+      "description": "The coordinate reference system of the file.",
+      "type": "object",
+      "properties": {
+        "epsg": {
+          "description": "EPSG code, when known.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "Name to show (`WGS 84`, `WGS 84 / UTM zone 32N`, or the proj\nstring given).",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where it came from.",
+          "$ref": "#/$defs/CrsSource",
+          "default": "default"
+        },
+        "definition": {
+          "description": "The PROJ definition used to reproject it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "definition"
+      ]
+    },
+    "CrsSource": {
+      "description": "Where the coordinate reference system came from.",
+      "oneOf": [
+        {
+          "description": "None was named: WGS 84 longitude/latitude, as RFC 7946 requires.",
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "description": "The file's legacy (2008) `crs` member.",
+          "type": "string",
+          "const": "member"
+        },
+        {
+          "description": "The caller gave it.",
+          "type": "string",
+          "const": "given"
+        }
+      ]
+    },
+    "MapFeature": {
+      "description": "One feature, in display coordinates, with what the engine measured.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The feature's `id`, as text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Its geometry type.",
+          "$ref": "#/$defs/GeometryKind"
+        },
+        "points": {
+          "description": "Points (Web Mercator).",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "lines": {
+          "description": "Lines, each a vertex list.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        },
+        "polygons": {
+          "description": "Polygons, each a list of closed rings: the exterior, then holes.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "properties": {
+          "description": "The feature's properties as written.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "bbox": {
+          "description": "Box in degrees: west, south, east, north (WGS 84).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "area_m2": {
+          "description": "Geodesic area of its polygons, holes taken out, in m².",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "length_m": {
+          "description": "Geodesic length of its lines, in m.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "perimeter_m": {
+          "description": "Geodesic perimeter of its polygons (holes included), in m.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "GeometryKind": {
+      "description": "The GeoJSON geometry type of a feature.",
+      "oneOf": [
+        {
+          "description": "`Point`.",
+          "type": "string",
+          "const": "point"
+        },
+        {
+          "description": "`MultiPoint`.",
+          "type": "string",
+          "const": "multi_point"
+        },
+        {
+          "description": "`LineString`.",
+          "type": "string",
+          "const": "line_string"
+        },
+        {
+          "description": "`MultiLineString`.",
+          "type": "string",
+          "const": "multi_line_string"
+        },
+        {
+          "description": "`Polygon`.",
+          "type": "string",
+          "const": "polygon"
+        },
+        {
+          "description": "`MultiPolygon`.",
+          "type": "string",
+          "const": "multi_polygon"
+        },
+        {
+          "description": "`GeometryCollection`.",
+          "type": "string",
+          "const": "geometry_collection"
+        }
+      ]
+    },
+    "MapSpec": {
+      "description": "A map of features.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the map.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "crs": {
+          "description": "Coordinate reference system of the source.",
+          "$ref": "#/$defs/MapCrs"
+        },
+        "features": {
+          "description": "The features with geometry, in file order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapFeature"
+          }
+        },
+        "total_features": {
+          "description": "Features in the file (more than `features` when capped or some had\nno geometry).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "without_geometry": {
+          "description": "Features without geometry, not drawn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "color_by": {
+          "description": "The property to colour by at first.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "measures": {
+          "description": "The measures (box, area, length) as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "crs",
+        "features",
+        "total_features",
+        "measures"
       ]
     }
   }

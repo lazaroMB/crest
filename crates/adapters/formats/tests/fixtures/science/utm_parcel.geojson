@@ -1,0 +1,11 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:EPSG::32632" } },
+  "features": [
+    { "type": "Feature", "id": "parcel-1",
+      "properties": { "owner": "crest fixture (generated)" },
+      "geometry": { "type": "Polygon", "coordinates": [
+        [[500000, 5540000], [500100, 5540000], [500100, 5540100], [500000, 5540100], [500000, 5540000]]
+      ] } }
+  ]
+}

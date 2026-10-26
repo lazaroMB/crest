@@ -185,9 +185,12 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "gb-io",
+ "geo",
+ "geojson",
  "ifc-lite-core",
  "mzdata",
  "parquet",
+ "proj4rs",
  "prost",
  "quick-xml 0.41.0",
  "ruststep",
@@ -1822,6 +1825,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_log"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86919cef3e37b9356ccf54d4421208c17ecfda01beae61393e7ffd72916c0ef1"
+dependencies = [
+ "log",
+ "web-sys",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2835,6 +2848,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
+name = "float_next_after"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37007738a80ea34f969af54a3390dd72cacdef654974cfd449c9f6f72dbaac10"
+
+[[package]]
 name = "fluent-uri"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3132,6 +3151,60 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "geo"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30eb1fdc57c1e5cfd11826fe0caec4b9dc7901f3758263bb506228d88c8d9e9a"
+dependencies = [
+ "float_next_after 2.0.0",
+ "geo-types",
+ "geographiclib-rs",
+ "i_overlay",
+ "log",
+ "num-traits 0.2.19",
+ "rand 0.10.3",
+ "rand_pcg",
+ "robust",
+ "rstar",
+ "sif-itree",
+]
+
+[[package]]
+name = "geo-types"
+version = "0.7.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "777d18aa0f12f8b285331cd867133ee14422b3f023f6d388034c47d43e28786a"
+dependencies = [
+ "approx 0.5.1",
+ "num-traits 0.2.19",
+ "rstar",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "geographiclib-rs"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5a7f08910fd98737a6eda7568e7c5e645093e073328eeef49758cfe8b0489c7"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "geojson"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "510c094bfc76ea34d02eee00833254945b70491d79a9c0b050abed6eaa799ffb"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tinyvec",
 ]
 
 [[package]]
@@ -3569,7 +3642,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
- "heapless",
+ "heapless 0.9.3",
  "image",
  "inventory",
  "itertools 0.14.0",
@@ -3900,7 +3973,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aadb3bd3da22617e2158b1842f5a9c29c1626c926ad0686163ced1a009963ff3"
 dependencies = [
  "gpui-pre-ztracing",
- "heapless",
+ "heapless 0.9.3",
  "rayon",
  "tracing",
 ]
@@ -4146,6 +4219,16 @@ dependencies = [
 
 [[package]]
 name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
@@ -4372,6 +4455,48 @@ dependencies = [
  "tower-service",
  "tracing",
 ]
+
+[[package]]
+name = "i_float"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "813145bb0ad5b60f55cbbf3c74cdceda1c0a9d253b35c4cc36ae0df7887cb78f"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "i_key_sort"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d73d122b937fca067feb0ad74f62388920272b27c356d4df2d0cfdd59e044cf0"
+
+[[package]]
+name = "i_overlay"
+version = "4.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8dd314b4668e2b3a12508f2e125558c82a6c0a8636fa5107a900f79ce414e450"
+dependencies = [
+ "i_float",
+ "i_key_sort",
+ "i_shape",
+ "i_tree",
+]
+
+[[package]]
+name = "i_shape"
+version = "1.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfa9eac533d7509a8ab87672b60ac610c17240f9ea4851d26227689fdfe349c8"
+dependencies = [
+ "i_float",
+]
+
+[[package]]
+name = "i_tree"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
 
 [[package]]
 name = "iana-time-zone"
@@ -5221,7 +5346,7 @@ version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43b8dcf906637ecef61b3c0740c7a4e7f27caeb31257cfac0cc579ce15be6005"
 dependencies = [
- "float_next_after",
+ "float_next_after 1.0.0",
  "lyon_path",
  "num-traits 0.2.19",
 ]
@@ -7147,6 +7272,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proj4rs"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0841627768f16ea6d37fe491695bde62d7b10a8e1a2ae2cf0c878580c16e2b3"
+dependencies = [
+ "console_log",
+ "js-sys",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8012,6 +8150,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rstar"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "421400d13ccfd26dfa5858199c30a5d76f9c54e0dba7575273025b43c5175dbb"
+dependencies = [
+ "heapless 0.8.0",
+ "num-traits 0.2.19",
+ "smallvec",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.40.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8745,6 +8894,12 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sif-itree"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f45b8998ced5134fb1d75732c77842a3e888f19c1ff98481822e8fbfbf930b"
 
 [[package]]
 name = "signal-hook-registry"
@@ -9526,6 +9681,9 @@ name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "tobj"

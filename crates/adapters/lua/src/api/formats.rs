@@ -4,7 +4,7 @@
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
 //! `show_reaction`, `show_molecule_grid`, `show_spectrum`,
-//! `show_molecule_3d` and `show_ghs` tools from Lua. Each returns a block (wrapped like
+//! `show_molecule_3d`, `show_ghs` and `show_map` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -30,6 +30,7 @@
 //! return app.formats.spectrum{ path = 'spectra/ir.jdx' }
 //! return app.formats.molecule_3d{ smiles = 'CCO' }
 //! return app.formats.ghs{ query = 'acetone' }
+//! return app.formats.map{ path = 'geo/parks.geojson', color_by = 'kind' }
 //! ```
 //!
 //! | Function | Block |
@@ -56,6 +57,7 @@
 //! | `spectrum{ path, block, threshold, max_peaks, title }` | a JCAMP-DX (IR, Raman, UV-Vis, NMR), mzML or MGF spectrum with its picked peaks (`block` 1-based) |
 //! | `molecule_3d{ smiles or path, name, title }` | ball and stick in the 3D view: a SMILES embedded by the engine, or a MOL/SDF, XYZ or PDB file's coordinates |
 //! | `ghs{ query or cid }` | the GHS hazard card PubChem gives for a name, CAS number or CID, with its source and date (needs the web on; a compound PubChem does not know is a card that says so) |
+//! | `map{ path or geojson, crs, color_by, title }` | GeoJSON on a map with geodesic area, length and box (`geojson`: text or a table; `crs`: an EPSG code or PROJ string over the file's) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -84,6 +86,8 @@ use serde_json::json;
 use super::ui::BLOCK_KEY;
 use crate::caps::context;
 use crate::convert;
+
+mod sciences;
 
 /// What `app.formats` runs on, handed to the host by the binary.
 #[derive(Clone)]
@@ -741,6 +745,7 @@ fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    sciences::register(lua, &formats)?;
     formats.set(
         "ghs",
         lua.create_function(|lua, args: Value| match args {
@@ -929,6 +934,7 @@ mod tests {
             .with_file("bim/house.ifc", "ISO-10303-21;\n")
             .with_file("dna/p.gb", "LOCUS x\n")
             .with_file("spectra/ir.jdx", "##TITLE=x\n")
+            .with_file("geo/parks.geojson", "{}")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -1183,6 +1189,27 @@ mod tests {
         };
         assert!(!spec.found());
         assert!(run_code("return app.formats.ghs{}", formats()).is_err());
+        sciences_b(formats);
+    }
+
+    /// The science B functions, each returning its block.
+    fn sciences_b(formats: impl Fn() -> Option<Arc<FakeFormats>>) {
+        let out = run_code(
+            "return app.formats.map{ path = 'geo/parks.geojson', color_by = 'kind' }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::GeoMap(spec)) = out else {
+            panic!("not a map: {out:?}");
+        };
+        assert_eq!(spec.color_by.as_deref(), Some("kind"));
+        let out = run_code(
+            "return app.formats.map{ geojson = { type = 'Point', coordinates = { 1, 2 } } }",
+            formats(),
+        )
+        .unwrap();
+        assert!(matches!(out, PluginOutput::Block(BlockKind::GeoMap(_))));
+        assert!(run_code("return app.formats.map{}", formats()).is_err());
     }
 
     #[test]

@@ -34,6 +34,7 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::geomap::MapSpec;
 use crate::science::ghs::GhsSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::molecule3d::Molecule3dSpec;
@@ -158,6 +159,7 @@ impl Block {
             BlockKind::Spectrum(spec) => spec.validate(),
             BlockKind::Molecule3d(spec) => spec.validate(),
             BlockKind::Ghs(spec) => spec.validate(),
+            BlockKind::GeoMap(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -359,6 +361,9 @@ pub enum BlockKind {
     Molecule3d(Box<Molecule3dSpec>),
     /// A GHS hazard card fetched from PubChem (tool `show_ghs`).
     Ghs(Box<GhsSpec>),
+    /// GeoJSON features on a map with their geodesic measures (tool
+    /// `show_map`).
+    GeoMap(Box<MapSpec>),
 }
 
 /// Lifecycle of a tool call.

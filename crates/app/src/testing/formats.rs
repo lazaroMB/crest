@@ -38,7 +38,9 @@
 //! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
 //! `bad`; every spectrum is an IR transmittance trace 4000–400 cm⁻¹ with
 //! one dip picked at 1715 cm⁻¹; every 3D molecule is water (O and two H
-//! 0.9572 Å from it) unless its SMILES is `bad`.
+//! 0.9572 Å from it) unless its SMILES is `bad`. The science B answers
+//! are in [`sciences`]: every map is one park polygon (12.5 ha) and one
+//! 1.2 km trail in WGS 84.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -74,6 +76,7 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::molecule3d::{
     Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
@@ -88,10 +91,12 @@ use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, S
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
-    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
-    WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, MapRequest,
+    Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
+    StepRequest, WaveRequest,
 };
+
+mod sciences;
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -1152,5 +1157,10 @@ impl FormatsPort for FakeFormats {
             bonds_inferred: false,
             warnings: Vec::new(),
         })
+    }
+
+    fn parse_geojson(&self, _bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
+        self.record("parse_geojson", request.path.as_deref().unwrap_or("inline"))?;
+        Ok(sciences::map(request))
     }
 }
