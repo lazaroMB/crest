@@ -574,6 +574,9 @@ mod tests {
             state: Default::default(),
             answer: None,
             reason: None,
+            body: None,
+            actions: Vec::new(),
+            action: None,
         };
         assert_eq!(spec.validate(), Ok(()));
     }

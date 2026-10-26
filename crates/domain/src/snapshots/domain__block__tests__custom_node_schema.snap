@@ -380,6 +380,63 @@ expression: "schemars::schema_for!(CustomNode)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Children in a framed box with an optional heading (an A2UI `Card`,\nan Adaptive Cards container with a style or the card of an\n`Action.ShowCard`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "card"
+        },
+        "title": {
+          "description": "Heading drawn above the children.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "description": "Child nodes, laid out vertically.",
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "children"
+      ]
+    },
+    {
+      "description": "Content crest cannot draw (an unknown A2UI component, an Adaptive\nCards element without a fallback, a Vega-Lite spec that is not a\nsimple chart): a labelled box with the raw JSON one click away, so\nnothing is dropped silently.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "placeholder"
+        },
+        "label": {
+          "description": "What it is, e.g. `A2UI component \"Video\"`.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Why it is not drawn, or what to do instead.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw": {
+          "description": "The content as received.",
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "label"
+      ]
     }
   ],
   "$defs": {

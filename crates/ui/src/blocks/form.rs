@@ -14,6 +14,10 @@
 //! the block submitted. A submitted form shows its answers read-only, a
 //! cancelled one says so.
 //!
+//! A form made from a card (A2UI, Adaptive Cards) draws the card's static
+//! content (`body`) above the fields with the `custom` renderer, and one
+//! button per action instead of Submit; each submits with its id.
+//!
 //! Keys while a field has the focus: `Tab` / `Shift+Tab` move between the
 //! inputs, `Enter` in a one-line field submits, `Esc` cancels; `Space`
 //! toggles a checkbox or picks a radio button.
@@ -246,6 +250,7 @@ impl FormView {
             // The fields never change; only the state and the answer.
             self.spec.state = spec.state;
             self.spec.answer.clone_from(&spec.answer);
+            self.spec.action.clone_from(&spec.action);
             if spec.state != FormState::Pending {
                 self.sent = false;
                 self.waiting = None;
@@ -344,8 +349,21 @@ impl FormView {
         }
     }
 
-    /// Checks the fields and sends the answer, or shows the problems.
+    /// Checks the fields and sends the answer with the default action, or
+    /// shows the problems.
     pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let action = self.spec.default_action().map(|a| a.id.clone());
+        self.submit_with(action, window, cx);
+    }
+
+    /// Checks the fields and sends the answer with `action`, or shows the
+    /// problems.
+    pub fn submit_with(
+        &mut self,
+        action: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.waiting.is_none() {
             return;
         }
@@ -353,7 +371,7 @@ impl FormView {
             Ok(answer) => {
                 self.errors.clear();
                 self.error = None;
-                self.respond(FormResponse::Submitted { answer }, window, cx);
+                self.respond(FormResponse::Submitted { answer, action }, window, cx);
                 self.sent = true;
                 // Read-only from now on: the prompt takes the focus, after
                 // the click that submitted has been handled.
@@ -571,9 +589,23 @@ impl FormView {
     fn render_summary(&self, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let answer = self.spec.answer.clone().unwrap_or_default();
+        let action = self.spec.action.as_ref().map(|id| {
+            let label = self
+                .spec
+                .actions
+                .iter()
+                .find(|a| &a.id == id)
+                .map_or(id.as_str(), |a| a.label.as_str());
+            wrapping()
+                .debug_selector(|| "form-summary-action".to_owned())
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(SharedString::from(format!("Sent with “{label}”")))
+        });
         v_flex()
             .debug_selector(|| "form-summary".to_owned())
             .gap_1()
+            .children(action)
             .children(self.spec.fields.iter().map(|field| {
                 h_flex()
                     .w_full()
@@ -629,14 +661,29 @@ impl FormView {
                     .disabled(disabled)
                     .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))),
             )
-            .child(
+            .children(self.spec.actions.is_empty().then(|| {
                 Button::new(self.element_id("submit", 0))
                     .debug_selector(|| "form-submit".to_owned())
                     .primary()
                     .label(SharedString::from(submit))
                     .disabled(disabled)
-                    .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
-            )
+                    .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx)))
+            }))
+            .children(self.spec.actions.iter().enumerate().map(|(i, action)| {
+                let id = action.id.clone();
+                let button = Button::new(self.element_id("action", i))
+                    .debug_selector(move || format!("form-action-{i}"))
+                    .label(SharedString::from(action.label.clone()))
+                    .disabled(disabled)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.submit_with(Some(id.clone()), window, cx);
+                    }));
+                if action.primary {
+                    button.primary()
+                } else {
+                    button
+                }
+            }))
             .into_any_element()
     }
 }
@@ -706,7 +753,7 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
 }
 
 impl Render for FormView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (border, background) = (theme.border, theme.secondary);
         let (muted, danger) = (theme.muted_foreground, theme.danger);
@@ -735,6 +782,15 @@ impl Render for FormView {
                     .text_sm()
                     .text_color(muted)
                     .child(SharedString::from(description.clone())),
+            );
+        }
+        if let Some(body) = self.spec.body.clone() {
+            card = card.child(
+                div()
+                    .debug_selector(|| "form-body".to_owned())
+                    .w_full()
+                    .min_w_0()
+                    .child(super::custom::render_node(self.id, &body, window, cx)),
             );
         }
         match self.spec.state {

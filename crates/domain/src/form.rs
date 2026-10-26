@@ -5,6 +5,10 @@
 //! one choice and several choices, each with a label, a description, a
 //! default and bounds. The block keeps its state: pending while the tool
 //! waits, then the submitted answer or a cancellation.
+//!
+//! Forms built from a card (A2UI, Adaptive Cards) also carry the card's
+//! static content as `body`, drawn above the fields, and its buttons as
+//! `actions`: each one submits the form and names itself in the answer.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -12,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::block::BlockError;
+use crate::block::{BlockError, CustomNode};
 
 pub mod schema;
 
@@ -41,6 +45,34 @@ pub struct FormSpec {
     /// [`NOT_ANSWERED`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Content drawn above the fields: the static part of a card whose
+    /// inputs became the fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Box<CustomNode>>,
+    /// Buttons that submit the form, in display order; empty for the single
+    /// submit button of `submit_label`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<FormAction>,
+    /// Id of the action the user submitted with, once submitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+}
+
+/// Most [`FormAction`]s a form may have.
+pub const MAX_ACTIONS: usize = 16;
+
+/// A button that submits a form (a card's `Button`, `Action.Submit` or
+/// `Action.Execute`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FormAction {
+    /// Id reported with the answer.
+    pub id: String,
+    /// Text of the button.
+    pub label: String,
+    /// Whether it is the main action (drawn as the primary button, and the
+    /// one `Enter` submits).
+    #[serde(default)]
+    pub primary: bool,
 }
 
 /// Reason of a form withdrawn before the user answered it: its turn was
@@ -203,6 +235,24 @@ impl FormSpec {
     ///
     /// [`BlockError::Invalid`] describing the first problem.
     pub fn validate(&self) -> Result<(), BlockError> {
+        if self.actions.len() > MAX_ACTIONS {
+            return Err(invalid(format!(
+                "{} actions, at most {MAX_ACTIONS}",
+                self.actions.len()
+            )));
+        }
+        let mut ids = HashSet::new();
+        for action in &self.actions {
+            if action.id.trim().is_empty() {
+                return Err(invalid("an action has an empty id".into()));
+            }
+            if !ids.insert(action.id.as_str()) {
+                return Err(invalid(format!("action {:?} appears twice", action.id)));
+            }
+        }
+        if let Some(body) = &self.body {
+            body.validate()?;
+        }
         let mut names = HashSet::new();
         for field in &self.fields {
             if field.name.trim().is_empty() {
@@ -244,6 +294,33 @@ impl FormSpec {
             }
         }
         Ok(())
+    }
+}
+
+impl FormSpec {
+    /// Checks the action a form was submitted with: one of `actions`, or
+    /// none when the form has only the submit button.
+    ///
+    /// # Errors
+    ///
+    /// [`BlockError::Invalid`] naming the unknown or missing action.
+    pub fn check_action(&self, action: Option<&str>) -> Result<(), BlockError> {
+        match action {
+            None if self.actions.is_empty() => Ok(()),
+            None => Err(invalid("the form was submitted without an action".into())),
+            Some(id) if self.actions.iter().any(|a| a.id == id) => Ok(()),
+            Some(id) => Err(invalid(format!("unknown action {id:?}"))),
+        }
+    }
+
+    /// The action `Enter` submits: the first primary one, else the first;
+    /// `None` for a form with only the submit button.
+    #[must_use]
+    pub fn default_action(&self) -> Option<&FormAction> {
+        self.actions
+            .iter()
+            .find(|a| a.primary)
+            .or_else(|| self.actions.first())
     }
 }
 
@@ -512,6 +589,44 @@ mod tests {
         ] {
             assert!(form.check_answer(&answer(bad.clone())).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn actions_are_unique_and_checked() {
+        let mut form = form();
+        assert_eq!(form.check_action(None), Ok(()));
+        assert!(form.check_action(Some("x")).is_err());
+        assert_eq!(form.default_action(), None);
+        form.actions = vec![
+            FormAction {
+                id: "save".into(),
+                label: "Save".into(),
+                primary: false,
+            },
+            FormAction {
+                id: "send".into(),
+                label: "Send".into(),
+                primary: true,
+            },
+        ];
+        form.body = Some(Box::new(CustomNode::Text { text: "hi".into() }));
+        assert_eq!(form.validate(), Ok(()));
+        assert_eq!(form.default_action().map(|a| a.id.as_str()), Some("send"));
+        assert_eq!(form.check_action(Some("save")), Ok(()));
+        assert!(form.check_action(None).is_err());
+        assert!(form.check_action(Some("other")).is_err());
+        let value = serde_json::to_value(&form).unwrap();
+        assert_eq!(serde_json::from_value::<FormSpec>(value).unwrap(), form);
+        form.actions[1].id = "save".into();
+        assert!(form.validate().is_err());
+        form.actions = (0..=MAX_ACTIONS)
+            .map(|i| FormAction {
+                id: i.to_string(),
+                label: i.to_string(),
+                primary: false,
+            })
+            .collect();
+        assert!(form.validate().is_err());
     }
 
     #[test]

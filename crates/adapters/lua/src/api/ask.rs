@@ -118,7 +118,7 @@ fn ask(
             error: rejected.take(),
         };
         match ctx.block_on(port.ask(request))? {
-            FormResponse::Submitted { answer } => match spec.check_answer(&answer) {
+            FormResponse::Submitted { answer, .. } => match spec.check_answer(&answer) {
                 Ok(()) => {
                     outcome = Ok(answer);
                     break;
@@ -248,9 +248,9 @@ mod tests {
 
     #[test]
     fn a_submitted_form_returns_the_answer_and_shows_it() {
-        let form = Arc::new(ScriptedForm::new(vec![FormResponse::Submitted {
-            answer: BTreeMap::from([("env".to_owned(), json!("prod"))]),
-        }]));
+        let form = Arc::new(ScriptedForm::new(vec![FormResponse::submitted(
+            BTreeMap::from([("env".to_owned(), json!("prod"))]),
+        )]));
         let (out, sink) = run(ASK, Some(Arc::clone(&form)));
         assert_eq!(out.unwrap(), json!({ "answer": { "env": "prod" } }));
         let shown = forms(&sink);
@@ -273,9 +273,7 @@ mod tests {
         assert_eq!(out.unwrap(), json!({ "why": "no terminal" }));
         assert_eq!(forms(&sink)[1].state, FormState::Cancelled);
 
-        let bad = FormResponse::Submitted {
-            answer: BTreeMap::from([("env".to_owned(), json!("moon"))]),
-        };
+        let bad = FormResponse::submitted(BTreeMap::from([("env".to_owned(), json!("moon"))]));
         let form = Arc::new(ScriptedForm::new(vec![bad.clone(), bad.clone(), bad]));
         let (out, _) = run(ASK, Some(Arc::clone(&form)));
         let why = out.unwrap()["why"].as_str().unwrap_or_default().to_owned();

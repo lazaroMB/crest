@@ -705,9 +705,9 @@ async fn ask_user_waits_in_its_form_block_and_shows_the_answer_there() {
     use crate::tools::form::AskUserTool;
     use domain::form::FormState;
 
-    let form = Arc::new(ScriptedForm::new([FormResponse::Submitted {
-        answer: [("ok".to_owned(), json!(true))].into(),
-    }]));
+    let form = Arc::new(ScriptedForm::new([FormResponse::submitted(
+        [("ok".to_owned(), json!(true))].into(),
+    )]));
     let port = Arc::clone(&form);
     let script = vec![
         ScriptedResponse::tool_use(

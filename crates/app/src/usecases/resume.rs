@@ -84,6 +84,9 @@ mod tests {
                 state,
                 answer: None,
                 reason: None,
+                body: None,
+                actions: Vec::new(),
+                action: None,
             }))
         };
         let store = InMemorySessionStore::new();

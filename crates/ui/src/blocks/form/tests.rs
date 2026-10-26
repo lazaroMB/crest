@@ -140,9 +140,7 @@ fn fill_and_submit_with_inline_errors(cx: &mut TestAppContext) {
     .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         answer.now_or_never(),
-        Some(Ok(FormResponse::Submitted {
-            answer: expected.clone()
-        }))
+        Some(Ok(FormResponse::submitted(expected.clone())))
     );
     form_view.read_with(cx, |form, _| assert!(form.request().is_none()));
 
@@ -365,4 +363,116 @@ fn a_submit_hands_the_focus_to_the_prompt_and_a_withdrawn_form_says_why(cx: &mut
     });
     draw(cx, &view);
     assert!(cx.debug_bounds("form-cancelled").is_some());
+}
+
+/// A card-shaped form: static content above one field and two actions.
+fn card_spec() -> FormSpec {
+    serde_json::from_value(json!({
+        "title": "Deploy",
+        "body": {"type": "card", "title": "Release 1.2", "children": [
+            {"type": "text", "text": "Ready to ship"},
+            {"type": "placeholder", "label": "A2UI component \"Video\"", "raw": {"component": "Video"}}
+        ]},
+        "fields": [{"name": "note", "type": "string"}],
+        "actions": [
+            {"id": "later", "label": "Later"},
+            {"id": "ship", "label": "Ship", "primary": true}
+        ]
+    }))
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[gpui::test]
+fn card_forms_draw_their_body_and_submit_with_the_action_pressed(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let block = Block::new(BlockKind::Form(card_spec()));
+    view.update(cx, |view, cx| {
+        view.apply(
+            &DomainEvent::BlockAdded {
+                block: block.clone(),
+            },
+            cx,
+        );
+    });
+    draw(cx, &view);
+    assert!(cx.debug_bounds("form-body").is_some());
+    assert!(cx.debug_bounds("custom-card").is_some());
+    assert!(cx.debug_bounds("custom-placeholder").is_some());
+    assert!(cx.debug_bounds("form-submit").is_none());
+    assert!(cx.debug_bounds("form-action-1").is_some());
+    let (pending, answer) = PendingForm::new(FormRequest {
+        id: FormRequestId(1),
+        block_id: block.id,
+        tool_use_id: ToolUseId::new("toolu_1"),
+        spec: card_spec(),
+        error: None,
+    });
+    cx.update(|window, cx| attach(pending, window, cx));
+    draw(cx, &view);
+    cx.run_until_parked();
+    cx.simulate_input("ok");
+    click(cx, "form-action-0");
+    cx.run_until_parked();
+    let expected: BTreeMap<String, Value> =
+        serde_json::from_value(json!({"note": "ok"})).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        answer.now_or_never(),
+        Some(Ok(FormResponse::Submitted {
+            answer: expected.clone(),
+            action: Some("later".into()),
+        }))
+    );
+    let mut done = card_spec();
+    done.state = FormState::Submitted;
+    done.answer = Some(expected);
+    done.action = Some("later".into());
+    view.update(cx, |view, cx| {
+        view.apply(
+            &DomainEvent::BlockUpdated {
+                block: Block {
+                    id: block.id,
+                    kind: BlockKind::Form(done),
+                },
+            },
+            cx,
+        );
+    });
+    draw(cx, &view);
+    assert!(cx.debug_bounds("form-summary-action").is_some());
+}
+
+#[gpui::test]
+fn enter_submits_a_card_form_with_its_primary_action(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let block = Block::new(BlockKind::Form(card_spec()));
+    view.update(cx, |view, cx| {
+        view.apply(
+            &DomainEvent::BlockAdded {
+                block: block.clone(),
+            },
+            cx,
+        );
+    });
+    draw(cx, &view);
+    let (pending, answer) = PendingForm::new(FormRequest {
+        id: FormRequestId(1),
+        block_id: block.id,
+        tool_use_id: ToolUseId::new("toolu_1"),
+        spec: card_spec(),
+        error: None,
+    });
+    cx.update(|window, cx| attach(pending, window, cx));
+    draw(cx, &view);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never(),
+        Some(Ok(FormResponse::Submitted {
+            answer: BTreeMap::new(),
+            action: Some("ship".into()),
+        }))
+    );
 }

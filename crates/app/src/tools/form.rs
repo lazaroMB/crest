@@ -12,11 +12,13 @@
 //! answers the model with an error saying the user declined, so the turn
 //! goes on. The call only reads: it needs no approval.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use domain::block::{BlockId, BlockKind};
+use domain::conversation::ToolUseId;
 use domain::form::{FormSpec, FormState, fields_from_schema};
 use domain::permission::ToolEffect;
 use futures::FutureExt as _;
@@ -124,6 +126,9 @@ pub fn form_spec(input: AskUser) -> Result<FormSpec, ToolError> {
         state: FormState::Pending,
         answer: None,
         reason: None,
+        body: None,
+        actions: Vec::new(),
+        action: None,
     };
     spec.validate().map_err(|err| invalid(err.to_string()))?;
     Ok(spec)
@@ -154,54 +159,142 @@ impl TypedTool for AskUserTool {
         let subject = spec.title.clone();
         let shown = BlockKind::Form(spec.clone());
         let run = async move {
-            let mut error = None;
-            for _ in 0..MAX_ATTEMPTS {
-                let request = FormRequest {
-                    id: FormRequestId(next_id.fetch_add(1, Ordering::Relaxed)),
-                    block_id,
-                    tool_use_id: tool_use_id.clone(),
-                    spec: spec.clone(),
-                    error: error.take(),
-                };
-                match port.ask(request).await {
-                    FormResponse::Submitted { answer } => match spec.check_answer(&answer) {
-                        Ok(()) => {
-                            let json = serde_json::to_string_pretty(&answer)
-                                .map_err(|err| ToolError::Execution(err.to_string()))?;
-                            let mut done = spec;
-                            done.state = FormState::Submitted;
-                            done.answer = Some(answer);
-                            let text = format!("The user submitted the form:\n{json}");
-                            return Ok(
-                                ToolOutput::text(text).with_block_update(BlockKind::Form(done))
-                            );
-                        }
-                        Err(err) => error = Some(err.to_string()),
-                    },
-                    FormResponse::Cancelled { reason } => {
-                        let mut done = spec;
-                        done.state = FormState::Cancelled;
-                        done.reason.clone_from(&reason);
-                        let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
-                        let text = format!(
-                            "{}: the user closed the form without answering{why}. Do not ask \
-                             the same form again; go on without these answers or ask in prose.",
-                            ToolError::Cancelled
-                        );
-                        return Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)));
-                    }
+            let asked = ask(
+                port.as_ref(),
+                &next_id,
+                block_id,
+                &tool_use_id,
+                spec,
+                &|_, _| Ok(()),
+            )
+            .await;
+            match asked {
+                Asked::Submitted { form, answer, .. } => {
+                    let json = serde_json::to_string_pretty(&answer)
+                        .map_err(|err| ToolError::Execution(err.to_string()))?;
+                    let text = format!("The user submitted the form:\n{json}");
+                    Ok(ToolOutput::text(text).with_block_update(BlockKind::Form(form)))
                 }
+                Asked::Cancelled { form, reason } => {
+                    Ok(ToolOutput::error(cancelled_text(reason.as_deref()))
+                        .with_block_update(BlockKind::Form(form)))
+                }
+                Asked::Rejected { form, error } => Ok(ToolOutput::error(rejected_text(&error))
+                    .with_block_update(BlockKind::Form(form))),
             }
-            let mut done = spec;
-            done.state = FormState::Cancelled;
-            let text = format!(
-                "the answer was rejected {MAX_ATTEMPTS} times (last: {}); the form was closed",
-                error.unwrap_or_default()
-            );
-            Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)))
         };
         Ok(PreparedCall::new(subject, run.boxed()).with_block_as(block_id, shown))
     }
+}
+
+/// How a form shown with [`ask`] ended; each carries the form as the
+/// block should show it now.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Asked {
+    /// The user submitted an answer that passed every check.
+    Submitted {
+        /// The form, submitted, with the answer and action.
+        form: FormSpec,
+        /// The values by field name.
+        answer: BTreeMap<String, Value>,
+        /// The action pressed, if the form has actions.
+        action: Option<String>,
+    },
+    /// The user (or the front end) dismissed the form.
+    Cancelled {
+        /// The form, cancelled.
+        form: FormSpec,
+        /// Why, when known.
+        reason: Option<String>,
+    },
+    /// [`MAX_ATTEMPTS`] answers were rejected.
+    Rejected {
+        /// The form, cancelled.
+        form: FormSpec,
+        /// Why the last answer was rejected.
+        error: String,
+    },
+}
+
+/// A check of a submitted answer and action beyond the fields' own
+/// (a card's date format or pattern); `Err` says what is wrong.
+pub type AnswerCheck =
+    dyn Fn(&BTreeMap<String, Value>, Option<&str>) -> Result<(), String> + Send + Sync;
+
+/// Shows `spec` in block `block_id` through `port` and waits for an answer
+/// that passes [`FormSpec::check_answer`], [`FormSpec::check_action`] and
+/// `check`, asking again with the reason up to [`MAX_ATTEMPTS`] times.
+/// Request ids come from `ids`.
+pub async fn ask(
+    port: &dyn FormPort,
+    ids: &AtomicU64,
+    block_id: BlockId,
+    tool_use_id: &ToolUseId,
+    spec: FormSpec,
+    check: &AnswerCheck,
+) -> Asked {
+    let mut error = None;
+    for _ in 0..MAX_ATTEMPTS {
+        let request = FormRequest {
+            id: FormRequestId(ids.fetch_add(1, Ordering::Relaxed)),
+            block_id,
+            tool_use_id: tool_use_id.clone(),
+            spec: spec.clone(),
+            error: error.take(),
+        };
+        match port.ask(request).await {
+            FormResponse::Submitted { answer, action } => {
+                let checked = spec
+                    .check_answer(&answer)
+                    .and_then(|()| spec.check_action(action.as_deref()))
+                    .map_err(|err| err.to_string())
+                    .and_then(|()| check(&answer, action.as_deref()));
+                match checked {
+                    Ok(()) => {
+                        let mut form = spec;
+                        form.state = FormState::Submitted;
+                        form.answer = Some(answer.clone());
+                        form.action.clone_from(&action);
+                        return Asked::Submitted {
+                            form,
+                            answer,
+                            action,
+                        };
+                    }
+                    Err(err) => error = Some(err),
+                }
+            }
+            FormResponse::Cancelled { reason } => {
+                let mut form = spec;
+                form.state = FormState::Cancelled;
+                form.reason.clone_from(&reason);
+                return Asked::Cancelled { form, reason };
+            }
+        }
+    }
+    let mut form = spec;
+    form.state = FormState::Cancelled;
+    Asked::Rejected {
+        form,
+        error: error.unwrap_or_default(),
+    }
+}
+
+/// What the model is told when the user closes a form unanswered.
+#[must_use]
+pub fn cancelled_text(reason: Option<&str>) -> String {
+    let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
+    format!(
+        "{}: the user closed the form without answering{why}. Do not ask the same form \
+         again; go on without these answers or ask in prose.",
+        ToolError::Cancelled
+    )
+}
+
+/// What the model is told when every answer was rejected.
+#[must_use]
+pub fn rejected_text(error: &str) -> String {
+    format!("the answer was rejected {MAX_ATTEMPTS} times (last: {error}); the form was closed")
 }
 
 /// Registers `ask_user`, asking through `port`.
@@ -283,9 +376,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_submitted_form_returns_the_answers_and_shows_them() {
-        let port = Arc::new(ScriptedForm::new([FormResponse::Submitted {
-            answer: answer(json!({"test": "welch", "alpha": 0.01})),
-        }]));
+        let port = Arc::new(ScriptedForm::new([FormResponse::submitted(answer(
+            json!({"test": "welch", "alpha": 0.01}),
+        ))]));
         let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
         assert_eq!(call.subject, "Test settings");
         let (Some(BlockKind::Form(pending)), Some(block_id)) = (&call.block, call.block_id) else {
@@ -311,12 +404,8 @@ mod tests {
     #[tokio::test]
     async fn an_invalid_answer_is_asked_again_with_the_reason() {
         let port = Arc::new(ScriptedForm::new([
-            FormResponse::Submitted {
-                answer: answer(json!({"alpha": 0.01})),
-            },
-            FormResponse::Submitted {
-                answer: answer(json!({"test": "student"})),
-            },
+            FormResponse::submitted(answer(json!({"alpha": 0.01}))),
+            FormResponse::submitted(answer(json!({"test": "student"}))),
         ]));
         let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
         let output = call.run.await.unwrap();
@@ -332,9 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn answers_rejected_too_often_close_the_form() {
-        let bad = || FormResponse::Submitted {
-            answer: answer(json!({"test": "other"})),
-        };
+        let bad = || FormResponse::submitted(answer(json!({"test": "other"})));
         let port = Arc::new(ScriptedForm::new([bad(), bad(), bad(), bad()]));
         let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
         let output = call.run.await.unwrap();

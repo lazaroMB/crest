@@ -455,6 +455,11 @@ fn widget(node: &CustomNode) -> Vec<CopyFormat> {
         }
         CustomNode::Graph(spec) => vec![CopyFormat::new("dot", "DOT", spec.to_dot())],
         CustomNode::Tree(spec) => vec![CopyFormat::new("tree", "indented text", spec.to_text())],
+        CustomNode::Placeholder { raw, .. } => vec![CopyFormat::new(
+            "raw",
+            "raw JSON",
+            serde_json::to_string_pretty(raw).unwrap_or_default(),
+        )],
         _ => Vec::new(),
     }
 }
@@ -467,7 +472,8 @@ pub fn custom(tree: &CustomNode) -> Vec<CopyFormat> {
         match node {
             CustomNode::Row { children }
             | CustomNode::Col { children }
-            | CustomNode::List { items: children } => {
+            | CustomNode::List { items: children }
+            | CustomNode::Card { children, .. } => {
                 children.iter().for_each(|child| walk(child, out));
             }
             other => {

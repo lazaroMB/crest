@@ -211,6 +211,12 @@ impl Walk<'_> {
             CustomNode::Model3d(spec) => {
                 super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
             }
+            CustomNode::Card { title, children } => {
+                self.card(title.as_deref(), children, depth, window, cx)
+            }
+            CustomNode::Placeholder { label, note, raw } => {
+                self.placeholder(label, note.as_deref(), raw, window, cx)
+            }
             CustomNode::Link { text, url } => {
                 let id = element_id("custom-link", self.next_id());
                 let url = url.clone();
@@ -230,6 +236,81 @@ impl Walk<'_> {
                     .into_any_element()
             }
         }
+    }
+
+    /// A framed group (kept out of [`Self::node`] so the recursion's
+    /// stack frames stay small).
+    #[inline(never)]
+    fn card(
+        &mut self,
+        title: Option<&str>,
+        children: &[CustomNode],
+        depth: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (border, muted) = (theme.border, theme.muted_foreground);
+        let heading = title.map(|title| {
+            div()
+                .debug_selector(|| "custom-card-title".to_owned())
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(muted)
+                .whitespace_normal()
+                .child(SharedString::from(title.to_owned()))
+        });
+        v_flex()
+            .debug_selector(|| "custom-card".to_owned())
+            .w_full()
+            .min_w_0()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .children(heading)
+            .children(self.children(children, depth, window, cx))
+            .into_any_element()
+    }
+
+    /// Content that is not drawn: its label, why, and the raw JSON.
+    #[inline(never)]
+    fn placeholder(
+        &mut self,
+        label: &str,
+        note: Option<&str>,
+        raw: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (border, muted) = (theme.warning, theme.muted_foreground);
+        let note = note.map(|note| {
+            div()
+                .text_xs()
+                .text_color(muted)
+                .whitespace_normal()
+                .child(SharedString::from(note.to_owned()))
+        });
+        let raw = super::json::json_view(self.next_id(), raw, 0, window, cx);
+        v_flex()
+            .debug_selector(|| "custom-placeholder".to_owned())
+            .w_full()
+            .min_w_0()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .whitespace_normal()
+                    .child(SharedString::from(format!("Not drawn: {label}"))),
+            )
+            .children(note)
+            .child(raw)
+            .into_any_element()
     }
 }
 

@@ -13,6 +13,7 @@ pub mod engineering;
 pub mod form;
 pub mod gantt;
 pub mod git;
+pub mod interop;
 pub mod math;
 pub mod modal;
 pub mod model;

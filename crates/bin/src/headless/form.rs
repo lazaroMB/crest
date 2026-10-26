@@ -290,7 +290,36 @@ impl FormPort for StdinForm {
                 Err(err) => return FormResponse::cancelled(err),
             }
         }
-        FormResponse::Submitted { answer }
+        let action = match req.spec.actions.as_slice() {
+            [] => None,
+            [only] => Some(only.id.clone()),
+            actions => {
+                let field = FormField {
+                    name: "action".into(),
+                    label: Some("Action".into()),
+                    description: None,
+                    required: true,
+                    kind: FieldKind::Enum {
+                        options: actions
+                            .iter()
+                            .map(|a| FormOption {
+                                value: a.id.clone(),
+                                label: Some(a.label.clone()),
+                            })
+                            .collect(),
+                        default: req.spec.default_action().map(|a| a.id.clone()),
+                    },
+                };
+                match self.read_field(&field).await {
+                    Ok(Read::Value(Some(Value::String(id)))) => Some(id),
+                    Ok(Read::Value(_)) => req.spec.default_action().map(|a| a.id.clone()),
+                    Ok(Read::Cancel) => return FormResponse::Cancelled { reason: None },
+                    Ok(Read::Closed) => return FormResponse::cancelled("stdin is closed"),
+                    Err(err) => return FormResponse::cancelled(err),
+                }
+            }
+        };
+        FormResponse::Submitted { answer, action }
     }
 }
 
@@ -345,7 +374,7 @@ mod tests {
             "plots": ["qq", "hist"], "notes": "first\nsecond"
         }))
         .unwrap();
-        assert_eq!(response, FormResponse::Submitted { answer: expected });
+        assert_eq!(response, FormResponse::submitted(expected));
         let text = buf.text();
         assert!(text.contains("Form: Run settings"), "{text}");
         assert!(text.contains("Label *"), "{text}");
@@ -382,5 +411,33 @@ mod tests {
             FormResponse::cancelled("stdin is not a terminal")
         );
         assert!(buf.text().contains("cancelled: stdin is not a terminal"));
+    }
+
+    #[tokio::test]
+    async fn card_forms_ask_which_action_to_send() {
+        let spec: FormSpec = serde_json::from_value(json!({
+            "title": "Deploy",
+            "fields": [],
+            "actions": [{"id": "later", "label": "Later"}, {"id": "ship", "label": "Ship", "primary": true}]
+        }))
+        .unwrap();
+        let req = FormRequest { spec, ..request() };
+        let (form, buf) = stdin_form("1\n");
+        assert_eq!(
+            form.ask(req.clone()).await,
+            FormResponse::Submitted {
+                answer: BTreeMap::new(),
+                action: Some("later".into()),
+            }
+        );
+        assert!(buf.text().contains("2) Ship (ship)"), "{}", buf.text());
+        let (form, _) = stdin_form("\n");
+        assert_eq!(
+            form.ask(req).await,
+            FormResponse::Submitted {
+                answer: BTreeMap::new(),
+                action: Some("ship".into()),
+            }
+        );
     }
 }

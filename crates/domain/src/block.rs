@@ -833,6 +833,30 @@ pub enum CustomNode {
     /// Nested rows with typed columns (text, numbers, durations, inline
     /// bars) and badges, collapsible (query plans, Terraform plans).
     Tree(Box<crate::widget::tree::TreeSpec>),
+    /// Children in a framed box with an optional heading (an A2UI `Card`,
+    /// an Adaptive Cards container with a style or the card of an
+    /// `Action.ShowCard`).
+    Card {
+        /// Heading drawn above the children.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// Child nodes, laid out vertically.
+        children: Vec<CustomNode>,
+    },
+    /// Content crest cannot draw (an unknown A2UI component, an Adaptive
+    /// Cards element without a fallback, a Vega-Lite spec that is not a
+    /// simple chart): a labelled box with the raw JSON one click away, so
+    /// nothing is dropped silently.
+    Placeholder {
+        /// What it is, e.g. `A2UI component "Video"`.
+        label: String,
+        /// Why it is not drawn, or what to do instead.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        /// The content as received.
+        #[serde(default)]
+        raw: Value,
+    },
 }
 
 fn default_expand_depth() -> u32 {
@@ -872,9 +896,10 @@ impl CustomNode {
     /// Returns the first [`BlockError`] found, depth first.
     pub fn validate(&self) -> Result<(), BlockError> {
         match self {
-            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
-                children.iter().try_for_each(Self::validate)
-            }
+            Self::Row { children }
+            | Self::Col { children }
+            | Self::List { items: children }
+            | Self::Card { children, .. } => children.iter().try_for_each(Self::validate),
             Self::Table(spec) => spec.validate(),
             Self::Chart(spec) => spec.validate(),
             Self::Image {
@@ -906,7 +931,8 @@ impl CustomNode {
             | Self::Json { .. }
             | Self::Mermaid { .. }
             | Self::Link { .. }
-            | Self::Diff { .. } => Ok(()),
+            | Self::Diff { .. }
+            | Self::Placeholder { .. } => Ok(()),
         }
     }
 
@@ -916,7 +942,10 @@ impl CustomNode {
     /// it is unavailable and why.
     pub fn check_image_paths(&mut self, check: &mut dyn FnMut(&str) -> Result<String, String>) {
         match self {
-            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
+            Self::Row { children }
+            | Self::Col { children }
+            | Self::List { items: children }
+            | Self::Card { children, .. } => {
                 for child in children {
                     child.check_image_paths(check);
                 }
@@ -938,13 +967,41 @@ impl CustomNode {
         }
     }
 
+    /// Calls `f` on this node and every node under it (the children of
+    /// rows, columns, lists and cards), depth first.
+    pub fn for_each(&self, f: &mut dyn FnMut(&CustomNode)) {
+        f(self);
+        if let Self::Row { children }
+        | Self::Col { children }
+        | Self::List { items: children }
+        | Self::Card { children, .. } = self
+        {
+            for child in children {
+                child.for_each(f);
+            }
+        }
+    }
+
+    /// The number of [`CustomNode::Placeholder`]s in the tree.
+    #[must_use]
+    pub fn placeholder_count(&self) -> usize {
+        let mut n = 0;
+        self.for_each(&mut |node| {
+            if matches!(node, Self::Placeholder { .. }) {
+                n += 1;
+            }
+        });
+        n
+    }
+
     /// Whether the tree has an image read from a file.
     #[must_use]
     pub fn has_image_paths(&self) -> bool {
         match self {
-            Self::Row { children } | Self::Col { children } | Self::List { items: children } => {
-                children.iter().any(Self::has_image_paths)
-            }
+            Self::Row { children }
+            | Self::Col { children }
+            | Self::List { items: children }
+            | Self::Card { children, .. } => children.iter().any(Self::has_image_paths),
             Self::Image {
                 source: ImageData::Path { .. },
                 ..
@@ -1808,6 +1865,44 @@ mod tests {
             assert_eq!(block.validate(), Ok(()), "{tag}");
             assert_eq!(roundtrip(&block)["type"], tag);
         }
+    }
+
+    #[test]
+    fn cards_and_placeholders_validate_and_walk() {
+        let tree = CustomNode::Card {
+            title: Some("Order".into()),
+            children: vec![
+                CustomNode::Text { text: "a".into() },
+                CustomNode::Placeholder {
+                    label: "A2UI component \"Video\"".into(),
+                    note: None,
+                    raw: json!({"component": "Video"}),
+                },
+                CustomNode::Link {
+                    text: "x".into(),
+                    url: "javascript:alert(1)".into(),
+                },
+            ],
+        };
+        assert!(tree.validate().is_err());
+        let CustomNode::Card {
+            mut children,
+            title,
+        } = tree
+        else {
+            unreachable!()
+        };
+        children.pop();
+        let tree = CustomNode::Card { title, children };
+        assert_eq!(tree.validate(), Ok(()));
+        assert_eq!(tree.placeholder_count(), 1);
+        let mut n = 0;
+        tree.for_each(&mut |_| n += 1);
+        assert_eq!(n, 3);
+        let value = serde_json::to_value(&tree).unwrap();
+        assert_eq!(value["type"], "card");
+        assert_eq!(value["children"][1]["type"], "placeholder");
+        assert_eq!(serde_json::from_value::<CustomNode>(value).unwrap(), tree);
     }
 
     #[test]

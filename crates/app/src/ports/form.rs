@@ -50,6 +50,10 @@ pub enum FormResponse {
     Submitted {
         /// The values.
         answer: BTreeMap<String, Value>,
+        /// Id of the [`domain::form::FormAction`] pressed; `None` for a
+        /// form with only the submit button.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
     },
     /// The user dismissed the form, or nobody can answer it.
     Cancelled {
@@ -60,6 +64,15 @@ pub enum FormResponse {
 }
 
 impl FormResponse {
+    /// The answer of a form with only the submit button.
+    #[must_use]
+    pub fn submitted(answer: BTreeMap<String, Value>) -> Self {
+        Self::Submitted {
+            answer,
+            action: None,
+        }
+    }
+
     /// A cancellation with `reason`.
     #[must_use]
     pub fn cancelled(reason: impl Into<String>) -> Self {
@@ -100,14 +113,22 @@ mod tests {
 
     #[test]
     fn response_round_trips_through_json() {
-        let submitted = FormResponse::Submitted {
-            answer: BTreeMap::from([("n".to_owned(), json!(3))]),
-        };
+        let submitted = FormResponse::submitted(BTreeMap::from([("n".to_owned(), json!(3))]));
         let json = serde_json::to_value(&submitted).unwrap();
         assert_eq!(json, json!({"outcome": "submitted", "answer": {"n": 3}}));
         assert_eq!(
             serde_json::from_value::<FormResponse>(json).unwrap(),
             submitted
+        );
+        let pressed = FormResponse::Submitted {
+            answer: BTreeMap::new(),
+            action: Some("send".into()),
+        };
+        let json = serde_json::to_value(&pressed).unwrap();
+        assert_eq!(json["action"], "send");
+        assert_eq!(
+            serde_json::from_value::<FormResponse>(json).unwrap(),
+            pressed
         );
         let cancelled = FormResponse::Cancelled { reason: None };
         let back: FormResponse =

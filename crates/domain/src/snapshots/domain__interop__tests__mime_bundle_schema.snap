@@ -1,0 +1,25 @@
+---
+source: crates/domain/src/interop.rs
+expression: "schemars::schema_for!(MimeBundle)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MimeBundle",
+  "description": "A Jupyter MIME bundle: the same output in several media types, keyed\nby type (`display_data`'s `data`), with per-type `metadata`.\n\nText types may be a string or a list of lines, as in notebooks.",
+  "type": "object",
+  "properties": {
+    "data": {
+      "description": "The output by media type.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "metadata": {
+      "description": "Metadata by media type (e.g. an image's `width`).",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "data"
+  ]
+}
