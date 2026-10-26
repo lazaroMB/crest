@@ -18,14 +18,16 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
-    WeakEntity, Window, div, list, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
+    MouseUpEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Task, WeakEntity, Window, div, list, px,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
 use super::column::{COLUMN_GUTTER, block_width};
+use super::selection::{self, CopyHint, render_hint};
 use super::{TimelineChange, TimelineState, copy_text, render_block};
 
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
@@ -36,6 +38,12 @@ pub struct TimelineView {
     state: TimelineState,
     list: ListState,
     focus_handle: FocusHandle,
+    /// The "Copy" hint next to the text selected with the mouse.
+    copy_hint: Option<CopyHint>,
+    _hint_expiry: Option<Task<()>>,
+    /// The reply (by its last block) whose copy button just copied.
+    copied_reply: Option<usize>,
+    _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
 
@@ -48,8 +56,67 @@ impl TimelineView {
             state: TimelineState::new(),
             list,
             focus_handle: cx.focus_handle(),
+            copy_hint: None,
+            _hint_expiry: None,
+            copied_reply: None,
+            _reply_expiry: None,
             _events: None,
         }
+    }
+
+    /// The hint offering to copy the selected text, if shown.
+    pub fn copy_hint(&self) -> Option<&CopyHint> {
+        self.copy_hint.as_ref()
+    }
+
+    /// The mouse was released over the timeline: with text selected, the
+    /// timeline takes the focus (so Ctrl+C copies instead of interrupting)
+    /// and shows the hint.
+    fn mouse_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let text = selection::selected_text(window, cx);
+        if text.is_empty() {
+            if self.copy_hint.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        window.focus(&self.focus_handle, cx);
+        self.copy_hint = Some(CopyHint {
+            at: event.position,
+            text,
+            copied: false,
+        });
+        cx.notify();
+    }
+
+    /// Copies the text selected in the timeline. Returns whether there was
+    /// any.
+    pub fn copy_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let text = selection::selected_text(window, cx);
+        if text.is_empty() {
+            return false;
+        }
+        self.copy(text, cx);
+        true
+    }
+
+    fn copy(&mut self, text: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let Some(hint) = &mut self.copy_hint else {
+            return;
+        };
+        hint.copied = true;
+        self._hint_expiry = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(selection::COPIED_TTL).await;
+            this.update(cx, |this, cx| {
+                if this.copy_hint.as_ref().is_some_and(|h| h.copied) {
+                    this.copy_hint = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 
     /// A timeline that applies every event received on `events`, on the GPUI
@@ -128,8 +195,14 @@ impl TimelineView {
     }
 
     /// Keys while the timeline has the focus.
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = &event.keystroke.modifiers;
+        if event.keystroke.key == "escape" && self.copy_hint.take().is_some() {
+            gpui_base::TextSelection::clear(window, cx);
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         if m.control || m.alt || m.platform {
             return;
         }
@@ -228,13 +301,55 @@ impl TimelineView {
         }
     }
 
-    fn click(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if self.state.select(ix).is_some() {
-            if let Some(ix) = self.state.toggle_selected() {
-                self.list.remeasure_items(ix..ix + 1);
-            }
-            cx.notify();
+    /// A click on a row selects it and expands or collapses it, unless the
+    /// click ended a text selection: then the row keeps its state.
+    fn click(&mut self, ix: usize, text_selected: bool, cx: &mut Context<Self>) {
+        if self.state.select(ix).is_some()
+            && !text_selected
+            && let Some(ix) = self.state.toggle_selected()
+        {
+            self.list.remeasure_items(ix..ix + 1);
         }
+        cx.notify();
+    }
+
+    /// The "Copy" button at the end of a complete reply.
+    fn reply_footer(&self, ix: usize, view: WeakEntity<Self>) -> Option<AnyElement> {
+        let text = self.state.reply_to_copy(ix)?;
+        let copied = self.copied_reply == Some(ix);
+        let button = Button::new(("reply-copy", ix))
+            .ghost()
+            .xsmall()
+            .icon(if copied {
+                IconName::Check
+            } else {
+                IconName::Copy
+            })
+            .tooltip("Copy Message")
+            .on_click(move |_, _, cx| {
+                // The row's click would select and expand the block.
+                cx.stop_propagation();
+                let text = text.clone();
+                view.update(cx, |this, cx| this.copy_reply(ix, text, cx))
+                    .ok();
+            });
+        Some(h_flex().pt_1().child(button).into_any_element())
+    }
+
+    fn copy_reply(&mut self, ix: usize, text: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.copied_reply = Some(ix);
+        self._reply_expiry = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(selection::COPIED_TTL).await;
+            this.update(cx, |this, cx| {
+                if this.copied_reply == Some(ix) {
+                    this.copied_reply = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 
     fn render_item(
@@ -251,6 +366,7 @@ impl TimelineView {
         let theme = cx.theme();
         let selected = self.state.selected() == Some(ix);
         let width = block_width(&entry.block.kind);
+        let footer = self.reply_footer(ix, view.clone());
         let block = div()
             .w_full()
             .max_w(width.max_width())
@@ -258,7 +374,8 @@ impl TimelineView {
             .py_1()
             .border_l_2()
             .debug_selector(move || format!("block-{ix}"))
-            .child(content);
+            .child(content)
+            .children(footer);
         let block = if selected {
             block
                 .border_color(theme.list_active_border)
@@ -273,9 +390,10 @@ impl TimelineView {
             .justify_center()
             .px(px(COLUMN_GUTTER))
             .on_click(move |_, window, cx| {
+                let text_selected = !selection::selected_text(window, cx).is_empty();
                 view.update(cx, |this, cx| {
                     window.focus(&this.focus_handle, cx);
-                    this.click(ix, cx);
+                    this.click(ix, text_selected, cx);
                 })
                 .ok();
             })
@@ -299,9 +417,10 @@ const WELCOME_KEYS: &[(&str, &str)] = &[
     ),
     ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
     ("Esc", "back to the prompt"),
+    ("Ctrl+C", "clear the prompt or interrupt the turn"),
     (
-        "Ctrl+C",
-        "copy the selection, clear the prompt, or interrupt",
+        "Ctrl+Shift+C",
+        "copy the selected text, from the prompt or the chat",
     ),
 ];
 
@@ -363,10 +482,34 @@ impl Render for TimelineView {
                 .into_any_element();
         }
         let view = cx.entity().downgrade();
+        // The hint outlives the selection only while it says "Copied".
+        if let Some(hint) = &self.copy_hint
+            && !hint.copied
+            && selection::selected_text(window, cx).is_empty()
+        {
+            self.copy_hint = None;
+        }
+        let hint = self.copy_hint.as_ref().map(|hint| {
+            let weak = view.clone();
+            let text = hint.text.clone();
+            render_hint(
+                hint,
+                move |_window, cx| {
+                    weak.update(cx, |this, cx| this.copy(text.clone(), cx)).ok();
+                },
+                cx,
+            )
+        });
         div()
             .id("timeline-list")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                    this.mouse_up(event, window, cx);
+                }),
+            )
             .relative()
             .size_full()
             .border_t_1()
@@ -385,6 +528,7 @@ impl Render for TimelineView {
                 .size_full(),
             )
             .vertical_scrollbar(&self.list)
+            .children(hint)
             .into_any_element()
     }
 }

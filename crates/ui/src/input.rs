@@ -254,6 +254,7 @@ pub fn key_from_keystroke(keystroke: &gpui::Keystroke) -> Option<Key> {
         "tab" => Some(KeyCode::Tab),
         "backspace" => Some(KeyCode::Backspace),
         "delete" => Some(KeyCode::Delete),
+        "insert" => Some(KeyCode::Insert),
         "up" => Some(KeyCode::Up),
         "down" => Some(KeyCode::Down),
         "left" => Some(KeyCode::Left),
@@ -855,16 +856,28 @@ impl InputView {
         }
     }
 
-    /// `Ctrl+C`: copies the selected text, else clears the prompt into the
-    /// history (not saved with the session) so `Up` brings it back, else
-    /// asks to interrupt the turn. The images in the tray stay.
-    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Copies the text selected in the prompt. Returns whether there was any.
+    pub fn copy_selection(&self, cx: &App) -> bool {
         let text = self.text(cx);
         let selected = self.editor.read(cx).selected_range();
-        if let Some(selection) = text.get(selected).filter(|s| !s.is_empty()) {
-            cx.write_to_clipboard(ClipboardItem::new_string(selection.to_owned()));
+        match text.get(selected).filter(|s| !s.is_empty()) {
+            Some(selection) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(selection.to_owned()));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `Ctrl+C` in the prompt, as in a terminal: copies the selection, else
+    /// clears the prompt into the history (not saved with the session) so
+    /// `Up` brings it back, else asks to interrupt the turn. The images in
+    /// the tray stay.
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.copy_selection(cx) {
             return;
         }
+        let text = self.text(cx);
         if text.is_empty() {
             cx.emit(InputEvent::Action(Action::builtin(INTERRUPT_ACTION)));
             return;
@@ -1663,6 +1676,7 @@ mod tests {
         assert_eq!(key("shift-enter"), parsed("<S-CR>"));
         assert_eq!(key("escape"), parsed("<Esc>"));
         assert_eq!(key("ctrl-c"), parsed("<C-c>"));
+        assert_eq!(key("ctrl-insert"), parsed("<C-Insert>"));
         assert_eq!(key("f5"), parsed("<F5>"));
     }
 

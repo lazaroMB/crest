@@ -27,6 +27,7 @@ pub enum KeyCode {
     Tab,
     Backspace,
     Delete,
+    Insert,
     Up,
     Down,
     Left,
@@ -51,9 +52,11 @@ pub struct Modifiers {
 /// One key press.
 ///
 /// Keys are normalized so that a parsed mapping and an incoming event compare
-/// equal: shift on a letter becomes the uppercase letter (`<S-a>` == `A`) and
-/// a letter with ctrl, alt or cmd is lowercased (`<C-C>` == `<C-c>`). Hosts
-/// should build incoming keys with [`Key::new`], which applies the same rules.
+/// equal: shift on a plain letter becomes the uppercase letter (`<S-a>` ==
+/// `A`), and a letter with ctrl, alt or cmd is lowercased with the shift kept
+/// as a modifier (`<C-C>` == `<C-c>`, but `<C-S-c>` is its own chord, as
+/// terminals use it to copy). Hosts should build incoming keys with
+/// [`Key::new`], which applies the same rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key {
     pub code: KeyCode,
@@ -64,13 +67,14 @@ impl Key {
     /// Builds a normalized key.
     pub fn new(code: KeyCode, mods: Modifiers) -> Self {
         let mut key = Self { code, mods };
-        if let KeyCode::Char(c) = key.code {
-            if key.mods.shift && c.is_alphabetic() {
+        if let KeyCode::Char(c) = key.code
+            && c.is_alphabetic()
+        {
+            if key.mods.ctrl || key.mods.alt || key.mods.cmd {
+                key.code = KeyCode::Char(c.to_lowercase().next().unwrap_or(c));
+            } else if key.mods.shift {
                 key.code = KeyCode::Char(c.to_uppercase().next().unwrap_or(c));
                 key.mods.shift = false;
-            }
-            if (key.mods.ctrl || key.mods.alt || key.mods.cmd) && c.is_alphabetic() {
-                key.code = KeyCode::Char(c.to_lowercase().next().unwrap_or(c));
             }
         }
         key
@@ -180,6 +184,7 @@ fn key_name(name: &str) -> Option<KeyCode> {
         "tab" => KeyCode::Tab,
         "bs" | "backspace" => KeyCode::Backspace,
         "del" | "delete" => KeyCode::Delete,
+        "ins" | "insert" => KeyCode::Insert,
         "space" => KeyCode::Char(' '),
         "lt" => KeyCode::Char('<'),
         "gt" => KeyCode::Char('>'),
@@ -216,6 +221,7 @@ impl fmt::Display for Key {
             KeyCode::Tab => "Tab".to_owned(),
             KeyCode::Backspace => "BS".to_owned(),
             KeyCode::Delete => "Del".to_owned(),
+            KeyCode::Insert => "Insert".to_owned(),
             KeyCode::Up => "Up".to_owned(),
             KeyCode::Down => "Down".to_owned(),
             KeyCode::Left => "Left".to_owned(),
@@ -571,7 +577,17 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     (
         "<C-c>",
         "input.cancel",
-        "Copy the selection, clear the prompt, or interrupt the turn",
+        "Copy the selection (of the prompt, or of the chat when it has the focus), clear the prompt, or interrupt the turn",
+    ),
+    (
+        "<C-S-c>",
+        "selection.copy",
+        "Copy the selected text (of the prompt, else of the chat); never interrupts",
+    ),
+    (
+        "<C-Insert>",
+        "selection.copy",
+        "Copy the selected text (of the prompt, else of the chat); never interrupts",
     ),
     ("<F1>", "help.open", "Open the help"),
     ("<leader>h", "help.open", "Open the help"),
@@ -951,7 +967,34 @@ mod tests {
         assert_eq!(get("<C-g>gg"), b("block.first"));
         assert_eq!(get("<C-g>G"), b("block.last"));
         assert_eq!(get("<C-c>"), b("input.cancel"));
+        assert_eq!(get("<C-S-c>"), b("selection.copy"));
+        assert_eq!(get("<C-Insert>"), b("selection.copy"));
         assert_eq!(get("<F1>"), b("help.open"));
+    }
+
+    #[test]
+    fn ctrl_shift_letter_is_its_own_chord() {
+        let ctrl_shift_c = Key::new(
+            KeyCode::Char('c'),
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        // As a host may report the shifted letter.
+        let reported_upper = Key::new(KeyCode::Char('C'), ctrl_shift_c.mods);
+        assert_eq!(reported_upper, ctrl_shift_c);
+        assert_ne!(ctrl_shift_c, ctrl('c'));
+        assert_eq!(parse_keys("<C-S-c>", " "), Ok(vec![ctrl_shift_c]));
+        assert_eq!(parse_keys("<C-S-C>", " "), Ok(vec![ctrl_shift_c]));
+        assert_eq!(ctrl_shift_c.to_string(), "<C-S-c>");
+        // Neovim notation: an uppercase letter alone does not add a shift.
+        assert_eq!(parse_keys("<C-C>", " "), Ok(vec![ctrl('c')]));
+        assert_eq!(
+            parse_keys("<C-Insert>", " "),
+            Ok(vec![Key::new(KeyCode::Insert, ctrl('c').mods)])
+        );
     }
 
     #[test]

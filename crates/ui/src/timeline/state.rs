@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use application::ports::events::DomainEvent;
 use domain::block::{Block, BlockId, BlockKind};
 
+use super::copy_text;
+
 /// One block of the timeline plus its view state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineEntry {
@@ -65,6 +67,13 @@ pub struct TimelineState {
     entries: Vec<TimelineEntry>,
     index: HashMap<BlockId, usize>,
     selected: Option<usize>,
+    /// Between `TurnStarted` and `TurnFinished`/`TurnFailed`.
+    turn_open: bool,
+}
+
+/// A user prompt, as `prompt_block` writes it: every line quoted with `> `.
+fn is_prompt(entry: &TimelineEntry) -> bool {
+    matches!(&entry.block.kind, BlockKind::Text { markdown } if markdown.starts_with("> "))
 }
 
 impl TimelineState {
@@ -96,6 +105,38 @@ impl TimelineState {
     /// Index of the block with `id`.
     pub fn position(&self, id: BlockId) -> Option<usize> {
         self.index.get(&id).copied()
+    }
+
+    /// The text to copy for the reply that ends at block `ix`: the text
+    /// blocks since the last prompt. `None` unless `ix` is the last block of
+    /// the reply, the reply is complete (the next block is a prompt, or no
+    /// turn is running) and it has text.
+    pub fn reply_to_copy(&self, ix: usize) -> Option<String> {
+        let entry = self.entries.get(ix)?;
+        if is_prompt(entry) {
+            return None;
+        }
+        match self.entries.get(ix + 1) {
+            Some(next) if !is_prompt(next) => return None,
+            None if self.turn_open => return None,
+            _ => {}
+        }
+        let start = self.entries[..ix]
+            .iter()
+            .rposition(is_prompt)
+            .map_or(0, |prompt| prompt + 1);
+        let texts: Vec<String> = self.entries[start..=ix]
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.block.kind,
+                    BlockKind::Text { .. } | BlockKind::Markdown { .. }
+                )
+            })
+            .map(|e| copy_text(&e.block.kind))
+            .filter(|text| !text.trim().is_empty())
+            .collect();
+        (!texts.is_empty()).then(|| texts.join("\n\n"))
     }
 
     /// Applies one domain event.
@@ -144,6 +185,10 @@ impl TimelineState {
                 }
                 _ => false,
             }),
+            DomainEvent::TurnStarted { .. } => self.set_turn_open(true),
+            DomainEvent::TurnFinished { .. } | DomainEvent::TurnFailed { .. } => {
+                self.set_turn_open(false)
+            }
             _ => TimelineChange::None,
         }
     }
@@ -231,6 +276,19 @@ impl TimelineState {
         TimelineChange::Inserted(ix)
     }
 
+    /// Records whether a turn is running. The last block may change its
+    /// reply's state (its copy button), so it is reported as updated.
+    fn set_turn_open(&mut self, open: bool) -> TimelineChange {
+        if self.turn_open == open {
+            return TimelineChange::None;
+        }
+        self.turn_open = open;
+        match self.entries.len().checked_sub(1) {
+            Some(ix) => TimelineChange::Updated(ix),
+            None => TimelineChange::None,
+        }
+    }
+
     fn edit(&mut self, id: BlockId, f: impl FnOnce(&mut BlockKind) -> bool) -> TimelineChange {
         let Some(ix) = self.position(id) else {
             return TimelineChange::None;
@@ -247,6 +305,8 @@ impl TimelineState {
 mod tests {
     use super::*;
     use domain::block::ToolStatus;
+    use domain::conversation::{SessionId, StopReason, TurnId};
+    use domain::model::{ModelId, ModelRole};
     use serde_json::json;
 
     fn text(markdown: &str) -> Block {
@@ -483,5 +543,63 @@ mod tests {
         });
         assert_eq!(change, TimelineChange::None);
         assert!(state.is_empty());
+    }
+
+    fn prompt(line: &str) -> Block {
+        Block::new(BlockKind::Text {
+            markdown: format!("> {line}\n"),
+        })
+    }
+
+    fn turn_started() -> DomainEvent {
+        DomainEvent::TurnStarted {
+            session_id: SessionId::new(),
+            turn_id: TurnId::new(),
+            model: ModelId::new("m"),
+            role: ModelRole::Main,
+        }
+    }
+
+    fn turn_finished() -> DomainEvent {
+        DomainEvent::TurnFinished {
+            turn_id: TurnId::new(),
+            stop_reason: StopReason::EndTurn,
+        }
+    }
+
+    #[test]
+    fn reply_is_copyable_only_once_complete() {
+        let mut state = TimelineState::new();
+        state.apply(&turn_started());
+        state.apply(&added(&prompt("hola")));
+        let first = text("Hola");
+        let tool_call = tool("read_file");
+        state.apply(&added(&first));
+        state.apply(&added(&tool_call));
+        let last = text("¿en qué te ayudo?");
+        state.apply(&added(&last));
+        // The turn is still writing the reply: no copy button yet.
+        assert_eq!(state.reply_to_copy(3), None);
+        assert_eq!(state.reply_to_copy(1), None, "not the last block");
+        assert_eq!(state.reply_to_copy(2), None, "not the last block");
+        state.apply(&turn_finished());
+        assert_eq!(
+            state.reply_to_copy(3).as_deref(),
+            Some("Hola\n\n¿en qué te ayudo?"),
+            "only text blocks, from the prompt on"
+        );
+        // A prompt after the reply completes it even during a new turn.
+        state.apply(&turn_started());
+        state.apply(&added(&prompt("otra")));
+        assert!(state.reply_to_copy(3).is_some());
+        assert_eq!(state.reply_to_copy(4), None, "a prompt has no copy button");
+    }
+
+    #[test]
+    fn reply_without_text_has_no_copy_button() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&prompt("ls")));
+        state.apply(&added(&tool("bash")));
+        assert_eq!(state.reply_to_copy(1), None);
     }
 }
