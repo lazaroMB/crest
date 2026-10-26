@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
+use crate::devops::bench::BenchSpec;
 use crate::devops::diagram::DiagramSpec;
 use crate::devops::flame::FlameSpec;
 use crate::devops::har::HarSpec;
@@ -141,6 +142,7 @@ impl Block {
             BlockKind::Har(spec) => spec.validate(),
             BlockKind::TerraformPlan(spec) => spec.validate(),
             BlockKind::Diagram(spec) => spec.validate(),
+            BlockKind::Benchmarks(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -307,6 +309,9 @@ pub enum BlockKind {
     /// A DOT graph or an ER diagram from SQL DDL on the graph widget
     /// (tools `show_dot`, `show_er`).
     Diagram(Box<DiagramSpec>),
+    /// Criterion benchmarks, baseline against new (tool
+    /// `show_benchmarks`).
+    Benchmarks(Box<BenchSpec>),
 }
 
 /// Lifecycle of a tool call.

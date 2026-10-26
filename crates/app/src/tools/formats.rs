@@ -7,8 +7,8 @@
 //! formula and mass) and `show_plate` (a 96/384-well plate map, pure),
 //! plus the developer/ops viewers of [`devops`] (`show_trace`,
 //! `show_flamegraph`, `show_logs`), [`query_plan`] (`show_query_plan`),
-//! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`) and
-//! [`diagram`] (`show_dot`, `show_er`).
+//! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`),
+//! [`diagram`] (`show_dot`, `show_er`) and [`bench`] (`show_benchmarks`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -45,12 +45,17 @@ use crate::ports::formats::{DatasetRequest, FormatsPort};
 use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
+pub mod bench;
 pub mod devops;
 pub mod diagram;
 pub mod har;
 pub mod query_plan;
 pub mod terraform;
 
+pub use bench::{
+    DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
+    collect_benchmarks,
+};
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
     flame_summary, logs_summary, read_log, trace_summary,
@@ -1113,6 +1118,9 @@ graphs, `terraform graph`, build graphs) as an interactive graph.
 - `show_er`: draw the entity-relationship diagram of a schema from its \
 SQL DDL (schema dump or migrations) so it matches the real tables. Use \
 `show_mermaid` only for diagrams you compose yourself.
+- `show_benchmarks`: after `cargo bench`, show criterion's results \
+(baseline against new) instead of pasting its output; cite its numbers and \
+verdicts, never your own estimates.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1120,7 +1128,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
-/// `show_terraform_plan`, `show_dot` and `show_er`.
+/// `show_terraform_plan`, `show_dot`, `show_er` and `show_benchmarks`.
 ///
 /// # Errors
 ///
@@ -1142,7 +1150,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowHarTool::new(ports.clone()))?;
     registry.register_typed(ShowTerraformPlanTool::new(ports.clone()))?;
     registry.register_typed(ShowDotTool::new(ports.clone()))?;
-    registry.register_typed(ShowErTool::new(ports.clone()))
+    registry.register_typed(ShowErTool::new(ports.clone()))?;
+    registry.register_typed(ShowBenchmarksTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1260,7 +1269,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 14);
+        assert_eq!(registry.names().len(), 15);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

@@ -56,7 +56,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::QueryPlan(_)
         | BlockKind::Har(_)
         | BlockKind::TerraformPlan(_)
-        | BlockKind::Diagram(_) => BlockWidth::Wide,
+        | BlockKind::Diagram(_)
+        | BlockKind::Benchmarks(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

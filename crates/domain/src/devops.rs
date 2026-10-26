@@ -1,8 +1,9 @@
 //! Developer and operations viewers: distributed traces (`show_trace`),
 //! profiles as flame graphs (`show_flamegraph`), structured logs
 //! (`show_logs`), SQL query plans (`show_query_plan`), HTTP archives
-//! (`show_har`), Terraform plans (`show_terraform_plan`) and DOT / ER
-//! diagrams (`show_dot`, `show_er`).
+//! (`show_har`), Terraform plans (`show_terraform_plan`), DOT / ER
+//! diagrams (`show_dot`, `show_er`) and criterion benchmark comparisons
+//! (`show_benchmarks`).
 //!
 //! Adapters parse the files (OTLP, Jaeger and Zipkin JSON; folded stacks
 //! and pprof; JSON lines, logfmt and plain text) into these specs, which
@@ -10,6 +11,7 @@
 //! helpers here (critical path, self times, hottest frames, level counts)
 //! are what the tools summarise for the model.
 
+pub mod bench;
 pub mod diagram;
 pub mod flame;
 pub mod har;

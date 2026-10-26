@@ -7,6 +7,7 @@
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod ansi;
+pub mod bench;
 pub mod chart;
 pub mod computed;
 pub mod copy;
@@ -85,6 +86,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Har(_) => har::render(entry, window, cx),
         BlockKind::TerraformPlan(_) => terraform::render(entry, window, cx),
         BlockKind::Diagram(_) => diagram::render(entry, window, cx),
+        BlockKind::Benchmarks(_) => bench::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }
