@@ -20,6 +20,7 @@
 //! | cad model (STEP) | solids CSV (faces, triangles, box), the summary line |
 //! | drawing (DXF) | layers CSV, the drawing's texts, the summary line |
 //! | IFC schedule | spaces CSV (storey, name, area, unit, source), the tree as text |
+//! | sequence | FASTA, features CSV, cut sites CSV (when searched) |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -564,6 +565,16 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("spaces", "spaces CSV", spec.to_csv()),
             CopyFormat::new("tree", "schedule", spec.to_tree().to_text()),
         ],
+        BlockKind::Sequence(spec) => {
+            let mut formats = vec![
+                CopyFormat::new("fasta", "FASTA", spec.to_fasta()),
+                CopyFormat::new("features", "features CSV", spec.features_csv()),
+            ];
+            if spec.enzyme_source.is_some() {
+                formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
+            }
+            formats
+        }
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }

@@ -685,6 +685,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A DNA, RNA or protein sequence with its features (tool\n`show_sequence`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "sequence"
+        }
+      },
+      "$ref": "#/$defs/SequenceSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -11397,6 +11411,310 @@ expression: "schemars::schema_for!(Block)"
         "path",
         "schema",
         "storeys"
+      ]
+    },
+    "SequenceFormat": {
+      "description": "The file the sequence came from.",
+      "oneOf": [
+        {
+          "description": "A GenBank flat file.",
+          "type": "string",
+          "const": "genbank"
+        },
+        {
+          "description": "FASTA.",
+          "type": "string",
+          "const": "fasta"
+        },
+        {
+          "description": "Bare residues.",
+          "type": "string",
+          "const": "plain"
+        }
+      ]
+    },
+    "Alphabet": {
+      "description": "What the residues are.",
+      "oneOf": [
+        {
+          "description": "Nucleotides with T.",
+          "type": "string",
+          "const": "dna"
+        },
+        {
+          "description": "Nucleotides with U.",
+          "type": "string",
+          "const": "rna"
+        },
+        {
+          "description": "Amino acids.",
+          "type": "string",
+          "const": "protein"
+        }
+      ]
+    },
+    "Topology": {
+      "description": "Linear or circular (a plasmid).",
+      "oneOf": [
+        {
+          "description": "Has two ends.",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "Its end joins its start.",
+          "type": "string",
+          "const": "circular"
+        }
+      ]
+    },
+    "SeqFeature": {
+      "description": "An annotated region.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Feature key (`CDS`, `gene`, `promoter`, `rep_origin`).",
+          "type": "string"
+        },
+        "label": {
+          "description": "Its name: `/label`, `/gene`, `/product` or `/note`, the first given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segments": {
+          "description": "Its parts in reading order (two for one crossing the origin).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeqSpan"
+          }
+        },
+        "strand": {
+          "description": "The strand.",
+          "$ref": "#/$defs/Strand",
+          "default": "forward"
+        },
+        "qualifiers": {
+          "description": "Its qualifiers (capped at [`MAX_QUALIFIERS`]).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Qualifier"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "segments"
+      ]
+    },
+    "SeqSpan": {
+      "description": "A half-open range of residues, `start..end`.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "First residue, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "end": {
+          "description": "One past the last residue.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Strand": {
+      "description": "The strand a feature or hit is on.",
+      "oneOf": [
+        {
+          "description": "The given (top) strand.",
+          "type": "string",
+          "const": "forward"
+        },
+        {
+          "description": "The complementary strand.",
+          "type": "string",
+          "const": "reverse"
+        },
+        {
+          "description": "No strand (proteins, unstranded features).",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "Qualifier": {
+      "description": "A feature qualifier, `/key=\"value\"`.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Its key (`gene`, `product`, `note`).",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value; empty for a flag such as `/pseudo`.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "CutSite": {
+      "description": "Where a restriction enzyme cuts.",
+      "type": "object",
+      "properties": {
+        "enzyme": {
+          "description": "The enzyme (`EcoRI`).",
+          "type": "string"
+        },
+        "site": {
+          "description": "Its recognition sequence on the top strand (`GAATTC`).",
+          "type": "string"
+        },
+        "start": {
+          "description": "First residue of the recognition site, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cut": {
+          "description": "The top-strand cut, before residue `cut` (0-based, modulo the\nlength on a circular sequence).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "strand": {
+          "description": "The strand the site reads on (non-palindromic sites).",
+          "$ref": "#/$defs/Strand",
+          "default": "forward"
+        }
+      },
+      "required": [
+        "enzyme",
+        "site",
+        "start",
+        "cut"
+      ]
+    },
+    "SequenceSpec": {
+      "description": "A DNA, RNA or protein sequence with its features and cut sites.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the viewer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "What it was read from.",
+          "$ref": "#/$defs/SequenceFormat",
+          "default": "plain"
+        },
+        "name": {
+          "description": "Record name (GenBank LOCUS, FASTA id).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Description (GenBank DEFINITION, the rest of the FASTA header).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accession": {
+          "description": "Accession and version, when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "organism": {
+          "description": "Organism, when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alphabet": {
+          "description": "The residues.",
+          "$ref": "#/$defs/Alphabet"
+        },
+        "topology": {
+          "description": "Linear or circular.",
+          "$ref": "#/$defs/Topology",
+          "default": "linear"
+        },
+        "sequence": {
+          "description": "The residues, upper case.",
+          "type": "string"
+        },
+        "features": {
+          "description": "The annotation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeqFeature"
+          }
+        },
+        "cut_sites": {
+          "description": "Restriction sites of the bundled enzyme table (nucleic acids).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CutSite"
+          }
+        },
+        "enzyme_source": {
+          "description": "Where the enzyme table comes from, when sites were searched.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "records": {
+          "description": "Records in the file.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1
+        },
+        "record": {
+          "description": "The record shown, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "warnings": {
+          "description": "Reader notes (non-IUPAC characters, features dropped).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "alphabet",
+        "sequence"
       ]
     }
   }

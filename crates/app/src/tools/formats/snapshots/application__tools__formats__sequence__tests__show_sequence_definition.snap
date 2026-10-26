@@ -1,0 +1,109 @@
+---
+source: crates/app/src/tools/formats/sequence.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_sequence",
+  "description": "Shows a DNA, RNA or protein sequence in the user's timeline: a GenBank, FASTA or plain file (`path`) or residues inline (`sequence`), with a ruler, feature tracks, translation frames, search with IUPAC codes on both strands, and a plasmid map with restriction sites for circular DNA. Returns the length, GC content, features with their locations, CDS problems (frame shifts, premature stops), single-cutter enzymes and the hits of `find`. Cite these; do not count bases or positions yourself, and do not paste the sequence back.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A sequence file of the workspace: GenBank (`.gb`, `.gbk`), FASTA\n(`.fa`, `.fasta`, `.faa`, `.fna`) or bare residues.",
+        "default": null
+      },
+      "sequence": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Residues or a FASTA record given inline, instead of `path`.",
+        "default": null
+      },
+      "record": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0,
+        "description": "The record of a multi-record file to show, 1-based (default 1).",
+        "default": null
+      },
+      "alphabet": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Alphabet"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "`dna`, `rna` or `protein`; guessed from the residues when absent\n(GenBank says).",
+        "default": null
+      },
+      "circular": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "description": "Whether the sequence is circular (a plasmid); GenBank's LOCUS line\nsays, otherwise linear.",
+        "default": null
+      },
+      "enzymes": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "description": "Search the bundled restriction enzymes (default true; DNA only).",
+        "default": null
+      },
+      "find": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A motif to find (IUPAC codes allowed, both strands), e.g. a primer;\nit is highlighted and its positions are returned.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the viewer; defaults to the record name.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_sequence`.",
+    "title": "ShowSequence",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Alphabet": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "dna",
+            "description": "Nucleotides with T."
+          },
+          {
+            "type": "string",
+            "const": "rna",
+            "description": "Nucleotides with U."
+          },
+          {
+            "type": "string",
+            "const": "protein",
+            "description": "Amino acids."
+          }
+        ],
+        "description": "What the residues are."
+      }
+    }
+  }
+}

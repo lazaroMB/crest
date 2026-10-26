@@ -23,7 +23,9 @@
 //! - netlists ([`netlist`], own SPICE and KiCad readers);
 //! - STEP parts ([`step`], truck-stepio + truck-meshalgo);
 //! - 2D DXF drawings ([`drawing`], the `dxf` crate);
-//! - IFC room schedules ([`ifc`], ifc-lite-core).
+//! - IFC room schedules ([`ifc`], ifc-lite-core);
+//! - sequences: GenBank, FASTA and bare residues ([`sequence`], gb-io and
+//!   our own FASTA reader).
 
 pub mod bench;
 pub mod dataset;
@@ -40,6 +42,7 @@ pub mod molecule;
 pub mod netlist;
 pub mod query_plan;
 pub mod sarif;
+pub mod sequence;
 pub mod step;
 pub mod terraform;
 pub mod trace;
@@ -48,7 +51,7 @@ pub mod waveform;
 
 use application::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    StepRequest, WaveRequest,
+    SequenceRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -66,6 +69,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::sequence::SequenceSpec;
 
 /// The formats adapter. Stateless.
 #[derive(Debug, Clone, Copy, Default)]
@@ -190,5 +194,13 @@ impl FormatsPort for Formats {
 
     fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError> {
         ifc::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_sequence(
+        &self,
+        bytes: &[u8],
+        request: &SequenceRequest,
+    ) -> Result<SequenceSpec, FormatError> {
+        sequence::parse(bytes, request).map_err(FormatError::Invalid)
     }
 }

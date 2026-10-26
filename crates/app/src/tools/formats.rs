@@ -12,7 +12,8 @@
 //! the engineering viewers [`waveform`] (`show_waveform`), [`netlist`]
 //! (`show_netlist`), [`material`] (`show_material`), [`step`]
 //! (`show_step`), [`dxf`] (`show_dxf`) and [`ifc`]
-//! (`show_ifc_schedule`).
+//! (`show_ifc_schedule`), and the science viewers [`sequence`]
+//! (`show_sequence`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -58,6 +59,7 @@ pub mod ifc;
 pub mod material;
 pub mod netlist;
 pub mod query_plan;
+pub mod sequence;
 pub mod step;
 pub mod terraform;
 pub mod waveform;
@@ -77,6 +79,7 @@ pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
+pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
 pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
@@ -1154,6 +1157,10 @@ DXF text; cite the extents, units, layers and texts it returns.
 - `show_ifc_schedule`: show an IFC model's rooms and areas per storey; \
 quote only the areas it returns with their source, and say \
 `not given` for spaces without one instead of estimating.
+- `show_sequence`: show a DNA, RNA or protein sequence (GenBank, FASTA or \
+residues) with its features, frames and, for plasmids, a map with \
+restriction sites; pass `find` for a motif or primer. Cite the lengths, \
+positions, GC content and cutters it returns, never your own counts.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1163,7 +1170,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
-/// `show_dxf` and `show_ifc_schedule`.
+/// `show_dxf`, `show_ifc_schedule` and `show_sequence`.
 ///
 /// # Errors
 ///
@@ -1192,7 +1199,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowMaterialTool)?;
     registry.register_typed(ShowStepTool::new(ports.clone()))?;
     registry.register_typed(ShowDxfTool::new(ports.clone()))?;
-    registry.register_typed(ShowIfcScheduleTool::new(ports.clone()))
+    registry.register_typed(ShowIfcScheduleTool::new(ports.clone()))?;
+    registry.register_typed(ShowSequenceTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1310,7 +1318,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 21);
+        assert_eq!(registry.names().len(), 22);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

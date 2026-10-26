@@ -256,6 +256,16 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::Sequence(seq) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[sequence: {} {}, {} features, {} cut sites]",
+                seq.len(),
+                seq.alphabet.unit(),
+                seq.features.len(),
+                seq.cut_sites.len()
+            ),
+        ),
         BlockKind::IfcSchedule(schedule) => w.line(
             Some(Style::Dim),
             &format!(

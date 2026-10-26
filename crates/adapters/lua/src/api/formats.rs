@@ -2,7 +2,7 @@
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
-//! `show_step`, `show_dxf` and `show_ifc_schedule` tools from Lua. Each returns a block (wrapped like
+//! `show_step`, `show_dxf`, `show_ifc_schedule` and `show_sequence` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -22,6 +22,7 @@
 //! return app.formats.step{ path = 'cad/bracket.step' }
 //! return app.formats.dxf{ path = 'dwg/plate.dxf' }
 //! return app.formats.ifc_schedule{ path = 'bim/house.ifc' }
+//! return app.formats.sequence{ path = 'dna/puc19.gb' }
 //! ```
 //!
 //! | Function | Block |
@@ -42,6 +43,7 @@
 //! | `step{ path, tolerance, title }` | a STEP part tessellated into the 3D view with its solids (`tolerance` in the file's unit) |
 //! | `dxf{ path, title }` | a 2D DXF drawing with its layers, zoom and pan |
 //! | `ifc_schedule{ path, title }` | an IFC model's spaces and areas (only the file's) and wall/door/window counts per storey |
+//! | `sequence{ path or sequence, record, alphabet, circular, enzymes, title }` | a GenBank, FASTA or plain sequence with features, frames and (circular DNA) a plasmid map; `record` 1-based, `alphabet` `dna`/`rna`/`protein`, `enzymes` (default true) searches the bundled restriction enzymes |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -52,7 +54,8 @@
 use std::sync::Arc;
 
 use application::ports::formats::{
-    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, StepRequest, WaveRequest,
+    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, SequenceRequest, StepRequest,
+    WaveRequest,
 };
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
@@ -509,9 +512,55 @@ fn netlist(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Netlist(Box::new(spec)))
 }
 
+fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "sequence";
+    let services = services(lua, F)?;
+    let (path, source) = path_or_inline(lua, args, F, "sequence")?;
+    let record = match args.get::<Option<i64>>("record")? {
+        Some(n) if n >= 1 => usize::try_from(n - 1).unwrap_or(0),
+        Some(_) => return Err(error(F, "`record` counts from 1")),
+        None => 0,
+    };
+    let alphabet = match text(args, F, "alphabet")? {
+        Some(name) => Some(
+            serde_json::from_value(json!(name.to_ascii_lowercase()))
+                .map_err(|_| error(F, format!("unknown `alphabet` `{name}`")))?,
+        ),
+        None => None,
+    };
+    let topology = args.get::<Option<bool>>("circular")?.map(|c| {
+        if c {
+            domain::science::sequence::Topology::Circular
+        } else {
+            domain::science::sequence::Topology::Linear
+        }
+    });
+    let request = SequenceRequest {
+        path,
+        record,
+        alphabet,
+        topology,
+        enzymes: args.get::<Option<bool>>("enzymes")?.unwrap_or(true),
+    };
+    let mut spec = services
+        .formats
+        .parse_sequence(source.as_bytes(), &request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Sequence(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "sequence",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => sequence(lua, &args),
+            _ => Err(error("sequence", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "dataset",
         lua.create_function(|lua, args: Value| match args {
@@ -656,6 +705,7 @@ mod tests {
             .with_file("cad/block.step", "ISO-10303-21;\n")
             .with_file("dwg/plate.dxf", "0\nEOF\n")
             .with_file("bim/house.ifc", "ISO-10303-21;\n")
+            .with_file("dna/p.gb", "LOCUS x\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -842,6 +892,23 @@ mod tests {
             (spec.missing_areas(), spec.title.as_deref()),
             (1, Some("h"))
         );
+    }
+
+    #[test]
+    fn science_viewers_return_their_blocks() {
+        let formats = || Some(Arc::new(FakeFormats::new()));
+        let out = run_code(
+            "return app.formats.sequence{ path = 'dna/p.gb', record = 1, circular = false }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Sequence(spec)) = out else {
+            panic!("not a sequence: {out:?}");
+        };
+        assert_eq!((spec.len(), spec.is_circular()), (30, false));
+        let err = run_code("return app.formats.sequence{ sequence = 'ACGT', record = 0 }", formats())
+            .unwrap_err();
+        assert!(err.to_string().contains("counts from 1"), "{err}");
     }
 
     #[test]
