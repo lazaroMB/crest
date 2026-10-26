@@ -12,7 +12,9 @@
 
 use std::path::Path;
 
-use application::ports::fs::{FileContent, FsError, MAX_READ_BYTES, ReadFileRequest};
+use application::ports::fs::{
+    DirEntry, FileContent, FsError, MAX_DIR_ENTRIES, MAX_READ_BYTES, ReadFileRequest,
+};
 use domain::workspace::WorkspacePath;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -68,6 +70,53 @@ pub(crate) async fn read_bytes(
     tokio::fs::read(&real)
         .await
         .map_err(|e| io_error(&path, &real, &e))
+}
+
+/// The entries of directory `path`, sorted by name, without the ones the
+/// sensitive-path rules deny.
+pub(crate) async fn list_dir(
+    guard: &WorkspaceGuard,
+    path: &WorkspacePath,
+) -> Result<Vec<DirEntry>, FsError> {
+    let (path, real) = guard.resolve_readable(path.as_str()).await?;
+    let meta = tokio::fs::metadata(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    if !meta.is_dir() {
+        return Err(FsError::Io(format!("{path} is not a directory")));
+    }
+    let mut dir = tokio::fs::read_dir(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    let mut out = Vec::new();
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let child = if path.is_root() {
+            WorkspacePath::parse(&name)
+        } else {
+            WorkspacePath::parse(&format!("{path}/{name}"))
+        };
+        let Ok(child) = child else {
+            continue;
+        };
+        if guard.check_readable(&child).is_err() {
+            continue;
+        }
+        // Follows symlinks; a dangling one is a file that cannot be read.
+        let is_dir = tokio::fs::metadata(entry.path())
+            .await
+            .is_ok_and(|m| m.is_dir());
+        out.push(DirEntry { name, is_dir });
+        if out.len() >= MAX_DIR_ENTRIES {
+            break;
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
 }
 
 /// Reads at most the first `max` bytes of `path`, with its full size.
