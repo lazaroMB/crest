@@ -48,6 +48,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::TerraformPlan(_) => "terraform_plan",
         BlockKind::Diagram(_) => "diagram",
         BlockKind::Benchmarks(_) => "benchmarks",
+        BlockKind::Waveform(_) => "waveform",
     }
 }
 

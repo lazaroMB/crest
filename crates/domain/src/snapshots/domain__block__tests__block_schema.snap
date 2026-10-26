@@ -601,6 +601,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Digital waveforms from a VCD, FST or GHW dump (tool\n`show_waveform`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "waveform"
+        }
+      },
+      "$ref": "#/$defs/WaveformSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -9004,6 +9018,235 @@ expression: "schemars::schema_for!(Block)"
         "baseline",
         "noise_threshold",
         "benches"
+      ]
+    },
+    "WaveFormat": {
+      "description": "The dump format.",
+      "oneOf": [
+        {
+          "description": "Value change dump (IEEE 1364).",
+          "type": "string",
+          "const": "vcd"
+        },
+        {
+          "description": "GTKWave's fast signal trace.",
+          "type": "string",
+          "const": "fst"
+        },
+        {
+          "description": "GHDL's waveform dump.",
+          "type": "string",
+          "const": "ghw"
+        }
+      ]
+    },
+    "Timescale": {
+      "description": "Length of a tick: `factor` × 10^`exponent` seconds.",
+      "type": "object",
+      "properties": {
+        "factor": {
+          "description": "1, 10 or 100 in VCD files.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "exponent": {
+          "description": "Power of ten of the unit: −9 for ns, −12 for ps.",
+          "type": "integer",
+          "format": "int8",
+          "minimum": -128,
+          "maximum": 127
+        }
+      },
+      "required": [
+        "factor",
+        "exponent"
+      ]
+    },
+    "WaveSignal": {
+      "description": "One signal with its changes in time order.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name within its scope, with its bit range (`data[7:0]`).",
+          "type": "string"
+        },
+        "scope": {
+          "description": "Dotted path of its scope (`tb.cpu`), empty at the top.",
+          "type": "string",
+          "default": ""
+        },
+        "kind": {
+          "description": "What it carries.",
+          "$ref": "#/$defs/SignalKind"
+        },
+        "width": {
+          "description": "Width in bits (1 for a bit, 0 for real and text).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "changes": {
+          "description": "The changes, ascending in time.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WaveChange"
+          },
+          "default": []
+        },
+        "truncated": {
+          "description": "Whether later changes were dropped to stay under [`MAX_CHANGES`].",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "width"
+      ]
+    },
+    "SignalKind": {
+      "description": "What a signal carries.",
+      "oneOf": [
+        {
+          "description": "One bit.",
+          "type": "string",
+          "const": "bit"
+        },
+        {
+          "description": "A bus of `width` bits.",
+          "type": "string",
+          "const": "vector"
+        },
+        {
+          "description": "A real number.",
+          "type": "string",
+          "const": "real"
+        },
+        {
+          "description": "Text (VHDL enumerations, strings).",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "A named event (no value).",
+          "type": "string",
+          "const": "event"
+        }
+      ]
+    },
+    "WaveChange": {
+      "description": "One value change.",
+      "type": "object",
+      "properties": {
+        "t": {
+          "description": "Time in ticks.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "v": {
+          "description": "The value: bits (msb first), a real number or text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "v"
+      ]
+    },
+    "Radix": {
+      "description": "How a bus value is written.",
+      "oneOf": [
+        {
+          "description": "Hexadecimal digits (`3f`); a digit with an unknown bit is `x`.",
+          "type": "string",
+          "const": "hex"
+        },
+        {
+          "description": "The bits as written.",
+          "type": "string",
+          "const": "bin"
+        },
+        {
+          "description": "Unsigned decimal; unknown when any bit is not 0 or 1.",
+          "type": "string",
+          "const": "dec"
+        }
+      ]
+    },
+    "WaveformSpec": {
+      "description": "A waveform block.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the waves; defaults to the file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the dump.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Its format.",
+          "$ref": "#/$defs/WaveFormat"
+        },
+        "timescale": {
+          "description": "Length of one tick.",
+          "$ref": "#/$defs/Timescale",
+          "default": {
+            "factor": 1,
+            "exponent": -9
+          }
+        },
+        "start": {
+          "description": "First time of the dump, in ticks.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "end": {
+          "description": "Last time of the dump, in ticks.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "signals": {
+          "description": "Signals shown, in hierarchy order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WaveSignal"
+          },
+          "default": []
+        },
+        "total_signals": {
+          "description": "Signals in the file (before any filter or cap).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "radix": {
+          "description": "How buses are written at first.",
+          "$ref": "#/$defs/Radix",
+          "default": "hex"
+        },
+        "generator": {
+          "description": "Simulator and date from the header, when present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "format"
       ]
     }
   }

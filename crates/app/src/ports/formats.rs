@@ -22,6 +22,7 @@ use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 
@@ -87,6 +88,18 @@ pub struct BenchRequest {
     pub baseline: String,
     /// The benchmarks found under it.
     pub benches: Vec<BenchFiles>,
+}
+
+/// What [`FormatsPort::parse_waveform`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WaveRequest {
+    /// Workspace path of the dump, for the block and messages.
+    pub path: String,
+    /// Signals to keep: dotted paths or name patterns with `*`
+    /// (`tb.cpu.*`, `*clk`); all (up to the cap) when empty.
+    pub signals: Vec<String>,
+    /// How buses are written at first.
+    pub radix: Radix,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -254,6 +267,20 @@ pub trait FormatsPort: Send + Sync {
     ///
     /// [`FormatError::Invalid`] when no benchmark has a readable new run.
     fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError>;
+
+    /// A VCD, FST or GHW dump: the signals (filtered by the request's
+    /// patterns) in hierarchy order with their value changes, capped at
+    /// the domain's limits.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unknown or malformed dump, or when
+    /// no signal matches.
+    fn parse_waveform(
+        &self,
+        bytes: &[u8],
+        request: &WaveRequest,
+    ) -> Result<WaveformSpec, FormatError>;
 }
 
 #[cfg(test)]

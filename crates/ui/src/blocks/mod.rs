@@ -41,6 +41,7 @@ pub mod terraform;
 pub mod test_report;
 pub mod thinking;
 pub mod trace;
+pub mod waveform;
 
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -87,6 +88,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::TerraformPlan(_) => terraform::render(entry, window, cx),
         BlockKind::Diagram(_) => diagram::render(entry, window, cx),
         BlockKind::Benchmarks(_) => bench::render(entry, window, cx),
+        BlockKind::Waveform(_) => waveform::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

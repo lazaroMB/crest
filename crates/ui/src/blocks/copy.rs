@@ -14,6 +14,7 @@
 //! | dataset | column profile CSV, preview rows CSV |
 //! | molecule | SMILES, canonical SMILES, formula, SVG |
 //! | plate | `well,label,value` CSV |
+//! | waveform | value changes CSV, every signal's value at the end |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -496,6 +497,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Benchmarks(spec) => {
             vec![CopyFormat::new("csv", "CSV", spec.to_csv())]
         }
+        BlockKind::Waveform(spec) => vec![
+            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
+            CopyFormat::new("end", "values at end", spec.values_at(spec.end, spec.radix)),
+        ],
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }
