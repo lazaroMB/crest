@@ -4,7 +4,7 @@
 //! ([`domain::widget::graph::layout`]) runs on the background executor;
 //! the canvas says "laying out…" until it is back, and draws a message
 //! instead of a graph past [`DRAW_LIMIT`] nodes. Nodes are rounded boxes
-//! colored by `kind`, edges polylines with arrowheads (directed graphs)
+//! colored by `kind` (and up to twice as large by `size`), edges polylines with arrowheads (directed graphs)
 //! and labels, groups boxes around their nodes. A drag (or shift + wheel)
 //! pans, ctrl/cmd + wheel (or `+`/`-` and the toolbar) zooms around the
 //! cursor, `0` fits. A click on a node focuses it: its neighbourhood
@@ -119,7 +119,8 @@ fn adjacency(spec: &GraphSpec) -> Vec<BTreeSet<usize>> {
     out
 }
 
-/// Box sizes of the nodes: the label width plus padding, in bounds.
+/// Box sizes of the nodes: the label width plus padding, in bounds,
+/// grown by the node's `size`.
 fn measure(spec: &GraphSpec, window: &Window) -> Vec<(f64, f64)> {
     let font = window.text_style().font();
     spec.nodes
@@ -127,7 +128,9 @@ fn measure(spec: &GraphSpec, window: &Window) -> Vec<(f64, f64)> {
         .map(|node| {
             let text = shape(node.text(), &font, px(FONT_SIZE), gpui::black(), window);
             let w = (f32::from(text.width()) + 2.0 * NODE_PAD).clamp(NODE_WIDTH.0, NODE_WIDTH.1);
-            (f64::from(w), f64::from(NODE_HEIGHT))
+            // A sized node (a metric) grows up to twice as wide and tall.
+            let grow = 1.0 + node.size.unwrap_or(0.0).clamp(0.0, 1.0);
+            (f64::from(w) * grow, f64::from(NODE_HEIGHT) * grow)
         })
         .collect()
 }

@@ -1,11 +1,12 @@
 //! Science B viewers on fixture files (all generated for these tests):
-//! GeoJSON maps, Gantt charts and HDF5 / NetCDF-3 files.
+//! GeoJSON maps, Gantt charts, HDF5 / NetCDF-3 files and networks.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
 use application::ports::formats::{
     ArrayRequest, FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
+    NetworkRequest,
 };
 use domain::gantt::Calendar;
 use domain::science::arrays::{ArrayFormat, ArrayNodeKind, PreviewKind};
@@ -353,5 +354,117 @@ fn netcdf3_classic_with_records_and_cf_decoding() {
         Formats::new()
             .inspect_array_file(b"not an array file", &ArrayRequest::default())
             .is_err()
+    );
+}
+
+fn network(name: &str, directed: Option<bool>) -> domain::science::network::NetworkSpec {
+    Formats::new()
+        .analyse_network(&NetworkRequest {
+            path: Some(format!("net/{name}")),
+            bytes: fixture(name),
+            directed,
+            ..NetworkRequest::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test]
+fn barbell_metrics_components_and_communities() {
+    let spec = network("barbell.csv", None);
+    spec.validate().unwrap();
+    assert!(!spec.directed && spec.weighted);
+    assert_eq!((spec.nodes.len(), spec.edges.len()), (12, 22));
+    assert!(spec.warnings.iter().any(|w| w.contains("1 self-loops")));
+    assert!(
+        spec.warnings
+            .iter()
+            .any(|w| w.contains("1 repeated edges merged"))
+    );
+    assert_eq!(spec.components, 2);
+    let node = |id: &str| spec.nodes.iter().find(|n| n.id == id).unwrap();
+    // Every path from a1..a4 to the other clique crosses a0: 20 of the 55
+    // pairs of the 11 other nodes.
+    assert!((node("a0").betweenness - 20.0 / 55.0).abs() < 1e-12);
+    assert_eq!(node("a1").betweenness, 0.0);
+    assert_eq!(node("a0").degree, 5.0);
+    // a2–a3 was given twice: strength 1 + 1 + 1 + 2.
+    assert_eq!(node("a2").strength, 5.0);
+    // Closeness of a0: 9 reachable at distances 4×1 + 1 + 4×2 = 13, scaled
+    // by 9/11 (the pair is out of reach).
+    assert!((node("a0").closeness - (9.0 / 13.0) * (9.0 / 11.0)).abs() < 1e-12);
+    // The two cliques and the pair are the communities.
+    assert_eq!(spec.communities, 3);
+    let a = node("a3").community;
+    assert!(
+        ["a0", "a1", "a2", "a4"]
+            .iter()
+            .all(|id| node(id).community == a)
+    );
+    assert_ne!(node("b2").community, a);
+    assert_eq!(node("p0").community, node("p1").community);
+    // Weighted modularity: m = 24, A inside 11 (degree 23), B inside 10
+    // (21), the pair 2 (4).
+    let q = 11.0 / 24.0 - (23.0f64 / 48.0).powi(2) + 10.0 / 24.0 - (21.0f64 / 48.0).powi(2)
+        + 2.0 / 24.0
+        - (4.0f64 / 48.0).powi(2);
+    assert!(
+        (spec.modularity - q).abs() < 1e-12,
+        "{} vs {q}",
+        spec.modularity
+    );
+    let sum: f64 = spec.nodes.iter().map(|n| n.pagerank).sum();
+    assert!((sum - 1.0).abs() < 1e-9);
+    let m = &spec.metrics;
+    assert_eq!(m.values["components"].v, 2.0);
+    assert!((m.values["a0.betweenness"].v - 20.0 / 55.0).abs() < 1e-12);
+    assert_eq!(m.seed, Some(spec.seed));
+    // The same seed gives the same communities.
+    let again = network("barbell.csv", None);
+    assert_eq!(
+        spec.nodes.iter().map(|n| n.community).collect::<Vec<_>>(),
+        again.nodes.iter().map(|n| n.community).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn star_pagerank_and_directed_components() {
+    let star = network("star.json", None);
+    // Undirected star of 5: hub = 0.03 + 0.85·Σ leaves, leaf = 0.03 + 0.85·hub/4,
+    // so hub = 0.132 / 0.2775.
+    let hub = star.nodes.iter().find(|n| n.id == "hub").unwrap();
+    assert!(
+        (hub.pagerank - 0.132 / 0.2775).abs() < 1e-5,
+        "{}",
+        hub.pagerank
+    );
+    assert_eq!(hub.label.as_deref(), Some("Hub"));
+    assert!(
+        (hub.betweenness - 1.0).abs() < 1e-12,
+        "every leaf pair crosses the hub"
+    );
+    assert!((hub.closeness - 1.0).abs() < 1e-12);
+    let cycle = Formats::new()
+        .analyse_network(&NetworkRequest {
+            path: Some("net/cycle.csv".into()),
+            bytes: b"from,to\na,b\nb,c\nc,a\nc,d\n".to_vec(),
+            directed: Some(true),
+            ..NetworkRequest::default()
+        })
+        .unwrap();
+    assert_eq!((cycle.components, cycle.strong_components), (1, Some(2)));
+    let c = cycle.nodes.iter().find(|n| n.id == "c").unwrap();
+    assert_eq!(
+        (c.in_degree, c.out_degree, c.degree),
+        (Some(1.0), Some(2.0), 3.0)
+    );
+    assert!(
+        Formats::new()
+            .analyse_network(&NetworkRequest {
+                bytes: b"a,b\n".to_vec(),
+                ..NetworkRequest::default()
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("no edges")
     );
 }

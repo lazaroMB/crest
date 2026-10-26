@@ -40,6 +40,7 @@ pub mod molecule;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod plate;
 pub mod plot;
 pub mod query_plan;
@@ -117,6 +118,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::GeoMap(_) => geomap::render(entry, window, cx),
         BlockKind::Gantt(_) => gantt::render(entry, window, cx),
         BlockKind::ArrayFile(_) => arrays::render(entry, window, cx),
+        BlockKind::Network(_) => network::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

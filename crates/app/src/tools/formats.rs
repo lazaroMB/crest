@@ -16,8 +16,8 @@
 //! (`show_sequence`), [`reaction`] (`show_reaction`),
 //! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
 //! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`), and the
-//! science B viewers [`geomap`] (`show_map`), [`gantt`] (`show_gantt`) and
-//! [`arrays`] (`show_array_file`).
+//! science B viewers [`geomap`] (`show_map`), [`gantt`] (`show_gantt`),
+//! [`arrays`] (`show_array_file`) and [`network`] (`show_network`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -67,6 +67,7 @@ pub mod material;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod query_plan;
 pub mod reaction;
 pub mod sequence;
@@ -94,6 +95,7 @@ pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_entries, grid_summary};
 pub use molecule3d::{SHOW_MOLECULE_3D, ShowMolecule3dTool, molecule3d_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
+pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, edges_json, network_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
@@ -1202,6 +1204,9 @@ slack and critical path instead of working them out yourself.
 - `show_array_file`: inspect an HDF5, NetCDF-4 or NetCDF-3 file (structure, \
 attributes, previews); its statistics cover the preview slice only, so say \
 so and never present them as the whole variable's.
+- `show_network`: show a network (edge list or node-link JSON, or inline \
+edges) with degree, betweenness, closeness, PageRank and communities; \
+name central nodes from its rankings, not from impressions.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1213,7 +1218,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
 /// `show_molecule_grid`, `show_spectrum`, `show_molecule_3d` and
-/// `show_map`, `show_gantt` and `show_array_file`.
+/// `show_map`, `show_gantt`, `show_array_file` and `show_network`.
 ///
 /// # Errors
 ///
@@ -1250,7 +1255,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowMolecule3dTool::new(ports.clone()))?;
     registry.register_typed(ShowMapTool::new(ports.clone()))?;
     registry.register_typed(ShowGanttTool::new(ports.clone()))?;
-    registry.register_typed(ShowArrayFileTool::new(ports.clone()))
+    registry.register_typed(ShowArrayFileTool::new(ports.clone()))?;
+    registry.register_typed(ShowNetworkTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1368,7 +1374,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 29);
+        assert_eq!(registry.names().len(), 30);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

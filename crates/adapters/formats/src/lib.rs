@@ -37,7 +37,8 @@
 //!   geo; engine records from [`sci`]);
 //! - Gantt charts scheduled by the critical path method ([`gantt`]);
 //! - HDF5, NetCDF-4 and NetCDF-3 structure with bounded previews
-//!   ([`arrays`]: hdf5-pure, our own NetCDF-3 reader).
+//!   ([`arrays`]: hdf5-pure, our own NetCDF-3 reader);
+//! - networks with centralities and communities ([`network`], petgraph).
 
 pub mod arrays;
 pub mod bench;
@@ -58,6 +59,7 @@ pub mod molecule;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod query_plan;
 pub mod reaction;
 pub mod sarif;
@@ -72,8 +74,8 @@ pub mod waveform;
 
 use application::ports::formats::{
     ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
-    MapRequest, Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest,
-    SpectrumRequest, StepRequest, WaveRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -96,6 +98,7 @@ use domain::science::arrays::ArrayFileSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::molecule3d::Molecule3dSpec;
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 use domain::science::spectrum::SpectrumSpec;
@@ -274,5 +277,9 @@ impl FormatsPort for Formats {
         request: &ArrayRequest,
     ) -> Result<ArrayFileSpec, FormatError> {
         arrays::inspect(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError> {
+        network::analyse(request).map_err(FormatError::Invalid)
     }
 }

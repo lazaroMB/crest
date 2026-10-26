@@ -72,3 +72,26 @@ pub struct ArrayRequest {
     /// few numeric variables when absent.
     pub variable: Option<String>,
 }
+
+/// What [`super::FormatsPort::analyse_network`] reads.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NetworkRequest {
+    /// Workspace path of the file, for the block, messages and the CSV
+    /// delimiter.
+    pub path: Option<String>,
+    /// An edge list (CSV/TSV with a header) or node-link JSON (`nodes`
+    /// and `links` or `edges`, NetworkX style).
+    pub bytes: Vec<u8>,
+    /// Whether edges have a direction; the JSON's `directed`, else false.
+    pub directed: Option<bool>,
+    /// Column of the source node (`source`, `from`, `src`... or the first).
+    pub source: Option<String>,
+    /// Column of the target node (`target`, `to`, `dst`... or the second).
+    pub target: Option<String>,
+    /// Column of the weight (`weight` when present).
+    pub weight: Option<String>,
+    /// Metric the nodes are sized by at first.
+    pub size_by: domain::science::network::NetworkMetric,
+    /// Seed of the community search, sampling and layout.
+    pub seed: Option<u64>,
+}

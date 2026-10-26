@@ -363,6 +363,7 @@ pub fn parse(sql: &str, dialect: Option<&str>, path: Option<&str>) -> Result<Dia
                 group: t.name.rsplit_once('.').map(|(schema, _)| schema.to_owned()),
                 kind: Some("table".to_owned()),
                 attrs,
+                size: None,
             }
         })
         .collect();

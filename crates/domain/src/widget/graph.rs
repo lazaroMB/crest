@@ -86,6 +86,10 @@ pub struct GraphNode {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     #[schemars(with = "std::collections::BTreeMap<String, Value>")]
     pub attrs: Map<String, Value>,
+    /// Relative size from 0 to 1 (a metric scaled to its maximum): the
+    /// box grows up to twice its width and height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
 }
 
 impl GraphNode {
@@ -180,6 +184,16 @@ impl GraphSpec {
         }
         if self.nodes.iter().any(|n| n.id.is_empty()) {
             return Err(invalid(KIND, "a node id is empty"));
+        }
+        if let Some(n) = self
+            .nodes
+            .iter()
+            .find(|n| n.size.is_some_and(|s| !(0.0..=1.0).contains(&s)))
+        {
+            return Err(invalid(
+                KIND,
+                format!("node {:?} has a size outside 0 to 1", n.id),
+            ));
         }
         unique(KIND, "node id", self.nodes.iter().map(|n| n.id.as_str()))?;
         if self.groups.iter().any(|g| g.id.is_empty()) {

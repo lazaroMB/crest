@@ -1,6 +1,6 @@
 [package]
 name = "adapter-formats"
-description = "FormatsPort adapter: JUnit XML test reports, SARIF findings, WaveDrom timing diagrams, dataset previews, 2D molecules, traces, profiles, logs, query plans, HAR, Terraform plans, DOT and ER diagrams, STEP parts, DXF drawings, IFC schedules, sequences, spectra, molecules, GeoJSON maps, Gantt charts, HDF5 and NetCDF files"
+description = "FormatsPort adapter: JUnit XML test reports, SARIF findings, WaveDrom timing diagrams, dataset previews, 2D molecules, traces, profiles, logs, query plans, HAR, Terraform plans, DOT and ER diagrams, STEP parts, DXF drawings, IFC schedules, sequences, spectra, molecules, GeoJSON maps, Gantt charts, HDF5 and NetCDF files, networks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,6 +23,7 @@ hdf5-pure.workspace = true
 mzdata.workspace = true
 ifc-lite-core.workspace = true
 parquet.workspace = true
+petgraph.workspace = true
 proj4rs.workspace = true
 prost.workspace = true
 quick-xml.workspace = true

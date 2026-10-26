@@ -1,10 +1,10 @@
 //! `app.formats` functions of the science B viewers: `map`, `gantt`,
-//! `array_file`.
+//! `array_file`, `network`.
 
 use application::ports::formats::{
-    ArrayRequest, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
+    ArrayRequest, GanttRequest, GanttSource, GanttTaskInput, MapRequest, NetworkRequest,
 };
-use application::tools::formats::{read_array, read_map, read_report};
+use application::tools::formats::{EdgeInput, edges_json, read_array, read_map, read_report};
 use domain::block::BlockKind;
 use mlua::{Lua, Table, Value};
 
@@ -129,6 +129,67 @@ fn array_file(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::ArrayFile(Box::new(spec)))
 }
 
+fn network(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "network";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?;
+    let edges: Option<Vec<EdgeInput>> = match args.get::<Value>("edges")? {
+        Value::Nil => None,
+        value @ Value::Table(_) => {
+            let json = convert::to_json(lua, value)?;
+            Some(serde_json::from_value(json).map_err(|e| error(F, format!("`edges`: {e}")))?)
+        }
+        other => {
+            return Err(error(
+                F,
+                format!("`edges` must be a list, got {}", other.type_name()),
+            ));
+        }
+    };
+    let bytes = match (&path, edges) {
+        (Some(_), Some(_)) => return Err(error(F, "give `path` or `edges`, not both")),
+        (None, None) => return Err(error(F, "`path` or `edges` is required")),
+        (Some(path), None) => context(lua)?
+            .block_on(read_report(services.fs.as_ref(), path))?
+            .map_err(|e| error(F, e))?,
+        (None, Some(edges)) => edges_json(&edges),
+    };
+    let size_by = match text(args, F, "size_by")? {
+        None => domain::science::network::NetworkMetric::Degree,
+        Some(name) => {
+            serde_json::from_value(serde_json::Value::String(name.clone())).map_err(|_| {
+                error(
+                    F,
+                    format!(
+                        "`size_by` is degree, betweenness, closeness or pagerank, not {name:?}"
+                    ),
+                )
+            })?
+        }
+    };
+    let seed = match args.get::<Option<i64>>("seed")? {
+        Some(s) => Some(u64::try_from(s).map_err(|_| error(F, "`seed` must not be negative"))?),
+        None => None,
+    };
+    let request = NetworkRequest {
+        path: path.clone(),
+        bytes,
+        directed: args.get::<Option<bool>>("directed")?,
+        source: text(args, F, "source")?,
+        target: text(args, F, "target")?,
+        weight: text(args, F, "weight")?,
+        size_by,
+        seed,
+    };
+    let mut spec = services
+        .formats
+        .analyse_network(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Network(Box::new(spec)))
+}
+
 /// Adds the science B functions to the `app.formats` table.
 pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
     formats.set(
@@ -150,6 +211,13 @@ pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => array_file(lua, &args),
             _ => Err(error("array_file", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "network",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => network(lua, &args),
+            _ => Err(error("network", "expected a table of arguments")),
         })?,
     )?;
     Ok(())

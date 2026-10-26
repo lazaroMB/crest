@@ -811,6 +811,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A network with degree, betweenness, closeness, PageRank and\ncommunities (tool `show_network`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "network"
+        }
+      },
+      "$ref": "#/$defs/NetworkSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -2308,6 +2322,14 @@ expression: "schemars::schema_for!(Block)"
           "description": "Extra fields shown when the node is focused.",
           "type": "object",
           "additionalProperties": true
+        },
+        "size": {
+          "description": "Relative size from 0 to 1 (a metric scaled to its maximum): the\nbox grows up to twice its width and height.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [
@@ -13644,6 +13666,247 @@ expression: "schemars::schema_for!(Block)"
         "format",
         "size",
         "nodes"
+      ]
+    },
+    "NetworkNode": {
+      "description": "One node with its metrics.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Label shown; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "degree": {
+          "description": "Edges at the node (in + out when directed).",
+          "type": "number",
+          "format": "double"
+        },
+        "in_degree": {
+          "description": "Incoming edges (directed only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "out_degree": {
+          "description": "Outgoing edges (directed only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "strength": {
+          "description": "Sum of the weights of its edges.",
+          "type": "number",
+          "format": "double"
+        },
+        "betweenness": {
+          "description": "Normalised betweenness.",
+          "type": "number",
+          "format": "double"
+        },
+        "closeness": {
+          "description": "Closeness (Wasserman–Faust scaled for disconnected graphs).",
+          "type": "number",
+          "format": "double"
+        },
+        "pagerank": {
+          "description": "PageRank.",
+          "type": "number",
+          "format": "double"
+        },
+        "component": {
+          "description": "Connected component (weak for directed graphs), largest first.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "community": {
+          "description": "Community (label propagation), largest first.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "degree",
+        "strength",
+        "betweenness",
+        "closeness",
+        "pagerank",
+        "component",
+        "community"
+      ]
+    },
+    "NetworkEdge": {
+      "description": "One edge (duplicates merged, weights summed).",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Source node id.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target node id.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Weight, when the input had weights.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "NetworkMetric": {
+      "description": "A per-node metric.",
+      "oneOf": [
+        {
+          "description": "Number of edges (in + out when directed).",
+          "type": "string",
+          "const": "degree"
+        },
+        {
+          "description": "Share of shortest paths through the node (normalised).",
+          "type": "string",
+          "const": "betweenness"
+        },
+        {
+          "description": "Inverse mean distance to the node (Wasserman–Faust scaled).",
+          "type": "string",
+          "const": "closeness"
+        },
+        {
+          "description": "PageRank (damping 0.85).",
+          "type": "string",
+          "const": "pagerank"
+        }
+      ]
+    },
+    "NetworkSpec": {
+      "description": "A network with its metrics.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the graph.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directed": {
+          "description": "Whether edges have a direction.",
+          "type": "boolean"
+        },
+        "weighted": {
+          "description": "Whether edges carry weights (used by PageRank and communities).",
+          "type": "boolean"
+        },
+        "nodes": {
+          "description": "The nodes in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkNode"
+          }
+        },
+        "edges": {
+          "description": "The edges.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkEdge"
+          }
+        },
+        "components": {
+          "description": "Connected components (weak when directed).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "strong_components": {
+          "description": "Strongly connected components (directed only).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "communities": {
+          "description": "Communities found.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "modularity": {
+          "description": "Modularity of the communities.",
+          "type": "number",
+          "format": "double"
+        },
+        "betweenness_sources": {
+          "description": "Sources betweenness was sampled from, when not exact.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "seed": {
+          "description": "Seed of the community search (and sampling, and layout).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size_by": {
+          "description": "The metric nodes are sized by at first.",
+          "$ref": "#/$defs/NetworkMetric",
+          "default": "degree"
+        },
+        "metrics": {
+          "description": "The metrics as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "directed",
+        "weighted",
+        "nodes",
+        "edges",
+        "components",
+        "communities",
+        "modularity",
+        "seed",
+        "metrics"
       ]
     }
   }

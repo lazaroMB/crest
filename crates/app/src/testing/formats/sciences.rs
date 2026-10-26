@@ -7,9 +7,10 @@ use domain::science::arrays::{
     ArrayFileSpec, ArrayFormat, ArrayNode, ArrayNodeKind, ArrayPreview, PreviewKind,
 };
 use domain::science::geomap::{CrsSource, GeometryKind, MapCrs, MapFeature, MapSpec};
+use domain::science::network::{NetworkEdge, NetworkNode, NetworkSpec};
 use serde_json::{Map, Value, json};
 
-use crate::ports::formats::{ArrayRequest, GanttRequest, MapRequest};
+use crate::ports::formats::{ArrayRequest, GanttRequest, MapRequest, NetworkRequest};
 
 fn engine(name: &str) -> Engine {
     Engine {
@@ -194,6 +195,63 @@ pub(super) fn arrays(request: &ArrayRequest) -> ArrayFileSpec {
             decoding: None,
             stats,
         }],
+        warnings: Vec::new(),
+    }
+}
+
+/// The path `a – b – c`: b has betweenness 1 and PageRank 0.486.
+pub(super) fn network(request: &NetworkRequest) -> NetworkSpec {
+    let node = |id: &str, degree: f64, bc: f64, cc: f64, pr: f64| NetworkNode {
+        id: id.into(),
+        label: None,
+        degree,
+        in_degree: None,
+        out_degree: None,
+        strength: degree,
+        betweenness: bc,
+        closeness: cc,
+        pagerank: pr,
+        component: 0,
+        community: 0,
+    };
+    let edge = |a: &str, b: &str| NetworkEdge {
+        from: a.into(),
+        to: b.into(),
+        weight: None,
+    };
+    let mut metrics = Computed::new(
+        "nw_fake",
+        "network.metrics",
+        "Network metrics",
+        engine("crest-graph"),
+    );
+    for (key, v) in [
+        ("nodes", 3.0),
+        ("edges", 2.0),
+        ("components", 1.0),
+        ("modularity", 0.0),
+    ] {
+        metrics.values.insert(key.into(), ComputedValue::new(v));
+    }
+    NetworkSpec {
+        title: None,
+        path: request.path.clone(),
+        directed: request.directed.unwrap_or(false),
+        weighted: false,
+        nodes: vec![
+            node("a", 1.0, 0.0, 0.667, 0.257),
+            node("b", 2.0, 1.0, 1.0, 0.486),
+            node("c", 1.0, 0.0, 0.667, 0.257),
+        ],
+        edges: vec![edge("a", "b"), edge("b", "c")],
+        components: 1,
+        strong_components: None,
+        communities: 1,
+        modularity: 0.0,
+        betweenness_sources: None,
+        seed: request.seed.unwrap_or(1),
+        size_by: request.size_by,
+        metrics,
         warnings: Vec::new(),
     }
 }
