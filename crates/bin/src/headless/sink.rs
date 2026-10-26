@@ -237,6 +237,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 wave.time_text(wave.end)
             ),
         ),
+        BlockKind::Netlist(netlist) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[netlist: {} components, {} nets, {} single-pin]",
+                netlist.components.len(),
+                netlist.nets().len(),
+                netlist.single_pin_nets().len()
+            ),
+        ),
         BlockKind::Benchmarks(bench) => w.line(
             Some(Style::Dim),
             &format!(

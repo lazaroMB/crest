@@ -9,7 +9,8 @@
 //! `show_flamegraph`, `show_logs`), [`query_plan`] (`show_query_plan`),
 //! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`),
 //! [`diagram`] (`show_dot`, `show_er`), [`bench`] (`show_benchmarks`) and
-//! the engineering viewer [`waveform`] (`show_waveform`).
+//! the engineering viewers [`waveform`] (`show_waveform`) and [`netlist`]
+//! (`show_netlist`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -50,6 +51,7 @@ pub mod bench;
 pub mod devops;
 pub mod diagram;
 pub mod har;
+pub mod netlist;
 pub mod query_plan;
 pub mod terraform;
 pub mod waveform;
@@ -64,6 +66,7 @@ pub use devops::{
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
+pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
@@ -1127,6 +1130,9 @@ verdicts, never your own estimates.
 - `show_waveform`: show a simulation dump (VCD, FST, GHW) as waves \
 instead of reading the dump text; narrow it with `signals` patterns and \
 cite the values and clock periods it returns.
+- `show_netlist`: show a SPICE deck or KiCad netlist as connectivity \
+before reasoning about a circuit's wiring; use the nets it returns \
+(including single-pin nets) instead of tracing the text yourself.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1134,8 +1140,8 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
-/// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks` and
-/// `show_waveform`.
+/// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
+/// `show_waveform` and `show_netlist`.
 ///
 /// # Errors
 ///
@@ -1159,7 +1165,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowDotTool::new(ports.clone()))?;
     registry.register_typed(ShowErTool::new(ports.clone()))?;
     registry.register_typed(ShowBenchmarksTool::new(ports.clone()))?;
-    registry.register_typed(ShowWaveformTool::new(ports.clone()))
+    registry.register_typed(ShowWaveformTool::new(ports.clone()))?;
+    registry.register_typed(ShowNetlistTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1277,7 +1284,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 16);
+        assert_eq!(registry.names().len(), 17);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

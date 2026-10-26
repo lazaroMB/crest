@@ -30,7 +30,7 @@ pub const MAX_INLINE_SOURCE: usize = 4 * 1024 * 1024;
 pub const MAX_TABLES_LISTED: usize = 40;
 
 /// The text of `path` or the inline source, with a name for messages.
-async fn source_text(
+pub(super) async fn source_text(
     ports: &FormatToolPorts,
     path: Option<&str>,
     inline: Option<String>,
@@ -45,7 +45,7 @@ async fn source_text(
 }
 
 /// Exactly one of `path` and the inline source, or an input error.
-fn one_of(
+pub(super) fn one_of(
     tool: &str,
     path: Option<String>,
     inline: Option<String>,

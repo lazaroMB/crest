@@ -24,6 +24,7 @@ use crate::devops::logs::LogSpec;
 use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
+use crate::engineering::netlist::NetlistSpec;
 use crate::engineering::waveform::WaveformSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
@@ -145,6 +146,7 @@ impl Block {
             BlockKind::Diagram(spec) => spec.validate(),
             BlockKind::Benchmarks(spec) => spec.validate(),
             BlockKind::Waveform(spec) => spec.validate(),
+            BlockKind::Netlist(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -317,6 +319,9 @@ pub enum BlockKind {
     /// Digital waveforms from a VCD, FST or GHW dump (tool
     /// `show_waveform`).
     Waveform(Box<WaveformSpec>),
+    /// A SPICE or KiCad netlist as a component–net graph and a component
+    /// table (tool `show_netlist`).
+    Netlist(Box<NetlistSpec>),
 }
 
 /// Lifecycle of a tool call.

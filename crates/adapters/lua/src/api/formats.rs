@@ -1,7 +1,8 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
-//! `show_er`, `show_benchmarks` and `show_waveform` tools from Lua. Each returns a block (wrapped like
+//! `show_er`, `show_benchmarks`, `show_waveform` and `show_netlist` tools
+//! from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -17,6 +18,7 @@
 //! return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }
 //! return app.formats.benchmarks{ path = 'target/criterion', baseline = 'base' }
 //! return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'tb.dut.*' } }
+//! return app.formats.netlist{ path = 'hw/amp.cir' }
 //! ```
 //!
 //! | Function | Block |
@@ -33,6 +35,7 @@
 //! | `er{ path or sql, dialect, title }` | an ER diagram from SQL DDL (tables, foreign keys) |
 //! | `benchmarks{ path, baseline, filter, title }` | criterion results, baseline against new (`target/criterion`, `base` by default) |
 //! | `waveform{ path, signals, radix, title }` | a VCD, FST or GHW dump as digital waves (`signals`: paths or `*` patterns; `radix`: `hex`, `bin`, `dec`) |
+//! | `netlist{ path or source, format, title }` | a SPICE deck or KiCad netlist as a component–net graph and table (`format`: `spice` or `kicad`, guessed when absent) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -415,6 +418,26 @@ fn waveform(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Waveform(Box::new(spec)))
 }
 
+fn netlist(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "netlist";
+    let services = services(lua, F)?;
+    let (path, source) = path_or_inline(lua, args, F, "source")?;
+    let format = match text(args, F, "format")? {
+        Some(name) => Some(
+            serde_json::from_value(json!(name))
+                .map_err(|_| error(F, format!("unknown `format` `{name}`")))?,
+        ),
+        None => None,
+    };
+    let mut spec = services
+        .formats
+        .parse_netlist(&source, format, path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Netlist(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -458,6 +481,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => waveform(lua, &args),
             _ => Err(error("waveform", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "netlist",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => netlist(lua, &args),
+            _ => Err(error("netlist", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -671,6 +701,15 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(bad.contains("unknown `radix`"), "{bad}");
+        let out = run_code(
+            "return app.formats.netlist{ source = 'div\\nR1 a 0 1k', format = 'spice' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Netlist(spec)) = out else {
+            panic!("not a netlist: {out:?}");
+        };
+        assert_eq!(spec.components.len(), 4);
     }
 
     #[test]
