@@ -254,6 +254,7 @@ pub fn key_from_keystroke(keystroke: &gpui::Keystroke) -> Option<Key> {
         "tab" => Some(KeyCode::Tab),
         "backspace" => Some(KeyCode::Backspace),
         "delete" => Some(KeyCode::Delete),
+        "insert" => Some(KeyCode::Insert),
         "up" => Some(KeyCode::Up),
         "down" => Some(KeyCode::Down),
         "left" => Some(KeyCode::Left),
@@ -1675,6 +1676,7 @@ mod tests {
         assert_eq!(key("shift-enter"), parsed("<S-CR>"));
         assert_eq!(key("escape"), parsed("<Esc>"));
         assert_eq!(key("ctrl-c"), parsed("<C-c>"));
+        assert_eq!(key("ctrl-insert"), parsed("<C-Insert>"));
         assert_eq!(key("f5"), parsed("<F5>"));
     }
 
