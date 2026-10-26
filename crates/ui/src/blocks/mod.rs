@@ -24,6 +24,7 @@ pub mod image_view;
 pub mod json;
 pub mod logs;
 pub mod markdown;
+pub mod material;
 pub mod math;
 pub mod measured;
 pub mod mermaid;
@@ -91,6 +92,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Benchmarks(_) => bench::render(entry, window, cx),
         BlockKind::Waveform(_) => waveform::render(entry, window, cx),
         BlockKind::Netlist(_) => netlist::render(entry, window, cx),
+        BlockKind::Material(_) => material::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

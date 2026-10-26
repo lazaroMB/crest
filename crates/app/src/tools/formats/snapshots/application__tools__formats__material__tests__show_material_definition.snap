@@ -1,0 +1,111 @@
+---
+source: crates/app/src/tools/formats/material.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_material",
+  "description": "Shows a material data card in the user's timeline: a table of the properties you give (density, E, ν, yield and ultimate strength, CTE, conductivity...), each with its unit, condition and source, and an `unverified` badge on every value without a source. crest has no material database: give only values from the user, a file or page you read, or a tool, and cite them; a value from memory must go without a source. Returns which values are unverified.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Material name (`aluminium alloy`, `PEEK`, `structural steel`)."
+      },
+      "designation": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Designation or grade (`6061-T6`, `S355JR`, `AISI 304`).",
+        "default": null
+      },
+      "condition": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Form or condition of the whole card (`plate 6–12 mm`, `annealed`).",
+        "default": null
+      },
+      "properties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/MaterialProperty"
+        },
+        "description": "The properties: `{name, symbol, value, unit, condition, source}`.\n`source` names where the value comes from (datasheet with its\nrevision, standard and table, handbook and edition, URL, or `user`\nfor a value the user gave); leave it out when you have none and the\nvalue shows as unverified."
+      },
+      "source": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A source for every property that names none (one datasheet for the\nwhole card).",
+        "default": null
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Notes shown under the table.",
+        "default": []
+      }
+    },
+    "required": [
+      "name",
+      "properties"
+    ],
+    "description": "Input of `show_material`.",
+    "title": "ShowMaterial",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "MaterialProperty": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name (`Young's modulus`, `yield strength`, `density`)."
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Symbol (`E`, `σy`, `ρ`)."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "The value as given."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Its unit (`GPa`, `MPa`, `kg/m³`, `1/K`).",
+            "default": ""
+          },
+          "condition": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Condition or basis (`20 °C`, `minimum`, `typical`, `T6 temper`,\n`A-basis`)."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the value comes from: a datasheet, standard, handbook (with\nedition and table), a URL, or `user` for a value the user gave.\nEmpty: unverified."
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "description": "One property value."
+      }
+    }
+  }
+}

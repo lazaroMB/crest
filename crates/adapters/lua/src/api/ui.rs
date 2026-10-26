@@ -42,11 +42,15 @@
 //! `app.ui.plate{ format, wells, value_label, title, ... }` (the fields of
 //! `show_plate`) is not a node but a whole block, already wrapped like
 //! `app.ui.block`: return it from a handler to show the plate map.
+//! `app.ui.material{ name, designation, condition, properties = { { name,
+//! symbol, value, unit, condition, source } }, notes }` is the same for a
+//! material data card (a property without `source` shows as unverified).
 
 use std::sync::Arc;
 
 use application::ports::plugin::PluginOutput;
 use domain::block::{BlockKind, CustomNode};
+use domain::engineering::material::MaterialSpec;
 use domain::science::PlateSpec;
 use mlua::{Lua, Table, Value};
 use serde_json::{Value as Json, json};
@@ -328,6 +332,22 @@ fn plate_block(lua: &Lua, def: Table) -> mlua::Result<Value> {
     super::formats::block_value(lua, &BlockKind::Plate(spec))
 }
 
+/// `app.ui.material{...}`: a material card block, wrapped like
+/// `app.ui.block`.
+fn material_block(lua: &Lua, def: Table) -> mlua::Result<Value> {
+    let mut json = convert::to_json(lua, Value::Table(def))?;
+    for key in ["properties", "notes"] {
+        if let Some(list) = json.get_mut(key)
+            && list.as_object().is_some_and(serde_json::Map::is_empty)
+        {
+            *list = json!([]);
+        }
+    }
+    let spec: MaterialSpec = serde_json::from_value(json).map_err(|e| error("material", e))?;
+    spec.validate().map_err(|e| error("material", e))?;
+    super::formats::block_value(lua, &BlockKind::Material(Box::new(spec)))
+}
+
 /// Builds the `app.ui` table of one phase; blocks are attributed to the
 /// phase's plugin.
 pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
@@ -446,6 +466,10 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
     ui.set(
         "plate",
         lua.create_function(|lua, def: Table| plate_block(lua, def))?,
+    )?;
+    ui.set(
+        "material",
+        lua.create_function(|lua, def: Table| material_block(lua, def))?,
     )?;
     let plugin = origin.plugin.clone();
     ui.set(
