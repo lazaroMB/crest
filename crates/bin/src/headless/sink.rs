@@ -256,6 +256,14 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::GeoMap(map) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[map: {} features, {}]",
+                map.features.len(),
+                map.crs.label()
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

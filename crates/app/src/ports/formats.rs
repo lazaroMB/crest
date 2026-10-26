@@ -7,7 +7,8 @@
 //! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
 //! (Graphviz DOT, ER from SQL DDL), criterion benchmark results and
 //! engineering files (waveforms, netlists, STEP parts, DXF drawings, IFC
-//! room schedules).
+//! room schedules) and science files (sequences, spectra, molecules,
+//! GeoJSON maps).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -31,6 +32,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::molecule3d::Molecule3dSpec;
 use domain::science::reaction::ReactionSpec;
@@ -195,6 +197,19 @@ pub enum Molecule3dSource {
         /// Its bytes.
         bytes: Vec<u8>,
     },
+}
+
+/// What [`FormatsPort::parse_geojson`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MapRequest {
+    /// Workspace path of the file, for the block and messages; `None`
+    /// for inline GeoJSON.
+    pub path: Option<String>,
+    /// The coordinate reference system to read the coordinates in, over
+    /// the file's own: `EPSG:32632`, `32632` or a PROJ string.
+    pub crs: Option<String>,
+    /// Property to colour the features by at first.
+    pub color_by: Option<String>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -477,6 +492,17 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for a SMILES that does not parse or embed,
     /// or a file without 3D coordinates.
     fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError>;
+
+    /// GeoJSON (a FeatureCollection, a Feature or a bare geometry):
+    /// reprojected from its CRS (the request's, the legacy `crs` member's
+    /// or WGS 84) to Web Mercator for display, with the box, geodesic
+    /// area and length of every feature and in total.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed GeoJSON, an unknown CRS or
+    /// coordinates the CRS cannot reproject.
+    fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError>;
 }
 
 #[cfg(test)]

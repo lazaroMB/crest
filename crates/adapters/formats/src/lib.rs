@@ -32,7 +32,9 @@
 //! - spectra with picked peaks ([`spectrum`]: our own JCAMP-DX reader,
 //!   mzdata for mzML and MGF);
 //! - molecules in 3D ([`molecule3d`]: chematic's embedding, our own
-//!   V2000 reader, chematic's V3000, XYZ and PDB readers).
+//!   V2000 reader, chematic's V3000, XYZ and PDB readers);
+//! - GeoJSON maps with geodesic measures ([`geomap`]: geojson, proj4rs,
+//!   geo; engine records from [`sci`]).
 
 pub mod bench;
 pub mod chem;
@@ -41,6 +43,7 @@ pub mod dot;
 pub mod drawing;
 pub mod er;
 pub mod flame;
+pub mod geomap;
 pub mod har;
 pub mod ifc;
 pub mod junit;
@@ -53,6 +56,7 @@ pub mod netlist;
 pub mod query_plan;
 pub mod reaction;
 pub mod sarif;
+pub mod sci;
 pub mod sequence;
 pub mod spectrum;
 pub mod step;
@@ -62,9 +66,9 @@ pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
-    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
-    WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, MapRequest,
+    Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
+    StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -82,6 +86,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::molecule3d::Molecule3dSpec;
 use domain::science::reaction::ReactionSpec;
@@ -246,5 +251,9 @@ impl FormatsPort for Formats {
             Molecule3dSource::File { path, bytes } => molecule3d::read(bytes, path),
         }
         .map_err(FormatError::Invalid)
+    }
+
+    fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
+        geomap::parse(bytes, request).map_err(FormatError::Invalid)
     }
 }

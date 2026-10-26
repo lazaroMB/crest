@@ -26,6 +26,7 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -580,6 +581,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::GeoMap(spec) => vec![
+            CopyFormat::new("features", "features CSV", spec.to_csv()),
+            CopyFormat::new("summary", "summary", super::geomap::summary_text(spec)),
+        ],
         BlockKind::Ghs(spec) => vec![
             CopyFormat::new("card", "card", spec.to_text()),
             CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),
