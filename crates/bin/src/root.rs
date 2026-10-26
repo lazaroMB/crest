@@ -288,6 +288,9 @@ pub struct App {
     /// The statistics engine with the file port and blocking pool it runs
     /// on: the `stats_*` tools, Lua's `app.compute` and Recompute.
     pub compute: ComputeToolPorts,
+    /// The file-format parsers of the `show_*` tools; `/open` tessellates
+    /// STEP parts with them.
+    pub formats: Arc<dyn FormatsPort>,
 }
 
 /// The lines sent from the prompt in the session, oldest first; the UI adds
@@ -610,7 +613,10 @@ pub async fn build_app(
         {
             warnings.push(format!("app.compute unavailable: {err}"));
         }
-        if let Err(err) = host.provide_formats(formats, Arc::clone(&compute.fs)).await {
+        if let Err(err) = host
+            .provide_formats(Arc::clone(&formats), Arc::clone(&compute.fs))
+            .await
+        {
             warnings.push(format!("app.formats unavailable: {err}"));
         }
         if let Err(err) = host.provide_forms(Arc::clone(&frontend.form)).await {
@@ -870,6 +876,7 @@ pub async fn build_app(
         research,
         simulator,
         compute,
+        formats,
     })
 }
 

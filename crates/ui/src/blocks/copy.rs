@@ -17,6 +17,7 @@
 //! | waveform | value changes CSV, every signal's value at the end |
 //! | netlist | `net,component,pin` CSV, components CSV, the graph as DOT |
 //! | material | properties CSV with the source of each value (or `unverified`) |
+//! | cad model (STEP) | solids CSV (faces, triangles, box), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -548,6 +549,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("dot", "DOT", spec.to_graph().to_dot()),
         ],
         BlockKind::Material(spec) => vec![CopyFormat::new("csv", "properties CSV", spec.to_csv())],
+        BlockKind::CadModel(spec) => vec![
+            CopyFormat::new("solids", "solids CSV", spec.to_csv()),
+            CopyFormat::new("summary", "summary", super::cad::summary_text(spec)),
+        ],
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }

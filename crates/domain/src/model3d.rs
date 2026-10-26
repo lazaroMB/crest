@@ -1,5 +1,6 @@
-//! A 3D model opened from a file (OBJ, STL, PLY): a triangle mesh with no
-//! materials, which the UI draws with an orbit camera.
+//! A 3D model opened from a file (OBJ, STL, PLY, or a tessellated STEP
+//! part): a triangle mesh with no materials, which the UI draws with an
+//! orbit camera.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -120,6 +121,10 @@ pub struct ModelSpec {
     pub name: String,
     /// The mesh.
     pub mesh: ModelMesh,
+    /// The length unit of the coordinates, when the file says it (`mm`,
+    /// `in`; STEP does, OBJ/STL/PLY do not). Measurements show it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 #[cfg(test)]

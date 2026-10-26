@@ -246,6 +246,16 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 netlist.single_pin_nets().len()
             ),
         ),
+        BlockKind::CadModel(part) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[step: {}, {} solids, {} triangles, {} faces not meshed]",
+                part.display_title(),
+                part.solids.len(),
+                part.mesh.triangles.len(),
+                part.failed_faces()
+            ),
+        ),
         BlockKind::Material(material) => w.line(
             Some(Style::Dim),
             &format!(

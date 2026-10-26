@@ -7,14 +7,21 @@
 //! outside the root (`..` or a symlink that leaves it) and no sensitive
 //! path. The viewer is chosen from the extension; the contents are only
 //! shown, never run or rendered as a page. 3D models (OBJ, STL, PLY) are
-//! parsed here ([`model3d`](super::model3d)) and drawn with an orbit camera.
+//! parsed here ([`model3d`](super::model3d)) and drawn with an orbit camera;
+//! STEP parts are tessellated by the [`FormatsPort`] off the async
+//! executor when the caller passes one ([`open_file_with`]).
 
 use domain::block::{CustomNode, ImageData, ImageFit};
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model3d::ModelSpec;
 use domain::workspace::{PathError, WorkspacePath};
 
+use std::sync::Arc;
+
+use crate::ports::formats::{FormatsPort, StepRequest};
 use crate::ports::fs::{FileContent, FileSystemPort, FsError, ReadFileRequest};
+use crate::tools::formats::{MAX_STEP_BYTES, STEP_EXTENSIONS};
+use crate::usecases::compute::{Offload, offloaded};
 use crate::usecases::model3d::{self, MAX_MODEL_BYTES, MODEL_EXTENSIONS};
 
 /// Most lines shown; longer files are cut and say so in the title.
@@ -144,6 +151,30 @@ fn unquote(path: &str) -> &str {
 /// denied, a directory, too large, a binary that is not a picture or a
 /// broken 3D model.
 pub async fn open_file(fs: &dyn FileSystemPort, arg: &str) -> Result<ModalSpec, OpenError> {
+    open_file_with(fs, None, arg).await
+}
+
+/// What `/open` needs to show STEP parts: the reader and where it runs.
+#[derive(Clone)]
+pub struct StepReader {
+    /// Tessellates the part.
+    pub formats: Arc<dyn FormatsPort>,
+    /// Runs it off the async executor.
+    pub offload: Offload,
+}
+
+/// [`open_file`], with STEP parts read by `step` (without it they are
+/// shown as text).
+///
+/// # Errors
+///
+/// As [`open_file`], and [`OpenError::Model`] for a STEP file that cannot
+/// be meshed.
+pub async fn open_file_with(
+    fs: &dyn FileSystemPort,
+    step: Option<&StepReader>,
+    arg: &str,
+) -> Result<ModalSpec, OpenError> {
     let path = parse_target(fs, arg)?;
     let shown = path.as_str().to_owned();
     if path.is_root() {
@@ -154,6 +185,8 @@ pub async fn open_file(fs: &dyn FileSystemPort, arg: &str) -> Result<ModalSpec, 
         (image(fs, &path).await?, false)
     } else if MODEL_EXTENSIONS.contains(&ext.as_str()) {
         (model(fs, &path, &ext).await?, false)
+    } else if let Some(reader) = step.filter(|_| STEP_EXTENSIONS.contains(&ext.as_str())) {
+        (step_model(fs, reader, &path).await?, false)
     } else {
         let file = read_text(fs, &path).await?;
         let truncated = file.truncated;
@@ -241,7 +274,39 @@ async fn model(
     Ok(CustomNode::Model3d(ModelSpec {
         name: path.file_name().unwrap_or(path.as_str()).to_owned(),
         mesh,
+        unit: None,
     }))
+}
+
+/// The 3D node of a STEP part: every solid's triangles in one mesh, with
+/// the file's unit.
+async fn step_model(
+    fs: &dyn FileSystemPort,
+    reader: &StepReader,
+    path: &WorkspacePath,
+) -> Result<CustomNode, OpenError> {
+    let bytes = fs
+        .read_bytes(path, MAX_STEP_BYTES)
+        .await
+        .map_err(|err| open_error(&root(fs), path, err))?;
+    let formats = Arc::clone(&reader.formats);
+    let request = StepRequest {
+        path: path.as_str().to_owned(),
+        tolerance: None,
+    };
+    let fail = |reason: String| OpenError::Model {
+        path: path.as_str().to_owned(),
+        reason,
+    };
+    let part = offloaded(&reader.offload, move || {
+        formats.parse_step(&bytes, &request)
+    })
+    .await
+    .ok_or_else(|| fail("the STEP reader did not run".to_owned()))?
+    .map_err(|err| fail(err.to_string()))?;
+    let mut model = part.model();
+    model.name = path.file_name().unwrap_or(path.as_str()).to_owned();
+    Ok(CustomNode::Model3d(model))
 }
 
 /// The node that shows a text file with extension `ext`.
@@ -498,6 +563,36 @@ endsolid t
             open(&fs, "@tri.obj").await.unwrap().content,
             CustomNode::Model3d(model) if model.mesh.triangles.len() == 1
         ));
+    }
+
+    #[tokio::test]
+    async fn step_parts_open_in_the_3d_viewer_with_a_reader() {
+        let fs = fs().with_file("cad/block.step", "ISO-10303-21;\n");
+        let reader = StepReader {
+            formats: Arc::new(crate::testing::formats::FakeFormats::new()),
+            offload: crate::usecases::compute::inline_offload(),
+        };
+        let spec = open_file_with(&fs, Some(&reader), "@cad/block.step")
+            .await
+            .unwrap();
+        let CustomNode::Model3d(model) = spec.content else {
+            panic!("not a model: {:?}", spec.content);
+        };
+        assert_eq!(model.name, "block.step");
+        assert_eq!(model.unit.as_deref(), Some("mm"));
+        assert_eq!(model.mesh.triangles.len(), 3);
+        assert!(matches!(
+            open(&fs, "@cad/block.step").await.unwrap().content,
+            CustomNode::Code { .. }
+        ));
+        let failing = StepReader {
+            formats: Arc::new(crate::testing::formats::FakeFormats::failing("no solid")),
+            ..reader
+        };
+        let err = open_file_with(&fs, Some(&failing), "@cad/block.step")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no solid"), "{err}");
     }
 
     #[tokio::test]

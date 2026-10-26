@@ -1,10 +1,10 @@
-//! Engineering viewers on fixture files: a VCD dump, a SPICE deck and a
-//! KiCad netlist.
+//! Engineering viewers on fixture files: a VCD dump, a SPICE deck, a
+//! KiCad netlist and a STEP part.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, WaveRequest};
+use application::ports::formats::{FormatsPort, StepRequest, WaveRequest};
 use domain::engineering::netlist::NetlistFormat;
 use domain::engineering::waveform::{Radix, SignalKind, WaveFormat};
 
@@ -170,4 +170,24 @@ fn kicad_netlists_read_components_and_nets() {
             .parse_netlist("title only\n.end\n", None, None)
             .is_err()
     );
+}
+
+#[test]
+fn a_step_block_is_tessellated_through_the_port() {
+    let request = StepRequest {
+        path: "parts/block.step".into(),
+        tolerance: Some(0.1),
+    };
+    let spec = Formats::new()
+        .parse_step(&fixture("block.step"), &request)
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.application.as_deref(), Some("crest fixture"));
+    assert_eq!(spec.tolerance, 0.1);
+    assert_eq!(spec.bounds(), Some(([0.0; 3], [10.0, 20.0, 5.0])));
+    assert_eq!(spec.mesh.triangles.len(), 12);
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    let mut cut = fixture("block.step");
+    cut.truncate(cut.len() / 2);
+    assert!(Formats::new().parse_step(&cut, &request).is_err());
 }

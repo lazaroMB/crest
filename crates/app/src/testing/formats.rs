@@ -25,7 +25,8 @@
 //! every waveform is `tb.clk` (period 10 ns) and an 8-bit `tb.count`
 //! counting 00, 01, 02 on its rising edges, over 0–30 ns; every netlist
 //! is a divider `V1` (in, 0), `R1` (in, out), `R2` (out, 0) plus `R3`
-//! (out, nc) left open.
+//! (out, nc) left open; every STEP part is a 10 mm tetrahedron `Body`
+//! (4 faces, one not meshed) in product `Block`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -44,10 +45,12 @@ use domain::devops::terraform::{
     AttrChange, AttrValue, PlanAction, PlanSource, ResourceChange, TerraformPlanSpec,
 };
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
+use domain::engineering::cad::{CadModelSpec, CadSolid};
 use domain::engineering::netlist::{Component, NetlistFormat, NetlistSpec, PinNet};
 use domain::engineering::waveform::{
     SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal, WaveformSpec,
 };
+use domain::model3d::{ModelMesh, UpAxis};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
@@ -59,7 +62,8 @@ use serde_json::Map;
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -697,6 +701,44 @@ impl FormatsPort for FakeFormats {
                 part("R3", "resistor", "1k", ["out", "nc"]),
             ],
             subcircuits: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_step(
+        &self,
+        _bytes: &[u8],
+        request: &StepRequest,
+    ) -> Result<CadModelSpec, FormatError> {
+        self.record("parse_step", &request.path)?;
+        Ok(CadModelSpec {
+            title: None,
+            path: request.path.clone(),
+            schema: Some("AUTOMOTIVE_DESIGN".to_owned()),
+            application: Some("fake CAD".to_owned()),
+            unit: Some("mm".to_owned()),
+            products: vec!["Block".to_owned()],
+            solids: vec![CadSolid {
+                name: "Body".to_owned(),
+                product: Some("Block".to_owned()),
+                faces: 4,
+                failed_faces: 1,
+                first_triangle: 0,
+                triangles: 3,
+                min: [0.0; 3],
+                max: [10.0; 3],
+            }],
+            mesh: ModelMesh {
+                positions: vec![
+                    [0.0, 0.0, 0.0],
+                    [10.0, 0.0, 0.0],
+                    [0.0, 10.0, 0.0],
+                    [0.0, 0.0, 10.0],
+                ],
+                triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2]],
+                up: UpAxis::Z,
+            },
+            tolerance: request.tolerance.unwrap_or(0.01),
             warnings: Vec::new(),
         })
     }
