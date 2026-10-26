@@ -1,0 +1,737 @@
+---
+source: crates/domain/src/computed.rs
+expression: "schemars::schema_for!(Computed)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Computed",
+  "description": "The result of one engine computation, with its provenance.",
+  "type": "object",
+  "properties": {
+    "crest_computed": {
+      "description": "Envelope format version, `\"1.0\"`.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Id that number slots use (`⟦id.key⟧`); unique within a session.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "What was computed, dotted: `stats.ttest_welch`, `calc.sheet`,\n`units.convert`.",
+      "type": "string"
+    },
+    "status": {
+      "description": "Whether the computation succeeded.",
+      "$ref": "#/$defs/ComputedStatus"
+    },
+    "error": {
+      "description": "Why it failed, when `status` is `error`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "values": {
+      "description": "Headline numbers by key (`t`, `df`, `p_value`...), the targets of\nnumber slots.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ComputedValue"
+      },
+      "default": {}
+    },
+    "uncertainty_kind": {
+      "description": "What kind of uncertainty the intervals express.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UncertaintyKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "method": {
+      "description": "The method used and why.",
+      "$ref": "#/$defs/Method"
+    },
+    "assumptions": {
+      "description": "Assumption checks, including the ones that were not checked.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Assumption"
+      },
+      "default": []
+    },
+    "warnings": {
+      "description": "Misuse and data warnings.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ComputedWarning"
+      },
+      "default": []
+    },
+    "inputs": {
+      "description": "The data and parameters the engine read.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InputRef"
+      },
+      "default": []
+    },
+    "engine": {
+      "description": "The engine that computed it.",
+      "$ref": "#/$defs/Engine"
+    },
+    "seed": {
+      "description": "RNG seed; required for resampling kinds (bootstrap, Monte Carlo).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0,
+      "default": null
+    },
+    "rng": {
+      "description": "RNG algorithm, e.g. `chacha20`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "environment_hash": {
+      "description": "Hash of the engine environment, `blake3:<hex>`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reproduce": {
+      "description": "Commands that reproduce the result elsewhere.",
+      "$ref": "#/$defs/Reproduce",
+      "default": {}
+    },
+    "narrative": {
+      "description": "The template the plain-language sentence comes from.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Narrative"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provenance": {
+      "description": "When and for whom it ran.",
+      "$ref": "#/$defs/Provenance",
+      "default": {}
+    },
+    "verification": {
+      "description": "Result of the last recompute.",
+      "$ref": "#/$defs/Verification",
+      "default": {
+        "recomputed_at": null,
+        "match": null
+      }
+    }
+  },
+  "required": [
+    "crest_computed",
+    "id",
+    "kind",
+    "status",
+    "method",
+    "engine"
+  ],
+  "$defs": {
+    "ComputedStatus": {
+      "description": "Outcome of a computation.",
+      "oneOf": [
+        {
+          "description": "Computed without problems.",
+          "type": "string",
+          "const": "ok"
+        },
+        {
+          "description": "Computed, but with warnings the card shows.",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "Not computed; `error` says why.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "ComputedValue": {
+      "description": "One engine number. `v` is the stored value; the other fields only change\nhow it is shown.",
+      "type": "object",
+      "properties": {
+        "v": {
+          "description": "Raw value, never rounded.",
+          "type": "number",
+          "format": "double"
+        },
+        "display": {
+          "description": "Preformatted text the engine chose, e.g. `−3.77`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit, from the engine (never the model), e.g. `mi/gal`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sig": {
+          "description": "Significant digits to show.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "decimals": {
+          "description": "Decimals to show (used when `sig` is absent).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "fmt": {
+          "description": "Formatting rule.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValueFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ci": {
+          "description": "Confidence or credible interval.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "A verbal label, e.g. `large` for an effect size.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label_rule": {
+          "description": "Where the label comes from, e.g. `Cohen 1988`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "v"
+      ]
+    },
+    "ValueFormat": {
+      "description": "How a [`ComputedValue`] is formatted when it has no `display`.",
+      "oneOf": [
+        {
+          "description": "An APA p-value: `.043`, `< .001`.",
+          "type": "string",
+          "const": "apa"
+        },
+        {
+          "description": "A statistic bounded by 1 (r, R², proportions): no leading zero.",
+          "type": "string",
+          "const": "bounded"
+        },
+        {
+          "description": "Fixed decimals, or `sig` significant digits.",
+          "type": "string",
+          "const": "fixed"
+        },
+        {
+          "description": "`v` is a fraction shown as a percentage.",
+          "type": "string",
+          "const": "percent"
+        },
+        {
+          "description": "Scientific notation, `1.23e−4`.",
+          "type": "string",
+          "const": "scientific"
+        }
+      ]
+    },
+    "Interval": {
+      "description": "A confidence or credible interval.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Coverage, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "description": "How it was computed, e.g. `welch_t`, `noncentral_t`, `bca`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "level",
+        "lo",
+        "hi"
+      ]
+    },
+    "UncertaintyKind": {
+      "description": "What the intervals of an envelope express.",
+      "oneOf": [
+        {
+          "description": "Frequentist confidence intervals.",
+          "type": "string",
+          "const": "frequentist_ci"
+        },
+        {
+          "description": "Bootstrap intervals.",
+          "type": "string",
+          "const": "bootstrap_ci"
+        },
+        {
+          "description": "Bayesian credible intervals.",
+          "type": "string",
+          "const": "credible_interval"
+        },
+        {
+          "description": "Monte Carlo standard errors.",
+          "type": "string",
+          "const": "monte_carlo"
+        },
+        {
+          "description": "Exact arithmetic; no uncertainty.",
+          "type": "string",
+          "const": "exact"
+        }
+      ]
+    },
+    "Method": {
+      "description": "The method an engine used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Human name, e.g. `Welch two-sample t-test`.",
+          "type": "string"
+        },
+        "why": {
+          "description": "Why it was chosen, e.g. `Levene p = .02 → unequal variances`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alternatives": {
+          "description": "Kinds that could be run instead, e.g. `mann_whitney`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "params": {
+          "description": "Parameters, e.g. `{\"alternative\": \"two-sided\"}`.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Assumption": {
+      "description": "One assumption of the method and whether it holds.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable id, e.g. `normality_g1`.",
+          "type": "string"
+        },
+        "check": {
+          "description": "The check run, e.g. `Shapiro-Wilk`; absent when not checked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stat": {
+          "description": "The check's statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "p": {
+          "description": "The check's p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "status": {
+          "description": "Outcome.",
+          "$ref": "#/$defs/AssumptionStatus"
+        },
+        "consequence": {
+          "description": "What the engine did about it, e.g. `used Welch correction`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "description": "A note for the user, e.g. `design property; confirm`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ]
+    },
+    "AssumptionStatus": {
+      "description": "Outcome of an assumption check.",
+      "oneOf": [
+        {
+          "description": "Holds.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Doubtful.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Violated.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "Not checkable by the engine (a design property); shown on purpose.",
+          "type": "string",
+          "const": "not_checked"
+        }
+      ]
+    },
+    "ComputedWarning": {
+      "description": "A misuse or data warning attached by the engine.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Stable code, e.g. `small_n`, `expected_count_lt_5`.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "How serious it is.",
+          "$ref": "#/$defs/WarningSeverity"
+        },
+        "text": {
+          "description": "Text for the user.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "text"
+      ]
+    },
+    "WarningSeverity": {
+      "description": "Severity of a [`ComputedWarning`].",
+      "oneOf": [
+        {
+          "description": "Worth knowing.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "May change the conclusion.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "The result should not be used as is.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "InputRef": {
+      "description": "Data or parameters an engine read.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "File name or a label for inline data.",
+          "type": "string"
+        },
+        "role": {
+          "description": "`data` or `param`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace-relative path, when read from a file; a change to it marks\nthe block stale.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "Content hash, `blake3:<hex>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "description": "Number of rows read.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "columns": {
+          "description": "Columns used.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "filter": {
+          "description": "Row filter applied, e.g. `none`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Engine": {
+      "description": "The engine that produced an envelope.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Engine name, e.g. `crest-stats`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Engine version.",
+          "type": "string"
+        },
+        "backend": {
+          "description": "Library underneath, e.g. `statrs 0.19.1`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "description": "Target triple, e.g. `x86_64-linux`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Reproduce": {
+      "description": "One-line commands that reproduce a result.",
+      "type": "object",
+      "properties": {
+        "lua": {
+          "description": "crest Lua, e.g. `app.compute.test{...}`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "description": "Python (scipy, statsmodels).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "r": {
+          "description": "R.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Narrative": {
+      "description": "The template of the plain-language sentence.",
+      "type": "object",
+      "properties": {
+        "template": {
+          "description": "Template name, e.g. `apa_ttest`.",
+          "type": "string"
+        },
+        "text_slots": {
+          "description": "Value keys the sentence uses.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "template"
+      ]
+    },
+    "Provenance": {
+      "description": "When and for whom a computation ran.",
+      "type": "object",
+      "properties": {
+        "activity_started": {
+          "description": "Start time, RFC 3339.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "description": "How long it took.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "agent": {
+          "description": "The turn or agent that asked for it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested_by": {
+          "description": "`user` or `model`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Verification": {
+      "description": "Result of re-running an envelope.",
+      "type": "object",
+      "properties": {
+        "recomputed_at": {
+          "description": "When it was recomputed, RFC 3339; `None` until then.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "match": {
+          "description": "Whether every value matched; `None` until recomputed.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "diff": {
+          "description": "The values that changed; `null` reads as none.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ValueDiff"
+          }
+        }
+      }
+    },
+    "ValueDiff": {
+      "description": "A value that changed on recompute.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Value key.",
+          "type": "string"
+        },
+        "old": {
+          "description": "Stored value; `None` when only the recompute has it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "new": {
+          "description": "Recomputed value; `None` when the recompute lost it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}

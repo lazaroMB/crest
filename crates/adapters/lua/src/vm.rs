@@ -72,6 +72,11 @@ impl Vm {
         Ok(())
     }
 
+    /// What the capability APIs and `app.compute` share.
+    pub(crate) fn context(&self) -> &Arc<Context> {
+        &self.ctx
+    }
+
     /// Activates the declarations in `granted` and deactivates the rest.
     pub(crate) fn grant(&mut self, granted: &[PluginCapabilities]) {
         for grant in &self.grants {

@@ -1,6 +1,7 @@
 //! Use cases of crest and the port traits that adapters implement.
 
 pub mod cost;
+pub mod csv;
 pub mod decide;
 pub mod flows;
 pub mod keymap;

@@ -1,0 +1,1030 @@
+---
+source: crates/domain/src/computed.rs
+expression: "schemars::schema_for!(ComputedBody)"
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ComputedBody",
+  "description": "What a computed card draws, tagged by `type`.",
+  "oneOf": [
+    {
+      "description": "Per-variable summary statistics.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "descriptive"
+        }
+      },
+      "$ref": "#/$defs/DescriptiveBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A hypothesis test.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "test"
+        }
+      },
+      "$ref": "#/$defs/TestBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A linear regression.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "regression"
+        }
+      },
+      "$ref": "#/$defs/RegressionBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A correlation matrix.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "correlation"
+        }
+      },
+      "$ref": "#/$defs/CorrelationBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A unit-checked calc sheet.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "calc_sheet"
+        }
+      },
+      "$ref": "#/$defs/CalcSheetBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A unit conversion.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "quantity"
+        }
+      },
+      "$ref": "#/$defs/QuantityBody",
+      "required": [
+        "type"
+      ]
+    }
+  ],
+  "$defs": {
+    "VariableSummary": {
+      "description": "Summary of one variable.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "group": {
+          "description": "Group value, when split by `by`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Numeric or categorical.",
+          "$ref": "#/$defs/VariableKind"
+        },
+        "unit": {
+          "description": "Unit of the values.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n": {
+          "description": "Non-missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing": {
+          "description": "Missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "mean": {
+          "description": "Mean (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "sd": {
+          "description": "Sample standard deviation (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "median": {
+          "description": "Median (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "q1": {
+          "description": "First quartile (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "q3": {
+          "description": "Third quartile (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min": {
+          "description": "Minimum (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max": {
+          "description": "Maximum (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "skew": {
+          "description": "Sample skewness (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "kurtosis": {
+          "description": "Excess kurtosis (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "histogram": {
+          "description": "Distribution for the sparkline (numeric).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "levels": {
+          "description": "Counts per level (categorical), most frequent first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LevelCount"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "n"
+      ]
+    },
+    "VariableKind": {
+      "description": "Measurement level of a variable.",
+      "oneOf": [
+        {
+          "description": "Numbers.",
+          "type": "string",
+          "const": "numeric"
+        },
+        {
+          "description": "Categories.",
+          "type": "string",
+          "const": "categorical"
+        }
+      ]
+    },
+    "Histogram": {
+      "description": "Binned counts: `edges` has one more entry than `counts`.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "description": "Bin edges, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "counts": {
+          "description": "Count per bin.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "edges",
+        "counts"
+      ]
+    },
+    "LevelCount": {
+      "description": "Count of one level of a categorical variable.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Level.",
+          "type": "string"
+        },
+        "count": {
+          "description": "Rows with this level.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "percent": {
+          "description": "Share of non-missing rows, 0–100.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "level",
+        "count",
+        "percent"
+      ]
+    },
+    "DescriptiveBody": {
+      "description": "Body of a descriptive summary: one row per variable (and group).",
+      "type": "object",
+      "properties": {
+        "by": {
+          "description": "Grouping column (`by=`), when rows are split by group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variables": {
+          "description": "One summary per variable, or per variable and group.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VariableSummary"
+          }
+        }
+      },
+      "required": [
+        "variables"
+      ]
+    },
+    "TestKind": {
+      "description": "A hypothesis test the engine runs.",
+      "oneOf": [
+        {
+          "description": "Welch two-sample t-test (unequal variances).",
+          "type": "string",
+          "const": "welch_t"
+        },
+        {
+          "description": "Student two-sample t-test (equal variances).",
+          "type": "string",
+          "const": "student_t"
+        },
+        {
+          "description": "Paired t-test.",
+          "type": "string",
+          "const": "paired_t"
+        },
+        {
+          "description": "One-sample t-test.",
+          "type": "string",
+          "const": "one_sample_t"
+        },
+        {
+          "description": "Mann-Whitney U (Wilcoxon rank-sum).",
+          "type": "string",
+          "const": "mann_whitney"
+        },
+        {
+          "description": "Wilcoxon signed-rank.",
+          "type": "string",
+          "const": "wilcoxon"
+        },
+        {
+          "description": "Pearson χ² test of independence.",
+          "type": "string",
+          "const": "chi_square"
+        },
+        {
+          "description": "Fisher's exact test, 2×2.",
+          "type": "string",
+          "const": "fisher"
+        }
+      ]
+    },
+    "Alternative": {
+      "description": "Alternative hypothesis.",
+      "oneOf": [
+        {
+          "description": "Different in either direction.",
+          "type": "string",
+          "const": "two_sided"
+        },
+        {
+          "description": "First less than second.",
+          "type": "string",
+          "const": "less"
+        },
+        {
+          "description": "First greater than second.",
+          "type": "string",
+          "const": "greater"
+        }
+      ]
+    },
+    "GroupSummary": {
+      "description": "Summary of one group in a test.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Group name.",
+          "type": "string"
+        },
+        "n": {
+          "description": "Size.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "mean": {
+          "description": "Mean.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "sd": {
+          "description": "Standard deviation.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "median": {
+          "description": "Median.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "n"
+      ]
+    },
+    "TestBody": {
+      "description": "Body of a hypothesis test. The statistic, df, p and effect size are in\nthe envelope's `values` (`statistic`, `df`, `p_value`, `effect`).",
+      "type": "object",
+      "properties": {
+        "test": {
+          "description": "Which test ran.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "alternative": {
+          "description": "Direction of the alternative hypothesis.",
+          "$ref": "#/$defs/Alternative",
+          "default": "two_sided"
+        },
+        "groups": {
+          "description": "Per-group summary, in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GroupSummary"
+          },
+          "default": []
+        },
+        "observed": {
+          "description": "Observed counts, for χ² and Fisher (rows × columns).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "expected": {
+          "description": "Expected counts under independence, same shape as `observed`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "required": [
+        "test"
+      ]
+    },
+    "CoefficientRow": {
+      "description": "One coefficient of a regression.",
+      "type": "object",
+      "properties": {
+        "term": {
+          "description": "Term, e.g. `(Intercept)`, `wt`.",
+          "type": "string"
+        },
+        "estimate": {
+          "description": "Estimate.",
+          "type": "number",
+          "format": "double"
+        },
+        "se": {
+          "description": "Standard error.",
+          "type": "number",
+          "format": "double"
+        },
+        "t": {
+          "description": "t statistic.",
+          "type": "number",
+          "format": "double"
+        },
+        "p": {
+          "description": "Two-sided p-value.",
+          "type": "number",
+          "format": "double"
+        },
+        "ci_lo": {
+          "description": "Lower interval bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "ci_hi": {
+          "description": "Upper interval bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "std_beta": {
+          "description": "Standardised coefficient.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "vif": {
+          "description": "Variance inflation factor (not for the intercept).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "term",
+        "estimate",
+        "se",
+        "t",
+        "p",
+        "ci_lo",
+        "ci_hi"
+      ]
+    },
+    "FitStats": {
+      "description": "Goodness of fit of a regression.",
+      "type": "object",
+      "properties": {
+        "n": {
+          "description": "Observations used.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "r_squared": {
+          "description": "R².",
+          "type": "number",
+          "format": "double"
+        },
+        "adj_r_squared": {
+          "description": "Adjusted R².",
+          "type": "number",
+          "format": "double"
+        },
+        "f": {
+          "description": "F statistic of the overall test.",
+          "type": "number",
+          "format": "double"
+        },
+        "df_model": {
+          "description": "Model degrees of freedom.",
+          "type": "number",
+          "format": "double"
+        },
+        "df_resid": {
+          "description": "Residual degrees of freedom.",
+          "type": "number",
+          "format": "double"
+        },
+        "f_p": {
+          "description": "p-value of the F test.",
+          "type": "number",
+          "format": "double"
+        },
+        "sigma": {
+          "description": "Residual standard error.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "aic": {
+          "description": "Akaike information criterion.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "bic": {
+          "description": "Bayesian information criterion.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "n",
+        "r_squared",
+        "adj_r_squared",
+        "f",
+        "df_model",
+        "df_resid",
+        "f_p"
+      ]
+    },
+    "Diagnostics": {
+      "description": "Residual diagnostics of a regression (the statsmodels footer).",
+      "type": "object",
+      "properties": {
+        "durbin_watson": {
+          "description": "Durbin-Watson statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jarque_bera": {
+          "description": "Jarque-Bera statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jarque_bera_p": {
+          "description": "Jarque-Bera p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "breusch_pagan": {
+          "description": "Breusch-Pagan statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "breusch_pagan_p": {
+          "description": "Breusch-Pagan p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "condition_number": {
+          "description": "Condition number of the design matrix.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max_vif": {
+          "description": "Largest VIF.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max_cooks_d": {
+          "description": "Largest Cook's distance.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "RegressionBody": {
+      "description": "Body of an OLS regression.",
+      "type": "object",
+      "properties": {
+        "dependent": {
+          "description": "Dependent variable.",
+          "type": "string"
+        },
+        "ci_level": {
+          "description": "Level of the coefficient intervals, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "coefficients": {
+          "description": "One row per term, intercept first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoefficientRow"
+          }
+        },
+        "fit": {
+          "description": "Goodness of fit.",
+          "$ref": "#/$defs/FitStats"
+        },
+        "diagnostics": {
+          "description": "Residual diagnostics.",
+          "$ref": "#/$defs/Diagnostics",
+          "default": {}
+        },
+        "fitted": {
+          "description": "Fitted values, in row order (for residual plots).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "residuals": {
+          "description": "Residuals, aligned with `fitted`.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "dependent",
+        "ci_level",
+        "coefficients",
+        "fit"
+      ]
+    },
+    "CorrelationMethod": {
+      "description": "Correlation coefficient.",
+      "oneOf": [
+        {
+          "description": "Pearson's r.",
+          "type": "string",
+          "const": "pearson"
+        },
+        {
+          "description": "Spearman's ρ.",
+          "type": "string",
+          "const": "spearman"
+        },
+        {
+          "description": "Kendall's τ-b.",
+          "type": "string",
+          "const": "kendall"
+        }
+      ]
+    },
+    "PAdjust": {
+      "description": "Multiple-comparison adjustment of p-values.",
+      "oneOf": [
+        {
+          "description": "Raw p-values.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Holm step-down.",
+          "type": "string",
+          "const": "holm"
+        },
+        {
+          "description": "Benjamini-Hochberg false discovery rate.",
+          "type": "string",
+          "const": "bh"
+        },
+        {
+          "description": "Bonferroni.",
+          "type": "string",
+          "const": "bonferroni"
+        }
+      ]
+    },
+    "CorrelationBody": {
+      "description": "Body of a correlation matrix. `r`, `p` and `n` are square, one row and\ncolumn per variable; a `None` cell could not be computed.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "Coefficient.",
+          "$ref": "#/$defs/CorrelationMethod"
+        },
+        "adjustment": {
+          "description": "Multiple-comparison adjustment applied to `p`.",
+          "$ref": "#/$defs/PAdjust",
+          "default": "none"
+        },
+        "variables": {
+          "description": "Variable names, the matrix order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "r": {
+          "description": "Coefficients.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "p": {
+          "description": "Adjusted p-values; the diagonal is `None`.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "n": {
+          "description": "Pairwise complete observations.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "required": [
+        "method",
+        "variables",
+        "r",
+        "p",
+        "n"
+      ]
+    },
+    "CalcLine": {
+      "description": "One line of a calc sheet, `name = expr`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name later lines use; `None` for a bare expression.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expr": {
+          "description": "Expression as written.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Numeric value in `unit`; `None` on error or for non-numeric results.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "display": {
+          "description": "The engine's rendering of the result, e.g. `9.81 m/s²`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit of `value`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latex": {
+          "description": "LaTeX of the line, when the engine can produce it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Evaluation error, e.g. a dimension mismatch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "expr"
+      ]
+    },
+    "CalcSheetBody": {
+      "description": "Body of a calc sheet: lines evaluated in order.",
+      "type": "object",
+      "properties": {
+        "lines": {
+          "description": "Lines, in evaluation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CalcLine"
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "Quantity": {
+      "description": "A value with a unit.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "description": "Magnitude.",
+          "type": "number",
+          "format": "double"
+        },
+        "unit": {
+          "description": "Unit, e.g. `km/h`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ]
+    },
+    "ConversionStep": {
+      "description": "One step of a conversion chain.",
+      "type": "object",
+      "properties": {
+        "from_unit": {
+          "description": "Unit converted from.",
+          "type": "string"
+        },
+        "to_unit": {
+          "description": "Unit converted to.",
+          "type": "string"
+        },
+        "factor": {
+          "description": "Multiplier of this step.",
+          "type": "number",
+          "format": "double"
+        },
+        "note": {
+          "description": "E.g. `exact by definition (1959)`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_unit",
+        "to_unit",
+        "factor"
+      ]
+    },
+    "QuantityBody": {
+      "description": "Body of a unit conversion.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "What was converted.",
+          "$ref": "#/$defs/Quantity"
+        },
+        "to": {
+          "description": "The result.",
+          "$ref": "#/$defs/Quantity"
+        },
+        "factor": {
+          "description": "Multiplier from `from.unit` to `to.unit` (for affine units like °C,\nthe slope).",
+          "type": "number",
+          "format": "double"
+        },
+        "exact": {
+          "description": "Whether the factor is exact by definition (inch → mm) rather than\nrounded.",
+          "type": "boolean"
+        },
+        "dimension": {
+          "description": "Physical dimension, e.g. `length`, `energy / time`.",
+          "type": "string"
+        },
+        "chain": {
+          "description": "Steps through base units, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversionStep"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "factor",
+        "exact",
+        "dimension"
+      ]
+    }
+  }
+}

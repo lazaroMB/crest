@@ -1,0 +1,123 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsDescribeTool::new(ports.clone()))"
+---
+{
+  "name": "stats_describe",
+  "description": "Computes descriptive statistics with crest's deterministic engine: per variable n, missing, mean, SD, median, quartiles, min/max, skew and kurtosis, or counts and percentages for categorical columns; per group of `by` when given. The user sees a card; you get the values as slots to cite. Use it instead of computing summaries yourself.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "variables": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Columns to summarise; all of them (except `by`) when empty.",
+        "default": []
+      },
+      "by": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Grouping column: one summary per variable and group."
+      }
+    },
+    "required": [
+      "data"
+    ],
+    "description": "Input of `describe`: summary statistics per variable.",
+    "title": "DescribeRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      }
+    }
+  }
+}

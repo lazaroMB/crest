@@ -14,7 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::computed::{Computed, ComputedBody, ComputedError};
+use crate::dataset::DatasetSpec;
+use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
+use crate::plot::PlotSpec;
+use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -77,8 +83,9 @@ impl Block {
 }
 
 impl Block {
-    /// Validates the payload (tables, charts, custom trees, sources and
-    /// stage progress); other kinds are always valid.
+    /// Validates the payload (tables, charts, custom trees, sources, stage
+    /// progress, computed envelopes and the spec of every other rich kind);
+    /// text-like kinds are always valid.
     ///
     /// # Errors
     ///
@@ -100,6 +107,17 @@ impl Block {
                     })
                 }
             }
+            BlockKind::Computed { envelope, body } => {
+                envelope.validate()?;
+                Ok(body.validate()?)
+            }
+            BlockKind::Form(spec) => spec.validate(),
+            BlockKind::Plot(spec) => spec.validate(),
+            BlockKind::TestReport(spec) => spec.validate(),
+            BlockKind::Findings(spec) => spec.validate(),
+            BlockKind::Dataset(spec) => spec.validate(),
+            BlockKind::Molecule(spec) => spec.validate(),
+            BlockKind::Plate(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -225,6 +243,30 @@ pub enum BlockKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         hint: Option<String>,
     },
+    /// An engine-computed result (statistics, calc sheet, unit
+    /// conversion) with its provenance.
+    Computed {
+        /// The numbers and how they were produced.
+        envelope: Box<Computed>,
+        /// What the card draws.
+        body: Box<ComputedBody>,
+    },
+    /// A form the model asks the user to fill (tool `ask_user`).
+    Form(FormSpec),
+    /// Function plots with parameter sliders and numeric series (tool
+    /// `show_plot`).
+    Plot(PlotSpec),
+    /// A test run report, e.g. from JUnit XML (tool `show_test_report`).
+    TestReport(TestReportSpec),
+    /// Static-analysis findings, e.g. from SARIF (tool `show_findings`).
+    Findings(FindingsSpec),
+    /// Schema, column statistics and first rows of a data file (tool
+    /// `show_dataset`).
+    Dataset(DatasetSpec),
+    /// A 2D molecule with computed formula and mass (tool `show_molecule`).
+    Molecule(MoleculeSpec),
+    /// A 96- or 384-well plate map (tool `show_plate`).
+    Plate(PlateSpec),
 }
 
 /// Lifecycle of a tool call.
@@ -322,6 +364,17 @@ pub enum BlockError {
     /// A 3D model that cannot be drawn.
     #[error("3D model: {0}")]
     Model(#[from] MeshError),
+    /// An invalid computed envelope or card body.
+    #[error("computed: {0}")]
+    Computed(#[from] ComputedError),
+    /// An invalid spec of a rich block (form, plot, dataset, plate...).
+    #[error("{kind}: {reason}")]
+    Invalid {
+        /// Block kind, e.g. `form`.
+        kind: &'static str,
+        /// What is wrong.
+        reason: String,
+    },
     /// A table row whose width differs from the number of columns.
     #[error("table row {row} has {actual} cells, expected {expected}")]
     TableRowWidth {
@@ -1484,6 +1537,117 @@ mod tests {
         ];
         for (kind, err) in bad {
             assert_eq!(Block::new(kind).validate(), Err(err));
+        }
+    }
+
+    #[test]
+    fn computed_block_roundtrips_and_validates() {
+        use crate::computed::{
+            CalcLine, CalcSheetBody, ComputedValue, DescriptiveBody, Engine, Histogram,
+            VariableKind, VariableSummary,
+        };
+        let mut envelope = Computed::new(
+            "c1",
+            "calc.sheet",
+            "numbat",
+            Engine {
+                name: "crest-calc".into(),
+                version: "0.15.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        envelope.values.insert("g".into(), ComputedValue::new(9.81));
+        let block = Block::new(BlockKind::Computed {
+            envelope: Box::new(envelope.clone()),
+            body: Box::new(ComputedBody::CalcSheet(CalcSheetBody {
+                lines: vec![CalcLine {
+                    name: Some("g".into()),
+                    expr: "9.81 m/s^2".into(),
+                    value: Some(9.81),
+                    display: None,
+                    unit: Some("m/s²".into()),
+                    latex: None,
+                    error: None,
+                }],
+            })),
+        });
+        let value = roundtrip(&block);
+        assert_eq!(value["type"], "computed");
+        assert_eq!(value["envelope"]["crest_computed"], "1.0");
+        assert_eq!(value["body"]["type"], "calc_sheet");
+        assert_eq!(block.validate(), Ok(()));
+
+        envelope.id = "bad id".into();
+        let bad = Block::new(BlockKind::Computed {
+            envelope: Box::new(envelope.clone()),
+            body: Box::new(ComputedBody::CalcSheet(CalcSheetBody { lines: vec![] })),
+        });
+        assert!(matches!(bad.validate(), Err(BlockError::Computed(_))));
+        envelope.id = "c1".into();
+        let bad_body = Block::new(BlockKind::Computed {
+            envelope: Box::new(envelope),
+            body: Box::new(ComputedBody::Descriptive(DescriptiveBody {
+                by: None,
+                variables: vec![VariableSummary {
+                    name: "x".into(),
+                    group: None,
+                    kind: VariableKind::Numeric,
+                    unit: None,
+                    n: 1,
+                    missing: 0,
+                    mean: None,
+                    sd: None,
+                    median: None,
+                    q1: None,
+                    q3: None,
+                    min: None,
+                    max: None,
+                    skew: None,
+                    kurtosis: None,
+                    histogram: Some(Histogram {
+                        edges: vec![0.0],
+                        counts: vec![1],
+                    }),
+                    levels: vec![],
+                }],
+            })),
+        });
+        assert!(matches!(bad_body.validate(), Err(BlockError::Computed(_))));
+    }
+
+    #[test]
+    fn new_rich_kinds_are_tagged_and_validated() {
+        let plate: Block = serde_json::from_value(json!({
+            "id": "00000000-0000-0000-0000-000000000000",
+            "type": "plate", "format": 96, "wells": [{"well": "Z9"}]
+        }))
+        .unwrap();
+        assert!(matches!(
+            plate.validate(),
+            Err(BlockError::Invalid { kind: "plate", .. })
+        ));
+        for (tag, body) in [
+            ("form", json!({"title": "t", "fields": []})),
+            (
+                "plot",
+                json!({"series": [{"name": "s", "x": [1], "y": [2]}]}),
+            ),
+            ("test_report", json!({"suites": []})),
+            ("findings", json!({"findings": []})),
+            ("molecule", json!({"smiles": "CCO"})),
+            (
+                "dataset",
+                json!({"path": "a.csv", "format": "csv", "columns": [],
+                       "preview": {"columns": [{"name": "a"}], "rows": []}}),
+            ),
+        ] {
+            let mut value = body;
+            value["id"] = json!("00000000-0000-0000-0000-000000000000");
+            value["type"] = json!(tag);
+            let block: Block = serde_json::from_value(value).unwrap();
+            assert_eq!(block.validate(), Ok(()), "{tag}");
+            assert_eq!(roundtrip(&block)["type"], tag);
         }
     }
 

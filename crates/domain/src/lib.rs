@@ -4,15 +4,21 @@
 //! tokio or any I/O.
 
 pub mod block;
+pub mod computed;
 pub mod conversation;
+pub mod dataset;
 pub mod decision;
+pub mod form;
 pub mod git;
 pub mod modal;
 pub mod model;
 pub mod model3d;
 pub mod permission;
 pub mod plan;
+pub mod plot;
+pub mod report;
 pub mod research;
+pub mod science;
 pub mod sysmodel;
 pub mod theme;
 pub mod workspace;

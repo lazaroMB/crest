@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use adapter_anthropic::{
     AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig, TokioClock,
 };
+use adapter_compute::StatsEngine;
 use adapter_export::HtmlExporter;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
@@ -43,6 +44,7 @@ use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
 use application::providers::{Provider, ProviderRouter, ProvidersOptions, effective_default};
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
+use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
@@ -276,6 +278,9 @@ pub struct App {
     /// Simulates the solution of a Spec (`/simulate`, `--simulate`, the
     /// `simulate_solution` tool).
     pub simulator: Simulator,
+    /// The statistics engine with the file port and blocking pool it runs
+    /// on: the `stats_*` tools, Lua's `app.compute` and Recompute.
+    pub compute: ComputeToolPorts,
 }
 
 /// The lines sent from the prompt in the session, oldest first; the UI adds
@@ -578,6 +583,15 @@ pub async fn build_app(
     )
     .context("tool registration")?;
     register_component_tools(&mut tools).context("tool registration")?;
+    let compute = compute_ports(Arc::clone(&fs));
+    register_compute_tools(&mut tools, &compute).context("tool registration")?;
+    if let Some(host) = &plugins
+        && let Err(err) = host
+            .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
+            .await
+    {
+        warnings.push(format!("app.compute unavailable: {err}"));
+    }
     if let Some(web) = &web {
         web.register(&mut tools).context("tool registration")?;
     }
@@ -830,7 +844,22 @@ pub async fn build_app(
         flow_storage,
         research,
         simulator,
+        compute,
     })
+}
+
+/// The statistics engine, reading data through `fs` and running on the
+/// blocking pool of the current runtime.
+fn compute_ports(fs: Arc<dyn FileSystemPort>) -> ComputeToolPorts {
+    let handle = tokio::runtime::Handle::current();
+    ComputeToolPorts {
+        engine: Arc::new(StatsEngine::new()),
+        fs,
+        offload: Arc::new(move |job| {
+            // The caller awaits the job's own channel, not the join handle.
+            drop(handle.spawn_blocking(job));
+        }),
+    }
 }
 
 type ModelPorts = (
@@ -976,8 +1005,8 @@ fn open_flow_storage(path: Option<&Path>) -> Result<SqliteFlowStorage, StoreErro
     }
 }
 
-/// The system prompt: role, workspace, platform, how to work and the
-/// component tools.
+/// The system prompt: role, workspace, platform, how to work, the
+/// component tools and the statistics tools.
 #[must_use]
 pub fn system_prompt(root: &WorkspaceRoot) -> String {
     format!(
@@ -999,7 +1028,9 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
          - Be concise. When you change something, end with a short explanation of what changed \
          and why.\n\
          \n\
-         {COMPONENT_TOOLS_PROMPT}",
+         {COMPONENT_TOOLS_PROMPT}\n\
+         \n\
+         {COMPUTE_TOOLS_PROMPT}",
         root = root.as_path().display(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
@@ -1034,7 +1065,8 @@ mod tests {
         assert!(prompt.contains(&line), "{prompt}");
         assert!(prompt.contains(std::env::consts::OS));
         assert_eq!(prompt.contains(WINDOWS_NOTE), cfg!(windows));
-        assert!(prompt.ends_with(COMPONENT_TOOLS_PROMPT));
+        assert!(prompt.contains(COMPONENT_TOOLS_PROMPT));
+        assert!(prompt.ends_with(COMPUTE_TOOLS_PROMPT));
     }
 
     #[test]

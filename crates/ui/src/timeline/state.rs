@@ -6,6 +6,21 @@ use std::collections::HashMap;
 
 use application::ports::events::DomainEvent;
 use domain::block::{Block, BlockId, BlockKind};
+use domain::computed::Computed;
+use domain::computed::lint::lint_numbers;
+use domain::computed::slots::replace_slots;
+
+/// What the timeline worked out about the numbers of a `Text` block.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextNumbers {
+    /// The markdown with its number slots (`⟦id.key⟧`) replaced by the
+    /// values of the computed blocks in the timeline; a slot no envelope
+    /// has shows as `⟦?id.key⟧`. `None` when the text has no slots.
+    pub resolved: Option<String>,
+    /// Numbers of a finished assistant reply that are neither slots nor in
+    /// the user's prompts (the "not from an engine" chip).
+    pub unverified: Vec<String>,
+}
 
 use super::copy_text;
 
@@ -19,17 +34,32 @@ pub struct TimelineEntry {
     /// Whether the block shows its alternate view (`t`): a chart's table, a
     /// document's or diagram's source.
     pub alt_view: bool,
+    /// Slots and unverified numbers of a `Text` block.
+    pub numbers: TextNumbers,
 }
 
 impl TimelineEntry {
-    fn new(block: Block) -> Self {
+    /// An entry for `block` in its default view state.
+    pub fn new(block: Block) -> Self {
         let expanded = expanded_by_default(&block.kind);
         Self {
             block,
             expanded,
             alt_view: false,
+            numbers: TextNumbers::default(),
         }
     }
+}
+
+/// Whether `markdown` is a prompt the user sent (every line quoted, see
+/// `prompt_block`).
+fn is_prompt(markdown: &str) -> bool {
+    !markdown.trim().is_empty() && markdown.lines().all(|line| line.starts_with('>'))
+}
+
+/// Whether `markdown` may hold number slots.
+fn has_slots(markdown: &str) -> bool {
+    markdown.contains('⟦') || markdown.contains("[[calc:")
 }
 
 /// Whether blocks of this kind have an alternate view for `t`.
@@ -69,11 +99,17 @@ pub struct TimelineState {
     selected: Option<usize>,
     /// Between `TurnStarted` and `TurnFinished`/`TurnFailed`.
     turn_open: bool,
+    /// Assistant text blocks not linted yet: still streaming, or the last
+    /// block when nothing followed it.
+    unlinted: Vec<usize>,
+    /// Entries whose [`TextNumbers`] changed outside the event's own
+    /// change, for the view to measure again.
+    touched: Vec<usize>,
 }
 
 /// A user prompt, as `prompt_block` writes it: every line quoted with `> `.
-fn is_prompt(entry: &TimelineEntry) -> bool {
-    matches!(&entry.block.kind, BlockKind::Text { markdown } if markdown.starts_with("> "))
+fn is_prompt_entry(entry: &TimelineEntry) -> bool {
+    matches!(&entry.block.kind, BlockKind::Text { markdown } if is_prompt(markdown))
 }
 
 impl TimelineState {
@@ -113,17 +149,17 @@ impl TimelineState {
     /// turn is running) and it has text.
     pub fn reply_to_copy(&self, ix: usize) -> Option<String> {
         let entry = self.entries.get(ix)?;
-        if is_prompt(entry) {
+        if is_prompt_entry(entry) {
             return None;
         }
         match self.entries.get(ix + 1) {
-            Some(next) if !is_prompt(next) => return None,
+            Some(next) if !is_prompt_entry(next) => return None,
             None if self.turn_open => return None,
             _ => {}
         }
         let start = self.entries[..ix]
             .iter()
-            .rposition(is_prompt)
+            .rposition(is_prompt_entry)
             .map_or(0, |prompt| prompt + 1);
         let texts: Vec<String> = self.entries[start..=ix]
             .iter()
@@ -149,15 +185,23 @@ impl TimelineState {
     pub fn apply(&mut self, event: &DomainEvent) -> TimelineChange {
         match event {
             DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
-                self.upsert(block.clone())
+                let change = self.upsert(block.clone());
+                self.after_block(change);
+                change
             }
-            DomainEvent::TextDelta { block_id, text } => self.edit(*block_id, |kind| match kind {
-                BlockKind::Text { markdown } => {
-                    markdown.push_str(text);
-                    true
+            DomainEvent::TextDelta { block_id, text } => {
+                let change = self.edit(*block_id, |kind| match kind {
+                    BlockKind::Text { markdown } => {
+                        markdown.push_str(text);
+                        true
+                    }
+                    _ => false,
+                });
+                if let TimelineChange::Updated(ix) = change {
+                    self.resolve(ix);
                 }
-                _ => false,
-            }),
+                change
+            }
             DomainEvent::ThinkingDelta { block_id, text } => {
                 self.edit(*block_id, |kind| match kind {
                     BlockKind::Thinking { text: thinking, .. } => {
@@ -187,6 +231,7 @@ impl TimelineState {
             }),
             DomainEvent::TurnStarted { .. } => self.set_turn_open(true),
             DomainEvent::TurnFinished { .. } | DomainEvent::TurnFailed { .. } => {
+                self.lint_pending(None);
                 self.set_turn_open(false)
             }
             _ => TimelineChange::None,
@@ -263,6 +308,121 @@ impl TimelineState {
         }
         entry.alt_view = !entry.alt_view;
         Some(ix)
+    }
+
+    /// The entries whose numbers changed since the last call.
+    pub fn take_touched(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.touched)
+    }
+
+    /// Keeps slots and lints in step after block `change`: a new or
+    /// changed text resolves its slots, a computed block resolves every
+    /// text again, and a block after an assistant text finishes it.
+    fn after_block(&mut self, change: TimelineChange) {
+        let (TimelineChange::Inserted(ix) | TimelineChange::Updated(ix)) = change else {
+            return;
+        };
+        match &self.entries[ix].block.kind {
+            BlockKind::Text { markdown } => {
+                if !is_prompt(markdown) && !self.unlinted.contains(&ix) {
+                    self.unlinted.push(ix);
+                }
+                self.resolve(ix);
+            }
+            BlockKind::Computed { .. } => {
+                for text in 0..self.entries.len() {
+                    if self.resolve(text) {
+                        self.touched.push(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+        if matches!(change, TimelineChange::Inserted(_)) {
+            self.lint_pending(Some(ix));
+        }
+    }
+
+    /// The envelopes of the computed blocks, newest first (a recomputed
+    /// card replaces its block, so ids stay unique in practice).
+    fn envelopes(&self) -> Vec<&Computed> {
+        self.entries
+            .iter()
+            .rev()
+            .filter_map(|entry| match &entry.block.kind {
+                BlockKind::Computed { envelope, .. } => Some(envelope.as_ref()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Resolves the slots of text entry `ix`; returns whether that changed
+    /// what it shows.
+    fn resolve(&mut self, ix: usize) -> bool {
+        let BlockKind::Text { markdown } = &self.entries[ix].block.kind else {
+            return false;
+        };
+        let resolved = has_slots(markdown).then(|| {
+            let envelopes = self.envelopes();
+            replace_slots(markdown, |slot| {
+                Some(
+                    envelopes
+                        .iter()
+                        .find(|e| e.id == slot.id)
+                        .and_then(|e| e.value(slot.key))
+                        .map_or_else(
+                            || format!("⟦?{}.{}⟧", slot.id, slot.key),
+                            domain::computed::ComputedValue::display_text,
+                        ),
+                )
+            })
+        });
+        let numbers = &mut self.entries[ix].numbers;
+        if numbers.resolved == resolved {
+            return false;
+        }
+        numbers.resolved = resolved;
+        true
+    }
+
+    /// Lints the assistant texts that are finished: all of them at the end
+    /// of a turn (`before` is `None`), or those before entry `before`.
+    fn lint_pending(&mut self, before: Option<usize>) {
+        let pending = std::mem::take(&mut self.unlinted);
+        let (done, waiting): (Vec<usize>, Vec<usize>) = pending
+            .into_iter()
+            .partition(|ix| before.is_none_or(|b| *ix < b));
+        self.unlinted = waiting;
+        if done.is_empty() {
+            return;
+        }
+        let prompts: Vec<&str> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match &entry.block.kind {
+                BlockKind::Text { markdown } if is_prompt(markdown) => Some(markdown.as_str()),
+                _ => None,
+            })
+            .collect();
+        let found: Vec<(usize, Vec<String>)> = done
+            .into_iter()
+            .filter_map(|ix| match &self.entries.get(ix)?.block.kind {
+                BlockKind::Text { markdown } => Some((
+                    ix,
+                    lint_numbers(markdown, &prompts)
+                        .into_iter()
+                        .map(|n| n.text)
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect();
+        for (ix, unverified) in found {
+            if self.entries[ix].numbers.unverified != unverified {
+                self.entries[ix].numbers.unverified = unverified;
+                self.touched.push(ix);
+            }
+        }
     }
 
     fn upsert(&mut self, block: Block) -> TimelineChange {
@@ -601,5 +761,89 @@ mod tests {
         state.apply(&added(&prompt("ls")));
         state.apply(&added(&tool("bash")));
         assert_eq!(state.reply_to_copy(1), None);
+    }
+
+    fn computed(id: &str, key: &str, display: &str) -> Block {
+        use domain::computed::{ComputedValue, DescriptiveBody, Engine};
+        let engine = Engine {
+            name: "crest-stats".into(),
+            version: "0".into(),
+            backend: None,
+            platform: None,
+        };
+        let mut envelope = Computed::new(id, "stats.describe", "Descriptives", engine);
+        envelope.values.insert(
+            key.into(),
+            ComputedValue {
+                display: Some(display.into()),
+                ..ComputedValue::new(0.0)
+            },
+        );
+        Block::new(BlockKind::Computed {
+            envelope: Box::new(envelope),
+            body: Box::new(domain::computed::ComputedBody::Descriptive(
+                DescriptiveBody {
+                    by: None,
+                    variables: Vec::new(),
+                },
+            )),
+        })
+    }
+
+    fn numbers(state: &TimelineState, ix: usize) -> &TextNumbers {
+        &state.entries()[ix].numbers
+    }
+
+    #[test]
+    fn slots_show_engine_values_and_unknown_ones_a_marker() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&computed("st_1", "p_value", ".030")));
+        let reply = text("p = ⟦st_1.p_value⟧ and ⟦st_2.r⟧; plain");
+        state.apply(&added(&reply));
+        assert_eq!(
+            numbers(&state, 1).resolved.as_deref(),
+            Some("p = .030 and ⟦?st_2.r⟧; plain")
+        );
+        assert_eq!(state.take_touched(), Vec::<usize>::new());
+
+        // A card that arrives later fills the open slot.
+        state.apply(&added(&computed("st_2", "r", ".45")));
+        assert_eq!(
+            numbers(&state, 1).resolved.as_deref(),
+            Some("p = .030 and .45; plain")
+        );
+        assert_eq!(state.take_touched(), [1]);
+
+        let plain = text("no slots here");
+        state.apply(&added(&plain));
+        assert_eq!(numbers(&state, 3).resolved, None);
+    }
+
+    #[test]
+    fn finished_replies_are_linted_against_the_prompts() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&text("> we have 1500 users\n")));
+        let reply = text("");
+        state.apply(&added(&reply));
+        state.apply(&DomainEvent::TextDelta {
+            block_id: reply.id,
+            text: "Of 1500 users, 3 groups had a mean of 12.7 and ⟦st_1.p⟧.".into(),
+        });
+        // Still streaming: nothing flagged yet.
+        assert!(numbers(&state, 1).unverified.is_empty());
+        state.apply(&added(&tool("read_file")));
+        assert_eq!(numbers(&state, 1).unverified, ["12.7"]);
+        assert_eq!(state.take_touched(), [1]);
+        // The prompt itself is never linted.
+        assert!(numbers(&state, 0).unverified.is_empty());
+
+        let last = text("Then 45.5 more.");
+        state.apply(&added(&last));
+        assert!(numbers(&state, 3).unverified.is_empty());
+        state.apply(&DomainEvent::TurnFinished {
+            turn_id: domain::conversation::TurnId::new(),
+            stop_reason: domain::conversation::StopReason::EndTurn,
+        });
+        assert_eq!(numbers(&state, 3).unverified, ["45.5"]);
     }
 }

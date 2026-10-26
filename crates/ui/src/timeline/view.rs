@@ -174,7 +174,7 @@ impl TimelineView {
     }
 
     fn apply_quietly(&mut self, event: &DomainEvent) -> bool {
-        match self.state.apply(event) {
+        let changed = match self.state.apply(event) {
             TimelineChange::None => false,
             TimelineChange::Inserted(ix) => {
                 self.list.splice(ix..ix, 1);
@@ -184,7 +184,13 @@ impl TimelineView {
                 self.list.remeasure_items(ix..ix + 1);
                 true
             }
+        };
+        // Texts whose slots or lint changed because of another block.
+        let touched = self.state.take_touched();
+        for ix in &touched {
+            self.list.remeasure_items(*ix..*ix + 1);
         }
+        changed || !touched.is_empty()
     }
 
     /// Selects the last block when none is selected (on taking the focus).

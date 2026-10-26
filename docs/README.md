@@ -14,6 +14,7 @@ For the project overview, installation and quick start, see the [main README](..
 
 Research notes:
 
+- [research/chat-blocks-for-technical-work.md](research/chat-blocks-for-technical-work.md): which new chat blocks crest should render for developers, engineers, architects, chemists, physicists and data people; computation you can verify (the `Computed` envelope), statistics cards, LaTeX math, interop formats and the roadmap.
 - [research/installation.md](research/installation.md): how crest is packaged and installed on each platform.
 - [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
 - [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (implemented as an MVP; see its status section).

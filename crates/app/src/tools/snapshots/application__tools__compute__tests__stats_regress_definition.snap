@@ -1,0 +1,127 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsRegressTool::new(ports.clone()))"
+---
+{
+  "name": "stats_regress",
+  "description": "Fits an ordinary least squares regression with intercept using crest's deterministic engine: coefficients with SE, t, p, confidence intervals, standardised β and VIF; R², adjusted R², F, AIC, BIC; Durbin-Watson, Jarque-Bera, Breusch-Pagan and the condition number. Categorical predictors are dummy coded. The user sees a card; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "y": {
+        "type": "string",
+        "description": "Dependent variable (numeric)."
+      },
+      "x": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Predictors; categorical ones are dummy coded against their first\nsorted level."
+      },
+      "conf_level": {
+        "type": "number",
+        "format": "double",
+        "description": "Level of the coefficient intervals (default 0.95).",
+        "default": 0.95
+      }
+    },
+    "required": [
+      "data",
+      "y",
+      "x"
+    ],
+    "description": "Input of `regress`: ordinary least squares with an intercept.",
+    "title": "RegressRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      }
+    }
+  }
+}

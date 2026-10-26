@@ -368,6 +368,127 @@ expression: "schemars::schema_for!(Block)"
         "type",
         "message"
       ]
+    },
+    {
+      "description": "An engine-computed result (statistics, calc sheet, unit\nconversion) with its provenance.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "computed"
+        },
+        "envelope": {
+          "description": "The numbers and how they were produced.",
+          "$ref": "#/$defs/Computed"
+        },
+        "body": {
+          "description": "What the card draws.",
+          "$ref": "#/$defs/ComputedBody"
+        }
+      },
+      "required": [
+        "type",
+        "envelope",
+        "body"
+      ]
+    },
+    {
+      "description": "A form the model asks the user to fill (tool `ask_user`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "form"
+        }
+      },
+      "$ref": "#/$defs/FormSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "Function plots with parameter sliders and numeric series (tool\n`show_plot`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "plot"
+        }
+      },
+      "$ref": "#/$defs/PlotSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A test run report, e.g. from JUnit XML (tool `show_test_report`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "test_report"
+        }
+      },
+      "$ref": "#/$defs/TestReportSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "Static-analysis findings, e.g. from SARIF (tool `show_findings`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "findings"
+        }
+      },
+      "$ref": "#/$defs/FindingsSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "Schema, column statistics and first rows of a data file (tool\n`show_dataset`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "dataset"
+        }
+      },
+      "$ref": "#/$defs/DatasetSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A 2D molecule with computed formula and mass (tool `show_molecule`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "molecule"
+        }
+      },
+      "$ref": "#/$defs/MoleculeSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A 96- or 384-well plate map (tool `show_plate`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "plate"
+        }
+      },
+      "$ref": "#/$defs/PlateSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1221,6 +1342,2885 @@ expression: "schemars::schema_for!(Block)"
             "output_excerpt"
           ]
         }
+      ]
+    },
+    "Computed": {
+      "description": "The result of one engine computation, with its provenance.",
+      "type": "object",
+      "properties": {
+        "crest_computed": {
+          "description": "Envelope format version, `\"1.0\"`.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Id that number slots use (`⟦id.key⟧`); unique within a session.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What was computed, dotted: `stats.ttest_welch`, `calc.sheet`,\n`units.convert`.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Whether the computation succeeded.",
+          "$ref": "#/$defs/ComputedStatus"
+        },
+        "error": {
+          "description": "Why it failed, when `status` is `error`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "description": "Headline numbers by key (`t`, `df`, `p_value`...), the targets of\nnumber slots.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComputedValue"
+          },
+          "default": {}
+        },
+        "uncertainty_kind": {
+          "description": "What kind of uncertainty the intervals express.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UncertaintyKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "method": {
+          "description": "The method used and why.",
+          "$ref": "#/$defs/Method"
+        },
+        "assumptions": {
+          "description": "Assumption checks, including the ones that were not checked.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          },
+          "default": []
+        },
+        "warnings": {
+          "description": "Misuse and data warnings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputedWarning"
+          },
+          "default": []
+        },
+        "inputs": {
+          "description": "The data and parameters the engine read.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputRef"
+          },
+          "default": []
+        },
+        "engine": {
+          "description": "The engine that computed it.",
+          "$ref": "#/$defs/Engine"
+        },
+        "seed": {
+          "description": "RNG seed; required for resampling kinds (bootstrap, Monte Carlo).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "rng": {
+          "description": "RNG algorithm, e.g. `chacha20`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "environment_hash": {
+          "description": "Hash of the engine environment, `blake3:<hex>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reproduce": {
+          "description": "Commands that reproduce the result elsewhere.",
+          "$ref": "#/$defs/Reproduce",
+          "default": {}
+        },
+        "narrative": {
+          "description": "The template the plain-language sentence comes from.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Narrative"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "description": "When and for whom it ran.",
+          "$ref": "#/$defs/Provenance",
+          "default": {}
+        },
+        "verification": {
+          "description": "Result of the last recompute.",
+          "$ref": "#/$defs/Verification",
+          "default": {
+            "recomputed_at": null,
+            "match": null
+          }
+        }
+      },
+      "required": [
+        "crest_computed",
+        "id",
+        "kind",
+        "status",
+        "method",
+        "engine"
+      ]
+    },
+    "ComputedStatus": {
+      "description": "Outcome of a computation.",
+      "oneOf": [
+        {
+          "description": "Computed without problems.",
+          "type": "string",
+          "const": "ok"
+        },
+        {
+          "description": "Computed, but with warnings the card shows.",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "Not computed; `error` says why.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "ComputedValue": {
+      "description": "One engine number. `v` is the stored value; the other fields only change\nhow it is shown.",
+      "type": "object",
+      "properties": {
+        "v": {
+          "description": "Raw value, never rounded.",
+          "type": "number",
+          "format": "double"
+        },
+        "display": {
+          "description": "Preformatted text the engine chose, e.g. `−3.77`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit, from the engine (never the model), e.g. `mi/gal`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sig": {
+          "description": "Significant digits to show.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "decimals": {
+          "description": "Decimals to show (used when `sig` is absent).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "fmt": {
+          "description": "Formatting rule.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValueFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ci": {
+          "description": "Confidence or credible interval.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "A verbal label, e.g. `large` for an effect size.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label_rule": {
+          "description": "Where the label comes from, e.g. `Cohen 1988`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "v"
+      ]
+    },
+    "ValueFormat": {
+      "description": "How a [`ComputedValue`] is formatted when it has no `display`.",
+      "oneOf": [
+        {
+          "description": "An APA p-value: `.043`, `< .001`.",
+          "type": "string",
+          "const": "apa"
+        },
+        {
+          "description": "A statistic bounded by 1 (r, R², proportions): no leading zero.",
+          "type": "string",
+          "const": "bounded"
+        },
+        {
+          "description": "Fixed decimals, or `sig` significant digits.",
+          "type": "string",
+          "const": "fixed"
+        },
+        {
+          "description": "`v` is a fraction shown as a percentage.",
+          "type": "string",
+          "const": "percent"
+        },
+        {
+          "description": "Scientific notation, `1.23e−4`.",
+          "type": "string",
+          "const": "scientific"
+        }
+      ]
+    },
+    "Interval": {
+      "description": "A confidence or credible interval.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Coverage, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "description": "How it was computed, e.g. `welch_t`, `noncentral_t`, `bca`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "level",
+        "lo",
+        "hi"
+      ]
+    },
+    "UncertaintyKind": {
+      "description": "What the intervals of an envelope express.",
+      "oneOf": [
+        {
+          "description": "Frequentist confidence intervals.",
+          "type": "string",
+          "const": "frequentist_ci"
+        },
+        {
+          "description": "Bootstrap intervals.",
+          "type": "string",
+          "const": "bootstrap_ci"
+        },
+        {
+          "description": "Bayesian credible intervals.",
+          "type": "string",
+          "const": "credible_interval"
+        },
+        {
+          "description": "Monte Carlo standard errors.",
+          "type": "string",
+          "const": "monte_carlo"
+        },
+        {
+          "description": "Exact arithmetic; no uncertainty.",
+          "type": "string",
+          "const": "exact"
+        }
+      ]
+    },
+    "Method": {
+      "description": "The method an engine used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Human name, e.g. `Welch two-sample t-test`.",
+          "type": "string"
+        },
+        "why": {
+          "description": "Why it was chosen, e.g. `Levene p = .02 → unequal variances`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alternatives": {
+          "description": "Kinds that could be run instead, e.g. `mann_whitney`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "params": {
+          "description": "Parameters, e.g. `{\"alternative\": \"two-sided\"}`.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Assumption": {
+      "description": "One assumption of the method and whether it holds.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable id, e.g. `normality_g1`.",
+          "type": "string"
+        },
+        "check": {
+          "description": "The check run, e.g. `Shapiro-Wilk`; absent when not checked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stat": {
+          "description": "The check's statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "p": {
+          "description": "The check's p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "status": {
+          "description": "Outcome.",
+          "$ref": "#/$defs/AssumptionStatus"
+        },
+        "consequence": {
+          "description": "What the engine did about it, e.g. `used Welch correction`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "description": "A note for the user, e.g. `design property; confirm`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ]
+    },
+    "AssumptionStatus": {
+      "description": "Outcome of an assumption check.",
+      "oneOf": [
+        {
+          "description": "Holds.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Doubtful.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "Violated.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "Not checkable by the engine (a design property); shown on purpose.",
+          "type": "string",
+          "const": "not_checked"
+        }
+      ]
+    },
+    "ComputedWarning": {
+      "description": "A misuse or data warning attached by the engine.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "Stable code, e.g. `small_n`, `expected_count_lt_5`.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "How serious it is.",
+          "$ref": "#/$defs/WarningSeverity"
+        },
+        "text": {
+          "description": "Text for the user.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "text"
+      ]
+    },
+    "WarningSeverity": {
+      "description": "Severity of a [`ComputedWarning`].",
+      "oneOf": [
+        {
+          "description": "Worth knowing.",
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "description": "May change the conclusion.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "The result should not be used as is.",
+          "type": "string",
+          "const": "error"
+        }
+      ]
+    },
+    "InputRef": {
+      "description": "Data or parameters an engine read.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "File name or a label for inline data.",
+          "type": "string"
+        },
+        "role": {
+          "description": "`data` or `param`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace-relative path, when read from a file; a change to it marks\nthe block stale.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "Content hash, `blake3:<hex>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "description": "Number of rows read.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "columns": {
+          "description": "Columns used.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "filter": {
+          "description": "Row filter applied, e.g. `none`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Engine": {
+      "description": "The engine that produced an envelope.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Engine name, e.g. `crest-stats`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Engine version.",
+          "type": "string"
+        },
+        "backend": {
+          "description": "Library underneath, e.g. `statrs 0.19.1`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "description": "Target triple, e.g. `x86_64-linux`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Reproduce": {
+      "description": "One-line commands that reproduce a result.",
+      "type": "object",
+      "properties": {
+        "lua": {
+          "description": "crest Lua, e.g. `app.compute.test{...}`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "python": {
+          "description": "Python (scipy, statsmodels).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "r": {
+          "description": "R.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Narrative": {
+      "description": "The template of the plain-language sentence.",
+      "type": "object",
+      "properties": {
+        "template": {
+          "description": "Template name, e.g. `apa_ttest`.",
+          "type": "string"
+        },
+        "text_slots": {
+          "description": "Value keys the sentence uses.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "template"
+      ]
+    },
+    "Provenance": {
+      "description": "When and for whom a computation ran.",
+      "type": "object",
+      "properties": {
+        "activity_started": {
+          "description": "Start time, RFC 3339.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "description": "How long it took.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "agent": {
+          "description": "The turn or agent that asked for it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requested_by": {
+          "description": "`user` or `model`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Verification": {
+      "description": "Result of re-running an envelope.",
+      "type": "object",
+      "properties": {
+        "recomputed_at": {
+          "description": "When it was recomputed, RFC 3339; `None` until then.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "match": {
+          "description": "Whether every value matched; `None` until recomputed.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "diff": {
+          "description": "The values that changed; `null` reads as none.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ValueDiff"
+          }
+        }
+      }
+    },
+    "ValueDiff": {
+      "description": "A value that changed on recompute.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Value key.",
+          "type": "string"
+        },
+        "old": {
+          "description": "Stored value; `None` when only the recompute has it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "new": {
+          "description": "Recomputed value; `None` when the recompute lost it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "ComputedBody": {
+      "description": "What a computed card draws, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "Per-variable summary statistics.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "descriptive"
+            }
+          },
+          "$ref": "#/$defs/DescriptiveBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A hypothesis test.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "test"
+            }
+          },
+          "$ref": "#/$defs/TestBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A linear regression.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "regression"
+            }
+          },
+          "$ref": "#/$defs/RegressionBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A correlation matrix.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "correlation"
+            }
+          },
+          "$ref": "#/$defs/CorrelationBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A unit-checked calc sheet.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "calc_sheet"
+            }
+          },
+          "$ref": "#/$defs/CalcSheetBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A unit conversion.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "quantity"
+            }
+          },
+          "$ref": "#/$defs/QuantityBody",
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "VariableSummary": {
+      "description": "Summary of one variable.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "group": {
+          "description": "Group value, when split by `by`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Numeric or categorical.",
+          "$ref": "#/$defs/VariableKind"
+        },
+        "unit": {
+          "description": "Unit of the values.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n": {
+          "description": "Non-missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing": {
+          "description": "Missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "mean": {
+          "description": "Mean (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "sd": {
+          "description": "Sample standard deviation (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "median": {
+          "description": "Median (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "q1": {
+          "description": "First quartile (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "q3": {
+          "description": "Third quartile (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min": {
+          "description": "Minimum (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max": {
+          "description": "Maximum (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "skew": {
+          "description": "Sample skewness (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "kurtosis": {
+          "description": "Excess kurtosis (numeric).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "histogram": {
+          "description": "Distribution for the sparkline (numeric).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "levels": {
+          "description": "Counts per level (categorical), most frequent first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LevelCount"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "n"
+      ]
+    },
+    "VariableKind": {
+      "description": "Measurement level of a variable.",
+      "oneOf": [
+        {
+          "description": "Numbers.",
+          "type": "string",
+          "const": "numeric"
+        },
+        {
+          "description": "Categories.",
+          "type": "string",
+          "const": "categorical"
+        }
+      ]
+    },
+    "Histogram": {
+      "description": "Binned counts: `edges` has one more entry than `counts`.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "description": "Bin edges, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "counts": {
+          "description": "Count per bin.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "edges",
+        "counts"
+      ]
+    },
+    "LevelCount": {
+      "description": "Count of one level of a categorical variable.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Level.",
+          "type": "string"
+        },
+        "count": {
+          "description": "Rows with this level.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "percent": {
+          "description": "Share of non-missing rows, 0–100.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "level",
+        "count",
+        "percent"
+      ]
+    },
+    "DescriptiveBody": {
+      "description": "Body of a descriptive summary: one row per variable (and group).",
+      "type": "object",
+      "properties": {
+        "by": {
+          "description": "Grouping column (`by=`), when rows are split by group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variables": {
+          "description": "One summary per variable, or per variable and group.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VariableSummary"
+          }
+        }
+      },
+      "required": [
+        "variables"
+      ]
+    },
+    "TestKind": {
+      "description": "A hypothesis test the engine runs.",
+      "oneOf": [
+        {
+          "description": "Welch two-sample t-test (unequal variances).",
+          "type": "string",
+          "const": "welch_t"
+        },
+        {
+          "description": "Student two-sample t-test (equal variances).",
+          "type": "string",
+          "const": "student_t"
+        },
+        {
+          "description": "Paired t-test.",
+          "type": "string",
+          "const": "paired_t"
+        },
+        {
+          "description": "One-sample t-test.",
+          "type": "string",
+          "const": "one_sample_t"
+        },
+        {
+          "description": "Mann-Whitney U (Wilcoxon rank-sum).",
+          "type": "string",
+          "const": "mann_whitney"
+        },
+        {
+          "description": "Wilcoxon signed-rank.",
+          "type": "string",
+          "const": "wilcoxon"
+        },
+        {
+          "description": "Pearson χ² test of independence.",
+          "type": "string",
+          "const": "chi_square"
+        },
+        {
+          "description": "Fisher's exact test, 2×2.",
+          "type": "string",
+          "const": "fisher"
+        }
+      ]
+    },
+    "Alternative": {
+      "description": "Alternative hypothesis.",
+      "oneOf": [
+        {
+          "description": "Different in either direction.",
+          "type": "string",
+          "const": "two_sided"
+        },
+        {
+          "description": "First less than second.",
+          "type": "string",
+          "const": "less"
+        },
+        {
+          "description": "First greater than second.",
+          "type": "string",
+          "const": "greater"
+        }
+      ]
+    },
+    "GroupSummary": {
+      "description": "Summary of one group in a test.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Group name.",
+          "type": "string"
+        },
+        "n": {
+          "description": "Size.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "mean": {
+          "description": "Mean.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "sd": {
+          "description": "Standard deviation.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "median": {
+          "description": "Median.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "n"
+      ]
+    },
+    "TestBody": {
+      "description": "Body of a hypothesis test. The statistic, df, p and effect size are in\nthe envelope's `values` (`statistic`, `df`, `p_value`, `effect`).",
+      "type": "object",
+      "properties": {
+        "test": {
+          "description": "Which test ran.",
+          "$ref": "#/$defs/TestKind"
+        },
+        "alternative": {
+          "description": "Direction of the alternative hypothesis.",
+          "$ref": "#/$defs/Alternative",
+          "default": "two_sided"
+        },
+        "groups": {
+          "description": "Per-group summary, in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GroupSummary"
+          },
+          "default": []
+        },
+        "observed": {
+          "description": "Observed counts, for χ² and Fisher (rows × columns).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "expected": {
+          "description": "Expected counts under independence, same shape as `observed`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "required": [
+        "test"
+      ]
+    },
+    "CoefficientRow": {
+      "description": "One coefficient of a regression.",
+      "type": "object",
+      "properties": {
+        "term": {
+          "description": "Term, e.g. `(Intercept)`, `wt`.",
+          "type": "string"
+        },
+        "estimate": {
+          "description": "Estimate.",
+          "type": "number",
+          "format": "double"
+        },
+        "se": {
+          "description": "Standard error.",
+          "type": "number",
+          "format": "double"
+        },
+        "t": {
+          "description": "t statistic.",
+          "type": "number",
+          "format": "double"
+        },
+        "p": {
+          "description": "Two-sided p-value.",
+          "type": "number",
+          "format": "double"
+        },
+        "ci_lo": {
+          "description": "Lower interval bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "ci_hi": {
+          "description": "Upper interval bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "std_beta": {
+          "description": "Standardised coefficient.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "vif": {
+          "description": "Variance inflation factor (not for the intercept).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "term",
+        "estimate",
+        "se",
+        "t",
+        "p",
+        "ci_lo",
+        "ci_hi"
+      ]
+    },
+    "FitStats": {
+      "description": "Goodness of fit of a regression.",
+      "type": "object",
+      "properties": {
+        "n": {
+          "description": "Observations used.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "r_squared": {
+          "description": "R².",
+          "type": "number",
+          "format": "double"
+        },
+        "adj_r_squared": {
+          "description": "Adjusted R².",
+          "type": "number",
+          "format": "double"
+        },
+        "f": {
+          "description": "F statistic of the overall test.",
+          "type": "number",
+          "format": "double"
+        },
+        "df_model": {
+          "description": "Model degrees of freedom.",
+          "type": "number",
+          "format": "double"
+        },
+        "df_resid": {
+          "description": "Residual degrees of freedom.",
+          "type": "number",
+          "format": "double"
+        },
+        "f_p": {
+          "description": "p-value of the F test.",
+          "type": "number",
+          "format": "double"
+        },
+        "sigma": {
+          "description": "Residual standard error.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "aic": {
+          "description": "Akaike information criterion.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "bic": {
+          "description": "Bayesian information criterion.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "n",
+        "r_squared",
+        "adj_r_squared",
+        "f",
+        "df_model",
+        "df_resid",
+        "f_p"
+      ]
+    },
+    "Diagnostics": {
+      "description": "Residual diagnostics of a regression (the statsmodels footer).",
+      "type": "object",
+      "properties": {
+        "durbin_watson": {
+          "description": "Durbin-Watson statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jarque_bera": {
+          "description": "Jarque-Bera statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jarque_bera_p": {
+          "description": "Jarque-Bera p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "breusch_pagan": {
+          "description": "Breusch-Pagan statistic.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "breusch_pagan_p": {
+          "description": "Breusch-Pagan p-value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "condition_number": {
+          "description": "Condition number of the design matrix.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max_vif": {
+          "description": "Largest VIF.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max_cooks_d": {
+          "description": "Largest Cook's distance.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "RegressionBody": {
+      "description": "Body of an OLS regression.",
+      "type": "object",
+      "properties": {
+        "dependent": {
+          "description": "Dependent variable.",
+          "type": "string"
+        },
+        "ci_level": {
+          "description": "Level of the coefficient intervals, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "coefficients": {
+          "description": "One row per term, intercept first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoefficientRow"
+          }
+        },
+        "fit": {
+          "description": "Goodness of fit.",
+          "$ref": "#/$defs/FitStats"
+        },
+        "diagnostics": {
+          "description": "Residual diagnostics.",
+          "$ref": "#/$defs/Diagnostics",
+          "default": {}
+        },
+        "fitted": {
+          "description": "Fitted values, in row order (for residual plots).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "residuals": {
+          "description": "Residuals, aligned with `fitted`.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "dependent",
+        "ci_level",
+        "coefficients",
+        "fit"
+      ]
+    },
+    "CorrelationMethod": {
+      "description": "Correlation coefficient.",
+      "oneOf": [
+        {
+          "description": "Pearson's r.",
+          "type": "string",
+          "const": "pearson"
+        },
+        {
+          "description": "Spearman's ρ.",
+          "type": "string",
+          "const": "spearman"
+        },
+        {
+          "description": "Kendall's τ-b.",
+          "type": "string",
+          "const": "kendall"
+        }
+      ]
+    },
+    "PAdjust": {
+      "description": "Multiple-comparison adjustment of p-values.",
+      "oneOf": [
+        {
+          "description": "Raw p-values.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Holm step-down.",
+          "type": "string",
+          "const": "holm"
+        },
+        {
+          "description": "Benjamini-Hochberg false discovery rate.",
+          "type": "string",
+          "const": "bh"
+        },
+        {
+          "description": "Bonferroni.",
+          "type": "string",
+          "const": "bonferroni"
+        }
+      ]
+    },
+    "CorrelationBody": {
+      "description": "Body of a correlation matrix. `r`, `p` and `n` are square, one row and\ncolumn per variable; a `None` cell could not be computed.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "Coefficient.",
+          "$ref": "#/$defs/CorrelationMethod"
+        },
+        "adjustment": {
+          "description": "Multiple-comparison adjustment applied to `p`.",
+          "$ref": "#/$defs/PAdjust",
+          "default": "none"
+        },
+        "variables": {
+          "description": "Variable names, the matrix order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "r": {
+          "description": "Coefficients.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "p": {
+          "description": "Adjusted p-values; the diagonal is `None`.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "n": {
+          "description": "Pairwise complete observations.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "required": [
+        "method",
+        "variables",
+        "r",
+        "p",
+        "n"
+      ]
+    },
+    "CalcLine": {
+      "description": "One line of a calc sheet, `name = expr`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name later lines use; `None` for a bare expression.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expr": {
+          "description": "Expression as written.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Numeric value in `unit`; `None` on error or for non-numeric results.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "display": {
+          "description": "The engine's rendering of the result, e.g. `9.81 m/s²`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit of `value`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latex": {
+          "description": "LaTeX of the line, when the engine can produce it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Evaluation error, e.g. a dimension mismatch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "expr"
+      ]
+    },
+    "CalcSheetBody": {
+      "description": "Body of a calc sheet: lines evaluated in order.",
+      "type": "object",
+      "properties": {
+        "lines": {
+          "description": "Lines, in evaluation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CalcLine"
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "Quantity": {
+      "description": "A value with a unit.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "description": "Magnitude.",
+          "type": "number",
+          "format": "double"
+        },
+        "unit": {
+          "description": "Unit, e.g. `km/h`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ]
+    },
+    "ConversionStep": {
+      "description": "One step of a conversion chain.",
+      "type": "object",
+      "properties": {
+        "from_unit": {
+          "description": "Unit converted from.",
+          "type": "string"
+        },
+        "to_unit": {
+          "description": "Unit converted to.",
+          "type": "string"
+        },
+        "factor": {
+          "description": "Multiplier of this step.",
+          "type": "number",
+          "format": "double"
+        },
+        "note": {
+          "description": "E.g. `exact by definition (1959)`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from_unit",
+        "to_unit",
+        "factor"
+      ]
+    },
+    "QuantityBody": {
+      "description": "Body of a unit conversion.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "What was converted.",
+          "$ref": "#/$defs/Quantity"
+        },
+        "to": {
+          "description": "The result.",
+          "$ref": "#/$defs/Quantity"
+        },
+        "factor": {
+          "description": "Multiplier from `from.unit` to `to.unit` (for affine units like °C,\nthe slope).",
+          "type": "number",
+          "format": "double"
+        },
+        "exact": {
+          "description": "Whether the factor is exact by definition (inch → mm) rather than\nrounded.",
+          "type": "boolean"
+        },
+        "dimension": {
+          "description": "Physical dimension, e.g. `length`, `energy / time`.",
+          "type": "string"
+        },
+        "chain": {
+          "description": "Steps through base units, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversionStep"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "factor",
+        "exact",
+        "dimension"
+      ]
+    },
+    "FormField": {
+      "description": "One field of a form.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Key of the value in the answer.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Label shown; the name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Help text under the input.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "description": "Whether the form cannot be submitted without it.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "oneOf": [
+        {
+          "description": "One line of text.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "string"
+            },
+            "default": {
+              "description": "Initial text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "min_length": {
+              "description": "Shortest accepted length, in characters.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "max_length": {
+              "description": "Longest accepted length, in characters.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Several lines of text.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "multiline"
+            },
+            "default": {
+              "description": "Initial text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_length": {
+              "description": "Longest accepted length, in characters.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A real number.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "number"
+            },
+            "default": {
+              "description": "Initial value.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min": {
+              "description": "Smallest accepted value.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "max": {
+              "description": "Largest accepted value.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A whole number.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "integer"
+            },
+            "default": {
+              "description": "Initial value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            },
+            "min": {
+              "description": "Smallest accepted value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            },
+            "max": {
+              "description": "Largest accepted value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A checkbox.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            },
+            "default": {
+              "description": "Initial state.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "One choice among options.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "enum"
+            },
+            "options": {
+              "description": "The options.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FormOption"
+              }
+            },
+            "default": {
+              "description": "Value of the option selected at first.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "options"
+          ]
+        },
+        {
+          "description": "Any number of choices among options.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "multi_enum"
+            },
+            "options": {
+              "description": "The options.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FormOption"
+              }
+            },
+            "default": {
+              "description": "Values selected at first.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "min_items": {
+              "description": "Fewest choices accepted.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "max_items": {
+              "description": "Most choices accepted.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "options"
+          ]
+        }
+      ]
+    },
+    "FormOption": {
+      "description": "An option of an enum field.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "description": "Value put in the answer.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Text shown; the value when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ]
+    },
+    "FormState": {
+      "description": "Lifecycle of a form.",
+      "oneOf": [
+        {
+          "description": "Waiting for the user.",
+          "type": "string",
+          "const": "pending"
+        },
+        {
+          "description": "Submitted; `answer` holds the values.",
+          "type": "string",
+          "const": "submitted"
+        },
+        {
+          "description": "Dismissed without answering.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "FormSpec": {
+      "description": "A form shown in the timeline.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Heading.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Text under the heading: why the model asks.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "description": "Fields, in display order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FormField"
+          }
+        },
+        "submit_label": {
+          "description": "Text of the submit button; the UI picks one when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "Whether the user answered.",
+          "$ref": "#/$defs/FormState",
+          "default": "pending"
+        },
+        "answer": {
+          "description": "The submitted values by field name, once submitted.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "title",
+        "fields"
+      ]
+    },
+    "PlotRange": {
+      "description": "A closed interval of an axis or of `t`.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "Lower end.",
+          "type": "number",
+          "format": "double"
+        },
+        "max": {
+          "description": "Upper end, greater than `min`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ]
+    },
+    "PlotFunction": {
+      "description": "A function to draw.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "How `expr` is read.",
+          "$ref": "#/$defs/FunctionKind"
+        },
+        "expr": {
+          "description": "`f(x)` for explicit, `x(t)` for parametric, `f(x, y)` (drawn where\nit is 0) for implicit.",
+          "type": "string"
+        },
+        "y_expr": {
+          "description": "`y(t)`, for parametric functions only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "t_range": {
+          "description": "Range of `t`, for parametric functions; `0..1` when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlotRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "Legend label; the expression when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "expr"
+      ]
+    },
+    "FunctionKind": {
+      "description": "How a [`PlotFunction`] is defined.",
+      "oneOf": [
+        {
+          "description": "`y = f(x)`.",
+          "type": "string",
+          "const": "explicit"
+        },
+        {
+          "description": "`(x(t), y(t))`.",
+          "type": "string",
+          "const": "parametric"
+        },
+        {
+          "description": "`f(x, y) = 0`.",
+          "type": "string",
+          "const": "implicit"
+        }
+      ]
+    },
+    "PlotParam": {
+      "description": "A parameter with a slider.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Variable name used in the expressions.",
+          "type": "string"
+        },
+        "min": {
+          "description": "Slider minimum.",
+          "type": "number",
+          "format": "double"
+        },
+        "max": {
+          "description": "Slider maximum.",
+          "type": "number",
+          "format": "double"
+        },
+        "step": {
+          "description": "Slider step; continuous when absent.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "value": {
+          "description": "Current value.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "min",
+        "max",
+        "value"
+      ]
+    },
+    "XySeries": {
+      "description": "A numeric series.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Legend name.",
+          "type": "string"
+        },
+        "x": {
+          "description": "x coordinates.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "y": {
+          "description": "y coordinates, one per x.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "style": {
+          "description": "Points or a line.",
+          "$ref": "#/$defs/SeriesStyle",
+          "default": "scatter"
+        }
+      },
+      "required": [
+        "name",
+        "x",
+        "y"
+      ]
+    },
+    "SeriesStyle": {
+      "description": "How an [`XySeries`] is drawn.",
+      "oneOf": [
+        {
+          "description": "Points.",
+          "type": "string",
+          "const": "scatter"
+        },
+        {
+          "description": "A line through the points in order.",
+          "type": "string",
+          "const": "line"
+        }
+      ]
+    },
+    "PlotSpec": {
+      "description": "A plot of functions and series.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_range": {
+          "description": "Visible x range; the UI fits the data when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlotRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_range": {
+          "description": "Visible y range; the UI fits the data when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlotRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "x_label": {
+          "description": "Label of the x axis.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "y_label": {
+          "description": "Label of the y axis.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "functions": {
+          "description": "Functions to draw.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlotFunction"
+          },
+          "default": []
+        },
+        "params": {
+          "description": "Parameters the functions use, each with a slider.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlotParam"
+          },
+          "default": []
+        },
+        "series": {
+          "description": "Numeric series.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/XySeries"
+          },
+          "default": []
+        }
+      }
+    },
+    "TestSuite": {
+      "description": "A test suite.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Suite name.",
+          "type": "string"
+        },
+        "time_secs": {
+          "description": "Wall time of the suite, in seconds.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "cases": {
+          "description": "Cases, in report order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestCase"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "cases"
+      ]
+    },
+    "TestCase": {
+      "description": "One test case.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Case name.",
+          "type": "string"
+        },
+        "classname": {
+          "description": "Class or module, when the report has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "description": "Outcome.",
+          "$ref": "#/$defs/TestOutcome"
+        },
+        "time_secs": {
+          "description": "Wall time, in seconds.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "message": {
+          "description": "Failure or skip message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "details": {
+          "description": "Stack trace or captured output.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "description": "Where the test or the failure is.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "outcome"
+      ]
+    },
+    "TestOutcome": {
+      "description": "Outcome of a [`TestCase`].",
+      "oneOf": [
+        {
+          "description": "Passed.",
+          "type": "string",
+          "const": "passed"
+        },
+        {
+          "description": "An assertion failed.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "The test could not run to completion (panic, setup error).",
+          "type": "string",
+          "const": "errored"
+        },
+        {
+          "description": "Not run.",
+          "type": "string",
+          "const": "skipped"
+        }
+      ]
+    },
+    "TestReportSpec": {
+      "description": "A test run: suites of cases.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title, e.g. the report file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suites": {
+          "description": "Suites, in report order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TestSuite"
+          }
+        }
+      },
+      "required": [
+        "suites"
+      ]
+    },
+    "Finding": {
+      "description": "One finding.",
+      "type": "object",
+      "properties": {
+        "rule": {
+          "description": "Rule id, e.g. `clippy::unwrap_used`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "severity": {
+          "description": "Severity (SARIF `level`).",
+          "$ref": "#/$defs/FindingSeverity"
+        },
+        "message": {
+          "description": "What is wrong.",
+          "type": "string"
+        },
+        "location": {
+          "description": "Where; usually a [`SourceRef::File`] with lines.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snippet": {
+          "description": "Source excerpt of the location.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "help_uri": {
+          "description": "Link to the rule's documentation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fix": {
+          "description": "Suggested fix as a unified diff.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "severity",
+        "message"
+      ]
+    },
+    "FindingSeverity": {
+      "description": "Severity of a [`Finding`], the SARIF levels.",
+      "oneOf": [
+        {
+          "description": "A problem.",
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "description": "A possible problem.",
+          "type": "string",
+          "const": "warning"
+        },
+        {
+          "description": "Information.",
+          "type": "string",
+          "const": "note"
+        },
+        {
+          "description": "No severity given.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "FindingsSpec": {
+      "description": "Static-analysis findings, SARIF-like.",
+      "type": "object",
+      "properties": {
+        "tool": {
+          "description": "Tool that produced them, e.g. `clippy 0.1.95`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "findings": {
+          "description": "The findings, in report order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        }
+      },
+      "required": [
+        "findings"
+      ]
+    },
+    "DatasetFormat": {
+      "description": "Format of a dataset file.",
+      "oneOf": [
+        {
+          "description": "Comma-separated values.",
+          "type": "string",
+          "const": "csv"
+        },
+        {
+          "description": "Tab-separated values.",
+          "type": "string",
+          "const": "tsv"
+        },
+        {
+          "description": "Apache Parquet.",
+          "type": "string",
+          "const": "parquet"
+        },
+        {
+          "description": "Arrow IPC.",
+          "type": "string",
+          "const": "arrow"
+        },
+        {
+          "description": "JSON lines.",
+          "type": "string",
+          "const": "jsonl"
+        }
+      ]
+    },
+    "DatasetColumn": {
+      "description": "Schema and statistics of one column.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "dtype": {
+          "description": "Data type as the file or the inference names it, e.g. `int64`,\n`utf8`, `timestamp[ms]`.",
+          "type": "string"
+        },
+        "null_percent": {
+          "description": "Share of null values, 0–100.",
+          "type": "number",
+          "format": "double"
+        },
+        "distinct": {
+          "description": "Number of distinct values, when computed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "min": {
+          "description": "Smallest value.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cell"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max": {
+          "description": "Largest value.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cell"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "histogram": {
+          "description": "Distribution for the sparkline (numeric columns).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Histogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "dtype",
+        "null_percent"
+      ]
+    },
+    "DatasetSpec": {
+      "description": "A dataset preview.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Workspace-relative path of the file.",
+          "type": "string"
+        },
+        "format": {
+          "description": "File format.",
+          "$ref": "#/$defs/DatasetFormat"
+        },
+        "rows": {
+          "description": "Total number of rows, when known without reading everything.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sampled": {
+          "description": "Whether the statistics come from a sample of the rows.",
+          "type": "boolean",
+          "default": false
+        },
+        "columns": {
+          "description": "One entry per column, in file order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DatasetColumn"
+          }
+        },
+        "preview": {
+          "description": "The first rows.",
+          "$ref": "#/$defs/TableSpec"
+        }
+      },
+      "required": [
+        "path",
+        "format",
+        "columns",
+        "preview"
+      ]
+    },
+    "MoleculeSpec": {
+      "description": "A molecule drawn from SMILES.",
+      "type": "object",
+      "properties": {
+        "smiles": {
+          "description": "SMILES as given.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name to show beside the drawing.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "svg": {
+          "description": "2D depiction, SVG source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "formula": {
+          "description": "Molecular formula in Hill order, computed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mw": {
+          "description": "Molecular weight in g/mol, computed.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "charge": {
+          "description": "Net formal charge, computed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "canonical": {
+          "description": "Canonical SMILES, computed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Why the SMILES could not be parsed, with the column when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimed_formula": {
+          "description": "Formula the model stated, to compare with the computed one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claimed_matches": {
+          "description": "Whether `claimed_formula` matches `formula` (see [`formulas_match`]).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "smiles"
+      ]
+    },
+    "Well": {
+      "description": "One well of a plate.",
+      "type": "object",
+      "properties": {
+        "well": {
+          "description": "Position, row letter and 1-based column: `A1`, `P24`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Sample label, e.g. `blank`, `ctrl+`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "Measured value.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "well"
+      ]
+    },
+    "PlateSpec": {
+      "description": "A microplate map: a value and a label per well, drawn as a heatmap.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "Number of wells: 96 (8×12) or 384 (16×24).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "value_label": {
+          "description": "What the values are, e.g. `OD600`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wells": {
+          "description": "Wells with data; the others are drawn empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Well"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "wells"
       ]
     }
   }

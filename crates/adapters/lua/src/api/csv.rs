@@ -1,5 +1,5 @@
-//! The CSV reader behind `app.ui.csv`: RFC 4180 records into a
-//! [`TableSpec`].
+//! The CSV reader behind `app.ui.csv`: RFC 4180 records (split by
+//! [`application::csv`]) into a [`TableSpec`].
 //!
 //! Fields are split on the delimiter, may be quoted with `"` (a doubled
 //! `""` is a quote inside), and quoted fields may span lines. Records end
@@ -8,6 +8,7 @@
 //! become nulls and the rest stay text. Short rows are padded with nulls
 //! to the widest row.
 
+use application::csv::{self, records};
 use domain::block::{Cell, Column, TableSpec};
 
 /// How to read the text.
@@ -28,76 +29,14 @@ impl Default for CsvOptions {
     }
 }
 
-/// Splits `text` into records of fields.
-fn records(text: &str, delimiter: char) -> Result<Vec<Vec<String>>, String> {
-    let mut records = Vec::new();
-    let mut record = Vec::new();
-    let mut field = String::new();
-    let mut quoted = false;
-    let mut chars = text.chars().peekable();
-    let mut line = 1;
-    let mut quote_line = 0;
-    while let Some(c) = chars.next() {
-        if quoted {
-            match c {
-                '"' if chars.peek() == Some(&'"') => {
-                    chars.next();
-                    field.push('"');
-                }
-                '"' => quoted = false,
-                '\n' => {
-                    line += 1;
-                    field.push(c);
-                }
-                _ => field.push(c),
-            }
-            continue;
-        }
-        match c {
-            '"' if field.is_empty() => {
-                quoted = true;
-                quote_line = line;
-            }
-            '\r' if chars.peek() == Some(&'\n') => {}
-            '\n' => {
-                line += 1;
-                record.push(std::mem::take(&mut field));
-                push_record(&mut records, std::mem::take(&mut record));
-            }
-            c if c == delimiter => record.push(std::mem::take(&mut field)),
-            _ => field.push(c),
-        }
-    }
-    if quoted {
-        return Err(format!("unclosed quote opened on line {quote_line}"));
-    }
-    if !field.is_empty() || !record.is_empty() {
-        record.push(field);
-        push_record(&mut records, record);
-    }
-    Ok(records)
-}
-
-/// Keeps `record` unless it is a blank line.
-fn push_record(records: &mut Vec<Vec<String>>, record: Vec<String>) {
-    let blank = record.len() == 1 && record[0].trim().is_empty();
-    if !blank {
-        records.push(record);
-    }
-}
-
 /// A cell from its text: a finite number, null when empty, else text.
 fn cell(text: String) -> Cell {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if text.trim().is_empty() {
         return Cell::Null;
     }
-    let numeric = trimmed
-        .chars()
-        .all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | 'e' | 'E'));
-    match trimmed.parse::<f64>() {
-        Ok(n) if numeric && n.is_finite() => Cell::Number(n),
-        _ => Cell::Text(text),
+    match csv::number(&text) {
+        Some(n) => Cell::Number(n),
+        None => Cell::Text(text),
     }
 }
 
