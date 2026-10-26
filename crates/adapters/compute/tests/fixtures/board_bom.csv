@@ -1,0 +1,6 @@
+Reference,Qty,Value,MPN,Category,Unit Price,Extended
+"R1, R2, R5-R8",,10k,RC0603FR-0710KL,passives,$0.0021,
+C1-C4,4,100n,GRM188R71C104KA01D,passives,0.0035,0.014
+U1,1,STM32F103C8T6,STM32F103C8T6,ICs,"$3,45",3.45
+J1,1,USB-C,,connectors,0.42,0.50
+SW1,2,Tactile switch,PTS645SM43SMTR92,mechanical,,

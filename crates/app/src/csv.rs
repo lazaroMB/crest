@@ -1,5 +1,6 @@
 //! A small RFC 4180 reader: CSV or TSV text into records, and into the
-//! named columns the compute engine reads ([`data_set`]).
+//! named columns the compute engine reads ([`data_set`]), and JSON arrays
+//! of records into the same columns ([`json_records`]).
 //!
 //! Fields are split on the delimiter, may be quoted with `"` (a doubled
 //! `""` is a quote inside), and quoted fields may span lines. Records end
@@ -131,7 +132,16 @@ pub fn data_set(text: &str, delimiter: char, source: InputRef) -> Result<DataSet
         }
     }
     let rows: Vec<Vec<String>> = records.collect();
-    let columns = names
+    Ok(DataSet {
+        source,
+        columns: columns_of(names, &rows),
+    })
+}
+
+/// Named columns from rows of cells: numeric when every present cell is
+/// a number, categorical otherwise.
+fn columns_of(names: Vec<String>, rows: &[Vec<String>]) -> Vec<DataColumn> {
+    names
         .into_iter()
         .enumerate()
         .map(|(ix, name)| {
@@ -161,14 +171,86 @@ pub fn data_set(text: &str, delimiter: char, source: InputRef) -> Result<DataSet
                 unit: None,
             }
         })
+        .collect()
+}
+
+/// Reads a JSON array of records (objects), or an object holding one
+/// under its first array-valued key (`{"items": [...]}`), as named
+/// columns in the order the keys first appear. Numbers keep their JSON
+/// text, `null` is missing, nested values are kept as JSON text.
+///
+/// # Errors
+///
+/// Malformed JSON, or no array of objects.
+pub fn json_records(text: &str, source: InputRef) -> Result<DataSet, String> {
+    use serde_json::Value;
+    let value: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
+    let list = match &value {
+        Value::Array(list) => list,
+        Value::Object(map) => map
+            .values()
+            .find_map(Value::as_array)
+            .ok_or("the JSON object holds no array of records")?,
+        _ => return Err("expected a JSON array of records".into()),
+    };
+    let mut names: Vec<String> = Vec::new();
+    for record in list {
+        let object = record
+            .as_object()
+            .ok_or("every record of the JSON array must be an object")?;
+        for key in object.keys() {
+            if !names.contains(key) {
+                names.push(key.clone());
+            }
+        }
+    }
+    if names.is_empty() {
+        return Err("the JSON records have no fields".into());
+    }
+    let rows: Vec<Vec<String>> = list
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|object| {
+            names
+                .iter()
+                .map(|name| match object.get(name) {
+                    None | Some(Value::Null) => String::new(),
+                    Some(Value::String(s)) => s.clone(),
+                    Some(other) => other.to_string(),
+                })
+                .collect()
+        })
         .collect();
-    Ok(DataSet { source, columns })
+    Ok(DataSet {
+        source,
+        columns: columns_of(names, &rows),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ports::compute::inline_source;
+
+    #[test]
+    fn json_records_become_columns() {
+        let text =
+            r#"{"items": [{"part": "R1", "qty": 4, "cost": 0.01}, {"part": "C1", "cost": null}]}"#;
+        let data = json_records(text, inline_source()).unwrap();
+        assert_eq!(
+            data.column("qty").map(|c| &c.values),
+            Some(&ColumnValues::Numeric(vec![Some(4.0), None]))
+        );
+        assert_eq!(
+            data.column("part").map(|c| &c.values),
+            Some(&ColumnValues::Categorical(vec![
+                Some("R1".into()),
+                Some("C1".into())
+            ]))
+        );
+        assert!(json_records("[1, 2]", inline_source()).is_err());
+        assert!(json_records("{", inline_source()).is_err());
+    }
 
     #[test]
     fn quotes_escapes_and_crlf() {

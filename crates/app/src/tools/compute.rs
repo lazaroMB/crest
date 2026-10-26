@@ -55,7 +55,7 @@ pub use self::cards::{
     StatsForecastTool, StatsPowerTool,
 };
 pub use self::engineering::{
-    Beam, BeamTool, Bode, BodeTool, Karnaugh, KarnaughTool, Tolerance, ToleranceTool,
+    Beam, BeamTool, Bode, BodeTool, Bom, BomTool, Karnaugh, KarnaughTool, Tolerance, ToleranceTool,
 };
 
 use super::registry::{
@@ -769,7 +769,7 @@ against weighted criteria, `decision_matrix`.
 For engineering: the frequency response, margins and crossovers of a transfer function come \
 from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`; reactions, shear, moment and \
 deflection of a beam come from `beam`; worst-case, RSS and Monte Carlo tolerance stacks \
-from `tolerance_stack`.
+from `tolerance_stack`; the cost of a bill of materials (a CSV/JSON BOM) from `bom_cost`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -811,7 +811,8 @@ pub fn register_compute_tools(
     registry.register_typed(BodeTool::new(ports.clone()))?;
     registry.register_typed(KarnaughTool::new(ports.clone()))?;
     registry.register_typed(BeamTool::new(ports.clone()))?;
-    registry.register_typed(ToleranceTool::new(ports.clone()))
+    registry.register_typed(ToleranceTool::new(ports.clone()))?;
+    registry.register_typed(BomTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -933,8 +934,9 @@ mod tests {
         insta::assert_json_snapshot!("beam_definition", definition(BeamTool::new(ports.clone())));
         insta::assert_json_snapshot!(
             "tolerance_stack_definition",
-            definition(ToleranceTool::new(ports))
+            definition(ToleranceTool::new(ports.clone()))
         );
+        insta::assert_json_snapshot!("bom_cost_definition", definition(BomTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1221,6 +1223,7 @@ mod tests {
             [
                 "beam",
                 "bode",
+                "bom_cost",
                 "calc",
                 "cash_flow",
                 "convert",

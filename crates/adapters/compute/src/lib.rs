@@ -25,7 +25,7 @@
 //! engineering cards run as `crest-solve` too: Bode / Nyquist plots with
 //! margins (`bode`) and Karnaugh maps by Quine–McCluskey and Petrick
 //! (`karnaugh`), beams by the stiffness method (`beam`) and seeded tolerance
-//! stack-ups (`tolerance`). Resampling and simulation draw from a seeded
+//! stack-ups (`tolerance`), and BOM costing in decimals (`bom`). Resampling and simulation draw from a seeded
 //! ChaCha20 stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -39,6 +39,7 @@
 mod ab_test;
 mod beam;
 mod bode;
+mod bom;
 mod bootstrap;
 mod calc;
 mod cash_flow;
@@ -129,6 +130,7 @@ impl StatsEngine {
             ComputeRequest::Simulate(r) => simulate::run(r, id)?,
             ComputeRequest::CashFlow(r) => cash_flow::run(r, id)?,
             ComputeRequest::Decide(r) => decide::run(r, id)?,
+            ComputeRequest::Bom(r) => bom::run(r, id)?,
             ComputeRequest::Tolerance(r) => tolerance::run(r, id)?,
             ComputeRequest::Beam(r) => beam::run(r, id)?,
             ComputeRequest::Karnaugh(r) => karnaugh::run(r, id)?,
@@ -163,6 +165,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Simulate(_) => "simulate",
         ComputeRequest::CashFlow(_) => "cash_flow",
         ComputeRequest::Decide(_) => "decide",
+        ComputeRequest::Bom(_) => "bom",
         ComputeRequest::Tolerance(_) => "tolerance",
         ComputeRequest::Beam(_) => "beam",
         ComputeRequest::Karnaugh(_) => "karnaugh",
@@ -237,6 +240,10 @@ impl ComputePort for StatsEngine {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn bom(&self, request: &BomRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Bom(request.clone()), None)
     }
 
     fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult {

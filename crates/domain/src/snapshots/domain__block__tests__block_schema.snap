@@ -3544,6 +3544,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A bill of materials costed line by line.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "bom"
+            }
+          },
+          "$ref": "#/$defs/BomBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -7174,6 +7188,163 @@ expression: "schemars::schema_for!(Block)"
         "mc_sd",
         "mc_range",
         "histogram"
+      ]
+    },
+    "BomLine": {
+      "description": "One line of the bill of materials.",
+      "type": "object",
+      "properties": {
+        "row": {
+          "description": "Row in the source (1 = the first data row).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "part": {
+          "description": "Part name or number.",
+          "type": "string"
+        },
+        "reference": {
+          "description": "Reference designators (`R1, R2`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mpn": {
+          "description": "Manufacturer part number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "description": "Category (`uncategorized` when none).",
+          "type": "string"
+        },
+        "quantity": {
+          "description": "Quantity per unit built, decimal.",
+          "type": "string"
+        },
+        "unit_cost": {
+          "description": "Unit cost, decimal; `None` when the source has no price.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extended": {
+          "description": "Quantity × unit cost, decimal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quantity_from_references": {
+          "description": "Whether the quantity was counted from the reference designators.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "row",
+        "part",
+        "category",
+        "quantity"
+      ]
+    },
+    "BomCategory": {
+      "description": "Totals of one category.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "lines": {
+          "description": "Lines in it.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "quantity": {
+          "description": "Σ quantity, decimal.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Σ extended cost of the priced lines, decimal.",
+          "type": "string"
+        },
+        "missing_prices": {
+          "description": "Lines without a price.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "lines",
+        "quantity",
+        "total",
+        "missing_prices"
+      ]
+    },
+    "BomBody": {
+      "description": "Body of a BOM costing card.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "description": "Currency of the costs, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "builds": {
+          "description": "Units built, decimal (the totals are per unit and × this).",
+          "type": "string"
+        },
+        "lines": {
+          "description": "The lines in source order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BomLine"
+          }
+        },
+        "categories": {
+          "description": "Totals per category, largest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BomCategory"
+          }
+        },
+        "total": {
+          "description": "Cost of one unit (priced lines only), decimal.",
+          "type": "string"
+        },
+        "total_builds": {
+          "description": "Cost of all the units built, decimal.",
+          "type": "string"
+        },
+        "has_mpn": {
+          "description": "Whether the source had an MPN column (so missing MPNs mean\nsomething).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "builds",
+        "lines",
+        "categories",
+        "total",
+        "total_builds"
       ]
     },
     "FormField": {

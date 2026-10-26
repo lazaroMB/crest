@@ -592,6 +592,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Tolerance(super::tolerance::tests::body()),
             &["stack"],
         ),
+        (
+            card("solve.bom", "BOM cost"),
+            ComputedBody::Bom(super::bom::tests::body()),
+            &[],
+        ),
     ]
 }
 

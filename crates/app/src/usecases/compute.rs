@@ -58,7 +58,8 @@ pub async fn offloaded<R: Send + 'static>(
 
 /// Reads the CSV/TSV file `path` of the workspace through `fs` (with its
 /// workspace and sensitive-path guard) as named columns. The delimiter
-/// defaults to the one the extension implies.
+/// defaults to the one the extension implies; a `.json` file (without a
+/// delimiter) is read as an array of records.
 ///
 /// # Errors
 ///
@@ -84,6 +85,9 @@ pub async fn load_file(
         columns: Vec::new(),
         filter: None,
     };
+    if delimiter.is_none() && path.to_ascii_lowercase().ends_with(".json") {
+        return csv::json_records(&text, source).map_err(|e| format!("`{path}`: {e}"));
+    }
     let delimiter = delimiter.unwrap_or_else(|| csv::delimiter_for(path));
     csv::data_set(&text, delimiter, source).map_err(|e| format!("`{path}`: {e}"))
 }

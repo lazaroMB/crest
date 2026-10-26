@@ -1,12 +1,12 @@
 //! The engineering compute tools: `bode`, `karnaugh`, `beam`,
-//! `tolerance_stack`, and what the model is told
+//! `tolerance_stack`, `bom_cost`, and what the model is told
 //! about each engineering card beyond its slots ([`notes`]).
 
 use std::fmt::Write as _;
 
 use domain::computed::ComputedBody;
 
-use super::{UnitsKind, UnitsTool};
+use super::{StatsKind, StatsTool, UnitsKind, UnitsTool};
 use crate::ports::compute::*;
 
 /// `bode`.
@@ -169,6 +169,39 @@ those as slots to cite.";
 /// `tolerance_stack`.
 pub type ToleranceTool = UnitsTool<Tolerance>;
 
+/// `bom_cost`.
+#[derive(Debug, Clone, Copy)]
+pub struct Bom;
+
+impl StatsKind for Bom {
+    type Request = BomRequest;
+    const NAME: &'static str = "bom_cost";
+    const DESCRIPTION: &'static str = "\
+Costs a bill of materials with crest's deterministic engine in exact decimal arithmetic: give \
+the BOM in `data` (a CSV/TSV file, or a JSON array of records with `.json`) or as inline \
+`items`; the part, quantity, unit cost, category, reference and MPN columns are found by \
+their headers unless you name them, a missing quantity is counted from the reference \
+designators, and prices may carry currency signs. The user sees each line's quantity × unit \
+cost, totals per category, per unit and for `builds` units, and the lines without a price or \
+MPN; you get the totals as slots to cite. Never fill in a missing price yourself.";
+    fn wrap(request: BomRequest) -> ComputeRequest {
+        ComputeRequest::Bom(request)
+    }
+    fn subject(request: &BomRequest) -> String {
+        if request.items.is_empty() {
+            "BOM".to_owned()
+        } else {
+            format!("BOM of {} items", request.items.len())
+        }
+    }
+    fn needs_data(request: &BomRequest) -> bool {
+        request.items.is_empty()
+    }
+}
+
+/// `bom_cost`.
+pub type BomTool = StatsTool<Bom>;
+
 /// What the model is told about an engineering card beyond its values.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
     if let ComputedBody::Karnaugh(k) = body {
@@ -211,6 +244,23 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
             .map(|d| format!("{} {:.1}%", d.name, d.variance_share * 100.0))
             .collect();
         let _ = writeln!(out, "Share of the variance: {}.", shares.join(", "));
+    }
+    if let ComputedBody::Bom(b) = body {
+        let missing: Vec<String> = b
+            .missing_prices()
+            .iter()
+            .take(20)
+            .map(|l| format!("{} (row {})", l.part, l.row))
+            .collect();
+        if !missing.is_empty() {
+            let _ = writeln!(out, "Lines without a price: {}.", missing.join(", "));
+        }
+        let categories: Vec<String> = b.categories.iter().map(|c| c.name.clone()).collect();
+        let _ = writeln!(
+            out,
+            "Categories (value keys `total.<category>`): {}.",
+            categories.join(", ")
+        );
     }
     if let ComputedBody::Bode(b) = body {
         let _ = writeln!(out, "G(s) = {}.", b.transfer_text());
@@ -339,5 +389,40 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn bom_cost_reads_a_file_or_takes_items() {
+        let engine = Arc::new(FakeCompute::new());
+        let fs = InMemoryFs::new(test_root()).with_file(
+            "hw/bom.json",
+            r#"[{"part": "R 10k", "qty": 2, "price": 0.01}]"#,
+        );
+        let tool = Typed(BomTool::new(ComputeToolPorts {
+            engine: Arc::clone(&engine) as Arc<dyn crate::ports::compute::ComputePort>,
+            fs: Arc::new(fs),
+            offload: inline_offload(),
+        }));
+        let prepared = tool
+            .prepare(
+                json!({ "data": { "path": "hw/bom.json" }, "currency": "USD" }),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.subject, "BOM · hw/bom.json");
+        let out = prepared.run.await.unwrap();
+        assert!(!out.is_error, "{}", out.text_content());
+        assert!(
+            out.text_content()
+                .contains("Categories (value keys `total.<category>`): passives.")
+        );
+        let ComputeRequest::Bom(request) = &engine.requests()[0] else {
+            panic!("not a BOM request");
+        };
+        assert_eq!(request.data.columns.len(), 3);
+        assert!(tool.prepare(json!({}), &ctx()).await.is_err());
+        let items = json!({ "items": [{ "part": "case", "quantity": 1, "unit_cost": 2.2 }] });
+        assert!(tool.prepare(items, &ctx()).await.is_ok());
     }
 }

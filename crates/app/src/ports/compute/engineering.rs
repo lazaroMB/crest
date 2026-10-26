@@ -1,11 +1,13 @@
 //! Requests of the engineering cards: Bode / Nyquist plots of a transfer
-//! function, Karnaugh maps, beams and tolerance stack-ups.
+//! function, Karnaugh maps, beams, tolerance stack-ups and BOM costing.
 
 use domain::computed::{
     BeamLoad, BeamSupport, Complex, ForceUnit, FrequencyUnit, InertiaUnit, LengthUnit, ModulusUnit,
     StackDirection, ToleranceDistribution,
 };
 use schemars::JsonSchema;
+
+use super::DataSet;
 use serde::{Deserialize, Serialize};
 
 fn default_points() -> u32 {
@@ -182,4 +184,70 @@ pub struct ToleranceRequest {
     /// Seed of the draws.
     #[serde(default = "default_stack_seed")]
     pub seed: u64,
+}
+
+/// One inline BOM line (instead of a file).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BomItem {
+    /// Part name or number.
+    pub part: String,
+    /// Quantity per unit built; counted from `reference` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<f64>,
+    /// Unit cost; a missing price is reported, not guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_cost: Option<f64>,
+    /// Category (`passives`, `ICs`, `mechanical`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Reference designators (`R1, R2, R5-R8`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// Manufacturer part number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpn: Option<String>,
+    /// Description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+/// Input of `bom`: a bill of materials as data columns (a CSV/TSV/JSON
+/// file) or inline items, costed in decimal arithmetic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BomRequest {
+    /// The BOM's columns (the tools fill this from `data`).
+    #[serde(default)]
+    pub data: DataSet,
+    /// Inline lines, when there is no file.
+    #[serde(default)]
+    pub items: Vec<BomItem>,
+    /// Column of the part name or number; found by its header (`part`,
+    /// `part number`, `item`, `value`...) when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    /// Column of the quantity (`qty`, `quantity`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<String>,
+    /// Column of the unit cost (`unit cost`, `unit price`, `price`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_cost: Option<String>,
+    /// Column of the category (`category`, `type`, `group`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Column of the reference designators (`reference`, `designator`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// Column of the manufacturer part number (`mpn`, `mfr part`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpn: Option<String>,
+    /// Units built (default 1): the totals are per unit and for all.
+    #[serde(default = "one")]
+    pub builds: f64,
+    /// Currency of the costs (`USD`, `€`), shown only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
 }

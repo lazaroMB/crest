@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], [`cash_flow`], [`decision_matrix`], and the engineering cards: [`bode`], [`karnaugh`], [`beam`], [`tolerance`]),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], [`cash_flow`], [`decision_matrix`], and the engineering cards: [`bode`], [`karnaugh`], [`beam`], [`tolerance`], [`bom`]),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -32,6 +32,7 @@
 pub mod ab_test;
 pub mod beam;
 pub mod bode;
+pub mod bom;
 pub mod bootstrap;
 pub mod calc;
 pub mod cash_flow;
@@ -519,6 +520,7 @@ impl ComputedCard {
             ComputedBody::Bode(body) => bode::render(&id, &self.envelope, body, window, cx),
             ComputedBody::Karnaugh(body) => karnaugh::render(&id, body, cx),
             ComputedBody::Beam(body) => beam::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::Bom(body) => bom::render(&id, &self.envelope, body, cx),
             ComputedBody::Tolerance(body) => {
                 tolerance::render(&id, &self.envelope, body, window, cx)
             }
