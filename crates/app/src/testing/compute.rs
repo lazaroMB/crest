@@ -374,6 +374,34 @@ impl FakeCompute {
                     indeterminacy: 0,
                 }),
             ),
+            ComputeRequest::Tolerance(r) => (
+                "solve.tolerance",
+                "Tolerance stack-up",
+                "tolerance",
+                ComputedBody::Tolerance(ToleranceBody {
+                    unit: r.unit.clone(),
+                    dimensions: Vec::new(),
+                    nominal: r
+                        .dimensions
+                        .iter()
+                        .map(|d| d.direction.sign() * d.nominal)
+                        .sum(),
+                    center: 0.0,
+                    worst_case: [-0.3, 0.3],
+                    rss: [-0.17, 0.17],
+                    sigmas: r.sigmas,
+                    samples: r.samples,
+                    mc_mean: 0.0,
+                    mc_sd: 0.058,
+                    mc_range: [-0.17, 0.17],
+                    histogram: Histogram {
+                        edges: vec![-0.3, 0.0, 0.3],
+                        counts: vec![1, 1],
+                    },
+                    lower_limit: r.lower_limit,
+                    upper_limit: r.upper_limit,
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -707,6 +735,10 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Tolerance(request.clone()), None)
     }
 
     fn beam(&self, request: &BeamRequest) -> ComputeResult {

@@ -1,5 +1,5 @@
 //! Sentences of the engineering cards: Bode / Nyquist, Karnaugh maps,
-//! beams.
+//! beams, tolerance stacks.
 //!
 //! As elsewhere, the words come from fixed templates and every number
 //! from the envelope (`display` of a value) or the engine's body.
@@ -95,6 +95,35 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                     at("max_deflection_at"),
                     b.length_unit.symbol()
                 ));
+            }
+            Some(text)
+        }
+        ("tolerance", ComputedBody::Tolerance(t)) => {
+            let unit = t
+                .unit
+                .as_deref()
+                .map(|u| format!(" {u}"))
+                .unwrap_or_default();
+            let mut text = format!(
+                "The stack is {}{unit} nominal: {} to {}{unit} worst case, {} to {}{unit} by RSS.",
+                display(computed, "nominal")?,
+                display(computed, "worst_case_min")?,
+                display(computed, "worst_case_max")?,
+                display(computed, "rss_min")?,
+                display(computed, "rss_max")?,
+            );
+            if let Some(p) = display(computed, "out_of_spec") {
+                text.push_str(&format!(
+                    " In {} seeded Monte Carlo draws, {p} fall outside the limits.",
+                    t.samples
+                ));
+            }
+            if let Some(top) = t
+                .dimensions
+                .iter()
+                .max_by(|a, b| a.variance_share.total_cmp(&b.variance_share))
+            {
+                text.push_str(&format!(" {} contributes most of the variance.", top.name));
             }
             Some(text)
         }

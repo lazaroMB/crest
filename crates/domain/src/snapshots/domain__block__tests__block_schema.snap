@@ -3516,6 +3516,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A tolerance stack-up: worst case, RSS and Monte Carlo.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tolerance"
+            }
+          },
+          "$ref": "#/$defs/ToleranceBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -6925,6 +6939,227 @@ expression: "schemars::schema_for!(Block)"
         "shear",
         "moment",
         "indeterminacy"
+      ]
+    },
+    "StackDimension": {
+      "description": "One dimension of the chain.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "nominal": {
+          "description": "Nominal value.",
+          "type": "number",
+          "format": "double"
+        },
+        "plus": {
+          "description": "Upper deviation (≥ 0).",
+          "type": "number",
+          "format": "double"
+        },
+        "minus": {
+          "description": "Lower deviation as a magnitude (≥ 0).",
+          "type": "number",
+          "format": "double"
+        },
+        "direction": {
+          "description": "Added or subtracted.",
+          "$ref": "#/$defs/StackDirection"
+        },
+        "distribution": {
+          "description": "Monte Carlo distribution.",
+          "$ref": "#/$defs/ToleranceDistribution"
+        },
+        "center": {
+          "description": "Centre of the band.",
+          "type": "number",
+          "format": "double"
+        },
+        "half_width": {
+          "description": "Half-width of the band.",
+          "type": "number",
+          "format": "double"
+        },
+        "sd": {
+          "description": "Standard deviation used in the Monte Carlo.",
+          "type": "number",
+          "format": "double"
+        },
+        "worst_case_share": {
+          "description": "Share of the worst-case spread (half-width / Σ half-widths).",
+          "type": "number",
+          "format": "double"
+        },
+        "rss_share": {
+          "description": "Share of the RSS variance (half-width² / Σ half-width²).",
+          "type": "number",
+          "format": "double"
+        },
+        "variance_share": {
+          "description": "Share of the Monte Carlo variance (sd² / Σ sd²).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "nominal",
+        "plus",
+        "minus",
+        "direction",
+        "distribution",
+        "center",
+        "half_width",
+        "sd",
+        "worst_case_share",
+        "rss_share",
+        "variance_share"
+      ]
+    },
+    "StackDirection": {
+      "description": "Whether a dimension adds to the stack or is taken away.",
+      "oneOf": [
+        {
+          "description": "Adds (+).",
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "description": "Subtracts (−).",
+          "type": "string",
+          "const": "subtract"
+        }
+      ]
+    },
+    "ToleranceDistribution": {
+      "description": "How a dimension varies within its tolerance in the Monte Carlo.",
+      "oneOf": [
+        {
+          "description": "Normal, centred, with the half-width = `sigmas` standard\ndeviations.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "Uniform over the tolerance band (a process that is not centred).",
+          "type": "string",
+          "const": "uniform"
+        }
+      ]
+    },
+    "ToleranceBody": {
+      "description": "Body of a tolerance stack-up card.",
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "Unit of every length, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dimensions": {
+          "description": "The chain in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StackDimension"
+          }
+        },
+        "nominal": {
+          "description": "Σ ± nominal.",
+          "type": "number",
+          "format": "double"
+        },
+        "center": {
+          "description": "Σ ± centre.",
+          "type": "number",
+          "format": "double"
+        },
+        "worst_case": {
+          "description": "Worst-case lower and upper limits.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "rss": {
+          "description": "RSS lower and upper limits.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "sigmas": {
+          "description": "Standard deviations a tolerance stands for (3 by default).",
+          "type": "number",
+          "format": "double"
+        },
+        "samples": {
+          "description": "Monte Carlo draws.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mc_mean": {
+          "description": "Mean and standard deviation of the simulated stack.",
+          "type": "number",
+          "format": "double"
+        },
+        "mc_sd": {
+          "description": "Standard deviation of the simulated stack.",
+          "type": "number",
+          "format": "double"
+        },
+        "mc_range": {
+          "description": "The simulated 0.135% and 99.865% quantiles (±3σ of a normal).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "histogram": {
+          "description": "Histogram of the simulated stack.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "lower_limit": {
+          "description": "Lower specification limit, if any.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "upper_limit": {
+          "description": "Upper specification limit, if any.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "dimensions",
+        "nominal",
+        "center",
+        "worst_case",
+        "rss",
+        "sigmas",
+        "samples",
+        "mc_mean",
+        "mc_sd",
+        "mc_range",
+        "histogram"
       ]
     },
     "FormField": {

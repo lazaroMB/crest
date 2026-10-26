@@ -35,6 +35,7 @@ pub mod optimization;
 pub mod power;
 pub mod simulation;
 pub mod slots;
+pub mod tolerance;
 
 use std::collections::BTreeMap;
 
@@ -67,6 +68,7 @@ pub use self::optimization::{
 };
 pub use self::power::{PowerBody, PowerTarget, PowerTest};
 pub use self::simulation::{SimInputSummary, SimulationBody, TornadoBar};
+pub use self::tolerance::{StackDimension, StackDirection, ToleranceBody, ToleranceDistribution};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -656,6 +658,8 @@ pub enum ComputedBody {
     Karnaugh(KarnaughBody),
     /// A beam's reactions, shear, moment and deflection.
     Beam(BeamBody),
+    /// A tolerance stack-up: worst case, RSS and Monte Carlo.
+    Tolerance(ToleranceBody),
 }
 
 impl ComputedBody {
@@ -696,6 +700,7 @@ impl ComputedBody {
             Self::Bode(body) => body.validate(),
             Self::Karnaugh(body) => body.validate(),
             Self::Beam(body) => body.validate(),
+            Self::Tolerance(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

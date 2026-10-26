@@ -54,7 +54,9 @@ pub use self::cards::{
     SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
     StatsForecastTool, StatsPowerTool,
 };
-pub use self::engineering::{Beam, BeamTool, Bode, BodeTool, Karnaugh, KarnaughTool};
+pub use self::engineering::{
+    Beam, BeamTool, Bode, BodeTool, Karnaugh, KarnaughTool, Tolerance, ToleranceTool,
+};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -766,7 +768,8 @@ against weighted criteria, `decision_matrix`.
 
 For engineering: the frequency response, margins and crossovers of a transfer function come \
 from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`; reactions, shear, moment and \
-deflection of a beam come from `beam`.
+deflection of a beam come from `beam`; worst-case, RSS and Monte Carlo tolerance stacks \
+from `tolerance_stack`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -807,7 +810,8 @@ pub fn register_compute_tools(
     registry.register_typed(DecisionMatrixTool::new(ports.clone()))?;
     registry.register_typed(BodeTool::new(ports.clone()))?;
     registry.register_typed(KarnaughTool::new(ports.clone()))?;
-    registry.register_typed(BeamTool::new(ports.clone()))
+    registry.register_typed(BeamTool::new(ports.clone()))?;
+    registry.register_typed(ToleranceTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -926,7 +930,11 @@ mod tests {
             "karnaugh_definition",
             definition(KarnaughTool::new(ports.clone()))
         );
-        insta::assert_json_snapshot!("beam_definition", definition(BeamTool::new(ports)));
+        insta::assert_json_snapshot!("beam_definition", definition(BeamTool::new(ports.clone())));
+        insta::assert_json_snapshot!(
+            "tolerance_stack_definition",
+            definition(ToleranceTool::new(ports))
+        );
     }
 
     #[tokio::test]
@@ -1230,7 +1238,8 @@ mod tests {
                 "stats_forecast",
                 "stats_power",
                 "stats_regress",
-                "stats_test"
+                "stats_test",
+                "tolerance_stack"
             ]
         );
         for name in registry.names() {
