@@ -164,6 +164,11 @@ impl StdinForm {
         if let Some(description) = &req.spec.description {
             w.line(Some(Style::Dim), &format!("  {description}"));
         }
+        if let Some(body) = &req.spec.body {
+            for line in application::interop::plain_text(body).lines().take(40) {
+                w.line(None, &format!("  {line}"));
+            }
+        }
         if let Some(error) = &req.error {
             w.line(
                 Some(Style::Yellow),
@@ -417,6 +422,7 @@ mod tests {
     async fn card_forms_ask_which_action_to_send() {
         let spec: FormSpec = serde_json::from_value(json!({
             "title": "Deploy",
+            "body": {"type": "text", "text": "Release notes"},
             "fields": [],
             "actions": [{"id": "later", "label": "Later"}, {"id": "ship", "label": "Ship", "primary": true}]
         }))
@@ -431,6 +437,7 @@ mod tests {
             }
         );
         assert!(buf.text().contains("2) Ship (ship)"), "{}", buf.text());
+        assert!(buf.text().contains("  Release notes"), "{}", buf.text());
         let (form, _) = stdin_form("\n");
         assert_eq!(
             form.ask(req).await,

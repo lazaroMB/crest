@@ -453,3 +453,25 @@ fn materials_are_whole_blocks() {
     assert_eq!(spec.unverified().len(), 1);
     assert!(error_of("app.ui.material{ name = 'x', properties = {} }").contains("app.ui.material"));
 }
+
+#[test]
+fn a2ui_streams_are_drawn_read_only() {
+    let got = tree(
+        r#"return app.ui.block("card", app.ui.a2ui({
+             { version = "v0.9", createSurface = { surfaceId = "s", catalogId = "basic" } },
+             { version = "v0.9", updateDataModel = { surfaceId = "s", value = { n = 3 } } },
+             { version = "v0.9", updateComponents = { surfaceId = "s", components = {
+                 { id = "root", component = "Column", children = { "t", "n", "x" } },
+                 { id = "t", component = "Text", text = "Hi" },
+                 { id = "n", component = "Slider", label = "N", value = { path = "/n" } },
+                 { id = "x", component = "Sparkle" },
+             } } },
+           }))"#,
+    );
+    let text = application::interop::plain_text(&got);
+    assert!(text.contains("Hi"), "{text}");
+    assert!(text.contains("N: 3"), "{text}");
+    assert_eq!(got.placeholder_count(), 1);
+    let err = error_of(r#"return app.ui.a2ui("{ nope")"#);
+    assert!(err.contains("app.ui.a2ui"), "{err}");
+}

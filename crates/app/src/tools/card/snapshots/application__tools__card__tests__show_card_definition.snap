@@ -1,0 +1,48 @@
+---
+source: crates/app/src/tools/card/tests.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_card",
+  "description": "Shows a declarative card in the user's timeline with crest's own blocks. `format` is `a2ui` (A2UI v0.9 messages: `createSurface`, `updateComponents` with a component `root`, `updateDataModel`; a list of messages or JSON lines; v0.8 is read too). Components of the basic catalog are drawn (Text, Image from data: URIs, Row, Column, List, Card, Tabs, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput); others show as placeholders. Remote images are not fetched. If the card has buttons with an event, the call waits until the user presses one and returns the A2UI `action` message (context resolved against the data model) and the values by field; otherwise it returns a summary.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "$ref": "#/$defs/CardKind",
+        "description": "The card's format."
+      },
+      "card": {
+        "description": "The card: a list of A2UI messages (or JSON lines as text)."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Heading of the block; the card's own or the format's name when\nabsent.",
+        "default": null
+      }
+    },
+    "required": [
+      "format",
+      "card"
+    ],
+    "description": "Input of `show_card`.",
+    "title": "ShowCard",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "CardKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "a2ui",
+            "description": "A2UI v0.9 messages (v0.8 read too)."
+          }
+        ],
+        "description": "The card formats crest reads."
+      }
+    }
+  }
+}

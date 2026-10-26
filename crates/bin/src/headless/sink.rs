@@ -3,9 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
+use application::interop::plain_text;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use domain::block::{Block, BlockId, BlockKind, Cell, SourceRef, TableSpec, ToolStatus};
+use domain::block::{
+    Block, BlockId, BlockKind, Cell, CustomNode, SourceRef, TableSpec, ToolStatus,
+};
 use domain::conversation::{StopReason, Usage};
+use domain::interop::INTEROP_PLUGIN;
 
 use super::terminal::{Style, Terminal, Writer};
 
@@ -429,7 +433,37 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 None => format!("[query plan: {} nodes]", plan.nodes.len()),
             },
         ),
+        BlockKind::Custom { plugin, name, tree } if plugin == INTEROP_PLUGIN => {
+            print_interop(w, name, tree);
+        }
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
+    }
+}
+
+/// Most lines of an interop card printed.
+const INTEROP_LINES: usize = 40;
+
+/// A card drawn from another host's format (A2UI, Adaptive Cards, a MIME
+/// bundle, structured content): a tag, then its text, cut to
+/// [`INTEROP_LINES`].
+fn print_interop(w: &mut Writer<'_>, name: &str, tree: &CustomNode) {
+    let unsupported = tree.placeholder_count();
+    let tag = if unsupported == 0 {
+        format!("[{name}]")
+    } else {
+        format!("[{name}: {unsupported} not drawn]")
+    };
+    w.line(Some(Style::Dim), &tag);
+    let text = plain_text(tree);
+    for line in text.lines().take(INTEROP_LINES) {
+        w.line(None, line);
+    }
+    let total = text.lines().count();
+    if total > INTEROP_LINES {
+        w.line(
+            Some(Style::Dim),
+            &format!("… {} more lines", total - INTEROP_LINES),
+        );
     }
 }
 
@@ -645,6 +679,31 @@ mod tests {
         assert_eq!(
             buf.text(),
             "Shall we start?\n  Expected | Met\n  p95 < 20ms | yes\n"
+        );
+    }
+
+    #[test]
+    fn interop_cards_print_a_tag_and_their_text() {
+        let (term, buf) = terminal(false);
+        let sink = HeadlessSink::new(term);
+        let tree = CustomNode::Col {
+            children: vec![
+                CustomNode::Markdown {
+                    source: "## Book a table".into(),
+                },
+                CustomNode::Placeholder {
+                    label: "A2UI component \"Chart\"".into(),
+                    note: None,
+                    raw: Value::Null,
+                },
+            ],
+        };
+        sink.emit(DomainEvent::BlockAdded {
+            block: Block::new(application::interop::block("A2UI", tree)),
+        });
+        assert_eq!(
+            buf.text(),
+            "[A2UI: 1 not drawn]\n## Book a table\n[not drawn: A2UI component \"Chart\"]\n"
         );
     }
 

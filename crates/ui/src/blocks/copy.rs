@@ -490,6 +490,27 @@ pub fn custom(tree: &CustomNode) -> Vec<CopyFormat> {
     out
 }
 
+/// A form with a card body copies the card's text; a submitted one also
+/// its answer as JSON.
+fn form_formats(form: &domain::form::FormSpec) -> Vec<CopyFormat> {
+    let mut formats = Vec::new();
+    if let Some(body) = &form.body {
+        formats.push(CopyFormat::new(
+            "text",
+            "text",
+            application::interop::plain_text(body),
+        ));
+    }
+    if let Some(answer) = &form.answer {
+        formats.push(CopyFormat::new(
+            "answer",
+            "answer JSON",
+            serde_json::to_string_pretty(answer).unwrap_or_default(),
+        ));
+    }
+    formats
+}
+
 /// The forms `kind` can be copied in; empty for kinds without any.
 #[must_use]
 pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
@@ -539,6 +560,16 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Plate(spec) => {
             vec![CopyFormat::new("csv", "CSV", super::plate::plate_csv(spec))]
         }
+        BlockKind::Custom { plugin, tree, .. } if plugin == domain::interop::INTEROP_PLUGIN => {
+            let mut formats = vec![CopyFormat::new(
+                "text",
+                "text",
+                application::interop::plain_text(tree),
+            )];
+            formats.extend(custom(tree));
+            formats
+        }
+        BlockKind::Form(form) => form_formats(form),
         BlockKind::Custom { tree, .. } => custom(tree),
         BlockKind::Trace(spec) => vec![
             CopyFormat::new("spans", "spans CSV", spec.timeline.to_csv()),
@@ -789,6 +820,33 @@ mod tests {
                 vec![Cell::Bool(true), Cell::Text("two\nlines".into())],
             ],
         }
+    }
+
+    #[test]
+    fn interop_cards_copy_their_text_and_raw_placeholders() {
+        let tree = CustomNode::Col {
+            children: vec![
+                CustomNode::Text { text: "Hi".into() },
+                CustomNode::Placeholder {
+                    label: "x".into(),
+                    note: None,
+                    raw: serde_json::json!({"a": 1}),
+                },
+            ],
+        };
+        let formats = formats(&application::interop::block("A2UI", tree.clone()));
+        let keys: Vec<&str> = formats.iter().map(|f| f.key).collect();
+        assert_eq!(keys, ["text", "raw"]);
+        assert_eq!(formats[0].text, "Hi\n[not drawn: x]");
+        let form: domain::form::FormSpec = serde_json::from_value(serde_json::json!({
+            "title": "t", "fields": [], "body": tree, "answer": {"n": 1}
+        }))
+        .unwrap();
+        let keys: Vec<&str> = super::formats(&BlockKind::Form(form))
+            .into_iter()
+            .map(|f| f.key)
+            .collect();
+        assert_eq!(keys, ["text", "answer"]);
     }
 
     #[test]

@@ -1,0 +1,12 @@
+[
+  {"surfaceUpdate": {"surfaceId": "s", "components": [
+    {"id": "top", "component": {"Column": {"children": {"explicitList": ["hello", "who", "pick", "go"]}}}},
+    {"id": "hello", "component": {"Text": {"text": {"literalString": "Hello"}, "usageHint": "h1"}}},
+    {"id": "who", "component": {"TextField": {"label": {"literalString": "Name"}, "text": {"path": "/user/name"}}}},
+    {"id": "pick", "component": {"MultipleChoice": {"selections": {"path": "/user/colour", "literalArray": ["red"]}, "maxAllowedSelections": 1, "options": [{"label": {"literalString": "Red"}, "value": "red"}, {"label": {"literalString": "Blue"}, "value": "blue"}]}}},
+    {"id": "go", "component": {"Button": {"child": "go_text", "primary": true, "action": {"name": "submit", "context": [{"key": "name", "value": {"path": "/user/name"}}]}}}},
+    {"id": "go_text", "component": {"Text": {"text": {"literalString": "Send"}}}}
+  ]}},
+  {"dataModelUpdate": {"surfaceId": "s", "contents": [{"key": "user", "valueMap": [{"key": "name", "valueString": "Ada"}]}]}},
+  {"beginRendering": {"surfaceId": "s", "root": "top"}}
+]

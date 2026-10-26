@@ -4,6 +4,7 @@ pub mod cost;
 pub mod csv;
 pub mod decide;
 pub mod flows;
+pub mod interop;
 pub mod keymap;
 pub mod llm_retry;
 pub mod ports;

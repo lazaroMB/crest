@@ -44,7 +44,11 @@ pub const FORM_TOOL_PROMPT: &str = "\
 When you need structured input from the user (choices among options, several values, \
 settings, yes/no decisions) call `ask_user` with a form instead of asking in prose. It waits \
 for the answer and returns it as JSON. If the user cancels, do not ask the same form again: \
-go on without the answers or ask in prose.";
+go on without the answers or ask in prose.
+
+When a tool or the user hands you a declarative card (A2UI messages), or you want a richer \
+form than `ask_user` offers, call `show_card` with it: crest draws it natively and, when it \
+has buttons, waits for the user and returns the answer.";
 
 const DESCRIPTION: &str = "Shows the user a form in the timeline and waits until they submit \
 or cancel it. Use it when you need structured answers (pick one or several options, numbers \
@@ -297,16 +301,17 @@ pub fn rejected_text(error: &str) -> String {
     format!("the answer was rejected {MAX_ATTEMPTS} times (last: {error}); the form was closed")
 }
 
-/// Registers `ask_user`, asking through `port`.
+/// Registers `ask_user` and `show_card`, asking through `port`.
 ///
 /// # Errors
 ///
-/// [`RegisterError::Duplicate`] when a tool of that name is registered.
+/// [`RegisterError::Duplicate`] when a tool of either name is registered.
 pub fn register_form_tool(
     registry: &mut ToolRegistry,
     port: Arc<dyn FormPort>,
 ) -> Result<(), RegisterError> {
-    registry.register_typed(AskUserTool::new(port))
+    registry.register_typed(AskUserTool::new(Arc::clone(&port)))?;
+    registry.register_typed(super::card::ShowCardTool::new(port))
 }
 
 #[cfg(test)]

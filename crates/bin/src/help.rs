@@ -194,6 +194,7 @@ fn builtin_effect(name: &str) -> &'static str {
         | "calc"
         | "convert"
         | "ask_user"
+        | "show_card"
         | "show_test_report"
         | "show_findings"
         | "show_wavedrom"

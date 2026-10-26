@@ -1,0 +1,21 @@
+{"version": "v0.9", "createSurface": {"surfaceId": "booking", "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"}}
+{"version": "v0.9", "updateDataModel": {"surfaceId": "booking", "path": "/", "value": {"restaurant": {"name": "Casa Lola"}, "booking": {"name": "", "guests": 2, "time": ["20:00"], "terrace": true}, "menu": [{"dish": "Gazpacho"}, {"dish": "Tortilla"}]}}}
+{"version": "v0.9", "updateComponents": {"surfaceId": "booking", "components": [
+  {"id": "root", "component": "Column", "children": ["title", "where", "logo", "menu", "name", "date", "time", "terrace", "guests", "chart", "buttons"]},
+  {"id": "title", "component": "Text", "text": "Book a table", "variant": "h2"},
+  {"id": "where", "component": "Text", "text": {"path": "/restaurant/name"}},
+  {"id": "logo", "component": "Image", "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==", "altText": "logo"},
+  {"id": "menu", "component": "List", "children": {"path": "/menu", "componentId": "dish"}},
+  {"id": "dish", "component": "Text", "text": {"path": "dish"}},
+  {"id": "name", "component": "TextField", "label": "Your name", "value": {"path": "/booking/name"}, "checks": [{"call": "required", "args": {"value": {"path": "/booking/name"}}, "message": "Required"}]},
+  {"id": "date", "component": "DateTimeInput", "label": "Day", "value": {"path": "/booking/date"}, "enableDate": true},
+  {"id": "time", "component": "ChoicePicker", "label": "Time", "variant": "mutuallyExclusive", "value": {"path": "/booking/time"}, "options": [{"label": "8 pm", "value": "20:00"}, {"label": "9 pm", "value": "21:00"}]},
+  {"id": "terrace", "component": "CheckBox", "label": "Terrace", "value": {"path": "/booking/terrace"}},
+  {"id": "guests", "component": "Slider", "label": "Guests", "min": 1, "max": 12, "value": {"path": "/booking/guests"}},
+  {"id": "chart", "component": "PieChart", "values": [1, 2]},
+  {"id": "buttons", "component": "Row", "children": ["book", "cancel"]},
+  {"id": "book", "component": "Button", "variant": "primary", "child": "book_label", "action": {"event": {"name": "book", "context": {"who": {"path": "/booking/name"}, "guests": {"path": "/booking/guests"}, "source": "card"}}}},
+  {"id": "book_label", "component": "Text", "text": "Book"},
+  {"id": "cancel", "component": "Button", "child": "cancel_label", "action": {"event": {"name": "cancel"}}},
+  {"id": "cancel_label", "component": "Text", "text": "Not now"}
+]}}

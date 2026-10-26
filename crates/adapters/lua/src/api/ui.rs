@@ -38,6 +38,7 @@
 //! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
 //! | `tree{ title, columns, nodes, expand_depth }` | nested rows with typed columns (`text`, `number`, `duration`, `bar`), badges and inline bars |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
+//! | `a2ui(messages)` | an A2UI v0.9 stream (a list of messages, or JSON lines as a string) drawn read-only: inputs show their values, buttons do nothing |
 //!
 //! `app.ui.plate{ format, wells, value_label, title, ... }` (the fields of
 //! `show_plate`) is not a node but a whole block, already wrapped like
@@ -48,6 +49,7 @@
 
 use std::sync::Arc;
 
+use application::interop::{self, CardKind};
 use application::ports::plugin::PluginOutput;
 use domain::block::{BlockKind, CustomNode};
 use domain::engineering::material::MaterialSpec;
@@ -319,6 +321,21 @@ fn csv_node(text: &str, opts: Option<Table>) -> mlua::Result<CustomNode> {
     Ok(CustomNode::Table(spec))
 }
 
+/// `app.ui.<function>(payload)`: a card of `kind` drawn read-only (a plugin
+/// cannot wait for its buttons), with the mapping's notes under it.
+fn interop_node(
+    lua: &Lua,
+    function: &str,
+    kind: CardKind,
+    payload: Value,
+) -> mlua::Result<CustomNode> {
+    let json = convert::to_json(lua, payload)?;
+    let mapped = interop::map_card(kind, &json, false).map_err(|e| error(function, e))?;
+    let tree = mapped.card().tree();
+    tree.validate().map_err(|e| error(function, e))?;
+    Ok(tree)
+}
+
 /// `app.ui.plate{...}`: a plate map block, wrapped like `app.ui.block`.
 fn plate_block(lua: &Lua, def: Table) -> mlua::Result<Value> {
     let mut json = convert::to_json(lua, Value::Table(def))?;
@@ -461,6 +478,12 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "csv",
         lua.create_function(|lua, (text, opts): (String, Option<Table>)| {
             to_lua(lua, &csv_node(&text, opts)?)
+        })?,
+    )?;
+    ui.set(
+        "a2ui",
+        lua.create_function(|lua, payload: Value| {
+            to_lua(lua, &interop_node(lua, "a2ui", CardKind::A2ui, payload)?)
         })?,
     )?;
     ui.set(
