@@ -176,6 +176,11 @@ proj4rs = { version = "=0.2.1", default-features = false }
 # through flate2, already in the tree); adds only byteorder. NetCDF-3 is
 # our own reader: netcdf3 0.6.1 cannot read part of a variable.
 hdf5-pure = "=0.47.0"
+# Networks (show_network): graph storage, weak/strong components and
+# traversal; MIT/Apache, std only (adds fixedbitset, hashbrown, indexmap,
+# already in the tree). Its page_rank is not used (quadratic, and it drops
+# the teleport term on linked pairs): crest's own power iteration is.
+petgraph = { version = "=0.8.3", default-features = false, features = ["std"] }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot

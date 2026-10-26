@@ -26,6 +26,7 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | network | node metrics CSV, edges CSV |
 //! | array file | groups and variables CSV, the preview shown as CSV (first preview) |
 //! | Gantt chart | schedule CSV (ES, EF, LS, LF, slack, critical), the critical path |
 //! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
@@ -583,6 +584,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::Network(spec) => vec![
+            CopyFormat::new("metrics", "metrics CSV", spec.to_csv()),
+            CopyFormat::new("edges", "edges CSV", spec.edges_csv()),
+        ],
         BlockKind::ArrayFile(spec) => {
             let mut formats = vec![CopyFormat::new("nodes", "variables CSV", spec.nodes_csv())];
             if let Some(p) = spec.previews.first() {

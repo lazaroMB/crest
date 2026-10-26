@@ -1,0 +1,13 @@
+{
+  "directed": false,
+  "nodes": [
+    { "id": "hub", "label": "Hub" },
+    { "id": "l1" }, { "id": "l2" }, { "id": "l3" }, { "id": "l4" }
+  ],
+  "links": [
+    { "source": "hub", "target": "l1" },
+    { "source": "hub", "target": "l2" },
+    { "source": "hub", "target": "l3" },
+    { "source": "hub", "target": "l4" }
+  ]
+}

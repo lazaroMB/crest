@@ -37,6 +37,7 @@ use domain::science::arrays::ArrayFileSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::molecule3d::Molecule3dSpec;
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 use domain::science::spectrum::SpectrumSpec;
@@ -536,6 +537,16 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         request: &ArrayRequest,
     ) -> Result<ArrayFileSpec, FormatError>;
+
+    /// A network from an edge list or node-link JSON with per-node degree,
+    /// betweenness, closeness and PageRank, connected components and
+    /// communities (seeded label propagation) with their modularity.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unreadable file, missing columns, no
+    /// edges or a network over the size limits.
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError>;
 }
 
 #[cfg(test)]

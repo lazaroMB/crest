@@ -63,6 +63,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::GeoMap(_) => "geo_map",
         BlockKind::Gantt(_) => "gantt",
         BlockKind::ArrayFile(_) => "array_file",
+        BlockKind::Network(_) => "network",
     }
 }
 

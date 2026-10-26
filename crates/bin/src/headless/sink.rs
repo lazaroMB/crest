@@ -282,6 +282,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 file.previews.len()
             ),
         ),
+        BlockKind::Network(net) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[network: {} nodes, {} edges, {} communities]",
+                net.nodes.len(),
+                net.edges.len(),
+                net.communities
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

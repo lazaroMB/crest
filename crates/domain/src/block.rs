@@ -40,6 +40,7 @@ use crate::science::geomap::MapSpec;
 use crate::science::ghs::GhsSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::molecule3d::Molecule3dSpec;
+use crate::science::network::NetworkSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::spectrum::SpectrumSpec;
@@ -173,6 +174,7 @@ impl Block {
             BlockKind::GeoMap(spec) => spec.validate(),
             BlockKind::Gantt(spec) => spec.validate(),
             BlockKind::ArrayFile(spec) => spec.validate(),
+            BlockKind::Network(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -383,6 +385,9 @@ pub enum BlockKind {
     /// An HDF5 or NetCDF file's groups and variables with bounded
     /// previews (tool `show_array_file`).
     ArrayFile(Box<ArrayFileSpec>),
+    /// A network with degree, betweenness, closeness, PageRank and
+    /// communities (tool `show_network`).
+    Network(Box<NetworkSpec>),
 }
 
 /// Lifecycle of a tool call.

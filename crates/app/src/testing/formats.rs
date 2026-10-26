@@ -43,7 +43,8 @@
 //! 1.2 km trail in WGS 84; every Gantt chart is `design` (3 d) then
 //! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it;
 //! every array file is HDF5 with `/temp` (2 × 3 f32, a 2 × 3 preview from
-//! 1 to 6, one missing).
+//! 1 to 6, one missing); every network is the path `a – b – c` (b in
+//! the middle: betweenness 1, PageRank 0.486).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -86,6 +87,7 @@ use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec
 use domain::science::molecule3d::{
     Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
 };
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::{
     ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
 };
@@ -97,8 +99,8 @@ use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
-    MapRequest, Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest,
-    SpectrumRequest, StepRequest, WaveRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 
 mod sciences;
@@ -1184,5 +1186,13 @@ impl FormatsPort for FakeFormats {
     ) -> Result<ArrayFileSpec, FormatError> {
         self.record("inspect_array_file", &request.path)?;
         Ok(sciences::arrays(request))
+    }
+
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError> {
+        self.record(
+            "analyse_network",
+            request.path.as_deref().unwrap_or("inline"),
+        )?;
+        Ok(sciences::network(request))
     }
 }
