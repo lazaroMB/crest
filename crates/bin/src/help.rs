@@ -214,6 +214,7 @@ fn builtin_effect(name: &str) -> &'static str {
         | "bode"
         | "karnaugh"
         | "beam"
+        | "tolerance_stack"
         | "show_trace"
         | "show_flamegraph"
         | "show_logs"

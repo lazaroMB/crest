@@ -587,6 +587,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Beam(super::beam::tests::body()),
             &["shear", "moment", "deflection"],
         ),
+        (
+            card("solve.tolerance", "Tolerance stack-up"),
+            ComputedBody::Tolerance(super::tolerance::tests::body()),
+            &["stack"],
+        ),
     ]
 }
 

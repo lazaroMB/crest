@@ -429,6 +429,8 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::tolerance`].
+    Tolerance(ToleranceRequest),
     /// [`ComputePort::beam`].
     Beam(BeamRequest),
     /// [`ComputePort::karnaugh`].
@@ -473,6 +475,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Tolerance(_)
             | Self::Beam(_)
             | Self::Karnaugh(_)
             | Self::Bode(_) => None,
@@ -500,6 +503,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Tolerance(_)
             | Self::Beam(_)
             | Self::Karnaugh(_)
             | Self::Bode(_) => None,
@@ -654,6 +658,16 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
+    /// A one-dimensional tolerance stack: worst-case and RSS limits, a seeded
+    /// Monte Carlo of the result with the share out of specification, and
+    /// each dimension's contribution.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty chain, negative tolerances,
+    /// limits that cross, or a sample count out of range.
+    fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult;
+
     /// A straight Euler-Bernoulli beam by the stiffness method: reactions,
     /// shear and bending-moment diagrams and, given E and I, the deflection.
     ///
@@ -719,6 +733,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Tolerance(r) => self.tolerance(r),
             ComputeRequest::Beam(r) => self.beam(r),
             ComputeRequest::Karnaugh(r) => self.karnaugh(r),
             ComputeRequest::Bode(r) => self.bode(r),

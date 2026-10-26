@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response, Karnaugh SOP / POS / truth table, beam diagrams), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response, Karnaugh SOP / POS / truth table, beam diagrams, tolerance chain), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -402,6 +402,9 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             "shear/moment/deflection CSV",
             b.to_csv(),
         ));
+    }
+    if let ComputedBody::Tolerance(t) = body {
+        formats.push(CopyFormat::new("chain", "stack chain CSV", t.to_csv()));
     }
     formats
 }

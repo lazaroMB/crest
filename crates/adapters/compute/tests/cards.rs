@@ -1737,3 +1737,117 @@ fn beam_rejects_mechanisms_and_bad_positions() {
         Some("in")
     );
 }
+
+// --- Tolerance stack-up -----------------------------------------------------------
+
+fn dim(name: &str, nominal: f64, tolerance: f64, direction: StackDirection) -> StackDimensionInput {
+    StackDimensionInput {
+        name: name.into(),
+        nominal,
+        tolerance: Some(tolerance),
+        plus: None,
+        minus: None,
+        direction,
+        distribution: ToleranceDistribution::Normal,
+    }
+}
+
+fn gap_stack() -> ToleranceRequest {
+    // A housing of 50 ± 0.1 holding parts of 30 ± 0.05 and 19.8 ± 0.05:
+    // gap 0.2 nominal.
+    ToleranceRequest {
+        dimensions: vec![
+            dim("housing", 50.0, 0.1, StackDirection::Add),
+            dim("part 1", 30.0, 0.05, StackDirection::Subtract),
+            dim("part 2", 19.8, 0.05, StackDirection::Subtract),
+        ],
+        lower_limit: Some(0.05),
+        upper_limit: None,
+        unit: Some("mm".into()),
+        sigmas: 3.0,
+        samples: 200_000,
+        seed: 7,
+    }
+}
+
+#[test]
+fn tolerance_worst_case_and_rss_are_closed_form() {
+    let (c, body) = engine().tolerance(&gap_stack()).unwrap();
+    near(v(&c, "nominal"), 0.2, 1e-12);
+    near(v(&c, "worst_case_min"), 0.0, 1e-12);
+    near(v(&c, "worst_case_max"), 0.4, 1e-12);
+    let rss = (0.1f64.powi(2) + 2.0 * 0.05f64.powi(2)).sqrt();
+    near(v(&c, "rss_min"), 0.2 - rss, 1e-12);
+    near(v(&c, "rss_max"), 0.2 + rss, 1e-12);
+    let ComputedBody::Tolerance(t) = body else {
+        panic!()
+    };
+    // Shares: 0.1/0.2 of the worst case, 0.01/0.015 of the RSS variance.
+    near(t.dimensions[0].worst_case_share, 0.5, 1e-12);
+    near(t.dimensions[0].rss_share, 2.0 / 3.0, 1e-12);
+    let total: f64 = t.dimensions.iter().map(|d| d.variance_share).sum();
+    near(total, 1.0, 1e-12);
+    assert_eq!(t.histogram.counts.iter().sum::<u64>(), 200_000);
+    assert_eq!(c.method.params["worst_case_fits"], serde_json::json!(false));
+    assert_eq!(c.method.params["rss_fits"], serde_json::json!(true));
+}
+
+#[test]
+fn tolerance_monte_carlo_matches_the_normal_stack_within_its_error() {
+    let (c, _) = engine().tolerance(&gap_stack()).unwrap();
+    let sigma = (0.1f64.powi(2) + 2.0 * 0.05f64.powi(2)).sqrt() / 3.0;
+    let n = 200_000.0;
+    near(v(&c, "mc_mean"), 0.2, 4.0 * sigma / f64::sqrt(n));
+    near(v(&c, "mc_sd") / sigma, 1.0, 0.01);
+    // P(gap < 0.05) = Φ((0.05 − 0.2)/σ).
+    let p = statrs::distribution::ContinuousCDF::cdf(
+        &statrs::distribution::Normal::new(0.2, sigma).unwrap(),
+        0.05,
+    );
+    near(
+        v(&c, "out_of_spec"),
+        p,
+        4.0 * (p * (1.0 - p) / n).sqrt() + 1e-6,
+    );
+    // Seeded: the same request gives the same draws, and recompute matches.
+    let (again, _) = engine().tolerance(&gap_stack()).unwrap();
+    assert_eq!(v(&again, "mc_sd"), v(&c, "mc_sd"));
+    let (re, _) = engine().recompute(&c).unwrap();
+    assert_eq!(re.verification.matched, Some(true));
+    assert_eq!(c.seed, Some(7));
+}
+
+#[test]
+fn tolerance_asymmetric_and_uniform_dimensions() {
+    let mut request = gap_stack();
+    request.dimensions = vec![
+        StackDimensionInput {
+            name: "shaft".into(),
+            nominal: 10.0,
+            tolerance: None,
+            plus: Some(0.2),
+            minus: Some(0.0),
+            direction: StackDirection::Add,
+            distribution: ToleranceDistribution::Uniform,
+        },
+        dim("spacer", 4.0, 0.06, StackDirection::Subtract),
+    ];
+    request.lower_limit = None;
+    let (c, body) = engine().tolerance(&request).unwrap();
+    near(v(&c, "nominal"), 6.0, 1e-12);
+    near(v(&c, "center"), 6.1, 1e-12);
+    near(v(&c, "worst_case_max"), 6.1 + 0.16, 1e-12);
+    let ComputedBody::Tolerance(t) = body else {
+        panic!()
+    };
+    near(t.dimensions[0].sd, 0.1 / 3f64.sqrt(), 1e-15);
+    let sigma = ((0.1f64 / 3f64.sqrt()).powi(2) + 0.02f64.powi(2)).sqrt();
+    near(v(&c, "mc_sd") / sigma, 1.0, 0.01);
+    assert!(c.value("out_of_spec").is_none());
+    let mut bad = gap_stack();
+    bad.dimensions[0].plus = Some(0.1);
+    assert!(engine().tolerance(&bad).is_err());
+    bad = gap_stack();
+    bad.dimensions[1].tolerance = Some(-0.1);
+    assert!(engine().tolerance(&bad).is_err());
+}

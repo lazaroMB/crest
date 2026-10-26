@@ -1,0 +1,154 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(ToleranceTool::new(ports))"
+---
+{
+  "name": "tolerance_stack",
+  "description": "Computes a one-dimensional tolerance stack-up with crest's deterministic engine: `dimensions` in chain order, each with `nominal`, `tolerance` (±) or `plus`/`minus`, `direction` (`add` or `subtract`) and `distribution` (`normal`, `uniform`), optional `lower_limit`/`upper_limit` on the result. The user sees the worst-case and RSS ranges, a seeded Monte Carlo histogram with the share out of specification and Cpk, and each dimension's share of the spread; you get those as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "dimensions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/StackDimensionInput"
+        },
+        "description": "The dimensions in chain order."
+      },
+      "lower_limit": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Lowest acceptable result (a minimum gap, say)."
+      },
+      "upper_limit": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Highest acceptable result."
+      },
+      "unit": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Unit of every length (`mm`), shown only."
+      },
+      "sigmas": {
+        "type": "number",
+        "format": "double",
+        "description": "Standard deviations a tolerance stands for (default 3, Cp = 1).",
+        "default": 3.0
+      },
+      "samples": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Monte Carlo draws (default 100 000).",
+        "default": 100000
+      },
+      "seed": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Seed of the draws.",
+        "default": 20261025
+      }
+    },
+    "required": [
+      "dimensions"
+    ],
+    "description": "Input of `tolerance`: a one-dimensional tolerance chain and optional\nspecification limits on the result.",
+    "title": "ToleranceRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "StackDimensionInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name (`housing bore`, `A`)."
+          },
+          "nominal": {
+            "type": "number",
+            "format": "double",
+            "description": "Nominal value."
+          },
+          "tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Symmetric tolerance ±`tolerance`; or give `plus` and `minus`."
+          },
+          "plus": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Upper deviation (e.g. 0.05 for +0.05)."
+          },
+          "minus": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Lower deviation as a magnitude (0.02 for −0.02)."
+          },
+          "direction": {
+            "$ref": "#/$defs/StackDirection",
+            "description": "`add` (default) or `subtract` in the chain.",
+            "default": "add"
+          },
+          "distribution": {
+            "$ref": "#/$defs/ToleranceDistribution",
+            "description": "`normal` (default) or `uniform` for the Monte Carlo.",
+            "default": "normal"
+          }
+        },
+        "required": [
+          "name",
+          "nominal"
+        ],
+        "description": "One dimension of a tolerance stack."
+      },
+      "StackDirection": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "add",
+            "description": "Adds (+)."
+          },
+          {
+            "type": "string",
+            "const": "subtract",
+            "description": "Subtracts (−)."
+          }
+        ],
+        "description": "Whether a dimension adds to the stack or is taken away."
+      },
+      "ToleranceDistribution": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "normal",
+            "description": "Normal, centred, with the half-width = `sigmas` standard\ndeviations."
+          },
+          {
+            "type": "string",
+            "const": "uniform",
+            "description": "Uniform over the tolerance band (a process that is not centred)."
+          }
+        ],
+        "description": "How a dimension varies within its tolerance in the Monte Carlo."
+      }
+    }
+  }
+}

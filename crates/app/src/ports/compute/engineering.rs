@@ -1,8 +1,9 @@
 //! Requests of the engineering cards: Bode / Nyquist plots of a transfer
-//! function, Karnaugh maps and beams.
+//! function, Karnaugh maps, beams and tolerance stack-ups.
 
 use domain::computed::{
     BeamLoad, BeamSupport, Complex, ForceUnit, FrequencyUnit, InertiaUnit, LengthUnit, ModulusUnit,
+    StackDirection, ToleranceDistribution,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -119,4 +120,66 @@ pub struct BeamRequest {
     /// 200); nodes sit at every support, load point and load end too.
     #[serde(default = "default_segments")]
     pub segments: u32,
+}
+
+/// One dimension of a tolerance stack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StackDimensionInput {
+    /// Name (`housing bore`, `A`).
+    pub name: String,
+    /// Nominal value.
+    pub nominal: f64,
+    /// Symmetric tolerance ±`tolerance`; or give `plus` and `minus`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<f64>,
+    /// Upper deviation (e.g. 0.05 for +0.05).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plus: Option<f64>,
+    /// Lower deviation as a magnitude (0.02 for −0.02).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minus: Option<f64>,
+    /// `add` (default) or `subtract` in the chain.
+    #[serde(default)]
+    pub direction: StackDirection,
+    /// `normal` (default) or `uniform` for the Monte Carlo.
+    #[serde(default)]
+    pub distribution: ToleranceDistribution,
+}
+
+fn default_sigmas() -> f64 {
+    3.0
+}
+
+fn default_stack_seed() -> u64 {
+    super::DEFAULT_SEED
+}
+
+fn default_stack_samples() -> u32 {
+    100_000
+}
+
+/// Input of `tolerance`: a one-dimensional tolerance chain and optional
+/// specification limits on the result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ToleranceRequest {
+    /// The dimensions in chain order.
+    pub dimensions: Vec<StackDimensionInput>,
+    /// Lowest acceptable result (a minimum gap, say).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lower_limit: Option<f64>,
+    /// Highest acceptable result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upper_limit: Option<f64>,
+    /// Unit of every length (`mm`), shown only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Standard deviations a tolerance stands for (default 3, Cp = 1).
+    #[serde(default = "default_sigmas")]
+    pub sigmas: f64,
+    /// Monte Carlo draws (default 100 000).
+    #[serde(default = "default_stack_samples")]
+    pub samples: u32,
+    /// Seed of the draws.
+    #[serde(default = "default_stack_seed")]
+    pub seed: u64,
 }

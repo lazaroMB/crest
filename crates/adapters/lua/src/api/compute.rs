@@ -33,6 +33,7 @@
 //! | `bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode / Nyquist, margins |
 //! | `karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map, minimal SOP and POS |
 //! | `beam{ length, length_unit, force_unit, supports = { { at, kind } }, loads = { { kind, at, end, value, end_value } }, e, e_unit, i, i_unit, segments }` | beam reactions, shear, moment, deflection |
+//! | `tolerance{ dimensions = { { name, nominal, tolerance, plus, minus, direction, distribution } }, lower_limit, upper_limit, unit, sigmas, samples, seed }` | tolerance stack-up |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -41,7 +42,8 @@
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
 //! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate`,
-//! `cash_flow`, `decide`, `bode`, `karnaugh` and `beam` read no data.
+//! `cash_flow`, `decide`, `bode`, `karnaugh`, `beam` and `tolerance` read
+//! no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -234,6 +236,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             | "bode"
             | "karnaugh"
             | "beam"
+            | "tolerance"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -306,6 +309,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "bode",
         "karnaugh",
         "beam",
+        "tolerance",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -512,6 +516,20 @@ mod tests {
         };
         assert_eq!(b.supports[1].kind, domain::computed::SupportKind::Roller);
         assert_eq!(b.segments, 200);
+        run_code(
+            "return app.compute.tolerance{ dimensions = { { name = 'a', nominal = 10, tolerance = 0.1 },
+               { name = 'b', nominal = 9.8, tolerance = 0.05, direction = 'subtract' } }, lower_limit = 0 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Tolerance(t) = &engine.requests()[3] else {
+            panic!("not a tolerance request");
+        };
+        assert_eq!(t.samples, 100_000);
+        assert_eq!(
+            t.dimensions[1].direction,
+            domain::computed::StackDirection::Subtract
+        );
     }
 
     #[test]

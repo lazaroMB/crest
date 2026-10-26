@@ -1,4 +1,5 @@
-//! The engineering compute tools: `bode`, `karnaugh`, `beam`, and what the model is told
+//! The engineering compute tools: `bode`, `karnaugh`, `beam`,
+//! `tolerance_stack`, and what the model is told
 //! about each engineering card beyond its slots ([`notes`]).
 
 use std::fmt::Write as _;
@@ -137,6 +138,37 @@ with their positions as slots to cite. State the assumptions (small deflections,
 /// `beam`.
 pub type BeamTool = UnitsTool<Beam>;
 
+/// `tolerance_stack`.
+#[derive(Debug, Clone, Copy)]
+pub struct Tolerance;
+
+impl UnitsKind for Tolerance {
+    type Request = ToleranceRequest;
+    const NAME: &'static str = "tolerance_stack";
+    const DESCRIPTION: &'static str = "\
+Computes a one-dimensional tolerance stack-up with crest's deterministic engine: `dimensions` in \
+chain order, each with `nominal`, `tolerance` (±) or `plus`/`minus`, `direction` (`add` or \
+`subtract`) and `distribution` (`normal`, `uniform`), optional `lower_limit`/`upper_limit` on \
+the result. The user sees the worst-case and RSS ranges, a seeded Monte Carlo histogram with \
+the share out of specification and Cpk, and each dimension's share of the spread; you get \
+those as slots to cite.";
+    fn wrap(request: ToleranceRequest) -> ComputeRequest {
+        ComputeRequest::Tolerance(request)
+    }
+    fn subject(request: &ToleranceRequest) -> String {
+        format!("{} dimensions", request.dimensions.len())
+    }
+    fn check(request: &ToleranceRequest) -> Result<(), String> {
+        if request.dimensions.is_empty() {
+            return Err("give the `dimensions` of the chain".into());
+        }
+        Ok(())
+    }
+}
+
+/// `tolerance_stack`.
+pub type ToleranceTool = UnitsTool<Tolerance>;
+
 /// What the model is told about an engineering card beyond its values.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
     if let ComputedBody::Karnaugh(k) = body {
@@ -171,6 +203,14 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                 b.indeterminacy
             );
         }
+    }
+    if let ComputedBody::Tolerance(t) = body {
+        let shares: Vec<String> = t
+            .dimensions
+            .iter()
+            .map(|d| format!("{} {:.1}%", d.name, d.variance_share * 100.0))
+            .collect();
+        let _ = writeln!(out, "Share of the variance: {}.", shares.join(", "));
     }
     if let ComputedBody::Bode(b) = body {
         let _ = writeln!(out, "G(s) = {}.", b.transfer_text());
@@ -284,5 +324,20 @@ mod tests {
         assert!(text.contains("moments in kN·m"), "{text}");
         let half = json!({ "length": 6, "supports": [{ "at": 0, "kind": "fixed" }], "loads": [], "e": 200 });
         assert!(tool.prepare(half, &ctx()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn tolerance_stack_lists_the_variance_shares() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(ToleranceTool::new(ports(Arc::clone(&engine))));
+        let input = json!({ "dimensions": [{ "name": "a", "nominal": 1, "tolerance": 0.1 }] });
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "1 dimensions");
+        assert!(!prepared.run.await.unwrap().is_error);
+        assert!(
+            tool.prepare(json!({ "dimensions": [] }), &ctx())
+                .await
+                .is_err()
+        );
     }
 }
