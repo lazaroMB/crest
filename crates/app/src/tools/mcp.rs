@@ -4,7 +4,15 @@
 //! qualified name, `mcp__<server>__<tool>`, and calls it through the port.
 //! Its effect is [`ToolEffect::Execute`] unless told otherwise, so every
 //! call goes through the same approval as running a command.
-//! [`register_mcp_tools`] adds the tools of every ready server.
+//! [`register_mcp_tools`] adds the tools of every ready server, except
+//! those whose MCP Apps visibility leaves the model out (`_meta.ui.
+//! visibility` without `"model"`: only their own HTML view may call them,
+//! and crest runs no such view).
+//!
+//! The model gets a result's text content as before (items annotated for
+//! the user only are left out); the user also gets a block drawn from its
+//! `structuredContent` and user-facing items, through
+//! [`crate::interop::structured`].
 
 use std::sync::Arc;
 
@@ -120,6 +128,7 @@ impl Tool for McpTool {
             ),
         };
         let port = Arc::clone(&self.port);
+        let spec = self.spec.clone();
         let server = self.spec.server.clone();
         let name = self.spec.name.clone();
         let qualified = self.qualified.clone();
@@ -135,7 +144,7 @@ impl Tool for McpTool {
             Ok(ToolOutput {
                 content,
                 is_error: result.is_error,
-                block_update: None,
+                block_update: crate::interop::structured::render(&spec, &result),
             })
         };
         Ok(PreparedCall::new(subject, run.boxed()).with_preview(preview))
@@ -156,6 +165,14 @@ pub async fn register_mcp_tools(
 ) -> Result<Vec<RegisterError>, McpError> {
     let mut skipped = Vec::new();
     for spec in port.list_tools().await? {
+        if !spec.ui.model {
+            tracing::info!(
+                target: "crest::mcp",
+                "MCP tool {} not offered: its visibility is app-only",
+                spec.qualified_name()
+            );
+            continue;
+        }
         let tool = McpTool::new(spec, Arc::clone(&port));
         if let Err(err) = registry.register(Arc::new(tool)) {
             tracing::warn!(target: "crest::mcp", "MCP tool not offered: {err}");
@@ -261,16 +278,12 @@ mod tests {
         let fake = FakeMcp::new()
             .with_tool("s", "fails", "", |_| {
                 Ok(McpToolResult {
-                    content: vec![McpContent::Text { text: "no".into() }],
+                    content: vec![McpContent::text("no")],
                     is_error: true,
+                    ..McpToolResult::default()
                 })
             })
-            .with_tool("s", "empty", "", |_| {
-                Ok(McpToolResult {
-                    content: Vec::new(),
-                    is_error: false,
-                })
-            })
+            .with_tool("s", "empty", "", |_| Ok(McpToolResult::default()))
             .with_tool("s", "broken", "", |_| {
                 Err(McpError::Timeout { server: "s".into() })
             })
@@ -307,6 +320,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn app_only_tools_are_hidden_and_structured_results_drawn() {
+        let spec = |name: &str, ui: mcp::McpToolUi| mcp::McpTool {
+            server: "shop".into(),
+            name: name.into(),
+            description: String::new(),
+            input_schema: json!({ "type": "object" }),
+            output_schema: Some(json!({ "type": "object" })),
+            ui,
+        };
+        let app_only = mcp::McpToolUi {
+            model: false,
+            ..mcp::McpToolUi::default()
+        };
+        let fake = FakeMcp::new()
+            .with_spec(spec("refresh", app_only), |_| Ok(text_result("x")))
+            .with_spec(spec("orders", mcp::McpToolUi::default()), |_| {
+                Ok(McpToolResult {
+                    content: vec![McpContent::text("2 orders")],
+                    structured_content: Some(json!([{ "id": "A1" }, { "id": "B2" }])),
+                    ..McpToolResult::default()
+                })
+            });
+        let (registry, _, skipped) = registry(fake).await;
+        assert!(skipped.is_empty());
+        assert_eq!(registry.names(), ["mcp__shop__orders"]);
+        let out = registry
+            .dispatch("mcp__shop__orders", json!({}), &ctx())
+            .await
+            .unwrap();
+        assert_eq!(out.text_content(), "2 orders");
+        let Some(domain::block::BlockKind::Custom { tree, .. }) = &out.block_update else {
+            panic!("{out:?}");
+        };
+        assert!(
+            matches!(tree, domain::block::CustomNode::Table(_)),
+            "{tree:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn the_preview_names_the_server_and_the_effect_can_change() {
         let fake: Arc<dyn McpPort> = Arc::new(FakeMcp::new());
         let spec = mcp::McpTool {
@@ -314,6 +367,8 @@ mod tests {
             name: "list_issues".into(),
             description: "Lists issues".into(),
             input_schema: json!({ "type": "object" }),
+            output_schema: None,
+            ui: mcp::McpToolUi::default(),
         };
         let tool = McpTool::new(spec, fake);
         let prepared = tool.prepare(json!({ "repo": "x" }), &ctx()).await.unwrap();

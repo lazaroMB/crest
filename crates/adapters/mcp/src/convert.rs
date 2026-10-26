@@ -10,9 +10,11 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use application::ports::mcp::{McpContent, McpError, McpTool, McpToolResult, qualified_name};
+use application::ports::mcp::{
+    McpAudience, McpContent, McpError, McpTool, McpToolResult, McpToolUi, qualified_name,
+};
 use rmcp::ServiceError;
-use rmcp::model::{CallToolResult, ContentBlock, ResourceContents, Tool};
+use rmcp::model::{Annotations, CallToolResult, ContentBlock, ResourceContents, Role, Tool};
 use serde_json::{Map, Value, json};
 
 /// Longest qualified tool name offered to the model.
@@ -30,6 +32,7 @@ pub(crate) fn tool(server: &str, tool: Tool, taken: &[String]) -> (McpTool, Stri
     if taken.contains(&name) {
         name = with_hash(&name, &original, budget(server));
     }
+    let ui = tool_ui(tool.meta.as_ref().map(|m| &m.0));
     let mcp = McpTool {
         server: server.to_owned(),
         name,
@@ -38,8 +41,40 @@ pub(crate) fn tool(server: &str, tool: Tool, taken: &[String]) -> (McpTool, Stri
             .map(std::borrow::Cow::into_owned)
             .unwrap_or_default(),
         input_schema: schema((*tool.input_schema).clone()),
+        output_schema: tool.output_schema.map(|s| Value::Object((*s).clone())),
+        ui,
     };
     (mcp, original)
+}
+
+/// The MCP Apps metadata of a tool's `_meta`: `ui.resourceUri` (or the
+/// deprecated flat `ui/resourceUri`) and `ui.visibility` (both when
+/// absent or not a list).
+fn tool_ui(meta: Option<&Map<String, Value>>) -> McpToolUi {
+    let Some(meta) = meta else {
+        return McpToolUi::default();
+    };
+    let ui = meta.get("ui");
+    let resource_uri = ui
+        .and_then(|u| u.get("resourceUri"))
+        .or_else(|| meta.get("ui/resourceUri"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let visibility: Option<Vec<&str>> = ui
+        .and_then(|u| u.get("visibility"))
+        .and_then(Value::as_array)
+        .map(|v| v.iter().filter_map(Value::as_str).collect());
+    match visibility {
+        Some(v) => McpToolUi {
+            resource_uri,
+            model: v.contains(&"model"),
+            app: v.contains(&"app"),
+        },
+        None => McpToolUi {
+            resource_uri,
+            ..McpToolUi::default()
+        },
+    }
 }
 
 /// Room for the tool part of `mcp__<server>__<tool>`.
@@ -190,44 +225,87 @@ fn merge_variants(root: &mut Map<String, Value>, variants: &[Value], all: bool) 
 }
 
 /// The port's view of a tool result. Audio has no equivalent and becomes a
-/// short note; structured content becomes its JSON when no text says it.
+/// short note; structured content becomes its JSON when no text says it
+/// (for the model, as the spec's backwards-compatible text), and is kept
+/// as is for the user's view.
 pub(crate) fn result(result: CallToolResult) -> McpToolResult {
     let mut content: Vec<McpContent> = result.content.into_iter().map(content).collect();
-    let has_text = content.iter().any(|c| matches!(c, McpContent::Text { .. }));
-    if !has_text && let Some(structured) = result.structured_content {
+    let has_text = content
+        .iter()
+        .any(|c| matches!(c, McpContent::Text { .. }) && c.audience().to_model());
+    if !has_text && let Some(structured) = &result.structured_content {
         content.push(McpContent::Text {
             text: structured.to_string(),
+            audience: McpAudience::Model,
         });
     }
     McpToolResult {
         content,
         is_error: result.is_error.unwrap_or(false),
+        structured_content: result.structured_content,
+        meta: result.meta.map(|m| Value::Object(m.0)),
+    }
+}
+
+/// The audience of an item's annotations: only the user, only the model
+/// (the assistant), or both.
+fn audience(annotations: Option<&Annotations>) -> McpAudience {
+    let Some(roles) = annotations.and_then(|a| a.audience.as_ref()) else {
+        return McpAudience::Both;
+    };
+    let user = roles.contains(&Role::User);
+    let model = roles.contains(&Role::Assistant);
+    match (user, model) {
+        (true, false) => McpAudience::User,
+        (false, true) => McpAudience::Model,
+        _ => McpAudience::Both,
     }
 }
 
 fn content(block: ContentBlock) -> McpContent {
     match block {
-        ContentBlock::Text(text) => McpContent::Text { text: text.text },
+        ContentBlock::Text(text) => McpContent::Text {
+            audience: audience(text.annotations.as_ref()),
+            text: text.text,
+        },
         ContentBlock::Image(image) => McpContent::Image {
+            audience: audience(image.annotations.as_ref()),
             media_type: image.mime_type,
             data: image.data,
         },
         ContentBlock::Audio(audio) => McpContent::Text {
             text: format!("[audio content ({}) omitted]", audio.mime_type),
+            audience: audience(audio.annotations.as_ref()),
         },
-        ContentBlock::Resource(embedded) => match embedded.resource {
-            ResourceContents::TextResourceContents { uri, text, .. } => McpContent::Resource {
-                uri,
-                text: Some(text),
-            },
-            ResourceContents::BlobResourceContents { uri, .. } => {
-                McpContent::Resource { uri, text: None }
+        ContentBlock::Resource(embedded) => {
+            let audience = audience(embedded.annotations.as_ref());
+            match embedded.resource {
+                ResourceContents::TextResourceContents {
+                    uri,
+                    text,
+                    mime_type,
+                    ..
+                } => McpContent::Resource {
+                    uri,
+                    text: Some(text),
+                    mime_type,
+                    audience,
+                },
+                ResourceContents::BlobResourceContents { uri, mime_type, .. } => {
+                    McpContent::Resource {
+                        uri,
+                        text: None,
+                        mime_type,
+                        audience,
+                    }
+                }
+                // `ResourceContents` is non-exhaustive.
+                other => McpContent::Text {
+                    text: serde_json::to_string(&other).unwrap_or_default(),
+                    audience,
+                },
             }
-            // `ResourceContents` is non-exhaustive.
-            other => McpContent::Text {
-                text: serde_json::to_string(&other).unwrap_or_default(),
-            },
-        },
+        }
         ContentBlock::ResourceLink(link) => {
             let about = [Some(link.name.clone()), link.description.clone()]
                 .into_iter()
@@ -238,12 +316,12 @@ fn content(block: ContentBlock) -> McpContent {
             McpContent::Resource {
                 uri: link.uri.clone(),
                 text: (!about.is_empty()).then_some(about),
+                mime_type: link.mime_type.clone(),
+                audience: McpAudience::Both,
             }
         }
         // `ContentBlock` is non-exhaustive.
-        other => McpContent::Text {
-            text: serde_json::to_string(&other).unwrap_or_default(),
-        },
+        other => McpContent::text(serde_json::to_string(&other).unwrap_or_default()),
     }
 }
 
@@ -297,6 +375,8 @@ mod tests {
                     name: "add".into(),
                     description: "Adds two numbers".into(),
                     input_schema: schema,
+                    output_schema: None,
+                    ui: McpToolUi::default(),
                 },
                 "add".to_owned()
             )
@@ -367,20 +447,22 @@ mod tests {
             result(call),
             McpToolResult {
                 content: vec![
-                    McpContent::Text { text: "ok".into() },
+                    McpContent::text("ok"),
                     McpContent::Image {
                         media_type: "image/png".into(),
                         data: "iVBO".into(),
+                        audience: McpAudience::Both,
                     },
                     McpContent::Resource {
                         uri: "file:///a.txt".into(),
                         text: Some("hola".into()),
+                        mime_type: Some("text/plain".into()),
+                        audience: McpAudience::Both,
                     },
-                    McpContent::Text {
-                        text: "[audio content (audio/wav) omitted]".into(),
-                    },
+                    McpContent::text("[audio content (audio/wav) omitted]"),
                 ],
                 is_error: true,
+                ..McpToolResult::default()
             }
         );
     }
@@ -393,10 +475,46 @@ mod tests {
         assert_eq!(
             mapped.content,
             vec![McpContent::Text {
-                text: r#"{"sum":3}"#.into()
+                text: r#"{"sum":3}"#.into(),
+                audience: McpAudience::Model,
             }]
         );
+        assert_eq!(mapped.structured_content, Some(json!({ "sum": 3 })));
         assert!(!mapped.is_error);
+    }
+
+    #[test]
+    fn audiences_meta_and_apps_metadata_are_kept() {
+        let mut text = rmcp::model::TextContent::new("for you");
+        let mut annotations = Annotations::default();
+        annotations.audience = Some(vec![Role::User]);
+        text.annotations = Some(annotations);
+        let mut call = CallToolResult::success(vec![ContentBlock::Text(text)]);
+        call.structured_content = Some(json!({ "rows": [] }));
+        let mut meta = rmcp::model::MetaObject::new();
+        meta.0.insert("trace".into(), json!("t1"));
+        call.meta = Some(meta);
+        let mapped = result(call);
+        assert_eq!(mapped.content[0].audience(), McpAudience::User);
+        // The user-only text does not count: the model gets the JSON.
+        assert_eq!(mapped.content[1].audience(), McpAudience::Model);
+        assert_eq!(mapped.meta, Some(json!({ "trace": "t1" })));
+
+        let Value::Object(meta) = json!({
+            "ui": { "resourceUri": "ui://charts/view", "visibility": ["app"] }
+        }) else {
+            unreachable!()
+        };
+        let ui = tool_ui(Some(&meta));
+        assert_eq!(ui.resource_uri.as_deref(), Some("ui://charts/view"));
+        assert!(!ui.model && ui.app);
+        let Value::Object(flat) = json!({ "ui/resourceUri": "ui://old" }) else {
+            unreachable!()
+        };
+        let ui = tool_ui(Some(&flat));
+        assert_eq!(ui.resource_uri.as_deref(), Some("ui://old"));
+        assert!(ui.model && ui.app);
+        assert_eq!(tool_ui(None), McpToolUi::default());
     }
 
     #[test]

@@ -637,6 +637,8 @@ mod tests {
                 name: "search_issues".into(),
                 description: "Searches issues".into(),
                 input_schema: json!({"type": "object"}),
+                output_schema: None,
+                ui: crate::ports::mcp::McpToolUi::default(),
             };
             tools
                 .register(Arc::new(

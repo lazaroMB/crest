@@ -45,6 +45,79 @@ pub struct McpTool {
     pub description: String,
     /// JSON Schema of the tool input.
     pub input_schema: serde_json::Value,
+    /// JSON Schema of the tool's `structuredContent`, when it declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+    /// What the tool's `_meta.ui` says (MCP Apps).
+    #[serde(default, skip_serializing_if = "McpToolUi::is_default")]
+    pub ui: McpToolUi,
+}
+
+/// The MCP Apps metadata of a tool (`_meta.ui`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpToolUi {
+    /// `resourceUri`: the `ui://` HTML view of its results, which crest
+    /// does not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_uri: Option<String>,
+    /// `visibility` includes `"model"`: the model may see and call it.
+    #[serde(default = "yes")]
+    pub model: bool,
+    /// `visibility` includes `"app"`: the tool's own view may call it.
+    #[serde(default = "yes")]
+    pub app: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for McpToolUi {
+    /// No view; visible to the model and the app (the spec's default).
+    fn default() -> Self {
+        Self {
+            resource_uri: None,
+            model: true,
+            app: true,
+        }
+    }
+}
+
+impl McpToolUi {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Who a content item is meant for (its `annotations.audience`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAudience {
+    /// Both, or not said.
+    #[default]
+    Both,
+    /// Only the model (`["assistant"]`): never drawn for the user.
+    Model,
+    /// Only the user (`["user"]`): drawn, never sent to the model.
+    User,
+}
+
+impl McpAudience {
+    fn is_both(&self) -> bool {
+        *self == Self::Both
+    }
+
+    /// Whether the model receives an item with this audience.
+    #[must_use]
+    pub fn to_model(self) -> bool {
+        self != Self::User
+    }
+
+    /// Whether the user is shown an item with this audience.
+    #[must_use]
+    pub fn to_user(self) -> bool {
+        self != Self::Model
+    }
 }
 
 impl McpTool {
@@ -56,28 +129,38 @@ impl McpTool {
 }
 
 /// Result of an MCP tool call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpToolResult {
     /// Content items returned by the tool.
     pub content: Vec<McpContent>,
     /// Whether the tool reported a failure (the call itself succeeded).
     pub is_error: bool,
+    /// The structured result (`structuredContent`), drawn for the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
+    /// The result's `_meta`, never sent to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
 }
 
 impl McpToolResult {
     /// Converts the content to the domain shape sent back to the model.
-    /// Embedded resources become text prefixed with their URI.
+    /// Embedded resources become text prefixed with their URI; items meant
+    /// only for the user are left out.
     #[must_use]
     pub fn to_tool_result_content(&self) -> Vec<ToolResultContent> {
         self.content
             .iter()
+            .filter(|item| item.audience().to_model())
             .map(|item| match item {
-                McpContent::Text { text } => ToolResultContent::text(text.clone()),
-                McpContent::Image { media_type, data } => ToolResultContent::Image {
+                McpContent::Text { text, .. } => ToolResultContent::text(text.clone()),
+                McpContent::Image {
+                    media_type, data, ..
+                } => ToolResultContent::Image {
                     media_type: media_type.clone(),
                     data: data.clone(),
                 },
-                McpContent::Resource { uri, text } => {
+                McpContent::Resource { uri, text, .. } => {
                     ToolResultContent::text(format!("{uri}\n{}", text.as_deref().unwrap_or("")))
                 }
             })
@@ -93,6 +176,9 @@ pub enum McpContent {
     Text {
         /// The text.
         text: String,
+        /// Who it is for.
+        #[serde(default, skip_serializing_if = "McpAudience::is_both")]
+        audience: McpAudience,
     },
     /// An inline image.
     Image {
@@ -100,6 +186,9 @@ pub enum McpContent {
         media_type: String,
         /// Base64-encoded bytes.
         data: String,
+        /// Who it is for.
+        #[serde(default, skip_serializing_if = "McpAudience::is_both")]
+        audience: McpAudience,
     },
     /// An embedded resource.
     Resource {
@@ -107,7 +196,34 @@ pub enum McpContent {
         uri: String,
         /// Text contents, if the resource is textual.
         text: Option<String>,
+        /// MIME type, when the server gives one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// Who it is for.
+        #[serde(default, skip_serializing_if = "McpAudience::is_both")]
+        audience: McpAudience,
     },
+}
+
+impl McpContent {
+    /// A text item for both the model and the user.
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text {
+            text: text.into(),
+            audience: McpAudience::Both,
+        }
+    }
+
+    /// Who the item is for.
+    #[must_use]
+    pub fn audience(&self) -> McpAudience {
+        match self {
+            Self::Text { audience, .. }
+            | Self::Image { audience, .. }
+            | Self::Resource { audience, .. } => *audience,
+        }
+    }
 }
 
 /// Connection state of a configured MCP server.
@@ -330,17 +446,24 @@ mod tests {
     fn result_content_maps_to_domain() {
         let result = McpToolResult {
             content: vec![
-                McpContent::Text { text: "ok".into() },
+                McpContent::text("ok"),
                 McpContent::Image {
                     media_type: "image/png".into(),
                     data: "iVBO".into(),
+                    audience: McpAudience::Both,
                 },
                 McpContent::Resource {
                     uri: "file:///a.txt".into(),
                     text: Some("hola".into()),
+                    mime_type: None,
+                    audience: McpAudience::Both,
+                },
+                McpContent::Text {
+                    text: "only for the user".into(),
+                    audience: McpAudience::User,
                 },
             ],
-            is_error: false,
+            ..McpToolResult::default()
         };
         assert_eq!(
             result.to_tool_result_content(),
@@ -365,6 +488,8 @@ mod tests {
                 name: "echo".into(),
                 description: "Echoes its input".into(),
                 input_schema: serde_json::json!({ "type": "object" }),
+                output_schema: None,
+                ui: McpToolUi::default(),
             }])
         }
 
@@ -379,10 +504,8 @@ mod tests {
             }
             assert_eq!(name, "echo");
             Ok(McpToolResult {
-                content: vec![McpContent::Text {
-                    text: input.to_string(),
-                }],
-                is_error: false,
+                content: vec![McpContent::text(input.to_string())],
+                ..McpToolResult::default()
             })
         }
 
@@ -405,12 +528,7 @@ mod tests {
             .call_tool(server, name, serde_json::json!({ "x": 1 }))
             .await
             .unwrap();
-        assert_eq!(
-            result.content,
-            vec![McpContent::Text {
-                text: "{\"x\":1}".into()
-            }]
-        );
+        assert_eq!(result.content, vec![McpContent::text("{\"x\":1}")]);
         assert_eq!(
             port.call_tool("other", "echo", serde_json::Value::Null)
                 .await,

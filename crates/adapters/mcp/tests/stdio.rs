@@ -13,7 +13,7 @@ use common::echo_spec;
 
 fn text(result: &application::ports::mcp::McpToolResult) -> &str {
     match result.content.as_slice() {
-        [McpContent::Text { text }] => text,
+        [McpContent::Text { text, .. }] => text,
         other => panic!("unexpected content {other:?}"),
     }
 }

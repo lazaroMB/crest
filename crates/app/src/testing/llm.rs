@@ -836,10 +836,27 @@ impl FakeMcp {
             name: name.to_owned(),
             description: description.to_owned(),
             input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: None,
+            ui: crate::ports::mcp::McpToolUi::default(),
         };
         self.server_mut(server)
             .tools
             .push((tool, Arc::new(handler)));
+        self
+    }
+
+    /// Registers `spec` (its server created if new), answered by
+    /// `handler`: for tools with an output schema or MCP Apps metadata.
+    #[must_use]
+    pub fn with_spec(
+        mut self,
+        spec: McpTool,
+        handler: impl Fn(serde_json::Value) -> Result<McpToolResult, McpError> + Send + Sync + 'static,
+    ) -> Self {
+        let server = spec.server.clone();
+        self.server_mut(&server)
+            .tools
+            .push((spec, Arc::new(handler)));
         self
     }
 
@@ -897,8 +914,8 @@ impl FakeServer {
 #[must_use]
 pub fn text_result(text: impl Into<String>) -> McpToolResult {
     McpToolResult {
-        content: vec![McpContent::Text { text: text.into() }],
-        is_error: false,
+        content: vec![McpContent::text(text)],
+        ..McpToolResult::default()
     }
 }
 

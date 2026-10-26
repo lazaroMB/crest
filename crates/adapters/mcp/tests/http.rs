@@ -42,7 +42,7 @@ async fn lists_and_calls_tools_over_http() {
         .call_tool("remote", "add", json!({ "a": 5, "b": 7 }))
         .await
         .unwrap();
-    assert_eq!(sum.content, [McpContent::Text { text: "12".into() }]);
+    assert_eq!(sum.content, [McpContent::text("12")]);
     manager.shutdown().await;
 }
 

@@ -681,10 +681,7 @@ mod tests {
             if name == "slow" {
                 std::future::pending::<()>().await;
             }
-            Ok(McpToolResult {
-                content: Vec::new(),
-                is_error: false,
-            })
+            Ok(McpToolResult::default())
         }
 
         async fn servers(&self) -> Vec<McpServerStatus> {
