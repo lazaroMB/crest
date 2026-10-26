@@ -22,7 +22,8 @@
 //! - digital waveforms ([`waveform`], wellen: VCD, FST, GHW);
 //! - netlists ([`netlist`], own SPICE and KiCad readers);
 //! - STEP parts ([`step`], truck-stepio + truck-meshalgo);
-//! - 2D DXF drawings ([`drawing`], the `dxf` crate).
+//! - 2D DXF drawings ([`drawing`], the `dxf` crate);
+//! - IFC room schedules ([`ifc`], ifc-lite-core).
 
 pub mod bench;
 pub mod dataset;
@@ -31,6 +32,7 @@ pub mod drawing;
 pub mod er;
 pub mod flame;
 pub mod har;
+pub mod ifc;
 pub mod junit;
 pub mod libtest;
 pub mod logs;
@@ -59,6 +61,7 @@ use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::engineering::cad::CadModelSpec;
 use domain::engineering::drawing::DrawingSpec;
+use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
@@ -183,5 +186,9 @@ impl FormatsPort for Formats {
 
     fn parse_dxf(&self, bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError> {
         drawing::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError> {
+        ifc::parse(bytes, path).map_err(FormatError::Invalid)
     }
 }

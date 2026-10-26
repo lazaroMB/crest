@@ -28,7 +28,10 @@
 //! (out, nc) left open; every STEP part is a 10 mm tetrahedron `Body`
 //! (4 faces, one not meshed) in product `Block`; every DXF drawing is a
 //! 100 × 50 mm rectangle on layer `Outline` with a hole on `Holes` (off)
-//! and a `PLATE` note.
+//! and a `PLATE` note; every IFC schedule is project `House` with a
+//! `Ground floor` holding `101` Kitchen (12.5 m² from
+//! Qto_SpaceBaseQuantities) and `102` Store (no area), 4 walls, 2 doors
+//! and 3 windows.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -49,6 +52,7 @@ use domain::devops::terraform::{
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::engineering::cad::{CadModelSpec, CadSolid};
 use domain::engineering::drawing::{DrawEntity, DrawingLayer, DrawingSpec, PolyVertex, Shape};
+use domain::engineering::ifc::{ElementCounts, IfcScheduleSpec, IfcSpace, IfcStorey};
 use domain::engineering::netlist::{Component, NetlistFormat, NetlistSpec, PinNet};
 use domain::engineering::waveform::{
     SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal, WaveformSpec,
@@ -798,6 +802,48 @@ impl FormatsPort for FakeFormats {
             inserts: 0,
             skipped: Vec::new(),
             truncated: false,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_ifc_schedule(
+        &self,
+        _bytes: &[u8],
+        path: &str,
+    ) -> Result<IfcScheduleSpec, FormatError> {
+        self.record("parse_ifc_schedule", path)?;
+        let space = |name: &str, long: &str, area: Option<f64>| IfcSpace {
+            name: Some(name.to_owned()),
+            long_name: Some(long.to_owned()),
+            area,
+            area_source: area.map(|_| "Qto_SpaceBaseQuantities.NetFloorArea".to_owned()),
+            global_id: None,
+        };
+        Ok(IfcScheduleSpec {
+            title: None,
+            path: path.to_owned(),
+            schema: "IFC4".to_owned(),
+            project: Some("House".to_owned()),
+            site: None,
+            buildings: Vec::new(),
+            length_unit: Some("m".to_owned()),
+            area_unit: Some("m²".to_owned()),
+            storeys: vec![IfcStorey {
+                name: "Ground floor".to_owned(),
+                elevation: Some(0.0),
+                building: None,
+                spaces: vec![
+                    space("101", "Kitchen", Some(12.5)),
+                    space("102", "Store", None),
+                ],
+                elements: ElementCounts {
+                    walls: 4,
+                    doors: 2,
+                    windows: 3,
+                },
+            }],
+            unplaced_spaces: Vec::new(),
+            unplaced: ElementCounts::default(),
             warnings: Vec::new(),
         })
     }

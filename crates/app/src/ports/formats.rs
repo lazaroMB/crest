@@ -6,7 +6,8 @@
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
 //! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
 //! (Graphviz DOT, ER from SQL DDL), criterion benchmark results and
-//! engineering files (waveforms, netlists, STEP parts, DXF drawings).
+//! engineering files (waveforms, netlists, STEP parts, DXF drawings, IFC
+//! room schedules).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -25,6 +26,7 @@ use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::engineering::cad::CadModelSpec;
 use domain::engineering::drawing::DrawingSpec;
+use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
@@ -329,6 +331,16 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] when the file is not DXF or holds nothing
     /// to draw.
     fn parse_dxf(&self, bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError>;
+
+    /// The room schedule of an IFC file (IFC2X3, IFC4, IFC4X3): storeys,
+    /// their spaces with the areas the file gives (and where), and wall,
+    /// door and window counts; `path` names it.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when the file is not IFC or has neither
+    /// storeys nor spaces.
+    fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError>;
 }
 
 #[cfg(test)]

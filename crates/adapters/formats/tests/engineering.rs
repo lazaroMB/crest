@@ -1,5 +1,5 @@
 //! Engineering viewers on fixture files: a VCD dump, a SPICE deck, a
-//! KiCad netlist, a STEP part and a DXF drawing.
+//! KiCad netlist, a STEP part, a DXF drawing and an IFC model.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -261,4 +261,78 @@ fn a_dxf_plate_reads_layers_inserts_and_text() {
         "{:?}",
         spec.warnings
     );
+}
+
+#[test]
+fn an_ifc_house_gives_storeys_spaces_areas_and_counts() {
+    let spec = Formats::new()
+        .parse_ifc_schedule(&fixture("house.ifc"), "bim/house.ifc")
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.schema, "IFC4");
+    assert_eq!(spec.project.as_deref(), Some("Small house"));
+    assert_eq!(spec.site.as_deref(), Some("Plot 7"));
+    assert_eq!(spec.buildings, ["House A"]);
+    assert_eq!(
+        (spec.length_unit.as_deref(), spec.area_unit.as_deref()),
+        (Some("mm"), Some("m²"))
+    );
+    // By elevation, though the file aggregates the first floor first.
+    let names: Vec<&str> = spec.storeys.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Ground floor", "First floor"]);
+    let ground = &spec.storeys[0];
+    assert_eq!(ground.elevation, Some(0.0));
+    assert_eq!(ground.building.as_deref(), Some("House A"));
+    let area = |name: &str| {
+        spec.spaces()
+            .find(|(_, s)| s.name.as_deref() == Some(name))
+            .map(|(_, s)| (s.area, s.area_source.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        area("101"),
+        (
+            Some(24.5),
+            Some("Qto_SpaceBaseQuantities.NetFloorArea".into())
+        ),
+        "net before gross"
+    );
+    assert_eq!(
+        area("102"),
+        (
+            Some(10.75),
+            Some("Qto_SpaceBaseQuantities.GrossFloorArea".into())
+        )
+    );
+    assert_eq!(
+        area("103"),
+        (None, None),
+        "no area: not given, not computed"
+    );
+    assert_eq!(
+        area("201"),
+        (Some(14.2), Some("Pset_SpaceCommon.NetPlannedArea".into()))
+    );
+    assert_eq!(ground.spaces[1].long_name.as_deref(), Some("K\u{fc}che"));
+    // The door contained in space 101 counts for its storey.
+    assert_eq!(
+        (
+            ground.elements.walls,
+            ground.elements.doors,
+            ground.elements.windows
+        ),
+        (3, 3, 1)
+    );
+    let first = &spec.storeys[1];
+    assert_eq!(first.elevation, Some(3000.0));
+    assert_eq!(
+        (
+            first.elements.walls,
+            first.elements.doors,
+            first.elements.windows
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(spec.unplaced.walls, 1, "the garden wall is in no storey");
+    assert_eq!(spec.missing_areas(), 1);
 }

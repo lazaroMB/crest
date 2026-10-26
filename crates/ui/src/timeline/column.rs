@@ -62,7 +62,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Netlist(_)
         | BlockKind::Material(_)
         | BlockKind::CadModel(_)
-        | BlockKind::Drawing(_) => BlockWidth::Wide,
+        | BlockKind::Drawing(_)
+        | BlockKind::IfcSchedule(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }
