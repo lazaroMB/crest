@@ -256,6 +256,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::Drawing(drawing) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[dxf: {}, {} entities, {} layers]",
+                drawing.display_title(),
+                drawing.entities.len(),
+                drawing.layers.len()
+            ),
+        ),
         BlockKind::Material(material) => w.line(
             Some(Style::Dim),
             &format!(

@@ -1,5 +1,5 @@
 //! Engineering viewers on fixture files: a VCD dump, a SPICE deck, a
-//! KiCad netlist and a STEP part.
+//! KiCad netlist, a STEP part and a DXF drawing.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -190,4 +190,75 @@ fn a_step_block_is_tessellated_through_the_port() {
     let mut cut = fixture("block.step");
     cut.truncate(cut.len() / 2);
     assert!(Formats::new().parse_step(&cut, &request).is_err());
+}
+
+#[test]
+fn a_dxf_plate_reads_layers_inserts_and_text() {
+    use domain::engineering::drawing::Shape;
+    let spec = Formats::new()
+        .parse_dxf(&fixture("plate.dxf"), "dwg/plate.dxf")
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.version.as_deref(), Some("R2000"));
+    assert_eq!(spec.units.as_deref(), Some("mm"));
+    let header = spec.header_extents.unwrap();
+    assert_eq!((header.min, header.max), ([-5.0, -5.0], [105.0, 65.0]));
+    let layer = |name: &str| spec.layers.iter().position(|l| l.name == name).unwrap();
+    assert!(spec.layers[layer("Hidden")].off);
+    assert_eq!(spec.layers[layer("Holes")].color, 1);
+    // Five inserts of a circle and a cross.
+    assert_eq!(spec.inserts, 5);
+    let circles: Vec<f64> = spec
+        .entities
+        .iter()
+        .filter_map(|e| match e.shape {
+            Shape::Circle { radius, .. } => Some(radius),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(circles.len(), 5);
+    assert!(
+        circles.iter().filter(|r| (**r - 6.4).abs() < 1e-9).count() == 1,
+        "{circles:?}"
+    );
+    // The cross of a hole is on layer 0 in the block: it takes the
+    // insert's layer and (BYBLOCK) its color.
+    let cross = spec
+        .entities
+        .iter()
+        .find(|e| matches!(e.shape, Shape::Line { a, .. } if (a[0] - 6.0).abs() < 1e-9 && (a[1] - 10.0).abs() < 1e-9))
+        .unwrap();
+    assert_eq!(
+        (spec.layers[cross.layer].name.as_str(), cross.color),
+        ("Holes", Some(1))
+    );
+    // The rotated, doubled insert turns its cross upright.
+    assert!(spec.entities.iter().any(|e| matches!(e.shape,
+        Shape::Line { a, b } if (a[0] - 45.0).abs() < 1e-9 && (a[1] - 42.0).abs() < 1e-9
+            && (b[1] - 58.0).abs() < 1e-9)));
+    assert_eq!(spec.texts(), ["PLATE 100x60 S235", "Thickness\n5 mm"]);
+    let outline = spec
+        .entities
+        .iter()
+        .find_map(|e| match &e.shape {
+            Shape::Polyline { vertices, closed } if *closed && vertices.len() == 4 => {
+                Some(vertices)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!((outline[1].bulge - 0.2).abs() < 1e-12);
+    // The bulged side reaches past x = 90.
+    let computed = spec.computed_extents().unwrap();
+    assert!(
+        computed.max[0] > 95.0 && computed.max[0] < 100.0,
+        "{computed:?}"
+    );
+    assert_eq!(spec.skipped.len(), 1, "{:?}", spec.skipped);
+    assert_eq!(spec.skipped[0].count, 1);
+    assert!(
+        spec.warnings[0].contains("1 ellipses"),
+        "{:?}",
+        spec.warnings
+    );
 }

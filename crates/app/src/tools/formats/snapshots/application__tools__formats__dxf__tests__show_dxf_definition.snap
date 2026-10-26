@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats/dxf.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_dxf",
+  "description": "Shows a 2D DXF drawing (`path`) in the user's timeline: lines, arcs, circles, polylines, text and expanded block inserts in their layer colors, with a layer list to turn layers on and off, zoom, pan and fit, and the extents and units. Returns the release, units, extents, layers with their entity counts, the entity kinds, what was left out (hatches, dimensions…) and the drawing's texts: cite those instead of reading the DXF text, and do not repeat the lists in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A DXF file of the workspace (`.dxf`, ASCII or binary, R12 to\nR2018), e.g. an export of LibreCAD, QCAD, FreeCAD, KiCad or a\nscript (ezdxf)."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the drawing; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_dxf`.",
+    "title": "ShowDxf",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

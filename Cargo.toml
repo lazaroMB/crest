@@ -148,8 +148,10 @@ wellen = { version = "=0.25.7", default-features = false }
 ruststep = "=0.4.0"
 truck-stepio = "=0.3.0"
 truck-meshalgo = { version = "=0.4.0", default-features = false, features = ["tessellation", "analyzers"] }
-# 2D drawings (show_dxf): ixmilia's DXF reader, MIT.
+# 2D drawings (show_dxf): ixmilia's DXF reader, MIT. encoding_rs (MIT or
+# Apache-2.0, already pulled by dxf) picks its UTF-8 reading path.
 dxf = "=0.6.2"
+encoding_rs = "=0.8.42"
 # IFC schedules (show_ifc_schedule): IFClite's STEP/IFC scanner and decoder,
 # MPL-2.0 (file-level copyleft; used unmodified).
 ifc-lite-core = "=22.6.0"

@@ -26,7 +26,9 @@
 //! counting 00, 01, 02 on its rising edges, over 0–30 ns; every netlist
 //! is a divider `V1` (in, 0), `R1` (in, out), `R2` (out, 0) plus `R3`
 //! (out, nc) left open; every STEP part is a 10 mm tetrahedron `Body`
-//! (4 faces, one not meshed) in product `Block`.
+//! (4 faces, one not meshed) in product `Block`; every DXF drawing is a
+//! 100 × 50 mm rectangle on layer `Outline` with a hole on `Holes` (off)
+//! and a `PLATE` note.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -46,6 +48,7 @@ use domain::devops::terraform::{
 };
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::engineering::cad::{CadModelSpec, CadSolid};
+use domain::engineering::drawing::{DrawEntity, DrawingLayer, DrawingSpec, PolyVertex, Shape};
 use domain::engineering::netlist::{Component, NetlistFormat, NetlistSpec, PinNet};
 use domain::engineering::waveform::{
     SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal, WaveformSpec,
@@ -739,6 +742,62 @@ impl FormatsPort for FakeFormats {
                 up: UpAxis::Z,
             },
             tolerance: request.tolerance.unwrap_or(0.01),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_dxf(&self, _bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError> {
+        self.record("parse_dxf", path)?;
+        let layer = |name: &str, color: u8, off: bool, entities: usize| DrawingLayer {
+            name: name.to_owned(),
+            color,
+            off,
+            entities,
+        };
+        let corner = |x: f64, y: f64| PolyVertex { x, y, bulge: 0.0 };
+        Ok(DrawingSpec {
+            title: None,
+            path: path.to_owned(),
+            version: Some("R2000".to_owned()),
+            units: Some("mm".to_owned()),
+            header_extents: None,
+            layers: vec![layer("Outline", 5, false, 2), layer("Holes", 1, true, 1)],
+            entities: vec![
+                DrawEntity {
+                    layer: 0,
+                    color: None,
+                    shape: Shape::Polyline {
+                        vertices: vec![
+                            corner(0.0, 0.0),
+                            corner(100.0, 0.0),
+                            corner(100.0, 50.0),
+                            corner(0.0, 50.0),
+                        ],
+                        closed: true,
+                    },
+                },
+                DrawEntity {
+                    layer: 0,
+                    color: Some(3),
+                    shape: Shape::Text {
+                        at: [5.0, 5.0],
+                        height: 2.5,
+                        rotation: 0.0,
+                        text: "PLATE".to_owned(),
+                    },
+                },
+                DrawEntity {
+                    layer: 1,
+                    color: None,
+                    shape: Shape::Circle {
+                        center: [50.0, 25.0],
+                        radius: 3.0,
+                    },
+                },
+            ],
+            inserts: 0,
+            skipped: Vec::new(),
+            truncated: false,
             warnings: Vec::new(),
         })
     }

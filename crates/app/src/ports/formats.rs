@@ -6,7 +6,7 @@
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
 //! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
 //! (Graphviz DOT, ER from SQL DDL), criterion benchmark results and
-//! engineering files (waveforms, netlists, STEP parts).
+//! engineering files (waveforms, netlists, STEP parts, DXF drawings).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -24,6 +24,7 @@ use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::engineering::cad::CadModelSpec;
+use domain::engineering::drawing::DrawingSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
@@ -319,6 +320,15 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] when the file is not STEP, holds no solid
     /// that could be meshed, is over the triangle limit or took too long.
     fn parse_step(&self, bytes: &[u8], request: &StepRequest) -> Result<CadModelSpec, FormatError>;
+
+    /// A 2D DXF drawing (ASCII or binary): its layers and model-space
+    /// entities with block inserts expanded; `path` names it.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when the file is not DXF or holds nothing
+    /// to draw.
+    fn parse_dxf(&self, bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError>;
 }
 
 #[cfg(test)]

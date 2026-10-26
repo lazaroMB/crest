@@ -13,6 +13,7 @@ bytes.workspace = true
 chematic.workspace = true
 domain.workspace = true
 dxf.workspace = true
+encoding_rs.workspace = true
 flate2.workspace = true
 ifc-lite-core.workspace = true
 parquet.workspace = true

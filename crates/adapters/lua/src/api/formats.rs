@@ -1,8 +1,8 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
-//! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist` and
-//! `show_step` tools from Lua. Each returns a block (wrapped like
+//! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
+//! `show_step` and `show_dxf` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -20,6 +20,7 @@
 //! return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'tb.dut.*' } }
 //! return app.formats.netlist{ path = 'hw/amp.cir' }
 //! return app.formats.step{ path = 'cad/bracket.step' }
+//! return app.formats.dxf{ path = 'dwg/plate.dxf' }
 //! ```
 //!
 //! | Function | Block |
@@ -38,6 +39,7 @@
 //! | `waveform{ path, signals, radix, title }` | a VCD, FST or GHW dump as digital waves (`signals`: paths or `*` patterns; `radix`: `hex`, `bin`, `dec`) |
 //! | `netlist{ path or source, format, title }` | a SPICE deck or KiCad netlist as a component–net graph and table (`format`: `spice` or `kicad`, guessed when absent) |
 //! | `step{ path, tolerance, title }` | a STEP part tessellated into the 3D view with its solids (`tolerance` in the file's unit) |
+//! | `dxf{ path, title }` | a 2D DXF drawing with its layers, zoom and pan |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -451,6 +453,23 @@ fn step(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::CadModel(Box::new(spec)))
 }
 
+fn dxf(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "dxf";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_dxf(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Drawing(Box::new(spec)))
+}
+
 fn netlist(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "netlist";
     let services = services(lua, F)?;
@@ -521,6 +540,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => step(lua, &args),
             _ => Err(error("step", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "dxf",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => dxf(lua, &args),
+            _ => Err(error("dxf", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -602,6 +628,7 @@ mod tests {
             .with_file("target/criterion/fib/new/estimates.json", "{}")
             .with_file("sim/tb.vcd", "$enddefinitions $end")
             .with_file("cad/block.step", "ISO-10303-21;\n")
+            .with_file("dwg/plate.dxf", "0\nEOF\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -767,6 +794,15 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(bad.contains("`tolerance`"), "{bad}");
+        let out = run_code(
+            "return app.formats.dxf{ path = 'dwg/plate.dxf' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Drawing(spec)) = out else {
+            panic!("not a drawing: {out:?}");
+        };
+        assert_eq!(spec.layers.len(), 2);
     }
 
     #[test]
