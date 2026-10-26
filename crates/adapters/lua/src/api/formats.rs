@@ -2,7 +2,8 @@
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
-//! `show_step`, `show_dxf`, `show_ifc_schedule` and `show_sequence` tools from Lua. Each returns a block (wrapped like
+//! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence` and
+//! `show_reaction` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -23,6 +24,7 @@
 //! return app.formats.dxf{ path = 'dwg/plate.dxf' }
 //! return app.formats.ifc_schedule{ path = 'bim/house.ifc' }
 //! return app.formats.sequence{ path = 'dna/puc19.gb' }
+//! return app.formats.reaction{ smiles = 'C.O=O>>O=C=O.O' }
 //! ```
 //!
 //! | Function | Block |
@@ -44,6 +46,7 @@
 //! | `dxf{ path, title }` | a 2D DXF drawing with its layers, zoom and pan |
 //! | `ifc_schedule{ path, title }` | an IFC model's spaces and areas (only the file's) and wall/door/window counts per storey |
 //! | `sequence{ path or sequence, record, alphabet, circular, enzymes, title }` | a GenBank, FASTA or plain sequence with features, frames and (circular DNA) a plasmid map; `record` 1-based, `alphabet` `dna`/`rna`/`protein`, `enzymes` (default true) searches the bundled restriction enzymes |
+//! | `reaction{ smiles, coefficients, conditions, names, title }` | a reaction scheme with its atom and charge balance and, when unbalanced, suggested coefficients (raises on a SMILES that does not parse) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -551,9 +554,50 @@ fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
+fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "reaction";
+    let services = services(lua, F)?;
+    let smiles = text(args, F, "smiles")?.ok_or_else(|| error(F, "`smiles` is required"))?;
+    let coefficients = match args.get::<Value>("coefficients")? {
+        Value::Nil => None,
+        Value::Table(t) => Some(
+            t.sequence_values::<u32>()
+                .collect::<mlua::Result<Vec<_>>>()
+                .map_err(|_| error(F, "`coefficients` must be a list of positive integers"))?,
+        ),
+        other => {
+            return Err(error(
+                F,
+                format!("`coefficients` must be a list, got {}", other.type_name()),
+            ));
+        }
+    };
+    let mut spec = services
+        .formats
+        .depict_reaction(&smiles, coefficients.as_deref());
+    if let Some(e) = &spec.error {
+        return Err(error(F, e));
+    }
+    spec.title = text(args, F, "title")?;
+    spec.conditions = text(args, F, "conditions")?;
+    let mut names = strings(args, F, "names")?.into_iter();
+    for c in &mut spec.components {
+        c.molecule.name = names.next().filter(|n| !n.trim().is_empty());
+    }
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Reaction(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "reaction",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => reaction(lua, &args),
+            _ => Err(error("reaction", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "sequence",
         lua.create_function(|lua, args: Value| match args {
@@ -909,6 +953,17 @@ mod tests {
         let err = run_code("return app.formats.sequence{ sequence = 'ACGT', record = 0 }", formats())
             .unwrap_err();
         assert!(err.to_string().contains("counts from 1"), "{err}");
+        let out = run_code(
+            "return app.formats.reaction{ smiles = '[H][H].O=O>>O', names = { 'h2' } }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Reaction(spec)) = out else {
+            panic!("not a reaction: {out:?}");
+        };
+        assert_eq!(spec.components[0].molecule.name.as_deref(), Some("h2"));
+        let err = run_code("return app.formats.reaction{ smiles = 'bad' }", formats()).unwrap_err();
+        assert!(err.to_string().contains("invalid reaction"), "{err}");
     }
 
     #[test]

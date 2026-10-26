@@ -13,7 +13,7 @@
 //! (`show_netlist`), [`material`] (`show_material`), [`step`]
 //! (`show_step`), [`dxf`] (`show_dxf`) and [`ifc`]
 //! (`show_ifc_schedule`), and the science viewers [`sequence`]
-//! (`show_sequence`).
+//! (`show_sequence`) and [`reaction`] (`show_reaction`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -59,6 +59,7 @@ pub mod ifc;
 pub mod material;
 pub mod netlist;
 pub mod query_plan;
+pub mod reaction;
 pub mod sequence;
 pub mod step;
 pub mod terraform;
@@ -79,6 +80,7 @@ pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
+pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
 pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
@@ -1161,6 +1163,9 @@ quote only the areas it returns with their source, and say \
 residues) with its features, frames and, for plasmids, a map with \
 restriction sites; pass `find` for a motif or primer. Cite the lengths, \
 positions, GC content and cutters it returns, never your own counts.
+- `show_reaction`: draw a reaction from reaction SMILES whenever you give \
+one; it checks the atom and charge balance. Say a reaction is balanced \
+only when it says so, and use the coefficients it suggests.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1170,7 +1175,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
-/// `show_dxf`, `show_ifc_schedule` and `show_sequence`.
+/// `show_dxf`, `show_ifc_schedule`, `show_sequence` and `show_reaction`.
 ///
 /// # Errors
 ///
@@ -1200,7 +1205,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowStepTool::new(ports.clone()))?;
     registry.register_typed(ShowDxfTool::new(ports.clone()))?;
     registry.register_typed(ShowIfcScheduleTool::new(ports.clone()))?;
-    registry.register_typed(ShowSequenceTool::new(ports.clone()))
+    registry.register_typed(ShowSequenceTool::new(ports.clone()))?;
+    registry.register_typed(ShowReactionTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1318,7 +1324,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 22);
+        assert_eq!(registry.names().len(), 23);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

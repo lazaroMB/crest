@@ -37,6 +37,7 @@ pub mod netlist;
 pub mod plate;
 pub mod plot;
 pub mod query_plan;
+pub mod reaction;
 pub mod sequence;
 pub mod shell;
 pub mod sources;
@@ -101,6 +102,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Drawing(_) => drawing::render(entry, window, cx),
         BlockKind::IfcSchedule(_) => ifc::render(entry, window, cx),
         BlockKind::Sequence(_) => sequence::render(entry, window, cx),
+        BlockKind::Reaction(_) => reaction::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

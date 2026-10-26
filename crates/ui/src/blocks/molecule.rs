@@ -108,6 +108,53 @@ fn field(label: &'static str, value: String, mono: Option<SharedString>, cx: &Ap
         )
 }
 
+/// The rasterized depiction `state` at most `max_height` tall, or what is
+/// happening to it.
+pub(crate) fn picture(state: Option<SvgState>, max_height: f32, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    match state {
+        Some(SvgState::Ready(raster)) => {
+            let (w, h) = raster.size;
+            let scale = (max_height / h).min(1.0);
+            img(ImageSource::Render(raster.image.clone()))
+                .debug_selector(|| "molecule-picture".to_owned())
+                .w(px(w * scale))
+                .max_w_full()
+                .aspect_ratio(w / h)
+                .object_fit(ObjectFit::Contain)
+                .into_any_element()
+        }
+        Some(SvgState::Failed(err)) => div()
+            .text_color(theme.danger)
+            .child(SharedString::from(err))
+            .into_any_element(),
+        Some(SvgState::Loading) | None => div()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child("drawing…")
+            .into_any_element(),
+    }
+}
+
+/// `svg` as image data for the SVG cache.
+pub(crate) fn svg_data(svg: &str) -> ImageData {
+    ImageData::Base64 {
+        data: base64::engine::general_purpose::STANDARD.encode(svg),
+    }
+}
+
+/// The depiction `data` tinted to the theme, at most `max_height` tall.
+pub(crate) fn tinted_picture(
+    data: &ImageData,
+    max_height: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let tint = super::svg::Tint::from_theme(cx);
+    let state = super::svg::use_svg_tinted(data, 1.0, Some(tint), window, cx);
+    picture(Some(state), max_height, cx)
+}
+
 /// Draws the block held by `entry`.
 pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Molecule(spec) = &entry.block.kind else {
@@ -115,9 +162,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     };
     let svg = spec.svg.clone();
     let depiction = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Depiction(svg.map(|svg| ImageData::Base64 {
-            data: base64::engine::general_purpose::STANDARD.encode(svg),
-        }))
+        Depiction(svg.as_deref().map(svg_data))
     });
     let data = depiction.read(cx).0.clone();
     let state = data.as_ref().map(|data| {
@@ -148,28 +193,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
             )
             .into_any_element();
     }
-    let picture = match state {
-        Some(SvgState::Ready(raster)) => {
-            let (w, h) = raster.size;
-            let scale = (MAX_HEIGHT / h).min(1.0);
-            img(ImageSource::Render(raster.image.clone()))
-                .debug_selector(|| "molecule-picture".to_owned())
-                .w(px(w * scale))
-                .max_w_full()
-                .aspect_ratio(w / h)
-                .object_fit(ObjectFit::Contain)
-                .into_any_element()
-        }
-        Some(SvgState::Failed(err)) => div()
-            .text_color(theme.danger)
-            .child(SharedString::from(err))
-            .into_any_element(),
-        Some(SvgState::Loading) | None => div()
-            .text_sm()
-            .text_color(theme.muted_foreground)
-            .child("drawing…")
-            .into_any_element(),
-    };
+    let picture = picture(state, MAX_HEIGHT, cx);
     card = card.child(
         h_flex().child(
             div()

@@ -31,6 +31,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 
 /// What [`FormatsPort::preview_dataset`] reads.
@@ -373,6 +374,13 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         request: &SequenceRequest,
     ) -> Result<SequenceSpec, FormatError>;
+
+    /// A reaction scheme from reaction SMILES (`A.B>agents>C.D`): each
+    /// molecule depicted with its formula, the atom and charge balance with
+    /// `coefficients` (reactants then products; 1 each when absent) and,
+    /// when it does not balance, the smallest integer coefficients that do.
+    /// A reaction that cannot be read comes back with `error` set.
+    fn depict_reaction(&self, smiles: &str, coefficients: Option<&[u32]>) -> ReactionSpec;
 }
 
 #[cfg(test)]

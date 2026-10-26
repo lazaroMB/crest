@@ -32,7 +32,9 @@
 //! `Ground floor` holding `101` Kitchen (12.5 m² from
 //! Qto_SpaceBaseQuantities) and `102` Store (no area), 4 walls, 2 doors
 //! and 3 windows; every sequence is the circular 30 bp `pFake` with a
-//! CDS `orf` (1..9) and one EcoRI site (cut after 10).
+//! CDS `orf` (1..9) and one EcoRI site (cut after 10); every reaction is
+//! `H2 + O2 → H2O` (O unbalanced, 2 H2 + O2 → 2 H2O suggested) unless its
+//! SMILES is `bad`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -67,6 +69,10 @@ use domain::widget::list::{ListItem, ListSpec};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use serde_json::Map;
 
+use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::reaction::{
+    ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
+};
 use domain::science::sequence::{
     Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
 };
@@ -895,5 +901,80 @@ impl FormatsPort for FakeFormats {
             record: 0,
             warnings: Vec::new(),
         })
+    }
+
+    fn depict_reaction(&self, smiles: &str, _coefficients: Option<&[u32]>) -> ReactionSpec {
+        let _ = self.record("depict_reaction", smiles);
+        let mut balance = Computed::new(
+            "ch_fake",
+            "chem.reaction_balance",
+            "Atom and charge balance",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        let mut spec = ReactionSpec {
+            title: None,
+            smiles: smiles.to_owned(),
+            conditions: None,
+            components: Vec::new(),
+            elements: Vec::new(),
+            charge: (0, 0),
+            stoichiometry: Stoichiometry::NotChecked,
+            balance: balance.clone(),
+            error: None,
+        };
+        if smiles == "bad" {
+            spec.error = Some("invalid reaction SMILES: bad".into());
+            spec.balance.status = ComputedStatus::Error;
+            return spec;
+        }
+        let component = |role, formula: &str, atoms: &[(&str, u32)]| ReactionComponent {
+            role,
+            molecule: MoleculeSpec {
+                smiles: formula.to_owned(),
+                name: None,
+                svg: Some(FAKE_SVG.to_owned()),
+                formula: Some(formula.to_owned()),
+                mw: Some(1.0),
+                charge: Some(0),
+                canonical: Some(formula.to_owned()),
+                error: None,
+                claimed_formula: None,
+                claimed_matches: None,
+            },
+            coefficient: 1,
+            atoms: atoms.iter().map(|(e, n)| ((*e).to_owned(), *n)).collect(),
+        };
+        spec.components = vec![
+            component(ReactionRole::Reactant, "H2", &[("H", 2)]),
+            component(ReactionRole::Reactant, "O2", &[("O", 2)]),
+            component(ReactionRole::Product, "H2O", &[("H", 2), ("O", 1)]),
+        ];
+        spec.elements = vec![
+            ElementBalance {
+                element: "H".into(),
+                reactants: 2,
+                products: 2,
+            },
+            ElementBalance {
+                element: "O".into(),
+                reactants: 2,
+                products: 1,
+            },
+        ];
+        spec.stoichiometry = Stoichiometry::Suggested {
+            coefficients: vec![2, 1, 2],
+        };
+        balance.status = ComputedStatus::Warning;
+        let mut flag = ComputedValue::new(0.0);
+        flag.display = Some("no".into());
+        balance.values.insert("balanced".into(), flag);
+        balance.values.insert("delta.O".into(), ComputedValue::new(-1.0));
+        spec.balance = balance;
+        spec
     }
 }

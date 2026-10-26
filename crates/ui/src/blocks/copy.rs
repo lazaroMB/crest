@@ -21,6 +21,7 @@
 //! | drawing (DXF) | layers CSV, the drawing's texts, the summary line |
 //! | IFC schedule | spaces CSV (storey, name, area, unit, source), the tree as text |
 //! | sequence | FASTA, features CSV, cut sites CSV (when searched) |
+//! | reaction | reaction SMILES, the equation (and the balanced one), balance CSV |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -573,6 +574,23 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             if spec.enzyme_source.is_some() {
                 formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
             }
+            formats
+        }
+        BlockKind::Reaction(spec) => {
+            let mut formats = vec![
+                CopyFormat::new("smiles", "reaction SMILES", spec.smiles.clone()),
+                CopyFormat::new("equation", "equation", spec.equation(None)),
+            ];
+            if let domain::science::reaction::Stoichiometry::Suggested { coefficients } =
+                &spec.stoichiometry
+            {
+                formats.push(CopyFormat::new(
+                    "balanced",
+                    "balanced equation",
+                    spec.equation(Some(coefficients)),
+                ));
+            }
+            formats.push(CopyFormat::new("balance", "balance CSV", spec.balance_csv()));
             formats
         }
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {

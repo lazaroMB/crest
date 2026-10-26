@@ -256,6 +256,20 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::Reaction(reaction) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[reaction: {}, {}]",
+                reaction.equation(None),
+                if reaction.error.is_some() {
+                    "not read"
+                } else if reaction.is_balanced() {
+                    "balanced"
+                } else {
+                    "not balanced"
+                }
+            ),
+        ),
         BlockKind::Sequence(seq) => w.line(
             Some(Style::Dim),
             &format!(

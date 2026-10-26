@@ -25,9 +25,12 @@
 //! - 2D DXF drawings ([`drawing`], the `dxf` crate);
 //! - IFC room schedules ([`ifc`], ifc-lite-core);
 //! - sequences: GenBank, FASTA and bare residues ([`sequence`], gb-io and
-//!   our own FASTA reader).
+//!   our own FASTA reader);
+//! - reaction schemes with their balance ([`reaction`], chematic's
+//!   reaction SMILES; envelopes from [`chem`]).
 
 pub mod bench;
+pub mod chem;
 pub mod dataset;
 pub mod dot;
 pub mod drawing;
@@ -41,6 +44,7 @@ pub mod logs;
 pub mod molecule;
 pub mod netlist;
 pub mod query_plan;
+pub mod reaction;
 pub mod sarif;
 pub mod sequence;
 pub mod step;
@@ -69,6 +73,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 
 /// The formats adapter. Stateless.
@@ -202,5 +207,9 @@ impl FormatsPort for Formats {
         request: &SequenceRequest,
     ) -> Result<SequenceSpec, FormatError> {
         sequence::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn depict_reaction(&self, smiles: &str, coefficients: Option<&[u32]>) -> ReactionSpec {
+        reaction::depict(smiles, coefficients)
     }
 }
