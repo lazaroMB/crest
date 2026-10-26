@@ -34,6 +34,7 @@
 //! | `karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map, minimal SOP and POS |
 //! | `beam{ length, length_unit, force_unit, supports = { { at, kind } }, loads = { { kind, at, end, value, end_value } }, e, e_unit, i, i_unit, segments }` | beam reactions, shear, moment, deflection |
 //! | `tolerance{ dimensions = { { name, nominal, tolerance, plus, minus, direction, distribution } }, lower_limit, upper_limit, unit, sigmas, samples, seed }` | tolerance stack-up |
+//! | `bom{ data, items = { { part, quantity, unit_cost, category, reference, mpn } }, part, quantity, unit_cost, category, reference, mpn, builds, currency }` | BOM costing (`data` may be a `.json` array of records) |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -310,6 +311,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "karnaugh",
         "beam",
         "tolerance",
+        "bom",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -530,6 +532,15 @@ mod tests {
             t.dimensions[1].direction,
             domain::computed::StackDirection::Subtract
         );
+        run_code(
+            "return app.compute.bom{ items = { { part = 'case', quantity = 1, unit_cost = 2.2 } }, builds = 10 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Bom(b) = &engine.requests()[4] else {
+            panic!("not a BOM request");
+        };
+        assert_eq!((b.items.len(), b.builds), (1, 10.0));
     }
 
     #[test]

@@ -402,6 +402,37 @@ impl FakeCompute {
                     upper_limit: r.upper_limit,
                 }),
             ),
+            ComputeRequest::Bom(r) => (
+                "solve.bom",
+                "BOM cost",
+                "bom",
+                ComputedBody::Bom(BomBody {
+                    currency: r.currency.clone(),
+                    builds: "1".into(),
+                    lines: vec![BomLine {
+                        row: 1,
+                        part: "R 10k".into(),
+                        reference: Some("R1, R2".into()),
+                        mpn: None,
+                        description: None,
+                        category: "passives".into(),
+                        quantity: "2".into(),
+                        unit_cost: Some("0.01".into()),
+                        extended: Some("0.02".into()),
+                        quantity_from_references: false,
+                    }],
+                    categories: vec![BomCategory {
+                        name: "passives".into(),
+                        lines: 1,
+                        quantity: "2".into(),
+                        total: "0.02".into(),
+                        missing_prices: 0,
+                    }],
+                    total: "0.02".into(),
+                    total_builds: "0.02".into(),
+                    has_mpn: false,
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -735,6 +766,10 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn bom(&self, request: &BomRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bom(request.clone()), None)
     }
 
     fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult {

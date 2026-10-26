@@ -429,6 +429,8 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::bom`].
+    Bom(BomRequest),
     /// [`ComputePort::tolerance`].
     Tolerance(ToleranceRequest),
     /// [`ComputePort::beam`].
@@ -466,6 +468,7 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&r.data),
             Self::Bootstrap(r) => Some(&r.data),
             Self::Forecast(r) => Some(&r.data),
+            Self::Bom(r) => Some(&r.data),
             Self::Calc(_)
             | Self::Convert(_)
             | Self::Power(_)
@@ -494,6 +497,7 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&mut r.data),
             Self::Bootstrap(r) => Some(&mut r.data),
             Self::Forecast(r) => Some(&mut r.data),
+            Self::Bom(r) => Some(&mut r.data),
             Self::Calc(_)
             | Self::Convert(_)
             | Self::Power(_)
@@ -658,6 +662,16 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
+    /// A bill of materials costed line by line in decimal arithmetic:
+    /// quantity times unit cost, totals per category and per build, and the
+    /// lines without a price or MPN.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty BOM, a missing part column,
+    /// negative quantities or prices, or unreadable numbers.
+    fn bom(&self, request: &BomRequest) -> ComputeResult;
+
     /// A one-dimensional tolerance stack: worst-case and RSS limits, a seeded
     /// Monte Carlo of the result with the share out of specification, and
     /// each dimension's contribution.
@@ -733,6 +747,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Bom(r) => self.bom(r),
             ComputeRequest::Tolerance(r) => self.tolerance(r),
             ComputeRequest::Beam(r) => self.beam(r),
             ComputeRequest::Karnaugh(r) => self.karnaugh(r),

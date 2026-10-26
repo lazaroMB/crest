@@ -21,6 +21,7 @@ pub mod ab_test;
 pub mod apa;
 pub mod beam;
 pub mod bode;
+pub mod bom;
 pub mod bootstrap;
 pub mod cash_flow;
 pub mod contingency;
@@ -49,6 +50,7 @@ pub use self::beam::{
     LengthUnit, ModulusUnit, SupportKind,
 };
 pub use self::bode::{BodeBody, BodePoint, Complex, Crossover, FrequencyUnit};
+pub use self::bom::{BomBody, BomCategory, BomLine};
 pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::cash_flow::{CashFlowBody, CashFlowRow};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
@@ -660,6 +662,8 @@ pub enum ComputedBody {
     Beam(BeamBody),
     /// A tolerance stack-up: worst case, RSS and Monte Carlo.
     Tolerance(ToleranceBody),
+    /// A bill of materials costed line by line.
+    Bom(BomBody),
 }
 
 impl ComputedBody {
@@ -701,6 +705,7 @@ impl ComputedBody {
             Self::Karnaugh(body) => body.validate(),
             Self::Beam(body) => body.validate(),
             Self::Tolerance(body) => body.validate(),
+            Self::Bom(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

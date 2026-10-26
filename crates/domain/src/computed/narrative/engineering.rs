@@ -1,5 +1,5 @@
 //! Sentences of the engineering cards: Bode / Nyquist, Karnaugh maps,
-//! beams, tolerance stacks.
+//! beams, tolerance stacks, BOM costs.
 //!
 //! As elsewhere, the words come from fixed templates and every number
 //! from the envelope (`display` of a value) or the engine's body.
@@ -124,6 +124,29 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 .max_by(|a, b| a.variance_share.total_cmp(&b.variance_share))
             {
                 text.push_str(&format!(" {} contributes most of the variance.", top.name));
+            }
+            Some(text)
+        }
+        ("bom", ComputedBody::Bom(b)) => {
+            let currency = b
+                .currency
+                .as_deref()
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            let mut text = format!(
+                "One unit costs {}{currency} over {} lines",
+                display(computed, "total")?,
+                display(computed, "lines")?
+            );
+            if let Some(all) = display(computed, "total_builds") {
+                text.push_str(&format!(", {all}{currency} for {} units", b.builds));
+            }
+            text.push('.');
+            let missing = b.missing_prices().len();
+            if missing > 0 {
+                text.push_str(&format!(
+                    " {missing} lines have no price and are not in the total."
+                ));
             }
             Some(text)
         }

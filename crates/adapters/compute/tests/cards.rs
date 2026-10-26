@@ -1851,3 +1851,98 @@ fn tolerance_asymmetric_and_uniform_dimensions() {
     bad.dimensions[1].tolerance = Some(-0.1);
     assert!(engine().tolerance(&bad).is_err());
 }
+
+// --- BOM costing ------------------------------------------------------------------
+
+fn bom_file(builds: f64) -> BomRequest {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/board_bom.csv",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let data = application::csv::data_set(&text, ',', inline_source()).unwrap();
+    BomRequest {
+        data,
+        items: Vec::new(),
+        part: None,
+        quantity: None,
+        unit_cost: None,
+        category: None,
+        reference: None,
+        mpn: None,
+        builds,
+        currency: Some("USD".into()),
+    }
+}
+
+#[test]
+fn bom_costs_lines_exactly_and_flags_gaps() {
+    let (c, body) = engine().bom(&bom_file(100.0)).unwrap();
+    let ComputedBody::Bom(b) = body else { panic!() };
+    // R1, R2, R5–R8: six resistors counted from the references.
+    assert_eq!(b.lines[0].quantity, "6");
+    assert!(b.lines[0].quantity_from_references);
+    assert_eq!(b.lines[0].extended.as_deref(), Some("0.0126"));
+    // "$3,45" is 3.45 (a decimal comma).
+    assert_eq!(b.lines[2].unit_cost.as_deref(), Some("3.45"));
+    // 0.0126 + 0.014 + 3.45 + 0.42 = 3.8966; the switch has no price.
+    assert_eq!(b.total, "3.8966");
+    assert_eq!(b.total_builds, "389.66");
+    assert_eq!(
+        c.value("total").and_then(|v| v.display.clone()).as_deref(),
+        Some("3.8966")
+    );
+    assert_eq!(c.value("total_builds").map(|v| v.v), Some(389.66));
+    assert_eq!(v(&c, "missing_prices"), 1.0);
+    assert_eq!(v(&c, "missing_mpns"), 1.0);
+    assert_eq!(b.categories[0].name, "ICs");
+    assert_eq!(
+        b.categories
+            .iter()
+            .find(|k| k.name == "passives")
+            .map(|k| k.total.as_str()),
+        Some("0.0266")
+    );
+    let codes: Vec<&str> = c.warnings.iter().map(|w| w.code.as_str()).collect();
+    // J1's file total 0.50 disagrees with 1 × 0.42.
+    assert!(codes.contains(&"extended_mismatch"), "{codes:?}");
+    assert!(codes.contains(&"missing_prices"));
+    assert!(c.warnings.iter().any(|w| w.text.contains("rows 4")));
+}
+
+#[test]
+fn bom_inline_items_and_errors() {
+    let mut request = bom_file(1.0);
+    request.data = DataSet::default();
+    request.items = vec![
+        BomItem {
+            part: "M3 screw".into(),
+            quantity: Some(4.0),
+            unit_cost: Some(0.1),
+            category: Some("mechanical".into()),
+            reference: None,
+            mpn: None,
+            description: None,
+        },
+        BomItem {
+            part: "case".into(),
+            quantity: Some(1.0),
+            unit_cost: Some(2.2),
+            category: None,
+            reference: None,
+            mpn: None,
+            description: None,
+        },
+    ];
+    let (c, body) = engine().bom(&request).unwrap();
+    let ComputedBody::Bom(b) = body else { panic!() };
+    // 0.1 × 4 + 2.2 = 2.6 exactly (2.6000000000000005 in binary).
+    assert_eq!(b.total, "2.6");
+    assert!(c.value("total_builds").is_none());
+    let mut negative = request.clone();
+    negative.items[0].quantity = Some(-1.0);
+    assert!(engine().bom(&negative).is_err());
+    let mut wrong = bom_file(1.0);
+    wrong.unit_cost = Some("Nope".into());
+    assert!(engine().bom(&wrong).is_err());
+}

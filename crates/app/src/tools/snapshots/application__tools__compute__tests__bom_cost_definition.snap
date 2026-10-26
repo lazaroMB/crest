@@ -1,0 +1,225 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(BomTool::new(ports))"
+---
+{
+  "name": "bom_cost",
+  "description": "Costs a bill of materials with crest's deterministic engine in exact decimal arithmetic: give the BOM in `data` (a CSV/TSV file, or a JSON array of records with `.json`) or as inline `items`; the part, quantity, unit cost, category, reference and MPN columns are found by their headers unless you name them, a missing quantity is counted from the reference designators, and prices may carry currency signs. The user sees each line's quantity × unit cost, totals per category, per unit and for `builds` units, and the lines without a price or MPN; you get the totals as slots to cite. Never fill in a missing price yourself.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/BomItem"
+        },
+        "description": "Inline lines, when there is no file.",
+        "default": []
+      },
+      "part": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the part name or number; found by its header (`part`,\n`part number`, `item`, `value`...) when absent."
+      },
+      "quantity": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the quantity (`qty`, `quantity`)."
+      },
+      "unit_cost": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the unit cost (`unit cost`, `unit price`, `price`)."
+      },
+      "category": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the category (`category`, `type`, `group`)."
+      },
+      "reference": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the reference designators (`reference`, `designator`)."
+      },
+      "mpn": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column of the manufacturer part number (`mpn`, `mfr part`)."
+      },
+      "builds": {
+        "type": "number",
+        "format": "double",
+        "description": "Units built (default 1): the totals are per unit and for all.",
+        "default": 1.0
+      },
+      "currency": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Currency of the costs (`USD`, `€`), shown only."
+      }
+    },
+    "description": "Input of `bom`: a bill of materials as data columns (a CSV/TSV/JSON\nfile) or inline items, costed in decimal arithmetic.",
+    "title": "BomRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "BomItem": {
+        "type": "object",
+        "properties": {
+          "part": {
+            "type": "string",
+            "description": "Part name or number."
+          },
+          "quantity": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Quantity per unit built; counted from `reference` when absent."
+          },
+          "unit_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unit cost; a missing price is reported, not guessed."
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Category (`passives`, `ICs`, `mechanical`)."
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reference designators (`R1, R2, R5-R8`)."
+          },
+          "mpn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Manufacturer part number."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Description."
+          }
+        },
+        "required": [
+          "part"
+        ],
+        "description": "One inline BOM line (instead of a file)."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      }
+    }
+  }
+}
