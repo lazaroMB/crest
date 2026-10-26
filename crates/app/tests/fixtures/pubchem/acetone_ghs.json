@@ -1,0 +1,269 @@
+{
+ "Record": {
+  "RecordType": "CID",
+  "RecordNumber": 180,
+  "RecordTitle": "Acetone",
+  "Section": [
+   {
+    "TOCHeading": "Safety and Hazards",
+    "Description": "Information on safety and hazards for this compound, including safety/hazards properties, reactivity, incompatibilities, management techniques, first aid treatments, and more.  For toxicity and related information, please see the Toxicity section.",
+    "Section": [
+     {
+      "TOCHeading": "Hazards Identification",
+      "Description": "This section identifies the hazards of the chemical presented on the safety data sheet (SDS) and the appropriate warning information associated with those hazards.  The information in this section includes, but are not limited to, the hazard classification of the chemical, signal word, pictograms, hazard statements and precautionary statements.",
+      "URL": "https://www.osha.gov/sites/default/files/publications/OSHA3514.pdf",
+      "Section": [
+       {
+        "TOCHeading": "GHS Classification",
+        "Description": "GHS (Globally Harmonized System of Classification and Labelling of Chemicals) is a United Nations system to identify hazardous chemicals and to inform users about these hazards. GHS has been adopted by many countries around the world and is now also used as the basis for international and national transport regulations for dangerous goods. The GHS hazard statements, class categories, pictograms, signal words, and the precautionary statements can be found on the PubChem GHS page.",
+        "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/",
+        "DisplayControls": {
+         "CreateTable": {
+          "FromInformationIn": "ThisSection",
+          "NumberOfColumns": 2,
+          "ColumnContents": [
+           "Name",
+           "Value"
+          ]
+         },
+         "ShowAtMost": 1
+        },
+        "Information": [
+         {
+          "ReferenceNumber": 175,
+          "Name": "Pictogram(s)",
+          "Value": {
+           "StringWithMarkup": [
+            {
+             "String": "          ",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 1,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/images/ghs/GHS02.svg",
+               "Type": "Icon",
+               "Extra": "Flammable"
+              },
+              {
+               "Start": 1,
+               "Length": 1,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/images/ghs/GHS07.svg",
+               "Type": "Icon",
+               "Extra": "Irritant"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         {
+          "ReferenceNumber": 175,
+          "Name": "Signal",
+          "Value": {
+           "StringWithMarkup": [
+            {
+             "String": "Danger",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 6,
+               "Type": "Color",
+               "Extra": "GHSDanger"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         {
+          "ReferenceNumber": 175,
+          "Name": "GHS Hazard Statements",
+          "Value": {
+           "StringWithMarkup": [
+            {
+             "String": "H225: Highly Flammable liquid and vapor [Danger Flammable liquids]",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#H225"
+              },
+              {
+               "Start": 41,
+               "Length": 6,
+               "Type": "Color",
+               "Extra": "GHSDanger"
+              }
+             ]
+            },
+            {
+             "String": "H319: Causes serious eye irritation [Warning Serious eye damage/eye irritation]",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#H319"
+              },
+              {
+               "Start": 37,
+               "Length": 7,
+               "Type": "Color",
+               "Extra": "GHSWarning"
+              }
+             ]
+            },
+            {
+             "String": "H336: May cause drowsiness or dizziness [Warning Specific target organ toxicity, single exposure; Narcotic effects]",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#H336"
+              },
+              {
+               "Start": 41,
+               "Length": 7,
+               "Type": "Color",
+               "Extra": "GHSWarning"
+              }
+             ]
+            }
+           ]
+          }
+         },
+         {
+          "ReferenceNumber": 175,
+          "Name": "Precautionary Statement Codes",
+          "Value": {
+           "StringWithMarkup": [
+            {
+             "String": "P210, P233, P240, P241, P242, P243, P261, P264+P265, P271, P280, P303+P361+P353, P304+P340, P305+P351+P338, P319, P337+P317, P370+P378, P403+P233, P403+P235, P405, and P501 (click each P-code to see the statement)",
+             "Markup": [
+              {
+               "Start": 0,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P210"
+              },
+              {
+               "Start": 6,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P233"
+              },
+              {
+               "Start": 12,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P240"
+              },
+              {
+               "Start": 18,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P241"
+              },
+              {
+               "Start": 24,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P242"
+              },
+              {
+               "Start": 30,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P243"
+              },
+              {
+               "Start": 36,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P261"
+              },
+              {
+               "Start": 42,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P264+P265"
+              },
+              {
+               "Start": 53,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P271"
+              },
+              {
+               "Start": 59,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P280"
+              },
+              {
+               "Start": 65,
+               "Length": 14,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P303+P361+P353"
+              },
+              {
+               "Start": 81,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P304+P340"
+              },
+              {
+               "Start": 92,
+               "Length": 14,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P305+P351+P338"
+              },
+              {
+               "Start": 108,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P319"
+              },
+              {
+               "Start": 114,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P337+P317"
+              },
+              {
+               "Start": 125,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P370+P378"
+              },
+              {
+               "Start": 136,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P403+P233"
+              },
+              {
+               "Start": 147,
+               "Length": 9,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P403+P235"
+              },
+              {
+               "Start": 158,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P405"
+              },
+              {
+               "Start": 168,
+               "Length": 4,
+               "URL": "https://pubchem.ncbi.nlm.nih.gov/ghs/#P501"
+              }
+             ]
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "Reference": [
+   {
+    "ReferenceNumber": 175,
+    "SourceName": "Regulation (EC) No 1272/2008 of the European Parliament and of the Council",
+    "SourceID": "606-001-00-8",
+    "Name": "acetone; propan-2-one; propanone",
+    "Description": "Regulation (EC) No 1272/2008 of the European Parliament and of the Council of 16 December 2008 on classification, labelling and packaging of substances and mixtures.",
+    "URL": "https://eur-lex.europa.eu/eli/reg/2008/1272/oj",
+    "LicenseNote": "The copyright for the editorial content of this source, the summaries of EU legislation and the consolidated texts, which is owned by the EU, is licensed under the Creative Commons Attribution 4.0 International licence.",
+    "LicenseURL": "https://eur-lex.europa.eu/content/legal-notice/legal-notice.html",
+    "ANID": 393089,
+    "SortOrder": 100000
+   }
+  ]
+ }
+}

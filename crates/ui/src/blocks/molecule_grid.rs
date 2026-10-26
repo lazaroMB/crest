@@ -99,7 +99,9 @@ pub fn parse_filter(text: &str) -> Vec<Clause> {
     // Glue `mw < 500` into `mw<500` so splitting on spaces keeps it whole.
     let mut glued = text.to_ascii_lowercase();
     for op in ["<=", ">=", "<", ">", "="] {
-        glued = glued.replace(&format!(" {op} "), op).replace(&format!(" {op}"), op);
+        glued = glued
+            .replace(&format!(" {op} "), op)
+            .replace(&format!(" {op}"), op);
         glued = glued.replace(&format!("{op} "), op);
     }
     glued
@@ -307,9 +309,10 @@ impl MoleculeGridView {
                     .debug_selector(|| "molecule-grid-filter".to_owned())
                     .child(Input::new(&self.input).small()),
             )
-            .child(readout(format!("{shown} of {total}"), cx).debug_selector(|| {
-                "molecule-grid-count".to_owned()
-            }))
+            .child(
+                readout(format!("{shown} of {total}"), cx)
+                    .debug_selector(|| "molecule-grid-count".to_owned()),
+            )
             .child(div().pl_2().child("sort:"));
         for (i, (key, label)) in SORTS.iter().enumerate() {
             let key = *key;
@@ -327,7 +330,11 @@ impl MoleculeGridView {
         row.child(
             tool_button(
                 "molecule-grid-ro5",
-                if self.ro5_only { "Ro5: compliant" } else { "Ro5: all" },
+                if self.ro5_only {
+                    "Ro5: compliant"
+                } else {
+                    "Ro5: all"
+                },
                 cx,
             )
             .on_click(cx.listener(|this, _, _, cx| {
@@ -345,8 +352,12 @@ impl MoleculeGridView {
             .and_then(Option::as_ref)
             .map(|data| tinted_picture(data, PICTURE_HEIGHT, window, cx));
         let theme = cx.theme();
-        let (muted, border, success, danger) =
-            (theme.muted_foreground, theme.border, theme.success, theme.danger);
+        let (muted, border, success, danger) = (
+            theme.muted_foreground,
+            theme.border,
+            theme.success,
+            theme.danger,
+        );
         let unit = self
             .spec
             .activity_unit
@@ -367,7 +378,10 @@ impl MoleculeGridView {
                 .text_xs()
                 .text_color(muted)
                 .child(format!("MW {:.1} · cLogP {:.2}", d.mw, d.logp))
-                .child(format!("TPSA {:.1} · HBD {} · HBA {}", d.tpsa, d.hbd, d.hba))
+                .child(format!(
+                    "TPSA {:.1} · HBD {} · HBA {}",
+                    d.tpsa, d.hbd, d.hba
+                ))
                 .child(format!(
                     "rot {} · rings {} · heavy {}",
                     d.rotatable_bonds, d.rings, d.heavy_atoms
@@ -404,11 +418,17 @@ impl MoleculeGridView {
             .when_some(m.molecule.name.clone(), |c, name| {
                 c.child(div().text_xs().child(SharedString::from(name)))
             })
-            .when_some(m.molecule.formula.as_deref().map(subscript_formula), |c, f| {
-                c.child(div().text_xs().child(SharedString::from(f)))
-            })
+            .when_some(
+                m.molecule.formula.as_deref().map(subscript_formula),
+                |c, f| c.child(div().text_xs().child(SharedString::from(f))),
+            )
             .when_some(m.molecule.error.clone(), |c, e| {
-                c.child(div().text_xs().text_color(danger).child(SharedString::from(e)))
+                c.child(
+                    div()
+                        .text_xs()
+                        .text_color(danger)
+                        .child(SharedString::from(e)),
+                )
             })
             .children(details)
             .into_any_element()
@@ -460,7 +480,12 @@ impl Render for MoleculeGridView {
                 )
             })
             .when_some(label, |d, l| {
-                d.child(div().text_xs().text_color(muted).child(SharedString::from(l)))
+                d.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(SharedString::from(l)),
+                )
             })
             .child(toolbar)
             .child(
@@ -600,7 +625,10 @@ mod tests {
             ]
         );
         let s = spec();
-        assert_eq!(visible(&s, &parse_filter("mw<500"), false, SortKey::Given, false), [0, 2]);
+        assert_eq!(
+            visible(&s, &parse_filter("mw<500"), false, SortKey::Given, false),
+            [0, 2]
+        );
         assert_eq!(visible(&s, &[], true, SortKey::Given, false), [0, 2]);
         // Missing activities go last either way.
         assert_eq!(visible(&s, &[], false, SortKey::Activity, false), [1, 0, 2]);
@@ -609,7 +637,10 @@ mod tests {
             visible(&s, &[], false, SortKey::Descriptor("logp"), true),
             [1, 0, 2]
         );
-        assert_eq!(visible(&s, &parse_filter("name"), false, SortKey::Given, true), [2, 1, 0]);
+        assert_eq!(
+            visible(&s, &parse_filter("name"), false, SortKey::Given, true),
+            [2, 1, 0]
+        );
     }
 
     #[gpui::test]

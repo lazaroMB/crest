@@ -74,22 +74,23 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::molecule3d::{
     Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
 };
-use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
-use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
 use domain::science::reaction::{
     ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
 };
 use domain::science::sequence::{
     Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
 };
+use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    Molecule3dSource, MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
+    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
+    WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -982,7 +983,9 @@ impl FormatsPort for FakeFormats {
         let mut flag = ComputedValue::new(0.0);
         flag.display = Some("no".into());
         balance.values.insert("balanced".into(), flag);
-        balance.values.insert("delta.O".into(), ComputedValue::new(-1.0));
+        balance
+            .values
+            .insert("delta.O".into(), ComputedValue::new(-1.0));
         spec.balance = balance;
         spec
     }
@@ -1135,8 +1138,16 @@ impl FormatsPort for FakeFormats {
                 atom("H", [-0.24, 0.9266, 0.0]),
             ],
             bonds: vec![
-                Bond3d { a: 0, b: 1, order: 1 },
-                Bond3d { a: 0, b: 2, order: 1 },
+                Bond3d {
+                    a: 0,
+                    b: 1,
+                    order: 1,
+                },
+                Bond3d {
+                    a: 0,
+                    b: 2,
+                    order: 1,
+                },
             ],
             bonds_inferred: false,
             warnings: Vec::new(),

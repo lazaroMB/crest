@@ -14,9 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chematic::rxn;
 use chematic::smiles;
-use domain::computed::{
-    Computed, ComputedStatus, ComputedValue, ComputedWarning, WarningSeverity,
-};
+use domain::computed::{Computed, ComputedStatus, ComputedValue, ComputedWarning, WarningSeverity};
 use domain::science::parse_formula;
 use domain::science::reaction::{
     ElementBalance, MAX_COEFFICIENT, MAX_COMPONENTS, ReactionComponent, ReactionRole, ReactionSpec,
@@ -76,9 +74,7 @@ fn envelope(source: &str, coefficients: Option<&[u32]>) -> Computed {
     );
     computed.method.alternatives = vec!["smallest integer coefficients (exact null space)".into()];
     computed.inputs = vec![chem::input("reaction SMILES", "param", &bytes, None)];
-    computed.reproduce.lua = Some(format!(
-        "app.formats.reaction{{ smiles = {source:?} }}"
-    ));
+    computed.reproduce.lua = Some(format!("app.formats.reaction{{ smiles = {source:?} }}"));
     computed
 }
 
@@ -90,10 +86,12 @@ fn read(spec: &mut ReactionSpec, source: &str, coefficients: Option<&[u32]>) -> 
         ));
     }
     if source.matches('>').count() < 2 {
-        return Err("not a reaction SMILES: write reactants>agents>products, e.g. CCO.O=O>>CC=O.O"
-            .into());
+        return Err(
+            "not a reaction SMILES: write reactants>agents>products, e.g. CCO.O=O>>CC=O.O".into(),
+        );
     }
-    let reaction = rxn::parse_reaction(source).map_err(|e| format!("invalid reaction SMILES: {e}"))?;
+    let reaction =
+        rxn::parse_reaction(source).map_err(|e| format!("invalid reaction SMILES: {e}"))?;
     if reaction.reactants.is_empty() || reaction.products.is_empty() {
         return Err("the reaction needs at least one reactant and one product".into());
     }
@@ -200,7 +198,11 @@ fn balance(spec: &mut ReactionSpec) {
                 .iter()
                 .map(|c| {
                     let n = i64::from(*c.atoms.get(element).unwrap_or(&0));
-                    if c.role == ReactionRole::Product { -n } else { n }
+                    if c.role == ReactionRole::Product {
+                        -n
+                    } else {
+                        n
+                    }
                 })
                 .collect()
         })
@@ -210,7 +212,11 @@ fn balance(spec: &mut ReactionSpec) {
             .iter()
             .map(|c| {
                 let q = i64::from(c.molecule.charge.unwrap_or(0));
-                if c.role == ReactionRole::Product { -q } else { q }
+                if c.role == ReactionRole::Product {
+                    -q
+                } else {
+                    q
+                }
             })
             .collect(),
     );
@@ -247,10 +253,10 @@ fn fill_envelope(spec: &mut ReactionSpec) {
                 v.decimals = Some(0);
                 values.insert(format!("suggested.{}", i + 1), v);
             }
-            spec.balance.method.params.insert(
-                "suggested".into(),
-                json!(spec.equation(Some(coefficients))),
-            );
+            spec.balance
+                .method
+                .params
+                .insert("suggested".into(), json!(spec.equation(Some(coefficients))));
         }
         Stoichiometry::Impossible => warnings.push(ComputedWarning {
             code: "cannot_balance".into(),
@@ -280,10 +286,7 @@ fn fill_envelope(spec: &mut ReactionSpec) {
             format!("Atoms (products − reactants): {}.", missing.join(", "))
         };
         if spec.charge.0 != spec.charge.1 {
-            text.push_str(&format!(
-                " Charge {} → {}.",
-                spec.charge.0, spec.charge.1
-            ));
+            text.push_str(&format!(" Charge {} → {}.", spec.charge.0, spec.charge.1));
         }
         warnings.insert(
             0,
@@ -301,10 +304,10 @@ fn fill_envelope(spec: &mut ReactionSpec) {
     };
     spec.balance.values = values;
     spec.balance.warnings = warnings;
-    spec.balance.method.params.insert(
-        "equation".into(),
-        json!(spec.equation(None)),
-    );
+    spec.balance
+        .method
+        .params
+        .insert("equation".into(), json!(spec.equation(None)));
 }
 
 /// An exact fraction `n / d` with `d > 0`, reduced.
@@ -393,7 +396,9 @@ fn solve(matrix: &[Vec<i64>]) -> Stoichiometry {
         x[c] = Q::int(0).sub(m[row][f]);
     }
     // Clear the denominators and the common factor.
-    let lcm = x.iter().fold(1i128, |acc, q| acc / gcd(acc, q.1).max(1) * q.1);
+    let lcm = x
+        .iter()
+        .fold(1i128, |acc, q| acc / gcd(acc, q.1).max(1) * q.1);
     let ints: Vec<i128> = x.iter().map(|q| q.0 * (lcm / q.1)).collect();
     let g = ints.iter().fold(0i128, |acc, &v| gcd(acc, v)).max(1);
     let mut ints: Vec<i128> = ints.iter().map(|v| v / g).collect();

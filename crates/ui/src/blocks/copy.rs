@@ -25,6 +25,7 @@
 //! | molecule grid | CSV of ids, SMILES, activities and descriptors; SMILES list |
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
+//! | GHS card | the card as text with its source and date, the PubChem URL |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -579,6 +580,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::Ghs(spec) => vec![
+            CopyFormat::new("card", "card", spec.to_text()),
+            CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),
+        ],
         BlockKind::Molecule3d(spec) => {
             let mut formats = vec![CopyFormat::new("xyz", "XYZ", spec.to_xyz())];
             if let Some(smiles) = &spec.smiles {
@@ -616,7 +621,11 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
                     spec.equation(Some(coefficients)),
                 ));
             }
-            formats.push(CopyFormat::new("balance", "balance CSV", spec.balance_csv()));
+            formats.push(CopyFormat::new(
+                "balance",
+                "balance CSV",
+                spec.balance_csv(),
+            ));
             formats
         }
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {

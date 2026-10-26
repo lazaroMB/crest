@@ -34,8 +34,9 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
-use crate::science::molecule3d::Molecule3dSpec;
+use crate::science::ghs::GhsSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
+use crate::science::molecule3d::Molecule3dSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::spectrum::SpectrumSpec;
@@ -165,6 +166,7 @@ impl Block {
             BlockKind::MoleculeGrid(spec) => spec.validate(),
             BlockKind::Spectrum(spec) => spec.validate(),
             BlockKind::Molecule3d(spec) => spec.validate(),
+            BlockKind::Ghs(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -364,6 +366,8 @@ pub enum BlockKind {
     Spectrum(Box<SpectrumSpec>),
     /// A molecule in 3D as ball and stick (tool `show_molecule_3d`).
     Molecule3d(Box<Molecule3dSpec>),
+    /// A GHS hazard card fetched from PubChem (tool `show_ghs`).
+    Ghs(Box<GhsSpec>),
 }
 
 /// Lifecycle of a tool call.

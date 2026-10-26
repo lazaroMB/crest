@@ -226,7 +226,8 @@ pub struct SequenceView {
 
 impl SequenceView {
     fn new(spec: &SequenceSpec, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("find · IUPAC, both strands"));
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("find · IUPAC, both strands"));
         register_input(&input, cx);
         let subscription =
             cx.subscribe(&input, |this: &mut Self, input, event: &InputEvent, cx| {
@@ -574,7 +575,8 @@ impl SequenceView {
             for (k, cell) in cells.iter().enumerate() {
                 if k > 0 && k % GROUP == 0 {
                     // The group gap continues a feature that spans it.
-                    let joined = matches!((cells[k - 1], cell), (Some((a, _)), Some((b, _))) if a == *b);
+                    let joined =
+                        matches!((cells[k - 1], cell), (Some((a, _)), Some((b, _))) if a == *b);
                     let at = text.len();
                     text.push(if joined { '━' } else { ' ' });
                     if let (true, Some((fi, _))) = (joined, cell) {
@@ -687,17 +689,15 @@ impl SequenceView {
                     .child(Input::new(&self.input).small()),
             )
             .when_some(count, |row, count| {
-                row.child(
-                    readout(count, cx).debug_selector(|| "sequence-hits".to_owned()),
-                )
-                .child(
-                    tool_button("sequence-prev", "◀", cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.step_hit(false, cx))),
-                )
-                .child(
-                    tool_button("sequence-next", "▶", cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.step_hit(true, cx))),
-                )
+                row.child(readout(count, cx).debug_selector(|| "sequence-hits".to_owned()))
+                    .child(
+                        tool_button("sequence-prev", "◀", cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.step_hit(false, cx))),
+                    )
+                    .child(
+                        tool_button("sequence-next", "▶", cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.step_hit(true, cx))),
+                    )
             })
             .when_some(self.query_error.clone(), |row, error| {
                 row.child(div().text_color(danger).child(SharedString::from(error)))
@@ -706,7 +706,11 @@ impl SequenceView {
                 row.child(
                     tool_button(
                         "sequence-frames",
-                        if self.frames { "frames: on" } else { "frames: off" },
+                        if self.frames {
+                            "frames: on"
+                        } else {
+                            "frames: off"
+                        },
                         cx,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -791,11 +795,11 @@ impl SequenceView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(SharedString::from(f.name().to_owned())),
                     )
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(format!("{} · {} {unit}", f.location_text(), f.len())),
-                    )
+                    .child(div().text_color(muted).child(format!(
+                        "{} · {} {unit}",
+                        f.location_text(),
+                        f.len()
+                    )))
                     .into_any_element()
             })
             .collect();
@@ -808,7 +812,11 @@ impl SequenceView {
             .pt_1()
             .children(rows)
             .when(more > 0, |d| {
-                d.child(div().text_color(muted).child(format!("… {more} more features")))
+                d.child(
+                    div()
+                        .text_color(muted)
+                        .child(format!("… {more} more features")),
+                )
             })
     }
 }
@@ -878,8 +886,12 @@ impl Render for SequenceView {
         .track_scroll(&self.scroll)
         .size_full();
         let theme = cx.theme();
-        let (muted, warning, border, radius) =
-            (theme.muted_foreground, theme.warning, theme.border, theme.radius);
+        let (muted, warning, border, radius) = (
+            theme.muted_foreground,
+            theme.warning,
+            theme.border,
+            theme.radius,
+        );
         let cutters = spec.unique_cutters();
         let cutters_text = (!cutters.is_empty()).then(|| {
             let listed: Vec<String> = cutters
@@ -1047,7 +1059,13 @@ mod tests {
                 SeqFeature {
                     kind: "misc_feature".into(),
                     label: Some("wrap".into()),
-                    segments: vec![SeqSpan { start: 130, end: 135 }, SeqSpan { start: 0, end: 4 }],
+                    segments: vec![
+                        SeqSpan {
+                            start: 130,
+                            end: 135,
+                        },
+                        SeqSpan { start: 0, end: 4 },
+                    ],
                     strand: Strand::Reverse,
                     qualifiers: Vec::new(),
                 },
@@ -1081,7 +1099,10 @@ mod tests {
             "circular DNA · 135 bp · GC 46.7% · 2 features · 1 cut sites (1 single cutters)"
         );
         assert_eq!(selection_text(&spec(), 0, 9), "1..9 · 9 bp · GC 11.1%");
-        assert_eq!(selection_text(&spec(), 130, 4).split(" · ").nth(1), Some("9 bp"));
+        assert_eq!(
+            selection_text(&spec(), 130, 4).split(" · ").nth(1),
+            Some("9 bp")
+        );
     }
 
     #[gpui::test]

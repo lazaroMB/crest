@@ -92,11 +92,7 @@ pub fn read(bytes: &[u8], format: MsFormat, index: usize) -> Result<(Scan, usize
     if count == 0 {
         return Err(format!("the {name} file has no spectra"));
     }
-    let scan = chosen.ok_or_else(|| {
-        format!(
-            "scan {} does not exist: the file has {count}",
-            index + 1
-        )
-    })?;
+    let scan =
+        chosen.ok_or_else(|| format!("scan {} does not exist: the file has {count}", index + 1))?;
     Ok((scan, count))
 }

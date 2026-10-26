@@ -89,7 +89,10 @@ impl TypedTool for ShowMolecule3dTool {
         let path = input.path.filter(|p| !p.trim().is_empty());
         let subject = match (&smiles, &path) {
             (Some(_), Some(_)) => {
-                return Err(invalid(SHOW_MOLECULE_3D, "give `smiles` or `path`, not both"));
+                return Err(invalid(
+                    SHOW_MOLECULE_3D,
+                    "give `smiles` or `path`, not both",
+                ));
             }
             (None, None) => return Err(invalid(SHOW_MOLECULE_3D, "give `smiles` or `path`")),
             (Some(s), None) => s.clone(),
@@ -166,7 +169,12 @@ pub fn molecule3d_summary(spec: &Molecule3dSpec) -> String {
         );
     }
     out.push_str(" The user can click atoms to read them and measure distances.");
-    for w in spec.warnings.iter().filter(|w| !w.contains("computed conformer")).take(5) {
+    for w in spec
+        .warnings
+        .iter()
+        .filter(|w| !w.contains("computed conformer"))
+        .take(5)
+    {
         let _ = write!(out, "\nNote: {}", one_line(w, 160));
     }
     out
@@ -229,13 +237,25 @@ mod tests {
         let file = call(&tool, json!({ "path": "mol/water.xyz", "name": "H2O" }))
             .await
             .unwrap();
-        assert!(file.text_content().contains("Coordinates from `mol/water.xyz`."));
+        assert!(
+            file.text_content()
+                .contains("Coordinates from `mol/water.xyz`.")
+        );
         let Some(BlockKind::Molecule3d(spec)) = file.block_update else {
             panic!("no block");
         };
         assert_eq!(spec.name.as_deref(), Some("H2O"));
-        assert!(call(&tool, json!({ "smiles": "bad" })).await.unwrap().is_error);
+        assert!(
+            call(&tool, json!({ "smiles": "bad" }))
+                .await
+                .unwrap()
+                .is_error
+        );
         assert!(call(&tool, json!({})).await.is_err());
-        assert!(call(&tool, json!({ "smiles": "O", "path": "a.pdb" })).await.is_err());
+        assert!(
+            call(&tool, json!({ "smiles": "O", "path": "a.pdb" }))
+                .await
+                .is_err()
+        );
     }
 }

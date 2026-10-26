@@ -101,7 +101,10 @@ pub fn atom_at(spec: &Molecule3dSpec, p: V3) -> Option<usize> {
 #[must_use]
 pub fn pick_text(spec: &Molecule3dSpec, atoms: &[usize]) -> Option<String> {
     match atoms {
-        [a] => Some(format!("atom {} — click another to measure", spec.atom_label(*a))),
+        [a] => Some(format!(
+            "atom {} — click another to measure",
+            spec.atom_label(*a)
+        )),
         [a, b, ..] => Some(format!(
             "{} – {}: {:.3} Å",
             spec.atom_label(*a),
@@ -266,7 +269,18 @@ mod tests {
                 atom("H", [0.9572, 0.0, 0.0]),
                 atom("H", [-0.24, 0.9266, 0.0]),
             ],
-            bonds: vec![Bond3d { a: 0, b: 1, order: 1 }, Bond3d { a: 0, b: 2, order: 1 }],
+            bonds: vec![
+                Bond3d {
+                    a: 0,
+                    b: 1,
+                    order: 1,
+                },
+                Bond3d {
+                    a: 0,
+                    b: 2,
+                    order: 1,
+                },
+            ],
             bonds_inferred: false,
             warnings: vec!["A computed conformer.".into()],
         }
@@ -301,7 +315,12 @@ mod tests {
             div().size_full().child(view.clone())
         });
         cx.run_until_parked();
-        for selector in ["molecule3d", "molecule3d-summary", "model-viewport", "model-measure"] {
+        for selector in [
+            "molecule3d",
+            "molecule3d-summary",
+            "model-viewport",
+            "model-measure",
+        ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
         let mol = cx.update(|window, cx| super::view(id, &spec(), window, cx));

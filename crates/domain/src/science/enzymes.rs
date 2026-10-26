@@ -214,7 +214,10 @@ mod tests {
         // EcoRI at 2: cut after G, before base 3.
         let sites = find_cut_sites(b"AAGAATTCAA", false, ENZYMES);
         assert_eq!(sites.len(), 1);
-        assert_eq!((sites[0].enzyme.as_str(), sites[0].start, sites[0].cut), ("EcoRI", 2, 3));
+        assert_eq!(
+            (sites[0].enzyme.as_str(), sites[0].start, sites[0].cut),
+            ("EcoRI", 2, 3)
+        );
         // BsaI on the reverse strand (GAGACC) cuts 5 bases before it.
         let rev = find_cut_sites(b"AAAAAAAAGAGACCAA", false, ENZYMES);
         let bsa = rev.iter().find(|s| s.enzyme == "BsaI").unwrap();

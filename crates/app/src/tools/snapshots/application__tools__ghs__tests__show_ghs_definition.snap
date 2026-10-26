@@ -1,0 +1,35 @@
+---
+source: crates/app/src/tools/ghs.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_ghs",
+  "description": "Looks a chemical up on PubChem (by name, CAS number or CID) and shows its GHS hazard card in the user's timeline: pictograms, signal word, hazard statements and precautionary statement codes per source (EU CLP, ECHA C&L inventory...), with the PubChem link and the retrieval date. Returns exactly what PubChem gives, or that it gave nothing; never add hazards it did not return.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The chemical: a name (`acetone`) or a CAS number (`67-64-1`).",
+        "default": null
+      },
+      "cid": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Or its PubChem compound id (CID), e.g. `180`.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_ghs`.",
+    "title": "ShowGhs",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

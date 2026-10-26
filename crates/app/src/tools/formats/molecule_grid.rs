@@ -109,9 +109,10 @@ pub fn grid_entries(
             continue;
         };
         let activity = match cell(activity) {
-            Some(text) => Some(number(&text).ok_or_else(|| {
-                format!("row {}: activity `{text}` is not a number", i + 2)
-            })?),
+            Some(text) => Some(
+                number(&text)
+                    .ok_or_else(|| format!("row {}: activity `{text}` is not a number", i + 2))?,
+            ),
             None => None,
         };
         entries.push(GridEntry {
@@ -186,7 +187,9 @@ impl TypedTool for ShowMoleculeGridTool {
                     let column = input.activity_column.as_deref().unwrap_or("activity");
                     match grid_entries(&text, delimiter_for(path), column) {
                         Ok(entries) => entries,
-                        Err(message) => return Ok(ToolOutput::error(format!("`{path}`: {message}"))),
+                        Err(message) => {
+                            return Ok(ToolOutput::error(format!("`{path}`: {message}")));
+                        }
                     }
                 }
                 None => input.molecules,
@@ -209,7 +212,10 @@ impl TypedTool for ShowMoleculeGridTool {
                 return Ok(ToolOutput::error(err.to_string()));
             }
             let summary = grid_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::MoleculeGrid(Box::new(spec))))
+            Ok(
+                ToolOutput::text(summary)
+                    .with_block_update(BlockKind::MoleculeGrid(Box::new(spec))),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
@@ -218,7 +224,11 @@ impl TypedTool for ShowMoleculeGridTool {
 /// A number with `decimals`, `-0` as `0`.
 fn fixed(v: f64, decimals: usize) -> String {
     let text = format!("{v:.decimals$}");
-    if text.trim_start_matches('-').chars().all(|c| c == '0' || c == '.') {
+    if text
+        .trim_start_matches('-')
+        .chars()
+        .all(|c| c == '0' || c == '.')
+    {
         format!("{:.decimals$}", 0.0)
     } else {
         text
@@ -294,7 +304,10 @@ pub fn grid_summary(spec: &MoleculeGridSpec) -> String {
     }
     let failed = spec.failed().len();
     if failed > 0 {
-        let _ = write!(out, "\n{failed} SMILES could not be parsed: fix them and call again.");
+        let _ = write!(
+            out,
+            "\n{failed} SMILES could not be parsed: fix them and call again."
+        );
     }
     out
 }
@@ -315,10 +328,8 @@ mod tests {
     }
 
     fn ports() -> FormatToolPorts {
-        let fs = InMemoryFs::new(test_root()).with_file(
-            "sar/series.csv",
-            "ID,SMILES,pIC50\nA-1,CCO,6.5\nA-2,bad,\n",
-        );
+        let fs = InMemoryFs::new(test_root())
+            .with_file("sar/series.csv", "ID,SMILES,pIC50\nA-1,CCO,6.5\nA-2,bad,\n");
         FormatToolPorts {
             formats: Arc::new(FakeFormats::new()),
             fs: Arc::new(fs),
@@ -346,9 +357,11 @@ mod tests {
         assert_eq!(entries[0].id, "1");
         assert_eq!(entries[0].name.as_deref(), Some("ethanol"));
         assert!(grid_entries("id\nx\n", ',', "activity").is_err());
-        assert!(grid_entries("smiles,activity\nC,high\n", ',', "activity")
-            .unwrap_err()
-            .contains("not a number"));
+        assert!(
+            grid_entries("smiles,activity\nC,high\n", ',', "activity")
+                .unwrap_err()
+                .contains("not a number")
+        );
     }
 
     #[tokio::test]

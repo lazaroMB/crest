@@ -230,11 +230,15 @@ fn record_spec(seq: Seq, request: &SequenceRequest) -> Result<SequenceSpec, Stri
     } else {
         Topology::Linear
     };
-    let sequence = String::from_utf8(seq.seq.clone())
-        .map_err(|_| "the sequence is not ASCII".to_owned())?;
+    let sequence =
+        String::from_utf8(seq.seq.clone()).map_err(|_| "the sequence is not ASCII".to_owned())?;
     spec.sequence = residues(&sequence);
     spec.alphabet = request.alphabet.unwrap_or_else(|| {
-        let molecule = seq.molecule_type.as_deref().unwrap_or("").to_ascii_lowercase();
+        let molecule = seq
+            .molecule_type
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         if molecule.contains("rna") {
             Alphabet::Rna
         } else if molecule.contains("aa") || molecule.contains("protein") {
@@ -268,11 +272,18 @@ fn record_spec(seq: Seq, request: &SequenceRequest) -> Result<SequenceSpec, Stri
                 value: clip(v.as_deref().unwrap_or("")),
             })
             .collect();
-        let label = ["label", "gene", "product", "locus_tag", "standard_name", "note"]
-            .iter()
-            .find_map(|key| f.qualifier_values(key).next())
-            .map(|v| clip(v.trim()))
-            .filter(|v| !v.is_empty());
+        let label = [
+            "label",
+            "gene",
+            "product",
+            "locus_tag",
+            "standard_name",
+            "note",
+        ]
+        .iter()
+        .find_map(|key| f.qualifier_values(key).next())
+        .map(|v| clip(v.trim()))
+        .filter(|v| !v.is_empty());
         kept.push(SeqFeature {
             kind: f.kind.to_string(),
             label,
@@ -344,7 +355,10 @@ fn parts(loc: &Location, len: usize, circular: bool) -> (Vec<SeqSpan>, Strand) {
             };
             (segments, flipped)
         }
-        Location::Join(list) | Location::Order(list) | Location::Bond(list) | Location::OneOf(list) => {
+        Location::Join(list)
+        | Location::Order(list)
+        | Location::Bond(list)
+        | Location::OneOf(list) => {
             let children: Vec<(Vec<SeqSpan>, Strand)> = list
                 .iter()
                 .map(|l| parts(l, len, circular))

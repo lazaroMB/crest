@@ -450,7 +450,8 @@ pub trait FormatsPort: Send + Sync {
     ///
     /// [`FormatError::Invalid`] for an empty or oversized grid or a
     /// repeated id.
-    fn molecule_grid(&self, request: &MoleculeGridRequest) -> Result<MoleculeGridSpec, FormatError>;
+    fn molecule_grid(&self, request: &MoleculeGridRequest)
+    -> Result<MoleculeGridSpec, FormatError>;
 
     /// A spectrum: JCAMP-DX (IR, Raman, UV-Vis, NMR; XYDATA with AFFN or
     /// ASDF compression, XYPOINTS, PEAK TABLE, linked blocks), mzML or MGF

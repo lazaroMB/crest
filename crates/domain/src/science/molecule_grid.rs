@@ -325,8 +325,14 @@ mod tests {
         assert_eq!(descriptors(600.0, 6.0).lipinski_violations(), 2);
         assert_eq!(value_key("a 1/x"), "a_1_x");
         let csv = spec.to_csv();
-        assert!(csv.starts_with("id,smiles,name,activity,formula,mw,"), "{csv}");
-        assert!(csv.contains("a 1,C,,10,CH4,180.16,13,1,3,2,1,1,1.31,63.6,0\n"), "{csv}");
+        assert!(
+            csv.starts_with("id,smiles,name,activity,formula,mw,"),
+            "{csv}"
+        );
+        assert!(
+            csv.contains("a 1,C,,10,CH4,180.16,13,1,3,2,1,1,1.31,63.6,0\n"),
+            "{csv}"
+        );
         let mut twice = spec.clone();
         twice.molecules[1].id = "a 1".into();
         assert!(twice.validate().is_err());
