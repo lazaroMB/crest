@@ -3,10 +3,13 @@
 
 use domain::computed::{Computed, ComputedValue, Engine};
 use domain::gantt::{Dependency, DependencyKind, GanttSpec, GanttTask};
+use domain::science::arrays::{
+    ArrayFileSpec, ArrayFormat, ArrayNode, ArrayNodeKind, ArrayPreview, PreviewKind,
+};
 use domain::science::geomap::{CrsSource, GeometryKind, MapCrs, MapFeature, MapSpec};
 use serde_json::{Map, Value, json};
 
-use crate::ports::formats::{GanttRequest, MapRequest};
+use crate::ports::formats::{ArrayRequest, GanttRequest, MapRequest};
 
 fn engine(name: &str) -> Engine {
     Engine {
@@ -137,6 +140,60 @@ pub(super) fn gantt(request: &GanttRequest) -> GanttSpec {
         project_duration: 5.0,
         critical_path: vec!["design".into(), "build".into()],
         schedule,
+        warnings: Vec::new(),
+    }
+}
+
+/// HDF5 with `/temp` (2 × 3 f32) and a full preview of it, 1 to 6 with
+/// the third value missing.
+pub(super) fn arrays(request: &ArrayRequest) -> ArrayFileSpec {
+    let mut stats = Computed::new(
+        "ar_fake",
+        "array.preview_stats",
+        "Descriptive statistics of the preview",
+        engine("crest-array"),
+    );
+    for (key, v) in [
+        ("n", 5.0),
+        ("missing", 1.0),
+        ("min", 1.0),
+        ("max", 6.0),
+        ("mean", 3.6),
+    ] {
+        stats.values.insert(key.into(), ComputedValue::new(v));
+    }
+    let node = |path: &str, kind, shape: Vec<u64>| ArrayNode {
+        path: path.into(),
+        depth: u32::from(path != "/"),
+        kind,
+        dtype: (kind == ArrayNodeKind::Variable).then(|| "f32".into()),
+        shape,
+        dims: Vec::new(),
+        chunks: None,
+        filters: Vec::new(),
+        attrs: Vec::new(),
+    };
+    ArrayFileSpec {
+        title: None,
+        path: request.path.clone(),
+        format: ArrayFormat::Hdf5,
+        size: 4096,
+        nodes: vec![
+            node("/", ArrayNodeKind::Group, Vec::new()),
+            node("/temp", ArrayNodeKind::Variable, vec![2, 3]),
+        ],
+        truncated: false,
+        previews: vec![ArrayPreview {
+            path: "/temp".into(),
+            kind: PreviewKind::Heatmap,
+            selection: "[0:2, 0:3]".into(),
+            rows: 2,
+            cols: 3,
+            values: vec![Some(1.0), Some(2.0), None, Some(4.0), Some(5.0), Some(6.0)],
+            texts: Vec::new(),
+            decoding: None,
+            stats,
+        }],
         warnings: Vec::new(),
     }
 }

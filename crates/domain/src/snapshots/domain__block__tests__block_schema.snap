@@ -797,6 +797,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "An HDF5 or NetCDF file's groups and variables with bounded\npreviews (tool `show_array_file`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "array_file"
+        }
+      },
+      "$ref": "#/$defs/ArrayFileSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -13341,6 +13355,295 @@ expression: "schemars::schema_for!(Block)"
         "tasks",
         "project_duration",
         "schedule"
+      ]
+    },
+    "ArrayFormat": {
+      "description": "The container format.",
+      "oneOf": [
+        {
+          "description": "HDF5.",
+          "type": "string",
+          "const": "hdf5"
+        },
+        {
+          "description": "NetCDF-4 (HDF5 underneath).",
+          "type": "string",
+          "const": "netcdf4"
+        },
+        {
+          "description": "NetCDF-3 classic (CDF-1).",
+          "type": "string",
+          "const": "netcdf3_classic"
+        },
+        {
+          "description": "NetCDF-3 64-bit offset (CDF-2).",
+          "type": "string",
+          "const": "netcdf3_offset64"
+        },
+        {
+          "description": "NetCDF-3 64-bit data (CDF-5).",
+          "type": "string",
+          "const": "netcdf3_data64"
+        }
+      ]
+    },
+    "ArrayNode": {
+      "description": "One group or variable.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path (`/sim/field`; `/` for the root).",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Nesting depth (root 0).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "Group or variable.",
+          "$ref": "#/$defs/ArrayNodeKind"
+        },
+        "dtype": {
+          "description": "Element type (`f32`, `i16`, `string`, `compound{...}`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shape": {
+          "description": "Extent per dimension (empty for a scalar or a group).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "dims": {
+          "description": "Dimension names (NetCDF), one per extent.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chunks": {
+          "description": "Chunk shape, for a chunked variable.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "filters": {
+          "description": "Filters in pipeline order (`shuffle`, `deflate`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attrs": {
+          "description": "Attributes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayAttr"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "depth",
+        "kind"
+      ]
+    },
+    "ArrayNodeKind": {
+      "description": "A group or a variable.",
+      "oneOf": [
+        {
+          "description": "A group (the root is `/`).",
+          "type": "string",
+          "const": "group"
+        },
+        {
+          "description": "A dataset or variable.",
+          "type": "string",
+          "const": "variable"
+        }
+      ]
+    },
+    "ArrayAttr": {
+      "description": "An attribute, its value as text.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value, written out (arrays cut after a few values).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "ArrayPreview": {
+      "description": "A bounded preview of one variable.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The variable's path.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "How it is drawn.",
+          "$ref": "#/$defs/PreviewKind"
+        },
+        "selection": {
+          "description": "What was read, as index ranges (`[0:2000]`, `[0, 0:8, 0:6]`).",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Rows of a heatmap (1 otherwise).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cols": {
+          "description": "Columns of a heatmap, or the number of values.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "values": {
+          "description": "The values row by row; `None` for a fill or missing value.",
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "texts": {
+          "description": "The strings of a text preview.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decoding": {
+          "description": "How the stored numbers were turned into values (CF\n`scale_factor`/`add_offset`, the fill value left out).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stats": {
+          "description": "Statistics of this preview only.",
+          "$ref": "#/$defs/Computed"
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "selection",
+        "rows",
+        "cols",
+        "stats"
+      ]
+    },
+    "PreviewKind": {
+      "description": "How a preview is drawn.",
+      "oneOf": [
+        {
+          "description": "One value.",
+          "type": "string",
+          "const": "scalar"
+        },
+        {
+          "description": "The first values of a 1D variable, as a line.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "A 2D slice, as a heatmap.",
+          "type": "string",
+          "const": "heatmap"
+        },
+        {
+          "description": "Strings, as a list.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "ArrayFileSpec": {
+      "description": "An array file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the inspector.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Its format.",
+          "$ref": "#/$defs/ArrayFormat"
+        },
+        "size": {
+          "description": "Its size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "nodes": {
+          "description": "Groups and variables, depth first (the root group first).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayNode"
+          }
+        },
+        "truncated": {
+          "description": "Whether the listing stopped at [`MAX_NODES`].",
+          "type": "boolean",
+          "default": false
+        },
+        "previews": {
+          "description": "Bounded previews, at most [`MAX_PREVIEWS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayPreview"
+          },
+          "default": []
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "format",
+        "size",
+        "nodes"
       ]
     }
   }

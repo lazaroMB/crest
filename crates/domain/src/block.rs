@@ -35,6 +35,7 @@ use crate::gantt::GanttSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::arrays::ArrayFileSpec;
 use crate::science::geomap::MapSpec;
 use crate::science::ghs::GhsSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
@@ -162,6 +163,7 @@ impl Block {
             BlockKind::Ghs(spec) => spec.validate(),
             BlockKind::GeoMap(spec) => spec.validate(),
             BlockKind::Gantt(spec) => spec.validate(),
+            BlockKind::ArrayFile(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -369,6 +371,9 @@ pub enum BlockKind {
     /// A project scheduled by the critical path method on a Gantt chart
     /// (tool `show_gantt`).
     Gantt(Box<GanttSpec>),
+    /// An HDF5 or NetCDF file's groups and variables with bounded
+    /// previews (tool `show_array_file`).
+    ArrayFile(Box<ArrayFileSpec>),
 }
 
 /// Lifecycle of a tool call.

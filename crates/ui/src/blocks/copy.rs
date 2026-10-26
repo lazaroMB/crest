@@ -26,6 +26,7 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | array file | groups and variables CSV, the preview shown as CSV (first preview) |
 //! | Gantt chart | schedule CSV (ES, EF, LS, LF, slack, critical), the critical path |
 //! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
@@ -579,6 +580,13 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             ];
             if spec.enzyme_source.is_some() {
                 formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
+            }
+            formats
+        }
+        BlockKind::ArrayFile(spec) => {
+            let mut formats = vec![CopyFormat::new("nodes", "variables CSV", spec.nodes_csv())];
+            if let Some(p) = spec.previews.first() {
+                formats.push(CopyFormat::new("preview", "preview CSV", p.to_csv()));
             }
             formats
         }

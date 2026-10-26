@@ -41,7 +41,9 @@
 //! 0.9572 Å from it) unless its SMILES is `bad`. The science B answers
 //! are in [`sciences`]: every map is one park polygon (12.5 ha) and one
 //! 1.2 km trail in WGS 84; every Gantt chart is `design` (3 d) then
-//! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it.
+//! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it;
+//! every array file is HDF5 with `/temp` (2 × 3 f32, a 2 × 3 preview from
+//! 1 to 6, one missing).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -78,6 +80,7 @@ use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
 use domain::gantt::GanttSpec;
+use domain::science::arrays::ArrayFileSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::molecule3d::{
@@ -93,9 +96,9 @@ use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, S
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest, MapRequest,
-    Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
-    StepRequest, WaveRequest,
+    ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest,
+    SpectrumRequest, StepRequest, WaveRequest,
 };
 
 mod sciences;
@@ -1172,5 +1175,14 @@ impl FormatsPort for FakeFormats {
             request.path.as_deref().unwrap_or("inline"),
         )?;
         Ok(sciences::gantt(request))
+    }
+
+    fn inspect_array_file(
+        &self,
+        _bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError> {
+        self.record("inspect_array_file", &request.path)?;
+        Ok(sciences::arrays(request))
     }
 }

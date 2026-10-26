@@ -273,6 +273,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 plan.critical_path.join(" → ")
             ),
         ),
+        BlockKind::ArrayFile(file) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[array file: {}, {} variables, {} previews]",
+                file.format.name(),
+                file.variables().count(),
+                file.previews.len()
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

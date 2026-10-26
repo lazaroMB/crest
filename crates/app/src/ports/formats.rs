@@ -33,6 +33,7 @@ use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::arrays::ArrayFileSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::molecule3d::Molecule3dSpec;
@@ -520,6 +521,21 @@ pub trait FormatsPort: Send + Sync {
     /// unknown task id, a bad duration or date, or a dependency cycle
     /// (named).
     fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError>;
+
+    /// An HDF5 (and so NetCDF-4) or NetCDF-3 file's groups and variables
+    /// with types, shapes, chunking, filters and attributes, and bounded
+    /// previews of a few numeric variables with statistics of the preview
+    /// only. Only the preview's rows are decoded.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for a file that is neither, is damaged, or
+    /// does not have the variable asked for.
+    fn inspect_array_file(
+        &self,
+        bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError>;
 }
 
 #[cfg(test)]

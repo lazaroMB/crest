@@ -1,7 +1,10 @@
-//! `app.formats` functions of the science B viewers: `map`, `gantt`.
+//! `app.formats` functions of the science B viewers: `map`, `gantt`,
+//! `array_file`.
 
-use application::ports::formats::{GanttRequest, GanttSource, GanttTaskInput, MapRequest};
-use application::tools::formats::{read_map, read_report};
+use application::ports::formats::{
+    ArrayRequest, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
+};
+use application::tools::formats::{read_array, read_map, read_report};
 use domain::block::BlockKind;
 use mlua::{Lua, Table, Value};
 
@@ -106,6 +109,26 @@ fn gantt(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Gantt(Box::new(spec)))
 }
 
+fn array_file(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "array_file";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_array(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = ArrayRequest {
+        path: path.clone(),
+        variable: text(args, F, "variable")?,
+    };
+    let mut spec = services
+        .formats
+        .inspect_array_file(&bytes, &request)
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::ArrayFile(Box::new(spec)))
+}
+
 /// Adds the science B functions to the `app.formats` table.
 pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
     formats.set(
@@ -120,6 +143,13 @@ pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => gantt(lua, &args),
             _ => Err(error("gantt", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "array_file",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => array_file(lua, &args),
+            _ => Err(error("array_file", "expected a table of arguments")),
         })?,
     )?;
     Ok(())

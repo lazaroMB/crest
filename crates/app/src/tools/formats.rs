@@ -16,7 +16,8 @@
 //! (`show_sequence`), [`reaction`] (`show_reaction`),
 //! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
 //! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`), and the
-//! science B viewers [`geomap`] (`show_map`) and [`gantt`] (`show_gantt`).
+//! science B viewers [`geomap`] (`show_map`), [`gantt`] (`show_gantt`) and
+//! [`arrays`] (`show_array_file`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -53,6 +54,7 @@ use crate::ports::formats::{DatasetRequest, FormatsPort};
 use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
+pub mod arrays;
 pub mod bench;
 pub mod devops;
 pub mod diagram;
@@ -73,6 +75,7 @@ pub mod step;
 pub mod terraform;
 pub mod waveform;
 
+pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary, read_array};
 pub use bench::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
     collect_benchmarks,
@@ -1196,6 +1199,9 @@ box it measures (geodesic), never your own estimates.
 - `show_gantt`: schedule a project (tasks with durations and dependencies, \
 from a file or inline) with the critical path method; quote its dates, \
 slack and critical path instead of working them out yourself.
+- `show_array_file`: inspect an HDF5, NetCDF-4 or NetCDF-3 file (structure, \
+attributes, previews); its statistics cover the preview slice only, so say \
+so and never present them as the whole variable's.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1207,7 +1213,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
 /// `show_molecule_grid`, `show_spectrum`, `show_molecule_3d` and
-/// `show_map` and `show_gantt`.
+/// `show_map`, `show_gantt` and `show_array_file`.
 ///
 /// # Errors
 ///
@@ -1243,7 +1249,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowSpectrumTool::new(ports.clone()))?;
     registry.register_typed(ShowMolecule3dTool::new(ports.clone()))?;
     registry.register_typed(ShowMapTool::new(ports.clone()))?;
-    registry.register_typed(ShowGanttTool::new(ports.clone()))
+    registry.register_typed(ShowGanttTool::new(ports.clone()))?;
+    registry.register_typed(ShowArrayFileTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1361,7 +1368,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 28);
+        assert_eq!(registry.names().len(), 29);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

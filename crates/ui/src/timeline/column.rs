@@ -71,7 +71,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Molecule3d(_)
         | BlockKind::Ghs(_)
         | BlockKind::GeoMap(_)
-        | BlockKind::Gantt(_) => BlockWidth::Wide,
+        | BlockKind::Gantt(_)
+        | BlockKind::ArrayFile(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }
