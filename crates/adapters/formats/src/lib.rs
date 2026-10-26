@@ -19,7 +19,8 @@
 //! - Graphviz DOT ([`dot`], own reduced parser) and ER diagrams from SQL
 //!   DDL ([`er`], sqlparser);
 //! - criterion benchmark estimates ([`bench`], serde);
-//! - digital waveforms ([`waveform`], wellen: VCD, FST, GHW).
+//! - digital waveforms ([`waveform`], wellen: VCD, FST, GHW);
+//! - netlists ([`netlist`], own SPICE and KiCad readers).
 
 pub mod bench;
 pub mod dataset;
@@ -31,6 +32,7 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod netlist;
 pub mod query_plan;
 pub mod sarif;
 pub mod terraform;
@@ -50,6 +52,7 @@ use domain::devops::logs::LogSpec;
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -156,5 +159,14 @@ impl FormatsPort for Formats {
         request: &WaveRequest,
     ) -> Result<WaveformSpec, FormatError> {
         waveform::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_netlist(
+        &self,
+        text: &str,
+        format: Option<NetlistFormat>,
+        path: Option<&str>,
+    ) -> Result<NetlistSpec, FormatError> {
+        netlist::parse(text, format, path).map_err(FormatError::Invalid)
     }
 }

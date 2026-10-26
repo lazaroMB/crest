@@ -22,6 +22,7 @@ use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -281,6 +282,20 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         request: &WaveRequest,
     ) -> Result<WaveformSpec, FormatError>;
+
+    /// A SPICE deck or KiCad netlist as components and their pin-to-net
+    /// assignments; `format` is guessed from the text when `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when the text holds no component or is
+    /// malformed.
+    fn parse_netlist(
+        &self,
+        text: &str,
+        format: Option<NetlistFormat>,
+        path: Option<&str>,
+    ) -> Result<NetlistSpec, FormatError>;
 }
 
 #[cfg(test)]

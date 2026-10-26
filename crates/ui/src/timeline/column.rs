@@ -58,7 +58,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::TerraformPlan(_)
         | BlockKind::Diagram(_)
         | BlockKind::Benchmarks(_)
-        | BlockKind::Waveform(_) => BlockWidth::Wide,
+        | BlockKind::Waveform(_)
+        | BlockKind::Netlist(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

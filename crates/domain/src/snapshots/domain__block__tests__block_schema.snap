@@ -615,6 +615,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A SPICE or KiCad netlist as a component–net graph and a component\ntable (tool `show_netlist`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "netlist"
+        }
+      },
+      "$ref": "#/$defs/NetlistSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -9247,6 +9261,170 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "path",
         "format"
+      ]
+    },
+    "NetlistFormat": {
+      "description": "Where the netlist came from.",
+      "oneOf": [
+        {
+          "description": "A SPICE deck (`.cir`, `.sp`, `.net` from a simulator).",
+          "type": "string",
+          "const": "spice"
+        },
+        {
+          "description": "A KiCad netlist export (`.net`, s-expressions).",
+          "type": "string",
+          "const": "kicad"
+        }
+      ]
+    },
+    "Component": {
+      "description": "One component (a SPICE element or a KiCad symbol instance).",
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "Reference designator (`R1`, `Q3`, `XU1`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What it is (`resistor`, `capacitor`, `mosfet`, `subcircuit`, or a\nKiCad library part such as `Device:R`).",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value (`10k`, `100n`, `DC 5`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "SPICE model or subcircuit name; KiCad footprint.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pins": {
+          "description": "The pins in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PinNet"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "reference",
+        "kind"
+      ]
+    },
+    "PinNet": {
+      "description": "One pin of a component and its net.",
+      "type": "object",
+      "properties": {
+        "pin": {
+          "description": "Pin number or name (`1`, `C`, `d` for a MOSFET drain).",
+          "type": "string"
+        },
+        "net": {
+          "description": "Net name.",
+          "type": "string"
+        },
+        "function": {
+          "description": "What the pin does, when the file says (`VCC`, `~`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "pin",
+        "net"
+      ]
+    },
+    "Subcircuit": {
+      "description": "A subcircuit defined in a SPICE deck.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "ports": {
+          "description": "Its port nodes in order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "elements": {
+          "description": "Elements inside it.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "ports",
+        "elements"
+      ]
+    },
+    "NetlistSpec": {
+      "description": "A netlist block.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above; defaults to the file name or the design.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path, when read from a file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "The source format.",
+          "$ref": "#/$defs/NetlistFormat"
+        },
+        "design": {
+          "description": "The SPICE title line or the KiCad design source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "description": "The top-level components.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Component"
+          }
+        },
+        "subcircuits": {
+          "description": "Subcircuits defined in the deck (not flattened).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Subcircuit"
+          }
+        },
+        "warnings": {
+          "description": "Lines or forms the reader skipped, and why.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "components"
       ]
     }
   }

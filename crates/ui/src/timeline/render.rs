@@ -49,6 +49,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Diagram(_) => "diagram",
         BlockKind::Benchmarks(_) => "benchmarks",
         BlockKind::Waveform(_) => "waveform",
+        BlockKind::Netlist(_) => "netlist",
     }
 }
 
