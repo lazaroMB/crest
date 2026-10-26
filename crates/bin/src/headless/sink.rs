@@ -291,6 +291,14 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 net.communities
             ),
         ),
+        BlockKind::TrainingCurves(curves) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[training curves: {} runs, {} metrics]",
+                curves.runs.len(),
+                curves.metrics.len()
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

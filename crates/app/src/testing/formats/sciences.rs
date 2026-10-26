@@ -8,9 +8,14 @@ use domain::science::arrays::{
 };
 use domain::science::geomap::{CrsSource, GeometryKind, MapCrs, MapFeature, MapSpec};
 use domain::science::network::{NetworkEdge, NetworkNode, NetworkSpec};
+use domain::science::training::{
+    AtRow, Goal, MetricSeries, RunAxes, SeriesSummary, TrainingAxis, TrainingRun, TrainingSpec, ema,
+};
 use serde_json::{Map, Value, json};
 
-use crate::ports::formats::{ArrayRequest, GanttRequest, MapRequest, NetworkRequest};
+use crate::ports::formats::{
+    ArrayRequest, GanttRequest, MapRequest, NetworkRequest, TrainingRequest,
+};
 
 fn engine(name: &str) -> Engine {
     Engine {
@@ -252,6 +257,59 @@ pub(super) fn network(request: &NetworkRequest) -> NetworkSpec {
         seed: request.seed.unwrap_or(1),
         size_by: request.size_by,
         metrics,
+        warnings: Vec::new(),
+    }
+}
+
+/// One run `a`: `loss` 1.0, 0.5, 0.25, 0.4 at steps 10 to 40.
+pub(super) fn training(request: &TrainingRequest) -> TrainingSpec {
+    let values = vec![1.0, 0.5, 0.25, 0.4];
+    let smoothing = request.smoothing.unwrap_or(0.6);
+    let mut stats = Computed::new(
+        "ml_fake",
+        "ml.training_curves",
+        "Training curve summaries",
+        engine("crest-curves"),
+    );
+    stats
+        .values
+        .insert("a.loss.best".into(), ComputedValue::new(0.25));
+    TrainingSpec {
+        title: None,
+        paths: request.files.iter().map(|f| f.path.clone()).collect(),
+        runs: vec![TrainingRun {
+            name: "a".into(),
+            axes: RunAxes {
+                step: vec![10.0, 20.0, 30.0, 40.0],
+                epoch: None,
+                time: None,
+            },
+            series: vec![MetricSeries {
+                metric: "loss".into(),
+                rows: vec![0, 1, 2, 3],
+                smoothed: ema(&values, smoothing),
+                values,
+            }],
+        }],
+        metrics: vec!["loss".into()],
+        metric: "loss".into(),
+        axis: request.axis.unwrap_or(TrainingAxis::Step),
+        smoothing,
+        log_y: request.log_y,
+        summaries: vec![SeriesSummary {
+            run: "a".into(),
+            metric: "loss".into(),
+            n: 4,
+            min: AtRow {
+                value: 0.25,
+                row: 2,
+            },
+            max: AtRow { value: 1.0, row: 0 },
+            last: AtRow { value: 0.4, row: 3 },
+            goal: request.goal.unwrap_or(Goal::Minimize),
+            goal_given: request.goal.is_some(),
+        }],
+        stats,
         warnings: Vec::new(),
     }
 }

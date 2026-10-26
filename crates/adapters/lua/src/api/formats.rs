@@ -5,7 +5,8 @@
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
 //! `show_reaction`, `show_molecule_grid`, `show_spectrum`,
 //! `show_molecule_3d`, `show_ghs`, `show_map`, `show_gantt`,
-//! `show_array_file` and `show_network` tools from Lua. Each returns a block (wrapped like
+//! `show_array_file`, `show_network` and `show_training_curves` tools
+//! from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -33,6 +34,7 @@
 //! return app.formats.ghs{ query = 'acetone' }
 //! return app.formats.map{ path = 'geo/parks.geojson', color_by = 'kind' }
 //! return app.formats.array_file{ path = 'data/run.h5', variable = '/sim/field' }
+//! return app.formats.training_curves{ paths = { 'runs/a.csv', 'runs/b.csv' }, metric = 'val_loss' }
 //! return app.formats.network{ edges = { { source = 'a', target = 'b' } }, size_by = 'pagerank' }
 //! return app.formats.gantt{ tasks = { { id = 'a', duration = 3 }, { id = 'b', duration = 2, depends_on = { 'a' } } } }
 //! ```
@@ -65,6 +67,7 @@
 //! | `gantt{ path or tasks, start, calendar, title }` | a project scheduled by the critical path method on a Gantt chart (`tasks`: `{ id, name, group, duration, start, finish, depends_on, milestone }`; `depends_on` like `'a'`, `'a SS+2'`; `calendar`: `all_days` or `weekdays`); raises on a cycle |
 //! | `array_file{ path, variable, title }` | an HDF5, NetCDF-4 or NetCDF-3 file's tree with bounded previews and their statistics (of the preview only) |
 //! | `network{ path or edges, directed, source, target, weight, size_by, seed, title }` | a network (edge-list CSV or node-link JSON, or `{ source, target, weight }` tables) with degree, betweenness, closeness, PageRank and communities; `size_by` picks the metric nodes are sized by |
+//! | `training_curves{ path or paths, metric, x, smoothing, log_y, goal, title }` | ML training logs (CSV or JSON lines) as smoothed curves per run with the engine's min/max/last/best (`x`: `step`, `epoch`, `time`; `goal`: `minimize`, `maximize`) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -943,6 +946,7 @@ mod tests {
             .with_file("spectra/ir.jdx", "##TITLE=x\n")
             .with_file("geo/parks.geojson", "{}")
             .with_file("data/run.h5", "x")
+            .with_file("runs/a.csv", "step,loss\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {

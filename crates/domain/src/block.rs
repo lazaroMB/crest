@@ -44,6 +44,7 @@ use crate::science::network::NetworkSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::spectrum::SpectrumSpec;
+use crate::science::training::TrainingSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
@@ -166,6 +167,7 @@ impl Block {
             BlockKind::Gantt(spec) => spec.validate(),
             BlockKind::ArrayFile(spec) => spec.validate(),
             BlockKind::Network(spec) => spec.validate(),
+            BlockKind::TrainingCurves(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -379,6 +381,9 @@ pub enum BlockKind {
     /// A network with degree, betweenness, closeness, PageRank and
     /// communities (tool `show_network`).
     Network(Box<NetworkSpec>),
+    /// Machine-learning training curves with smoothing and per-run
+    /// summaries (tool `show_training_curves`).
+    TrainingCurves(Box<TrainingSpec>),
 }
 
 /// Lifecycle of a tool call.

@@ -898,6 +898,25 @@ expression: "schemars::schema_for!(CustomNode)"
         }
       ]
     },
+    "SeriesLook": {
+      "description": "The colour and weight of one series.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Palette slot; the layer's position when absent (series sharing a\nslot share a colour, as a raw and a smoothed curve).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "faint": {
+          "description": "Drawn faint (and left out of the legend), as raw values under\ntheir smoothed curve.",
+          "type": "boolean"
+        }
+      }
+    },
     "PlotSpec": {
       "description": "A plot of functions and series.",
       "type": "object",
@@ -984,6 +1003,13 @@ expression: "schemars::schema_for!(CustomNode)"
         "x_reversed": {
           "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
           "type": "boolean"
+        },
+        "looks": {
+          "description": "How each series looks, by index (missing entries: the default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesLook"
+          }
         }
       }
     },

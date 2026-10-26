@@ -239,7 +239,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_map"
         | "show_gantt"
         | "show_array_file"
-        | "show_network" => "read",
+        | "show_network"
+        | "show_training_curves" => "read",
         "web_search" | "web_fetch" | "show_ghs" => "network (no approval)",
         _ => "",
     }

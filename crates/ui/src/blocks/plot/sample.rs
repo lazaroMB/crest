@@ -359,6 +359,8 @@ pub struct Layer {
     pub label: String,
     pub color: usize,
     pub mark: Mark,
+    /// Drawn faint and left out of the legend.
+    pub faint: bool,
 }
 
 /// Everything a plot draws for one set of parameter values.
@@ -535,10 +537,12 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
             label: f.label.clone(),
             color: layers.len(),
             mark,
+            faint: false,
         });
     }
     let mut skipped = 0;
-    for s in &spec.series {
+    for (ix, s) in spec.series.iter().enumerate() {
+        let look = spec.looks.get(ix).copied().unwrap_or_default();
         let all: Vec<Pt> =
             s.x.iter()
                 .zip(&s.y)
@@ -552,8 +556,9 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
         };
         layers.push(Layer {
             label: s.name.clone(),
-            color: layers.len(),
+            color: look.color.unwrap_or(layers.len()),
             mark,
+            faint: look.faint,
         });
     }
     Scene {

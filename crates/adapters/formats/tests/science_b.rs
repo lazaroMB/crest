@@ -1,16 +1,18 @@
 //! Science B viewers on fixture files (all generated for these tests):
-//! GeoJSON maps, Gantt charts, HDF5 / NetCDF-3 files and networks.
+//! GeoJSON maps, Gantt charts, HDF5 / NetCDF-3 files, networks and
+//! training curves.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
 use application::ports::formats::{
     ArrayRequest, FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
-    NetworkRequest,
+    NetworkRequest, TrainingFile, TrainingRequest,
 };
 use domain::gantt::Calendar;
 use domain::science::arrays::{ArrayFormat, ArrayNodeKind, PreviewKind};
 use domain::science::geomap::{CrsSource, GeometryKind, to_lon_lat};
+use domain::science::training::{Goal, TrainingAxis};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = format!(
@@ -467,4 +469,80 @@ fn star_pagerank_and_directed_components() {
             .to_string()
             .contains("no edges")
     );
+}
+
+#[test]
+fn training_runs_summaries_and_smoothing() {
+    let file = |name: &str| TrainingFile {
+        path: format!("runs/{name}"),
+        bytes: fixture(name),
+    };
+    let spec = Formats::new()
+        .training_curves(&TrainingRequest {
+            files: vec![file("run_a.csv"), file("run_b.jsonl")],
+            ..TrainingRequest::default()
+        })
+        .unwrap();
+    spec.validate().unwrap();
+    assert_eq!(
+        spec.runs
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_a", "run_b"]
+    );
+    assert_eq!(spec.metrics, vec!["loss", "val_loss", "accuracy"]);
+    assert_eq!(spec.metric, "loss");
+    assert!(
+        spec.warnings.iter().any(|w| w.contains("note")),
+        "{:?}",
+        spec.warnings
+    );
+    let a = &spec.runs[0];
+    assert!(a.axes.epoch.is_some() && a.axes.time.is_none());
+    assert_eq!(
+        a.series("val_loss").unwrap().values.len(),
+        6,
+        "every 10 steps"
+    );
+    // val_loss = (s − 30)²/1000 + 0.5 is lowest at step 30.
+    let val = spec.summary("run_a", "val_loss").unwrap();
+    assert_eq!((val.goal, val.min.value), (Goal::Minimize, 0.5));
+    assert_eq!(
+        spec.x_at("run_a", val.best().row, TrainingAxis::Step),
+        Some(30.0)
+    );
+    let acc = spec.summary("run_a", "accuracy").unwrap();
+    assert_eq!(acc.goal, Goal::Maximize);
+    assert_eq!(
+        spec.x_at("run_a", acc.best().row, TrainingAxis::Step),
+        Some(58.0)
+    );
+    // run_b's time is relative to its first row: 1.5 s per step.
+    let b = &spec.runs[1];
+    assert_eq!(b.axes.time.as_ref().unwrap()[2], 12.0);
+    assert!(
+        spec.axes() == vec![TrainingAxis::Step],
+        "only step is common"
+    );
+    // The default EMA weight is TensorBoard's 0.6; the first value stays.
+    let s = &a.series("loss").unwrap();
+    assert_eq!(spec.smoothing, 0.6);
+    assert!((s.smoothed[0] - s.values[0]).abs() < 1e-12);
+    assert!(
+        s.smoothed[5] > s.values[5],
+        "smoothing lags a falling curve"
+    );
+    let env = &spec.stats.values;
+    assert_eq!(env["run_a.val_loss.best_step"].v, 30.0);
+    assert_eq!(env["runs"].v, 2.0);
+    let err = Formats::new()
+        .training_curves(&TrainingRequest {
+            files: vec![file("run_a.csv")],
+            metric: Some("bleu".into()),
+            ..TrainingRequest::default()
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("loss, val_loss, accuracy"), "{err}");
 }

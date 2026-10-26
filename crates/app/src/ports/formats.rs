@@ -41,6 +41,7 @@ use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 use domain::science::spectrum::SpectrumSpec;
+use domain::science::training::TrainingSpec;
 
 mod sciences;
 
@@ -547,6 +548,16 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for an unreadable file, missing columns, no
     /// edges or a network over the size limits.
     fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError>;
+
+    /// Training curves from CSV or JSON lines logs: a series per run and
+    /// metric with step, epoch and time, the engine's EMA and per-series
+    /// count, minimum, maximum, last and best value with where each was.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for unreadable logs, no numeric metric or
+    /// an unknown `metric`.
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError>;
 }
 
 #[cfg(test)]

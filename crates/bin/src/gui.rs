@@ -278,7 +278,7 @@ async fn simulate_command(simulator: Simulator, spec: String) -> Reply {
         open_board: true,
     };
     match simulator.run(request).await {
-        Ok(report) => Reply::Block(Block::new(BlockKind::Markdown {
+        Ok(report) => Reply::block(Block::new(BlockKind::Markdown {
             title: Some(format!("Simulation of {}", report.folder)),
             source: simulation_markdown(&report),
         })),
@@ -517,7 +517,7 @@ impl McpCommands {
                 ]
             })
             .collect();
-        Reply::Block(Block::new(BlockKind::Table(TableSpec {
+        Reply::block(Block::new(BlockKind::Table(TableSpec {
             columns: ["MCP server", "State", "Transport", "Config", "Detail"]
                 .map(Column::new)
                 .to_vec(),
@@ -567,7 +567,7 @@ impl McpCommands {
                 format!("MCP server `{name}` offers no tools"),
             );
         }
-        Reply::Block(Block::new(BlockKind::Table(TableSpec {
+        Reply::block(Block::new(BlockKind::Table(TableSpec {
             columns: vec![Column::new("Tool"), Column::new("Description")],
             rows,
         })))
@@ -761,9 +761,9 @@ async fn recompute_block(
 pub fn plugin_reply(result: Result<PluginOutput, PluginError>) -> Reply {
     match result {
         Ok(PluginOutput::Actions(actions)) => Reply::Actions(actions),
-        Ok(PluginOutput::Block(kind)) => Reply::Block(Block::new(kind)),
+        Ok(PluginOutput::Block(kind)) => Reply::block(Block::new(kind)),
         Ok(PluginOutput::Value(_)) => Reply::Done,
-        Err(err) => Reply::Block(Block::new(BlockKind::Error {
+        Err(err) => Reply::block(Block::new(BlockKind::Error {
             message: format!("Lua: {err}"),
             hint: None,
         })),

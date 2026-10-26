@@ -1,11 +1,13 @@
 //! `app.formats` functions of the science B viewers: `map`, `gantt`,
-//! `array_file`, `network`.
+//! `array_file`, `network`, `training_curves`.
 
 use application::ports::formats::{
     ArrayRequest, GanttRequest, GanttSource, GanttTaskInput, MapRequest, NetworkRequest,
+    TrainingFile, TrainingRequest,
 };
 use application::tools::formats::{EdgeInput, edges_json, read_array, read_map, read_report};
 use domain::block::BlockKind;
+use domain::science::training::{Goal, TrainingAxis};
 use mlua::{Lua, Table, Value};
 
 use super::{block_value, error, services, text};
@@ -190,6 +192,61 @@ fn network(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Network(Box::new(spec)))
 }
 
+fn training_curves(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "training_curves";
+    let services = services(lua, F)?;
+    let mut paths: Vec<String> = text(args, F, "path")?.into_iter().collect();
+    if let Some(list) = args.get::<Option<Vec<String>>>("paths")? {
+        paths.extend(list);
+    }
+    if paths.is_empty() {
+        return Err(error(F, "`path` or `paths` is required"));
+    }
+    let mut files = Vec::new();
+    for path in paths {
+        let bytes = context(lua)?
+            .block_on(read_report(services.fs.as_ref(), &path))?
+            .map_err(|e| error(F, e))?;
+        files.push(TrainingFile { path, bytes });
+    }
+    let request = TrainingRequest {
+        files,
+        metric: text(args, F, "metric")?,
+        axis: match text(args, F, "x")?.as_deref() {
+            None => None,
+            Some("step") => Some(TrainingAxis::Step),
+            Some("epoch") => Some(TrainingAxis::Epoch),
+            Some("time") => Some(TrainingAxis::Time),
+            Some(other) => {
+                return Err(error(
+                    F,
+                    format!("`x` is step, epoch or time, not {other:?}"),
+                ));
+            }
+        },
+        smoothing: args.get::<Option<f64>>("smoothing")?,
+        log_y: args.get::<Option<bool>>("log_y")?.unwrap_or(false),
+        goal: match text(args, F, "goal")?.as_deref() {
+            None => None,
+            Some("minimize") => Some(Goal::Minimize),
+            Some("maximize") => Some(Goal::Maximize),
+            Some(other) => {
+                return Err(error(
+                    F,
+                    format!("`goal` is minimize or maximize, not {other:?}"),
+                ));
+            }
+        },
+    };
+    let mut spec = services
+        .formats
+        .training_curves(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::TrainingCurves(Box::new(spec)))
+}
+
 /// Adds the science B functions to the `app.formats` table.
 pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
     formats.set(
@@ -218,6 +275,13 @@ pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => network(lua, &args),
             _ => Err(error("network", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "training_curves",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => training_curves(lua, &args),
+            _ => Err(error("training_curves", "expected a table of arguments")),
         })?,
     )?;
     Ok(())

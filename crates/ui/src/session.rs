@@ -180,10 +180,18 @@ pub enum Reply {
     Done,
     /// A message for the status bar.
     Notice(NoticeLevel, String),
-    /// A block for the timeline.
-    Block(Block),
+    /// A block for the timeline (boxed: blocks are large).
+    Block(Box<Block>),
     /// Actions requested by Lua (`app.cmd`, `app.send`), in order.
     Actions(Vec<PluginAction>),
+}
+
+impl Reply {
+    /// A reply that shows `block`.
+    #[must_use]
+    pub fn block(block: Block) -> Self {
+        Self::Block(Box::new(block))
+    }
 }
 
 /// How many times a command may lead to another one (`app.cmd` inside a
@@ -1376,7 +1384,7 @@ impl Session {
         match reply {
             Reply::Done => {}
             Reply::Notice(level, message) => self.notice(level, message, cx),
-            Reply::Block(block) => self.dispatch(DomainEvent::BlockAdded { block }, cx),
+            Reply::Block(block) => self.dispatch(DomainEvent::BlockAdded { block: *block }, cx),
             Reply::Actions(actions) => {
                 for action in actions {
                     match action {

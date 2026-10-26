@@ -120,6 +120,11 @@ pub fn paint_layers(
     window.with_content_mask(Some(mask), |window| {
         for layer in &scene.layers {
             let color = color(layer.color);
+            let color = if layer.faint {
+                color.opacity(0.3)
+            } else {
+                color
+            };
             match &layer.mark {
                 Mark::Lines(lines) => {
                     stroke(

@@ -26,6 +26,7 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | training curves | per-run summaries CSV (min, max, last, best with steps) |
 //! | network | node metrics CSV, edges CSV |
 //! | array file | groups and variables CSV, the preview shown as CSV (first preview) |
 //! | Gantt chart | schedule CSV (ES, EF, LS, LF, slack, critical), the critical path |
@@ -584,6 +585,11 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::TrainingCurves(spec) => vec![CopyFormat::new(
+            "summaries",
+            "summaries CSV",
+            spec.summary_csv(),
+        )],
         BlockKind::Network(spec) => vec![
             CopyFormat::new("metrics", "metrics CSV", spec.to_csv()),
             CopyFormat::new("edges", "edges CSV", spec.edges_csv()),
