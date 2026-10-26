@@ -2,7 +2,8 @@
 //! statistics tools `stats_describe`, `stats_test`, `stats_regress` and
 //! `stats_correlate`, and the unit tools `calc` (a calc sheet) and
 //! `convert` (one unit conversion), whose input is the port request as is,
-//! and the card tools of [`cards`] (distribution, ...).
+//! and the card tools of [`cards`] (distribution, ...) and [`engineering`]
+//! (Bode, ...).
 //! [`register_compute_tools`] adds them and [`COMPUTE_TOOLS_PROMPT`] tells
 //! the model to compute with them and to cite numbers through slots.
 //!
@@ -45,6 +46,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 mod cards;
+mod engineering;
 
 pub use self::cards::{
     AbTest, Bootstrap, CashFlow, CashFlowTool, Contingency, Decide, DecisionMatrixTool,
@@ -52,6 +54,7 @@ pub use self::cards::{
     SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
     StatsForecastTool, StatsPowerTool,
 };
+pub use self::engineering::{Bode, BodeTool};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -761,6 +764,9 @@ quantity built from uncertain inputs (a business case, a Fermi estimate), call `
 For NPV, IRR or payback of a series of cash flows, call `cash_flow`; to compare options \
 against weighted criteria, `decision_matrix`.
 
+For engineering: the frequency response, margins and crossovers of a transfer function come \
+from `bode`.
+
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
 out yourself; for a unit conversion call `convert`. Quote results through their slots.
@@ -772,7 +778,7 @@ fails, fix the input and call it again.";
 
 /// Registers `stats_describe`, `stats_test`, `stats_regress`,
 /// `stats_correlate`, `calc`, `convert` and the phase-2 card tools
-/// ([`cards`]) over `ports`.
+/// ([`cards`]) and the engineering tools ([`engineering`]) over `ports`.
 ///
 /// # Errors
 ///
@@ -797,7 +803,8 @@ pub fn register_compute_tools(
     registry.register_typed(SolveEquationsTool::new(ports.clone()))?;
     registry.register_typed(SimulateTool::new(ports.clone()))?;
     registry.register_typed(CashFlowTool::new(ports.clone()))?;
-    registry.register_typed(DecisionMatrixTool::new(ports.clone()))
+    registry.register_typed(DecisionMatrixTool::new(ports.clone()))?;
+    registry.register_typed(BodeTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -909,8 +916,9 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "decision_matrix_definition",
-            definition(DecisionMatrixTool::new(ports))
+            definition(DecisionMatrixTool::new(ports.clone()))
         );
+        insta::assert_json_snapshot!("bode_definition", definition(BodeTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1195,6 +1203,7 @@ mod tests {
         assert_eq!(
             registry.names(),
             [
+                "bode",
                 "calc",
                 "cash_flow",
                 "convert",

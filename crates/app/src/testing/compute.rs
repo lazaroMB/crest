@@ -296,6 +296,29 @@ impl FakeCompute {
                     npv_curve: Curve::default(),
                 }),
             ),
+            ComputeRequest::Bode(r) => (
+                "solve.bode",
+                "Frequency response",
+                "bode",
+                ComputedBody::Bode(BodeBody {
+                    numerator: r.numerator.clone(),
+                    denominator: r.denominator.clone(),
+                    delay: r.delay,
+                    unit: r.unit,
+                    points: vec![BodePoint {
+                        w: 1.0,
+                        magnitude_db: -3.0,
+                        phase_deg: -45.0,
+                        re: 0.5,
+                        im: -0.5,
+                    }],
+                    zeros: Vec::new(),
+                    poles: vec![Complex { re: -1.0, im: 0.0 }],
+                    gain_crossovers: Vec::new(),
+                    phase_crossovers: Vec::new(),
+                    closed_loop_poles: vec![Complex { re: -2.0, im: 0.0 }],
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -629,6 +652,10 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn bode(&self, request: &BodeRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bode(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

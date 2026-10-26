@@ -30,6 +30,7 @@
 //! | `simulate{ inputs = { { name, distribution = { type = 'normal', mean, sd }, source, unit } }, model, output, unit, samples, seed }` | Monte Carlo, tornado, Fermi |
 //! | `cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback |
 //! | `decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | decision matrix |
+//! | `bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode / Nyquist, margins |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -38,7 +39,7 @@
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
 //! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate`,
-//! `cash_flow` and `decide` read no data.
+//! `cash_flow`, `decide` and `bode` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -228,6 +229,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             | "simulate"
             | "cash_flow"
             | "decide"
+            | "bode"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -297,6 +299,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "simulate",
         "cash_flow",
         "decide",
+        "bode",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -466,6 +469,23 @@ mod tests {
             panic!("not a distribution");
         };
         assert_eq!(d.data.source.path.as_deref(), Some("cars.tsv"));
+    }
+
+    #[test]
+    fn the_engineering_card_requests_take_their_tables() {
+        let engine = Arc::new(FakeCompute::new());
+        let out = run_code(
+            "return app.compute.bode{ numerator = { 1 }, denominator = { 1, 1, 0 }, delay = 0.1 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        assert_eq!(envelope(out).kind, "solve.bode");
+        let requests = engine.requests();
+        let ComputeRequest::Bode(bode) = &requests[0] else {
+            panic!("not a Bode request");
+        };
+        assert_eq!(bode.denominator, [1.0, 1.0, 0.0]);
+        assert_eq!(bode.points, 400);
     }
 
     #[test]

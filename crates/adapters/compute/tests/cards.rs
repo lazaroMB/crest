@@ -1202,3 +1202,154 @@ fn decision_matrix_totals_and_weight_thresholds_by_hand() {
     bad.options[0].scores.pop();
     assert!(engine().decide(&bad).is_err());
 }
+
+// --- Bode / Nyquist -----------------------------------------------------------
+
+fn bode(numerator: &[f64], denominator: &[f64], delay: f64) -> BodeRequest {
+    BodeRequest {
+        numerator: numerator.to_vec(),
+        denominator: denominator.to_vec(),
+        zeros: Vec::new(),
+        poles: Vec::new(),
+        gain: None,
+        delay,
+        w_min: None,
+        w_max: None,
+        points: 400,
+        unit: FrequencyUnit::RadPerS,
+    }
+}
+
+/// The sweep point nearest `w`.
+fn at(body: &BodeBody, w: f64) -> BodePoint {
+    *body
+        .points
+        .iter()
+        .min_by(|a, b| {
+            (a.w.ln() - w.ln())
+                .abs()
+                .total_cmp(&(b.w.ln() - w.ln()).abs())
+        })
+        .unwrap()
+}
+
+#[test]
+fn bode_first_order_lag_is_minus_3_db_and_45_degrees_at_the_corner() {
+    let mut request = bode(&[1.0], &[1.0, 1.0], 0.0);
+    request.w_min = Some(0.01);
+    request.w_max = Some(100.0);
+    request.points = 401;
+    let (c, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    // 401 log-spaced points over four decades put ω = 1 on the grid.
+    let corner = at(&b, 1.0);
+    near(corner.w, 1.0, 1e-12);
+    near(corner.magnitude_db, -10.0 * 2f64.log10(), 1e-9);
+    near(corner.phase_deg, -45.0, 1e-9);
+    near(b.points[0].phase_deg, -(0.01f64).atan().to_degrees(), 1e-9);
+    near(v(&c, "dc_gain"), 0.0, 1e-12);
+    near(v(&c, "bandwidth"), 1.0, 1e-9);
+    assert!(c.value("phase_margin").is_none());
+    assert!(c.value("gain_margin").is_none());
+    assert_eq!(b.poles, [Complex { re: -1.0, im: 0.0 }]);
+    // 1/(s+1) + 1 = 0 → s = −2.
+    near(b.closed_loop_poles[0].re, -2.0, 1e-12);
+    assert_eq!(
+        c.value("closed_loop_max_re")
+            .and_then(|x| x.label.clone())
+            .as_deref(),
+        Some("stable")
+    );
+}
+
+#[test]
+fn bode_second_order_peaks_at_one_over_two_zeta() {
+    // ωn = 10, ζ = 0.1: |G(jωn)| = 1/(2ζ) = 5, phase −90°.
+    let (wn, zeta) = (10.0, 0.1);
+    let mut request = bode(&[wn * wn], &[1.0, 2.0 * zeta * wn, wn * wn], 0.0);
+    request.w_min = Some(0.1);
+    request.w_max = Some(1000.0);
+    request.points = 401;
+    let (_, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    let p = at(&b, wn);
+    near(p.w, wn, 1e-9);
+    near(p.magnitude_db, 20.0 * 5f64.log10(), 1e-9);
+    near(p.phase_deg, -90.0, 1e-9);
+    near(b.points.last().unwrap().phase_deg, -180.0, 0.2);
+    near(b.poles[0].re, -1.0, 1e-12);
+    near(b.poles[0].im.abs(), 99f64.sqrt(), 1e-12);
+}
+
+#[test]
+fn bode_integrator_lag_has_the_closed_form_phase_margin() {
+    // G = 1/(s(s+1)): ωc² = (√5 − 1)/2, PM = 90° − atan(ωc).
+    let (c, body) = engine().bode(&bode(&[1.0], &[1.0, 1.0, 0.0], 0.0)).unwrap();
+    let wc = ((5f64.sqrt() - 1.0) / 2.0).sqrt();
+    near(v(&c, "gain_crossover"), wc, 1e-9);
+    near(v(&c, "phase_margin"), 90.0 - wc.atan().to_degrees(), 1e-7);
+    printed(v(&c, "phase_margin"), "51.83");
+    assert!(c.value("gain_margin").is_none());
+    assert!(c.value("dc_gain").is_none());
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    // An integrator starts near −90°, not −90° ± 360°.
+    near(b.points[0].phase_deg, -90.0, 1.0);
+    // s² + s + 1: −0.5 ± 0.866j.
+    near(b.closed_loop_poles[0].re, -0.5, 1e-12);
+}
+
+#[test]
+fn bode_third_order_gain_margin_is_20_log_6() {
+    // G = 1/(s(s+1)(s+2)): phase −180° at ω = √2, |G| = 1/6 there.
+    let (c, _) = engine()
+        .bode(&bode(&[1.0], &[1.0, 3.0, 2.0, 0.0], 0.0))
+        .unwrap();
+    near(v(&c, "phase_crossover"), 2f64.sqrt(), 1e-9);
+    near(v(&c, "gain_margin"), 20.0 * 6f64.log10(), 1e-8);
+    printed(v(&c, "gain_margin"), "15.56");
+    let wc = v(&c, "gain_crossover");
+    near(
+        wc * (wc * wc + 1.0).sqrt() * (wc * wc + 4.0).sqrt(),
+        1.0,
+        1e-9,
+    );
+    let pm = 90.0 - wc.atan().to_degrees() - (wc / 2.0).atan().to_degrees();
+    near(v(&c, "phase_margin"), pm, 1e-7);
+    // The same plant given as poles and a gain.
+    let mut by_poles = bode(&[], &[], 0.0);
+    by_poles.poles = vec![
+        Complex { re: 0.0, im: 0.0 },
+        Complex { re: -1.0, im: 0.0 },
+        Complex { re: -2.0, im: 0.0 },
+    ];
+    let (c2, _) = engine().bode(&by_poles).unwrap();
+    near(v(&c2, "gain_margin"), v(&c, "gain_margin"), 1e-9);
+}
+
+#[test]
+fn bode_dead_time_adds_minus_omega_t_to_the_phase() {
+    let mut request = bode(&[1.0], &[1.0, 1.0], 0.1);
+    request.w_min = Some(0.01);
+    request.w_max = Some(100.0);
+    request.points = 401;
+    let (c, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    let p = at(&b, 1.0);
+    near(p.phase_deg, -45.0 - 0.1f64.to_degrees(), 1e-9);
+    near(p.magnitude_db, -10.0 * 2f64.log10(), 1e-9);
+    assert!(b.closed_loop_poles.is_empty());
+    // The delay brings the phase to −180° even for a first-order lag.
+    assert!(c.value("phase_crossover").is_some());
+    assert!(engine().bode(&bode(&[1.0], &[0.0], 0.0)).is_err());
+    let mut lone = bode(&[], &[], 0.0);
+    lone.poles = vec![Complex { re: -1.0, im: 1.0 }];
+    assert!(engine().bode(&lone).is_err());
+}

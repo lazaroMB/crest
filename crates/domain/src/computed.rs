@@ -19,6 +19,7 @@
 
 pub mod ab_test;
 pub mod apa;
+pub mod bode;
 pub mod bootstrap;
 pub mod cash_flow;
 pub mod contingency;
@@ -40,6 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
+pub use self::bode::{BodeBody, BodePoint, Complex, Crossover, FrequencyUnit};
 pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::cash_flow::{CashFlowBody, CashFlowRow};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
@@ -641,6 +643,8 @@ pub enum ComputedBody {
     CashFlow(CashFlowBody),
     /// A weighted decision matrix.
     DecisionMatrix(DecisionMatrixBody),
+    /// A transfer function's Bode and Nyquist plots with its margins.
+    Bode(BodeBody),
 }
 
 impl ComputedBody {
@@ -678,6 +682,7 @@ impl ComputedBody {
             Self::Simulation(body) => body.validate(),
             Self::CashFlow(body) => body.validate(),
             Self::DecisionMatrix(body) => body.validate(),
+            Self::Bode(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

@@ -17,6 +17,7 @@
 //! Engines are CPU-bound and synchronous: async callers run them on a
 //! blocking thread.
 
+mod engineering;
 mod solve;
 mod stats;
 
@@ -26,6 +27,7 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use self::engineering::*;
 pub use self::solve::*;
 pub use self::stats::*;
 
@@ -427,6 +429,8 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::bode`].
+    Bode(BodeRequest),
 }
 
 impl ComputeRequest {
@@ -464,7 +468,8 @@ impl ComputeRequest {
             | Self::Solve(_)
             | Self::Simulate(_)
             | Self::CashFlow(_)
-            | Self::Decide(_) => None,
+            | Self::Decide(_)
+            | Self::Bode(_) => None,
         }
     }
 
@@ -488,7 +493,8 @@ impl ComputeRequest {
             | Self::Solve(_)
             | Self::Simulate(_)
             | Self::CashFlow(_)
-            | Self::Decide(_) => None,
+            | Self::Decide(_)
+            | Self::Bode(_) => None,
         }
     }
 }
@@ -640,6 +646,13 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
+    /// The frequency response of a transfer function: Bode magnitude and phase, the Nyquist curve, poles and zeros, crossovers with gain and phase margins and the closed-loop poles.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty or zero denominator, a numerator of higher degree than the denominator, or complex roots without their conjugates.
+    fn bode(&self, request: &BodeRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -674,6 +687,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Bode(r) => self.bode(r),
         }
     }
 }

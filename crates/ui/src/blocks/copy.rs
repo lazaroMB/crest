@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -369,6 +369,23 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             csv.push_str(&format!(",{},{}\n", o.total, o.rank));
         }
         formats.push(CopyFormat::new("matrix", "matrix CSV", csv));
+    }
+    if let ComputedBody::Bode(b) = body {
+        let mut csv = format!(
+            "w_{},magnitude_db,phase_deg,re,im\n",
+            b.unit.symbol().replace('/', "_per_")
+        );
+        for p in &b.points {
+            csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                b.unit.from_rad(p.w),
+                p.magnitude_db,
+                p.phase_deg,
+                p.re,
+                p.im
+            ));
+        }
+        formats.push(CopyFormat::new("response", "frequency response CSV", csv));
     }
     formats
 }

@@ -572,6 +572,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::DecisionMatrix(super::decision_matrix::tests::body()),
             &[],
         ),
+        (
+            card("solve.bode", "Frequency response"),
+            ComputedBody::Bode(super::bode::tests::body()),
+            &["magnitude", "phase", "nyquist"],
+        ),
     ]
 }
 
