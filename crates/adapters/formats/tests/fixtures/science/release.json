@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    { "id": "design", "name": "Design", "duration": 5, "start": "2026-11-02" },
+    { "id": "build", "name": "Build", "duration": 10, "depends_on": ["design SS+2"] },
+    { "id": "test", "name": "Test", "duration": 4, "depends_on": ["build FF+1"] },
+    { "id": "docs", "name": "Docs", "duration": 3, "depends_on": "design" },
+    { "id": "release", "name": "Release", "milestone": true, "depends_on": ["test", "docs"] }
+  ]
+}

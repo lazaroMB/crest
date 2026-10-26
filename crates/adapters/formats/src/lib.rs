@@ -34,7 +34,8 @@
 //! - molecules in 3D ([`molecule3d`]: chematic's embedding, our own
 //!   V2000 reader, chematic's V3000, XYZ and PDB readers);
 //! - GeoJSON maps with geodesic measures ([`geomap`]: geojson, proj4rs,
-//!   geo; engine records from [`sci`]).
+//!   geo; engine records from [`sci`]);
+//! - Gantt charts scheduled by the critical path method ([`gantt`]).
 
 pub mod bench;
 pub mod chem;
@@ -43,6 +44,7 @@ pub mod dot;
 pub mod drawing;
 pub mod er;
 pub mod flame;
+pub mod gantt;
 pub mod geomap;
 pub mod har;
 pub mod ifc;
@@ -66,7 +68,7 @@ pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, MapRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest, MapRequest,
     Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
     StepRequest, WaveRequest,
 };
@@ -84,6 +86,7 @@ use domain::engineering::drawing::DrawingSpec;
 use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
+use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 use domain::science::geomap::MapSpec;
@@ -255,5 +258,9 @@ impl FormatsPort for Formats {
 
     fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
         geomap::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError> {
+        gantt::schedule(request).map_err(FormatError::Invalid)
     }
 }

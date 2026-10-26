@@ -31,6 +31,7 @@ use crate::engineering::material::MaterialSpec;
 use crate::engineering::netlist::NetlistSpec;
 use crate::engineering::waveform::WaveformSpec;
 use crate::form::FormSpec;
+use crate::gantt::GanttSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
@@ -169,6 +170,7 @@ impl Block {
             BlockKind::Molecule3d(spec) => spec.validate(),
             BlockKind::Ghs(spec) => spec.validate(),
             BlockKind::GeoMap(spec) => spec.validate(),
+            BlockKind::Gantt(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -373,6 +375,9 @@ pub enum BlockKind {
     /// GeoJSON features on a map with their geodesic measures (tool
     /// `show_map`).
     GeoMap(Box<MapSpec>),
+    /// A project scheduled by the critical path method on a Gantt chart
+    /// (tool `show_gantt`).
+    Gantt(Box<GanttSpec>),
 }
 
 /// Lifecycle of a tool call.

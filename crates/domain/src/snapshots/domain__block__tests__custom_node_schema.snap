@@ -1131,6 +1131,16 @@ expression: "schemars::schema_for!(CustomNode)"
           "description": "Failed.",
           "type": "string",
           "const": "error"
+        },
+        {
+          "description": "On a critical path (a Gantt chart's critical tasks).",
+          "type": "string",
+          "const": "critical"
+        },
+        {
+          "description": "Room a task may slip (a Gantt chart's slack), drawn faint.",
+          "type": "string",
+          "const": "slack"
         }
       ]
     },

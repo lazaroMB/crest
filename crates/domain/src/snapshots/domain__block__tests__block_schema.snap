@@ -783,6 +783,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A project scheduled by the critical path method on a Gantt chart\n(tool `show_gantt`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "gantt"
+        }
+      },
+      "$ref": "#/$defs/GanttSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -2039,6 +2053,16 @@ expression: "schemars::schema_for!(Block)"
           "description": "Failed.",
           "type": "string",
           "const": "error"
+        },
+        {
+          "description": "On a critical path (a Gantt chart's critical tasks).",
+          "type": "string",
+          "const": "critical"
+        },
+        {
+          "description": "Room a task may slip (a Gantt chart's slack), drawn faint.",
+          "type": "string",
+          "const": "slack"
         }
       ]
     },
@@ -13186,6 +13210,232 @@ expression: "schemars::schema_for!(Block)"
         "features",
         "total_features",
         "measures"
+      ]
+    },
+    "Calendar": {
+      "description": "Which days count as working days.",
+      "oneOf": [
+        {
+          "description": "Every day.",
+          "type": "string",
+          "const": "all_days"
+        },
+        {
+          "description": "Monday to Friday.",
+          "type": "string",
+          "const": "weekdays"
+        }
+      ]
+    },
+    "GanttTask": {
+      "description": "One task with what the engine computed for it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id, referenced by dependencies.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name shown; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
+          "description": "Phase or work package the task belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration": {
+          "description": "Duration in working days (0 for a milestone).",
+          "type": "number",
+          "format": "double"
+        },
+        "milestone": {
+          "description": "Whether it is a milestone (zero duration).",
+          "type": "boolean",
+          "default": false
+        },
+        "depends_on": {
+          "description": "Its predecessors.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          }
+        },
+        "not_before": {
+          "description": "It may not start before this offset (from a start date).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "early_start": {
+          "description": "Early start (forward pass).",
+          "type": "number",
+          "format": "double"
+        },
+        "early_finish": {
+          "description": "Early finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "late_start": {
+          "description": "Late start (backward pass).",
+          "type": "number",
+          "format": "double"
+        },
+        "late_finish": {
+          "description": "Late finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "total_slack": {
+          "description": "How long it can slip without moving the project finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "free_slack": {
+          "description": "How long it can slip without moving any successor.",
+          "type": "number",
+          "format": "double"
+        },
+        "critical": {
+          "description": "On the critical path (no total slack).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "duration",
+        "early_start",
+        "early_finish",
+        "late_start",
+        "late_finish",
+        "total_slack",
+        "free_slack",
+        "critical"
+      ]
+    },
+    "Dependency": {
+      "description": "A link to a predecessor.",
+      "type": "object",
+      "properties": {
+        "task": {
+          "description": "Id of the predecessor.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "How this task waits on it.",
+          "$ref": "#/$defs/DependencyKind",
+          "default": "fs"
+        },
+        "lag": {
+          "description": "Days added to the link (negative for a lead).",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "task"
+      ]
+    },
+    "DependencyKind": {
+      "description": "How a task waits on another.",
+      "oneOf": [
+        {
+          "description": "It starts after the other finishes (`FS`, the default).",
+          "type": "string",
+          "const": "fs"
+        },
+        {
+          "description": "It starts after the other starts (`SS`).",
+          "type": "string",
+          "const": "ss"
+        },
+        {
+          "description": "It finishes after the other finishes (`FF`).",
+          "type": "string",
+          "const": "ff"
+        },
+        {
+          "description": "It finishes after the other starts (`SF`).",
+          "type": "string",
+          "const": "sf"
+        }
+      ]
+    },
+    "GanttSpec": {
+      "description": "A scheduled project.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the chart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Project start as `YYYY-MM-DD`; offsets only when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "calendar": {
+          "description": "Which days are working days.",
+          "$ref": "#/$defs/Calendar",
+          "default": "all_days"
+        },
+        "tasks": {
+          "description": "The tasks in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GanttTask"
+          }
+        },
+        "project_duration": {
+          "description": "Working days from the start to the last finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "critical_path": {
+          "description": "Ids of the critical tasks, by early start.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "schedule": {
+          "description": "The schedule as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader and scheduler notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "tasks",
+        "project_duration",
+        "schedule"
       ]
     }
   }

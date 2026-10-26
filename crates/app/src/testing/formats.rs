@@ -40,7 +40,8 @@
 //! one dip picked at 1715 cm⁻¹; every 3D molecule is water (O and two H
 //! 0.9572 Å from it) unless its SMILES is `bad`. The science B answers
 //! are in [`sciences`]: every map is one park polygon (12.5 ha) and one
-//! 1.2 km trail in WGS 84.
+//! 1.2 km trail in WGS 84; every Gantt chart is `design` (3 d) then
+//! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -76,6 +77,7 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::gantt::GanttSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::molecule3d::{
@@ -91,7 +93,7 @@ use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, S
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, MapRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest, MapRequest,
     Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
     StepRequest, WaveRequest,
 };
@@ -1162,5 +1164,13 @@ impl FormatsPort for FakeFormats {
     fn parse_geojson(&self, _bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
         self.record("parse_geojson", request.path.as_deref().unwrap_or("inline"))?;
         Ok(sciences::map(request))
+    }
+
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError> {
+        self.record(
+            "schedule_gantt",
+            request.path.as_deref().unwrap_or("inline"),
+        )?;
+        Ok(sciences::gantt(request))
     }
 }

@@ -16,7 +16,7 @@
 //! (`show_sequence`), [`reaction`] (`show_reaction`),
 //! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
 //! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`), and the
-//! science B viewers [`geomap`] (`show_map`).
+//! science B viewers [`geomap`] (`show_map`) and [`gantt`] (`show_gantt`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -57,6 +57,7 @@ pub mod bench;
 pub mod devops;
 pub mod diagram;
 pub mod dxf;
+pub mod gantt;
 pub mod geomap;
 pub mod har;
 pub mod ifc;
@@ -82,6 +83,7 @@ pub use devops::{
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
 pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
+pub use gantt::{SHOW_GANTT, ShowGanttTool, gantt_summary};
 pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, inline_geojson, map_summary, read_map};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
 pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
@@ -1191,6 +1193,9 @@ computed conformer, and quote no bond lengths or angles it did not give.
 - `show_map`: show GeoJSON (a file or inline) on a map; give `crs` when the \
 coordinates are not WGS 84 longitude/latitude. Cite the areas, lengths and \
 box it measures (geodesic), never your own estimates.
+- `show_gantt`: schedule a project (tasks with durations and dependencies, \
+from a file or inline) with the critical path method; quote its dates, \
+slack and critical path instead of working them out yourself.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1202,7 +1207,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
 /// `show_molecule_grid`, `show_spectrum`, `show_molecule_3d` and
-/// `show_map`.
+/// `show_map` and `show_gantt`.
 ///
 /// # Errors
 ///
@@ -1237,7 +1242,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowMoleculeGridTool::new(ports.clone()))?;
     registry.register_typed(ShowSpectrumTool::new(ports.clone()))?;
     registry.register_typed(ShowMolecule3dTool::new(ports.clone()))?;
-    registry.register_typed(ShowMapTool::new(ports.clone()))
+    registry.register_typed(ShowMapTool::new(ports.clone()))?;
+    registry.register_typed(ShowGanttTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1355,7 +1361,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 27);
+        assert_eq!(registry.names().len(), 28);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

@@ -2,10 +2,11 @@
 //! (maps, Gantt charts, array files, networks, training curves).
 
 use domain::computed::{Computed, ComputedValue, Engine};
+use domain::gantt::{Dependency, DependencyKind, GanttSpec, GanttTask};
 use domain::science::geomap::{CrsSource, GeometryKind, MapCrs, MapFeature, MapSpec};
 use serde_json::{Map, Value, json};
 
-use crate::ports::formats::MapRequest;
+use crate::ports::formats::{GanttRequest, MapRequest};
 
 fn engine(name: &str) -> Engine {
     Engine {
@@ -84,6 +85,58 @@ pub(super) fn map(request: &MapRequest) -> MapSpec {
         without_geometry: 0,
         color_by: request.color_by.clone(),
         measures,
+        warnings: Vec::new(),
+    }
+}
+
+/// `design` (3 d) then `build` (2 d), both critical, and `docs` (1 d)
+/// after `design` with 1 d of slack.
+pub(super) fn gantt(request: &GanttRequest) -> GanttSpec {
+    let task = |id: &str, d: f64, es: f64, slack: f64, after: Option<&str>| GanttTask {
+        id: id.into(),
+        name: None,
+        group: None,
+        duration: d,
+        milestone: false,
+        depends_on: after
+            .map(|a| Dependency {
+                task: a.into(),
+                kind: DependencyKind::Fs,
+                lag: 0.0,
+            })
+            .into_iter()
+            .collect(),
+        not_before: None,
+        early_start: es,
+        early_finish: es + d,
+        late_start: es + slack,
+        late_finish: es + d + slack,
+        total_slack: slack,
+        free_slack: slack,
+        critical: slack == 0.0,
+    };
+    let mut schedule = Computed::new(
+        "pl_fake",
+        "plan.cpm",
+        "Critical path method",
+        engine("crest-plan"),
+    );
+    let mut duration = ComputedValue::new(5.0);
+    duration.unit = Some("d".into());
+    schedule.values.insert("project_duration".into(), duration);
+    GanttSpec {
+        title: None,
+        path: request.path.clone(),
+        start: request.start.clone(),
+        calendar: request.calendar,
+        tasks: vec![
+            task("design", 3.0, 0.0, 0.0, None),
+            task("build", 2.0, 3.0, 0.0, Some("design")),
+            task("docs", 1.0, 3.0, 1.0, Some("design")),
+        ],
+        project_duration: 5.0,
+        critical_path: vec!["design".into(), "build".into()],
+        schedule,
         warnings: Vec::new(),
     }
 }
