@@ -51,6 +51,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Waveform(_) => "waveform",
         BlockKind::Netlist(_) => "netlist",
         BlockKind::Material(_) => "material",
+        BlockKind::CadModel(_) => "cad_model",
     }
 }
 

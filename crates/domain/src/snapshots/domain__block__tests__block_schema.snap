@@ -643,6 +643,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A STEP part tessellated into the 3D view, with its solids (tool\n`show_step`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "cad_model"
+        }
+      },
+      "$ref": "#/$defs/CadModelSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1449,6 +1463,13 @@ expression: "schemars::schema_for!(Block)"
         "mesh": {
           "description": "The mesh.",
           "$ref": "#/$defs/ModelMesh"
+        },
+        "unit": {
+          "description": "The length unit of the coordinates, when the file says it (`mm`,\n`in`; STEP does, OBJ/STL/PLY do not). Measurements show it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -10666,6 +10687,152 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "name",
         "properties"
+      ]
+    },
+    "CadSolid": {
+      "description": "A solid (or an open shell) of the part.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name in the file (`MANIFOLD_SOLID_BREP('name', …)`), or\n`solid N` when it has none.",
+          "type": "string"
+        },
+        "product": {
+          "description": "The product it belongs to, when the file links it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "faces": {
+          "description": "Faces of its boundary.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "failed_faces": {
+          "description": "Faces the tessellator could not mesh (left out of the view).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "first_triangle": {
+          "description": "Index of its first triangle in the mesh.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "triangles": {
+          "description": "Its triangles.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "min": {
+          "description": "Corners of its box, in file units (all zero without triangles).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "max": {
+          "description": "See [`Self::min`].",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "name",
+        "faces",
+        "first_triangle",
+        "triangles",
+        "min",
+        "max"
+      ]
+    },
+    "CadModelSpec": {
+      "description": "A tessellated STEP part.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the view; defaults to the file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The file, relative to the workspace.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "The schema of `FILE_SCHEMA` (`AUTOMOTIVE_DESIGN`,\n`CONFIG_CONTROL_DESIGN`, `AP242_…`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "application": {
+          "description": "The originating system of `FILE_NAME` (the CAD tool).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "The length unit of the coordinates (`mm`, `m`, `in`), when the file\ndeclares one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "products": {
+          "description": "Names of the products in the file.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "solids": {
+          "description": "The solids, in the order of the mesh.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CadSolid"
+          }
+        },
+        "mesh": {
+          "description": "Every solid's triangles, in file units, Z up.",
+          "$ref": "#/$defs/ModelMesh"
+        },
+        "tolerance": {
+          "description": "Chord tolerance of the tessellation, in file units.",
+          "type": "number",
+          "format": "double"
+        },
+        "warnings": {
+          "description": "Reader notes (shells that could not be converted, skipped\nplacements).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "path",
+        "solids",
+        "mesh",
+        "tolerance"
       ]
     }
   }

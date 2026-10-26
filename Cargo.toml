@@ -142,6 +142,19 @@ sqlparser = { version = "=0.63.0", default-features = false, features = ["std"] 
 # (Surfer's backend). Pulls fst-reader (BSD-3), lz4_flex (MIT), leb128,
 # num_enum, memmap2, miniz_oxide, rayon, smallvec: all MIT/Apache/BSD.
 wellen = { version = "=0.25.7", default-features = false }
+# STEP parts (show_step, /open): truck's STEP reader and tessellator,
+# Apache-2.0 (with ruststep, spade, robust, cgmath: MIT/Apache). Without
+# meshalgo's default `vtk` feature, which pulls vtkio, nom 3 and xz2's C
+# build. Both stale since 2024: spiked on real AP203/AP214 files first (see
+# the research note); the adapter catches their panics.
+ruststep = "=0.4.0"
+truck-stepio = "=0.3.0"
+truck-meshalgo = { version = "=0.4.0", default-features = false, features = ["tessellation", "analyzers"] }
+# 2D drawings (show_dxf): ixmilia's DXF reader, MIT.
+dxf = "=0.6.2"
+# IFC schedules (show_ifc_schedule): IFClite's STEP/IFC scanner and decoder,
+# MPL-2.0 (file-level copyleft; used unmodified).
+ifc-lite-core = "=22.6.0"
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot

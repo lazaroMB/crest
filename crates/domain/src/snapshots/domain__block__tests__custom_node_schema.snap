@@ -681,6 +681,13 @@ expression: "schemars::schema_for!(CustomNode)"
         "mesh": {
           "description": "The mesh.",
           "$ref": "#/$defs/ModelMesh"
+        },
+        "unit": {
+          "description": "The length unit of the coordinates, when the file says it (`mm`,\n`in`; STEP does, OBJ/STL/PLY do not). Measurements show it.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

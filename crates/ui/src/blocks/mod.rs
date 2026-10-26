@@ -8,6 +8,7 @@
 
 pub mod ansi;
 pub mod bench;
+pub mod cad;
 pub mod chart;
 pub mod computed;
 pub mod copy;
@@ -93,6 +94,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Waveform(_) => waveform::render(entry, window, cx),
         BlockKind::Netlist(_) => netlist::render(entry, window, cx),
         BlockKind::Material(_) => material::render(entry, window, cx),
+        BlockKind::CadModel(_) => cad::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

@@ -5,7 +5,8 @@
 //! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
 //! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
-//! (Graphviz DOT, ER from SQL DDL) and criterion benchmark results.
+//! (Graphviz DOT, ER from SQL DDL), criterion benchmark results and
+//! engineering files (waveforms, netlists, STEP parts).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -22,6 +23,7 @@ use domain::devops::logs::{LogFormat, LogSpec};
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::cad::CadModelSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
@@ -101,6 +103,16 @@ pub struct WaveRequest {
     pub signals: Vec<String>,
     /// How buses are written at first.
     pub radix: Radix,
+}
+
+/// What [`FormatsPort::parse_step`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StepRequest {
+    /// Workspace path of the file, for the block and messages.
+    pub path: String,
+    /// Chord tolerance of the tessellation in file units; by default a
+    /// fraction of the part's size.
+    pub tolerance: Option<f64>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -296,6 +308,17 @@ pub trait FormatsPort: Send + Sync {
         format: Option<NetlistFormat>,
         path: Option<&str>,
     ) -> Result<NetlistSpec, FormatError>;
+
+    /// A STEP part (ISO 10303-21, AP203/AP214/AP242 B-rep): every solid
+    /// tessellated into one mesh, with the file's schema, unit and
+    /// product names. Runs within a time limit; a reader crash on a file
+    /// is an error, not a panic.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when the file is not STEP, holds no solid
+    /// that could be meshed, is over the triangle limit or took too long.
+    fn parse_step(&self, bytes: &[u8], request: &StepRequest) -> Result<CadModelSpec, FormatError>;
 }
 
 #[cfg(test)]

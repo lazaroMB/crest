@@ -175,6 +175,7 @@ pub(crate) fn rich_tree() -> CustomNode {
                     triangles: vec![[0, 1, 2]],
                     up: domain::model3d::UpAxis::Y,
                 },
+                unit: None,
             }),
         ],
     }

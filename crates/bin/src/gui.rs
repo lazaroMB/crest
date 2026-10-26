@@ -925,8 +925,15 @@ async fn post_images(
 /// app's sink, so a picture's path is checked again by the image guard; it
 /// is not part of the saved timeline.
 async fn open_command(app: Arc<tokio::sync::Mutex<App>>, args: String) -> Reply {
-    let fs = Arc::clone(&app.lock().await.fs);
-    match application::usecases::open_file::open_file(fs.as_ref(), &args).await {
+    let (fs, step) = {
+        let app = app.lock().await;
+        let step = application::usecases::open_file::StepReader {
+            formats: Arc::clone(&app.formats),
+            offload: Arc::clone(&app.compute.offload),
+        };
+        (Arc::clone(&app.fs), step)
+    };
+    match application::usecases::open_file::open_file_with(fs.as_ref(), Some(&step), &args).await {
         Ok(spec) => {
             app.lock().await.emit(DomainEvent::ModalOpened { spec });
             Reply::Done

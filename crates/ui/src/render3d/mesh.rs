@@ -10,6 +10,7 @@ use domain::model3d::{ModelMesh, UpAxis};
 use domain::sysmodel::scene::{DOWN, Frame, HIGHLIGHT, PACKET_RADIUS, Rgb, Scene};
 
 use super::math::{self, V3};
+use super::section::{self, Section};
 
 /// Floats per vertex: position, normal, base colour, emissive.
 pub const FLOATS_PER_VERTEX: usize = 12;
@@ -23,6 +24,77 @@ pub struct Mesh {
     pub vertices: Vec<f32>,
     /// Triangle list.
     pub indices: Vec<u32>,
+}
+
+/// Where a model's file coordinates go in the viewer: `up` turned to +Y,
+/// centred on the origin and scaled to [`MODEL_RADIUS`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    /// The file's up axis.
+    pub up: UpAxis,
+    /// Centre of the turned box, before scaling.
+    pub center: V3,
+    /// World units per file unit.
+    pub scale: f32,
+    /// The placed box.
+    pub bounds: (V3, V3),
+}
+
+impl Placement {
+    /// The placement of `model`'s box with `up` up (the identity for a
+    /// model without triangles).
+    #[must_use]
+    pub fn of(model: &ModelMesh, up: UpAxis) -> Self {
+        let Some((min, max)) = model.bounds() else {
+            return Self {
+                up,
+                center: [0.0; 3],
+                scale: 1.0,
+                bounds: ([0.0; 3], [0.0; 3]),
+            };
+        };
+        let (min, max) = (turn(up, min), turn(up, max));
+        let (min, max) = (
+            [min[0].min(max[0]), min[1].min(max[1]), min[2].min(max[2])],
+            [min[0].max(max[0]), min[1].max(max[1]), min[2].max(max[2])],
+        );
+        let center = math::scale(math::add(min, max), 0.5);
+        let half = math::length(math::sub(max, min)) / 2.0;
+        let scale = if half > 0.0 { MODEL_RADIUS / half } else { 1.0 };
+        Self {
+            up,
+            center,
+            scale,
+            bounds: (
+                math::scale(math::sub(min, center), scale),
+                math::scale(math::sub(max, center), scale),
+            ),
+        }
+    }
+
+    /// File point `p` in the viewer's world.
+    #[must_use]
+    pub fn to_world(&self, p: V3) -> V3 {
+        math::scale(math::sub(turn(self.up, p), self.center), self.scale)
+    }
+
+    /// World point `w` back in file coordinates.
+    #[must_use]
+    pub fn to_file(&self, w: V3) -> V3 {
+        let t = math::add(math::scale(w, 1.0 / self.scale), self.center);
+        match self.up {
+            UpAxis::Y => t,
+            UpAxis::Z => [t[0], -t[2], t[1]],
+        }
+    }
+}
+
+/// `p` with `up` turned to +Y.
+fn turn(up: UpAxis, p: V3) -> V3 {
+    match up {
+        UpAxis::Y => p,
+        UpAxis::Z => [p[0], p[2], -p[1]],
+    }
 }
 
 impl Mesh {
@@ -47,48 +119,57 @@ impl Mesh {
     /// shading. Returns the mesh and its box.
     #[must_use]
     pub fn from_model(model: &ModelMesh, up: UpAxis, color: Rgb) -> (Self, (V3, V3)) {
-        let world = |p: [f32; 3]| match up {
-            UpAxis::Y => p,
-            UpAxis::Z => [p[0], p[2], -p[1]],
-        };
-        let Some((min, max)) = model.bounds() else {
-            return (Self::default(), ([0.0; 3], [0.0; 3]));
-        };
-        let (min, max) = (world(min), world(max));
-        let (min, max) = (
-            [min[0].min(max[0]), min[1].min(max[1]), min[2].min(max[2])],
-            [min[0].max(max[0]), min[1].max(max[1]), min[2].max(max[2])],
-        );
-        let center = math::scale(math::add(min, max), 0.5);
-        let half = math::length(math::sub(max, min)) / 2.0;
-        let scale = if half > 0.0 { MODEL_RADIUS / half } else { 1.0 };
-        let place = |p: [f32; 3]| math::scale(math::sub(world(p), center), scale);
+        let placement = Placement::of(model, up);
+        let mesh = Self::from_model_cut(model, &placement, color, &|_| true, None);
+        (mesh, placement.bounds)
+    }
+
+    /// The triangles of `model` placed by `placement` (so a cut or a
+    /// filtered mesh stays where the whole model is), only those whose
+    /// index `keep` accepts, cut by `section` (in file coordinates) when
+    /// there is one.
+    #[must_use]
+    pub fn from_model_cut(
+        model: &ModelMesh,
+        placement: &Placement,
+        color: Rgb,
+        keep: &dyn Fn(usize) -> bool,
+        section: Option<&Section>,
+    ) -> Self {
         let mut mesh = Self {
             vertices: Vec::with_capacity(model.triangles.len() * 3 * FLOATS_PER_VERTEX),
             indices: Vec::with_capacity(model.triangles.len() * 3),
         };
-        for t in &model.triangles {
-            let Some([a, b, c]) = t
+        for (index, t) in model.triangles.iter().enumerate() {
+            if !keep(index) {
+                continue;
+            }
+            let Some(file) = t
                 .iter()
-                .map(|&i| model.positions.get(i as usize).copied().map(place))
+                .map(|&i| model.positions.get(i as usize).copied())
                 .collect::<Option<Vec<_>>>()
                 .and_then(|v| <[V3; 3]>::try_from(v).ok())
             else {
                 continue;
             };
+            let polygon = match section {
+                Some(section) => section::clip_triangle(file, section),
+                None => file.to_vec(),
+            };
+            if polygon.len() < 3 {
+                continue;
+            }
+            let placed: Vec<V3> = polygon.iter().map(|&p| placement.to_world(p)).collect();
+            let (a, b, c) = (placed[0], placed[1], placed[2]);
             let n = math::cross(math::sub(b, a), math::sub(c, a));
             let n = if math::length(n) > 0.0 {
                 math::normalize(n)
             } else {
                 [0.0, 1.0, 0.0]
             };
-            mesh.polygon(&[a, b, c], n, color, [0.0; 3]);
+            mesh.polygon(&placed, n, color, [0.0; 3]);
         }
-        let bounds = (
-            math::scale(math::sub(min, center), scale),
-            math::scale(math::sub(max, center), scale),
-        );
-        (mesh, bounds)
+        mesh
     }
 
     fn polygon(&mut self, points: &[V3], n: V3, color: Rgb, emissive: Rgb) {
@@ -456,6 +537,46 @@ mod tests {
         assert!(n[1].abs() > 0.99, "{n:?}");
         let (y_up, _) = Mesh::from_model(&model, UpAxis::Y, [0.5; 3]);
         assert!(y_up.vertices[4].abs() < 1e-6, "Y up keeps the file's axes");
+    }
+
+    #[test]
+    fn placement_round_trips_and_cuts_stay_in_place() {
+        let model = ModelMesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [0.0, 0.0, 6.0],
+            ],
+            triangles: vec![[0, 1, 2], [0, 1, 3]],
+            up: UpAxis::Z,
+        };
+        for up in [UpAxis::Z, UpAxis::Y] {
+            let placement = Placement::of(&model, up);
+            let p = [1.5, -0.5, 4.0];
+            let back = placement.to_file(placement.to_world(p));
+            assert!(math::length(math::sub(back, p)) < 1e-5, "{up:?}: {back:?}");
+        }
+        let placement = Placement::of(&model, UpAxis::Z);
+        let whole = Mesh::from_model_cut(&model, &placement, [0.5; 3], &|_| true, None);
+        assert_eq!(whole, Mesh::from_model(&model, UpAxis::Z, [0.5; 3]).0);
+        let second = Mesh::from_model_cut(&model, &placement, [0.5; 3], &|i| i == 1, None);
+        assert_eq!(second.vertex_count(), 3, "only the kept triangle");
+        // z ≤ 3 leaves the floor triangle and a quad of the wall.
+        let cut = Section {
+            axis: 2,
+            offset: 3.0,
+            flip: false,
+        };
+        let cut = Mesh::from_model_cut(&model, &placement, [0.5; 3], &|_| true, Some(&cut));
+        assert_eq!(cut.vertex_count(), 3 + 4);
+        assert_eq!(cut.indices.len(), 3 * 3, "a triangle and a quad's two");
+        let top = cut
+            .vertices
+            .chunks(FLOATS_PER_VERTEX)
+            .map(|v| placement.to_file([v[0], v[1], v[2]])[2])
+            .fold(f32::MIN, f32::max);
+        assert!((top - 3.0).abs() < 1e-4, "cut at z = 3: {top}");
     }
 
     #[test]

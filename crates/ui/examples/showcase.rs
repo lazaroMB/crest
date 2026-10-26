@@ -648,6 +648,7 @@ impl SessionController for Fake {
                     CustomNode::Model3d(ModelSpec {
                         name: "gear.stl".into(),
                         mesh: gear(18, 16.0, 19.0, 5.0, 6.0),
+                        unit: Some("mm".into()),
                     }),
                 ));
                 Reply::Done
