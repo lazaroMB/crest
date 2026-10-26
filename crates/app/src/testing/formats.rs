@@ -31,7 +31,8 @@
 //! and a `PLATE` note; every IFC schedule is project `House` with a
 //! `Ground floor` holding `101` Kitchen (12.5 m² from
 //! Qto_SpaceBaseQuantities) and `102` Store (no area), 4 walls, 2 doors
-//! and 3 windows.
+//! and 3 windows; every sequence is the circular 30 bp `pFake` with a
+//! CDS `orf` (1..9) and one EcoRI site (cut after 10).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -66,11 +67,14 @@ use domain::widget::list::{ListItem, ListSpec};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use serde_json::Map;
 
+use domain::science::sequence::{
+    Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
+};
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    StepRequest, WaveRequest,
+    SequenceRequest, StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -844,6 +848,51 @@ impl FormatsPort for FakeFormats {
             }],
             unplaced_spaces: Vec::new(),
             unplaced: ElementCounts::default(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_sequence(
+        &self,
+        _bytes: &[u8],
+        request: &SequenceRequest,
+    ) -> Result<SequenceSpec, FormatError> {
+        self.record(
+            "parse_sequence",
+            request.path.as_deref().unwrap_or("<inline>"),
+        )?;
+        Ok(SequenceSpec {
+            title: None,
+            path: request.path.clone(),
+            format: SequenceFormat::Genbank,
+            name: Some("pFake".into()),
+            description: Some("a fake plasmid".into()),
+            accession: None,
+            organism: None,
+            alphabet: Alphabet::Dna,
+            topology: request.topology.unwrap_or(Topology::Circular),
+            sequence: "ATGAAATAAGAATTCCCCGGGTTTTAAAAC".into(),
+            features: vec![SeqFeature {
+                kind: "CDS".into(),
+                label: Some("orf".into()),
+                segments: vec![SeqSpan { start: 0, end: 9 }],
+                strand: Strand::Forward,
+                qualifiers: Vec::new(),
+            }],
+            cut_sites: if request.enzymes {
+                vec![CutSite {
+                    enzyme: "EcoRI".into(),
+                    site: "GAATTC".into(),
+                    start: 9,
+                    cut: 10,
+                    strand: Strand::Forward,
+                }]
+            } else {
+                Vec::new()
+            },
+            enzyme_source: request.enzymes.then(|| "REBASE".to_owned()),
+            records: 1,
+            record: 0,
             warnings: Vec::new(),
         })
     }

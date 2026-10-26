@@ -15,6 +15,7 @@ domain.workspace = true
 dxf.workspace = true
 encoding_rs.workspace = true
 flate2.workspace = true
+gb-io.workspace = true
 ifc-lite-core.workspace = true
 parquet.workspace = true
 prost.workspace = true

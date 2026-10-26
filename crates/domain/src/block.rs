@@ -34,6 +34,7 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::sequence::SequenceSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
@@ -155,6 +156,7 @@ impl Block {
             BlockKind::CadModel(spec) => spec.validate(),
             BlockKind::Drawing(spec) => spec.validate(),
             BlockKind::IfcSchedule(spec) => spec.validate(),
+            BlockKind::Sequence(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -340,6 +342,9 @@ pub enum BlockKind {
     Drawing(Box<DrawingSpec>),
     /// An IFC model's room schedule by storey (tool `show_ifc_schedule`).
     IfcSchedule(Box<IfcScheduleSpec>),
+    /// A DNA, RNA or protein sequence with its features (tool
+    /// `show_sequence`).
+    Sequence(Box<SequenceSpec>),
 }
 
 /// Lifecycle of a tool call.

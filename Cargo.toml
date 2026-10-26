@@ -157,6 +157,9 @@ encoding_rs = "=0.8.42"
 # IFC schedules (show_ifc_schedule): IFClite's STEP/IFC scanner and decoder,
 # MPL-2.0 (file-level copyleft; used unmodified).
 ifc-lite-core = "=22.6.0"
+# Sequences (show_sequence): GenBank flat files, MIT; adds only
+# `circular` (MIT) next to nom 8 and itertools 0.14, already in the tree.
+gb-io = { version = "=0.9.0", default-features = false }
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot

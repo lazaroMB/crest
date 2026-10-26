@@ -31,6 +31,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 
 /// What [`FormatsPort::preview_dataset`] reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +117,23 @@ pub struct StepRequest {
     /// Chord tolerance of the tessellation in file units; by default a
     /// fraction of the part's size.
     pub tolerance: Option<f64>,
+}
+
+/// What [`FormatsPort::parse_sequence`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SequenceRequest {
+    /// Workspace path of the file, for the block and messages; `None` for
+    /// residues given inline.
+    pub path: Option<String>,
+    /// The record to show of a multi-record file, 0-based.
+    pub record: usize,
+    /// What the residues are; guessed from them when absent (GenBank
+    /// says).
+    pub alphabet: Option<Alphabet>,
+    /// Linear or circular; GenBank's LOCUS line says, otherwise linear.
+    pub topology: Option<Topology>,
+    /// Search the bundled restriction enzymes (nucleic acids).
+    pub enzymes: bool,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -341,6 +359,20 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] when the file is not IFC or has neither
     /// storeys nor spaces.
     fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError>;
+
+    /// A sequence: a GenBank flat file (features, topology, organism),
+    /// FASTA or bare residues, told apart by content, with the cut sites
+    /// of the bundled enzymes when asked.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when nothing reads as a sequence or the
+    /// record does not exist.
+    fn parse_sequence(
+        &self,
+        bytes: &[u8],
+        request: &SequenceRequest,
+    ) -> Result<SequenceSpec, FormatError>;
 }
 
 #[cfg(test)]
