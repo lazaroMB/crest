@@ -187,6 +187,7 @@ dependencies = [
  "gb-io",
  "geo",
  "geojson",
+ "hdf5-pure",
  "ifc-lite-core",
  "mzdata",
  "parquet",
@@ -4215,6 +4216,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "hdf5-pure"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18a2ed6aa54b01776adf71049f7f776284c22d6febe772155ac040105ffbd126"
+dependencies = [
+ "byteorder",
+ "flate2",
 ]
 
 [[package]]

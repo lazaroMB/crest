@@ -7,6 +7,7 @@
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod ansi;
+pub mod arrays;
 pub mod bench;
 pub mod cad;
 pub mod chart;
@@ -115,6 +116,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Ghs(_) => ghs::render(entry, window, cx),
         BlockKind::GeoMap(_) => geomap::render(entry, window, cx),
         BlockKind::Gantt(_) => gantt::render(entry, window, cx),
+        BlockKind::ArrayFile(_) => arrays::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

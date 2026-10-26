@@ -35,8 +35,11 @@
 //!   V2000 reader, chematic's V3000, XYZ and PDB readers);
 //! - GeoJSON maps with geodesic measures ([`geomap`]: geojson, proj4rs,
 //!   geo; engine records from [`sci`]);
-//! - Gantt charts scheduled by the critical path method ([`gantt`]).
+//! - Gantt charts scheduled by the critical path method ([`gantt`]);
+//! - HDF5, NetCDF-4 and NetCDF-3 structure with bounded previews
+//!   ([`arrays`]: hdf5-pure, our own NetCDF-3 reader).
 
+pub mod arrays;
 pub mod bench;
 pub mod chem;
 pub mod dataset;
@@ -68,9 +71,9 @@ pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest, MapRequest,
-    Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest,
-    StepRequest, WaveRequest,
+    ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, ProfileRequest, SequenceRequest,
+    SpectrumRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -89,6 +92,7 @@ use domain::engineering::waveform::WaveformSpec;
 use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::arrays::ArrayFileSpec;
 use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::molecule3d::Molecule3dSpec;
@@ -262,5 +266,13 @@ impl FormatsPort for Formats {
 
     fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError> {
         gantt::schedule(request).map_err(FormatError::Invalid)
+    }
+
+    fn inspect_array_file(
+        &self,
+        bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError> {
+        arrays::inspect(bytes, request).map_err(FormatError::Invalid)
     }
 }

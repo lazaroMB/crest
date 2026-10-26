@@ -1,0 +1,40 @@
+---
+source: crates/app/src/tools/formats/arrays.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_array_file",
+  "description": "Inspects an HDF5, NetCDF-4 or NetCDF-3 file (`path`) in the user's timeline: the group and variable tree with types, shapes, dimension names, chunking, compression and attributes, and bounded previews (the first values of a 1D variable as a line, the first 2D slice of a higher one as a heatmap) of the first few numeric variables or of `variable`. Statistics are computed on the preview only and say which slice; never present them as the whole variable's. Returns the structure and the preview statistics.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "An HDF5 (`.h5`, `.hdf5`, `.he5`), NetCDF-4 or NetCDF-3 (`.nc`) file\nof the workspace."
+      },
+      "variable": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The variable to preview (`/group/name` or a NetCDF name); the\nfirst few numeric ones when absent.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the inspector.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_array_file`.",
+    "title": "ShowArrayFile",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

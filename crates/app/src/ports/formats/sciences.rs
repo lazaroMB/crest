@@ -61,3 +61,14 @@ pub struct GanttRequest {
     /// Which days are working days.
     pub calendar: Calendar,
 }
+
+/// What [`super::FormatsPort::inspect_array_file`] reads besides the
+/// bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArrayRequest {
+    /// Workspace path of the file, for the block and messages.
+    pub path: String,
+    /// The variable to preview (`/sim/field`, or a NetCDF name); the first
+    /// few numeric variables when absent.
+    pub variable: Option<String>,
+}

@@ -170,6 +170,12 @@ mzdata = { version = "=0.67.4", default-features = false, features = ["mgf", "mz
 geojson = { version = "=1.0.0", default-features = false }
 geo = { version = "=0.33.1", default-features = false }
 proj4rs = { version = "=0.2.1", default-features = false }
+# Array files (show_array_file): a pure-Rust HDF5 reader (MIT/Apache, the
+# HDF5 and ZFP code it ports under their BSD-3 licences; no C, no build
+# script) for HDF5 and NetCDF-4. Default features (std, checksum, deflate
+# through flate2, already in the tree); adds only byteorder. NetCDF-3 is
+# our own reader: netcdf3 0.6.1 cannot read part of a variable.
+hdf5-pure = "=0.47.0"
 
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot

@@ -1,13 +1,14 @@
 //! Science B viewers on fixture files (all generated for these tests):
-//! GeoJSON maps and Gantt charts.
+//! GeoJSON maps, Gantt charts and HDF5 / NetCDF-3 files.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
 use application::ports::formats::{
-    FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
+    ArrayRequest, FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
 };
 use domain::gantt::Calendar;
+use domain::science::arrays::{ArrayFormat, ArrayNodeKind, PreviewKind};
 use domain::science::geomap::{CrsSource, GeometryKind, to_lon_lat};
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -228,4 +229,129 @@ fn cycles_and_unknown_tasks_are_named() {
     let ok = run(vec![task("a", &[])]).unwrap();
     assert_eq!(ok.start.as_deref(), Some("2026-11-09"));
     assert!(ok.warnings[0].contains("not a working day"));
+}
+
+fn arrays(
+    name: &str,
+    variable: Option<&str>,
+) -> Result<domain::science::arrays::ArrayFileSpec, String> {
+    Formats::new()
+        .inspect_array_file(
+            &fixture(name),
+            &ArrayRequest {
+                path: format!("data/{name}"),
+                variable: variable.map(str::to_owned),
+            },
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn hdf5_structure_and_bounded_previews() {
+    let spec = arrays("arrays.h5", None).unwrap();
+    spec.validate().unwrap();
+    assert_eq!(spec.format, ArrayFormat::Hdf5);
+    let paths: Vec<&str> = spec.nodes.iter().map(|n| n.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/",
+            "/scalar",
+            "/series",
+            "/sim",
+            "/sim/field",
+            "/sim/stack"
+        ]
+    );
+    let root = &spec.nodes[0];
+    assert_eq!(root.attr("title"), Some("crest array fixture"));
+    let field = spec.node("/sim/field").unwrap();
+    assert_eq!(field.kind, ArrayNodeKind::Variable);
+    assert_eq!(field.dtype.as_deref(), Some("f32"));
+    assert_eq!(field.shape, vec![40, 30]);
+    assert_eq!(field.chunks, Some(vec![10, 10]));
+    assert_eq!(field.filters.len(), 2, "{:?}", field.filters);
+    assert!(
+        field.filters.iter().any(|f| f.starts_with("deflate")),
+        "{:?}",
+        field.filters
+    );
+    assert_eq!(field.attr("units"), Some("K"));
+    // Previews: the 2D and 3D first, then the 1D, then the scalar.
+    let order: Vec<&str> = spec.previews.iter().map(|p| p.path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["/sim/field", "/sim/stack", "/series", "/scalar"]
+    );
+    let heat = &spec.previews[0];
+    assert_eq!(
+        (heat.kind, heat.rows, heat.cols),
+        (PreviewKind::Heatmap, 40, 30)
+    );
+    assert_eq!(heat.at(3, 7), Some(307.0));
+    assert_eq!(heat.selection, "[0:40, 0:30]");
+    let st = &heat.stats.values;
+    assert_eq!((st["n"].v, st["min"].v, st["max"].v), (1200.0, 0.0, 3929.0));
+    // Mean of r*100 + c over 40 x 30: 19.5*100 + 14.5.
+    assert!((st["mean"].v - 1964.5).abs() < 1e-9);
+    assert!(
+        heat.stats
+            .method
+            .why
+            .as_deref()
+            .unwrap()
+            .contains("preview only")
+    );
+    let stack = &spec.previews[1];
+    assert_eq!(stack.selection, "[0, 0:8, 0:6]");
+    assert_eq!((stack.rows, stack.cols, stack.at(7, 5)), (8, 6, Some(75.0)));
+    let series = &spec.previews[2];
+    assert_eq!((series.kind, series.cols), (PreviewKind::Line, 2000));
+    assert_eq!(series.values[100], Some(3.0));
+    assert_eq!(spec.previews[3].values, vec![Some(2.5)]);
+    // One variable on request, by name or path.
+    let one = arrays("arrays.h5", Some("stack")).unwrap();
+    assert_eq!(one.previews.len(), 1);
+    assert!(
+        arrays("arrays.h5", Some("nope"))
+            .unwrap_err()
+            .contains("/sim/field")
+    );
+}
+
+#[test]
+fn netcdf3_classic_with_records_and_cf_decoding() {
+    let spec = arrays("grid.nc", None).unwrap();
+    spec.validate().unwrap();
+    assert_eq!(spec.format, ArrayFormat::Netcdf3Classic);
+    assert_eq!(spec.nodes[0].attr("Conventions"), Some("CF-1.8"));
+    let temp = spec.node("/temp").unwrap();
+    assert_eq!(temp.shape, vec![3, 4, 5], "3 records");
+    assert_eq!(temp.dims, vec!["time", "lat", "lon"]);
+    assert_eq!(temp.dtype.as_deref(), Some("i16"));
+    assert_eq!(temp.shape_text(), "time=3 × lat=4 × lon=5");
+    let time = spec.node("/time").unwrap();
+    assert_eq!(time.attr("units"), Some("hours since 2026-01-01"));
+    let p = spec.previews.iter().find(|p| p.path == "/temp").unwrap();
+    assert_eq!(p.selection, "[0, 0:4, 0:5]");
+    // stored × 0.5 + 250; the fill value is missing.
+    assert_eq!(p.at(0, 0), Some(250.0));
+    assert_eq!(p.at(3, 4), Some(250.0 + 34.0 * 0.5));
+    assert_eq!(p.at(1, 2), None);
+    assert_eq!(p.stats.values["missing"].v, 1.0);
+    assert_eq!(p.stats.values["n"].v, 19.0);
+    assert!(p.decoding.as_deref().unwrap().contains("scale_factor"));
+    // A record variable's later rows come from their own records.
+    let times = spec.previews.iter().find(|p| p.path == "/time").unwrap();
+    assert_eq!(times.values, vec![Some(0.0), Some(6.0), Some(12.0)]);
+    let lat = spec.previews.iter().find(|p| p.path == "/lat").unwrap();
+    assert_eq!(
+        lat.values,
+        vec![Some(10.0), Some(20.0), Some(30.0), Some(40.0)]
+    );
+    assert!(
+        Formats::new()
+            .inspect_array_file(b"not an array file", &ArrayRequest::default())
+            .is_err()
+    );
 }
