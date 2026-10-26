@@ -1,13 +1,15 @@
 //! Lab blocks: a 2D molecule with its validation strip (`show_molecule`)
 //! and a microplate map (`show_plate`), plus the science viewers of
 //! [`sequence`] (`show_sequence`, with the restriction enzymes of
-//! [`enzymes`]) and [`reaction`] (`show_reaction`).
+//! [`enzymes`]), [`reaction`] (`show_reaction`) and [`molecule_grid`]
+//! (`show_molecule_grid`).
 //!
 //! A molecule's formula, mass and charge are computed from its SMILES by
 //! the chemistry adapter; when the model also stated a formula
 //! (`claimed_formula`), the block shows whether the two agree.
 
 pub mod enzymes;
+pub mod molecule_grid;
 pub mod reaction;
 pub mod sequence;
 

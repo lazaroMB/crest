@@ -2,8 +2,8 @@
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
-//! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence` and
-//! `show_reaction` tools from Lua. Each returns a block (wrapped like
+//! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
+//! `show_reaction` and `show_molecule_grid` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -25,6 +25,7 @@
 //! return app.formats.ifc_schedule{ path = 'bim/house.ifc' }
 //! return app.formats.sequence{ path = 'dna/puc19.gb' }
 //! return app.formats.reaction{ smiles = 'C.O=O>>O=C=O.O' }
+//! return app.formats.molecule_grid{ molecules = { { id = 'A1', smiles = 'CCO', activity = 12 } } }
 //! ```
 //!
 //! | Function | Block |
@@ -47,6 +48,7 @@
 //! | `ifc_schedule{ path, title }` | an IFC model's spaces and areas (only the file's) and wall/door/window counts per storey |
 //! | `sequence{ path or sequence, record, alphabet, circular, enzymes, title }` | a GenBank, FASTA or plain sequence with features, frames and (circular DNA) a plasmid map; `record` 1-based, `alphabet` `dna`/`rna`/`protein`, `enzymes` (default true) searches the bundled restriction enzymes |
 //! | `reaction{ smiles, coefficients, conditions, names, title }` | a reaction scheme with its atom and charge balance and, when unbalanced, suggested coefficients (raises on a SMILES that does not parse) |
+//! | `molecule_grid{ molecules or path, activity_column, activity_label, activity_unit, direction, title }` | a SAR grid with computed descriptors (`molecules`: `{ id, smiles, name, activity }` tables; `path`: CSV/TSV with a `smiles` column; `direction`: `higher` or `lower`) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -62,6 +64,7 @@ use application::ports::formats::{
 };
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
+    grid_entries,
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
     collect_benchmarks, dataset_format, read_dataset, read_har, read_ifc, read_log, read_report,
     read_step, read_wave,
@@ -554,6 +557,62 @@ fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
+fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "molecule_grid";
+    let services = services(lua, F)?;
+    let listed: Vec<application::ports::formats::GridEntry> = match args.get::<Value>("molecules")? {
+        Value::Nil => Vec::new(),
+        value @ Value::Table(_) => {
+            let json = convert::to_json(lua, value)?;
+            serde_json::from_value(json)
+                .map_err(|e| error(F, format!("`molecules`: {e}")))?
+        }
+        other => {
+            return Err(error(
+                F,
+                format!("`molecules` must be a list, got {}", other.type_name()),
+            ));
+        }
+    };
+    let molecules = match (text(args, F, "path")?, listed.is_empty()) {
+        (Some(_), false) => return Err(error(F, "give `molecules` or `path`, not both")),
+        (None, true) => return Err(error(F, "`molecules` or `path` is required")),
+        (None, false) => listed,
+        (Some(path), true) => {
+            let bytes = context(lua)?
+                .block_on(read_report(services.fs.as_ref(), &path))?
+                .map_err(|e| error(F, e))?;
+            let text_body = String::from_utf8(bytes)
+                .map_err(|_| error(F, format!("`{path}` is not UTF-8 text")))?;
+            let column = text(args, F, "activity_column")?.unwrap_or_else(|| "activity".into());
+            grid_entries(
+                &text_body,
+                application::csv::delimiter_for(&path),
+                &column,
+            )
+            .map_err(|e| error(F, format!("`{path}`: {e}")))?
+        }
+    };
+    let direction = match text(args, F, "direction")? {
+        Some(d) => serde_json::from_value(json!(d.to_ascii_lowercase()))
+            .map_err(|_| error(F, format!("unknown `direction` `{d}`")))?,
+        None => domain::science::molecule_grid::ActivityDirection::default(),
+    };
+    let request = application::ports::formats::MoleculeGridRequest {
+        molecules,
+        activity_label: text(args, F, "activity_label")?,
+        activity_unit: text(args, F, "activity_unit")?,
+        direction,
+    };
+    let mut spec = services
+        .formats
+        .molecule_grid(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::MoleculeGrid(Box::new(spec)))
+}
+
 fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "reaction";
     let services = services(lua, F)?;
@@ -591,6 +650,13 @@ fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "molecule_grid",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => molecule_grid(lua, &args),
+            _ => Err(error("molecule_grid", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "reaction",
         lua.create_function(|lua, args: Value| match args {
@@ -964,6 +1030,17 @@ mod tests {
         assert_eq!(spec.components[0].molecule.name.as_deref(), Some("h2"));
         let err = run_code("return app.formats.reaction{ smiles = 'bad' }", formats()).unwrap_err();
         assert!(err.to_string().contains("invalid reaction"), "{err}");
+        let out = run_code(
+            "return app.formats.molecule_grid{ molecules = { { id = 'A1', smiles = 'CCO', \
+             activity = 12 } }, direction = 'lower' }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::MoleculeGrid(spec)) = out else {
+            panic!("not a grid: {out:?}");
+        };
+        assert_eq!(spec.molecules[0].activity, Some(12.0));
+        assert!(run_code("return app.formats.molecule_grid{}", formats()).is_err());
     }
 
     #[test]

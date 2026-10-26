@@ -256,6 +256,14 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::MoleculeGrid(grid) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[molecule grid: {} molecules, {} not parsed]",
+                grid.molecules.len(),
+                grid.failed().len()
+            ),
+        ),
         BlockKind::Reaction(reaction) => w.line(
             Some(Style::Dim),
             &format!(

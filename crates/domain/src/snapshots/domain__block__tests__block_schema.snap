@@ -713,6 +713,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A grid of molecules with descriptors and activities (tool\n`show_molecule_grid`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "molecule_grid"
+        }
+      },
+      "$ref": "#/$defs/MoleculeGridSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -12066,6 +12080,173 @@ expression: "schemars::schema_for!(Block)"
         "components",
         "stoichiometry",
         "balance"
+      ]
+    },
+    "ActivityDirection": {
+      "description": "Whether a higher activity value is better (potency in %, pIC50) or a\nlower one (IC50, Ki).",
+      "oneOf": [
+        {
+          "description": "Higher is better.",
+          "type": "string",
+          "const": "higher"
+        },
+        {
+          "description": "Lower is better.",
+          "type": "string",
+          "const": "lower"
+        }
+      ]
+    },
+    "GridMolecule": {
+      "description": "One molecule of the grid.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its id (compound number), unique in the grid.",
+          "type": "string"
+        },
+        "molecule": {
+          "description": "The structure, depicted (or the parse error).",
+          "$ref": "#/$defs/MoleculeSpec"
+        },
+        "activity": {
+          "description": "The measured activity, as given.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "descriptors": {
+          "description": "Descriptors, when the SMILES parsed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Descriptors"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "molecule"
+      ]
+    },
+    "Descriptors": {
+      "description": "Descriptors computed from a structure.",
+      "type": "object",
+      "properties": {
+        "mw": {
+          "description": "Average molecular weight, g/mol.",
+          "type": "number",
+          "format": "double"
+        },
+        "heavy_atoms": {
+          "description": "Heavy (non-hydrogen) atoms.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "hbd": {
+          "description": "Hydrogen-bond donors.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "hba": {
+          "description": "Hydrogen-bond acceptors.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rotatable_bonds": {
+          "description": "Rotatable bonds.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rings": {
+          "description": "Rings (SSSR size).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "aromatic_rings": {
+          "description": "Aromatic rings.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "logp": {
+          "description": "Crippen logP (Wildman & Crippen 1999).",
+          "type": "number",
+          "format": "double"
+        },
+        "tpsa": {
+          "description": "Topological polar surface area, Å² (Ertl 2000, N, O, S and P).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "mw",
+        "heavy_atoms",
+        "hbd",
+        "hba",
+        "rotatable_bonds",
+        "rings",
+        "aromatic_rings",
+        "logp",
+        "tpsa"
+      ]
+    },
+    "MoleculeGridSpec": {
+      "description": "A grid of molecules with descriptors and activities.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activity_label": {
+          "description": "What the activity is (`IC50`, `% inhibition at 10 µM`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activity_unit": {
+          "description": "Its unit (`nM`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction": {
+          "description": "Which way is better, for the colours.",
+          "$ref": "#/$defs/ActivityDirection",
+          "default": "higher"
+        },
+        "molecules": {
+          "description": "The molecules in the order given.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GridMolecule"
+          }
+        },
+        "descriptors": {
+          "description": "The descriptors as an envelope (values `<id>.<descriptor>`).",
+          "$ref": "#/$defs/Computed"
+        }
+      },
+      "required": [
+        "molecules",
+        "descriptors"
       ]
     }
   }

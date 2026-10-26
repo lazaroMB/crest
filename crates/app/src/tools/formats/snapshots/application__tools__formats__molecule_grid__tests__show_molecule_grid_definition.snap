@@ -1,0 +1,130 @@
+---
+source: crates/app/src/tools/formats/molecule_grid.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_molecule_grid",
+  "description": "Shows a grid of molecules in the user's timeline for a structure–activity (SAR) table: each SMILES drawn with descriptors the engine computes (MW, heavy atoms, HBD/HBA, rotatable bonds, rings, Crippen cLogP, TPSA, rule-of-five violations) and the activity you give, sortable, filterable and coloured by activity. Give `molecules` inline or a CSV/TSV `path` with a `smiles` column. Returns the descriptors per molecule and the envelope id; cite these, never descriptor values from memory.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "molecules": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/GridEntry"
+        },
+        "description": "The molecules: `{id, smiles, name, activity}` each.",
+        "default": []
+      },
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Instead of `molecules`: a CSV or TSV file of the workspace with a\n`smiles` column and optionally `id`, `name` and the activity\ncolumn.",
+        "default": null
+      },
+      "activity_column": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The activity column of the file (default `activity`).",
+        "default": null
+      },
+      "activity_label": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "What the activity is, e.g. `IC50` or `% inhibition at 10 µM`.",
+        "default": null
+      },
+      "activity_unit": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Its unit, e.g. `nM`.",
+        "default": null
+      },
+      "direction": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ActivityDirection"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "`higher` (default) or `lower`: which activity is better, for the\ncolours (IC50 and Ki: `lower`).",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the grid.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_molecule_grid`.",
+    "title": "ShowMoleculeGrid",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "GridEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Compound id, unique in the grid (`CMP-001`)."
+          },
+          "smiles": {
+            "type": "string",
+            "description": "Its structure as SMILES."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A name shown under the id.",
+            "default": null
+          },
+          "activity": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The measured activity, in the grid's unit.",
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "smiles"
+        ],
+        "description": "One molecule of a [`MoleculeGridRequest`]."
+      },
+      "ActivityDirection": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "higher",
+            "description": "Higher is better."
+          },
+          {
+            "type": "string",
+            "const": "lower",
+            "description": "Lower is better."
+          }
+        ],
+        "description": "Whether a higher activity value is better (potency in %, pIC50) or a\nlower one (IC50, Ki)."
+      }
+    }
+  }
+}

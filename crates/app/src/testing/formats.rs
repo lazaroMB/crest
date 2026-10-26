@@ -34,7 +34,9 @@
 //! and 3 windows; every sequence is the circular 30 bp `pFake` with a
 //! CDS `orf` (1..9) and one EcoRI site (cut after 10); every reaction is
 //! `H2 + O2 → H2O` (O unbalanced, 2 H2 + O2 → 2 H2O suggested) unless its
-//! SMILES is `bad`.
+//! SMILES is `bad`; every molecule grid gives each entry ethanol's
+//! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
+//! `bad`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -70,6 +72,7 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::reaction::{
     ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
 };
@@ -80,7 +83,7 @@ use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    SequenceRequest, StepRequest, WaveRequest,
+    MoleculeGridRequest, SequenceRequest, StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -976,5 +979,66 @@ impl FormatsPort for FakeFormats {
         balance.values.insert("delta.O".into(), ComputedValue::new(-1.0));
         spec.balance = balance;
         spec
+    }
+
+    fn molecule_grid(
+        &self,
+        request: &MoleculeGridRequest,
+    ) -> Result<MoleculeGridSpec, FormatError> {
+        self.record("molecule_grid", &request.molecules.len().to_string())?;
+        if request.molecules.is_empty() {
+            return Err(FormatError::Invalid("no molecules given".into()));
+        }
+        let mut envelope = Computed::new(
+            "ch_grid",
+            "chem.descriptors",
+            "Molecular descriptors",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        let molecules = request
+            .molecules
+            .iter()
+            .map(|e| {
+                let molecule = self.depict_molecule(&e.smiles, None);
+                let descriptors = molecule.error.is_none().then(|| Descriptors {
+                    mw: 46.069,
+                    heavy_atoms: 3,
+                    hbd: 1,
+                    hba: 1,
+                    rotatable_bonds: 0,
+                    rings: 0,
+                    aromatic_rings: 0,
+                    logp: -0.0014,
+                    tpsa: 20.23,
+                });
+                if descriptors.is_some() {
+                    envelope
+                        .values
+                        .insert(format!("{}.mw", e.id), ComputedValue::new(46.069));
+                }
+                GridMolecule {
+                    id: e.id.clone(),
+                    molecule: MoleculeSpec {
+                        name: e.name.clone(),
+                        ..molecule
+                    },
+                    activity: e.activity,
+                    descriptors,
+                }
+            })
+            .collect();
+        Ok(MoleculeGridSpec {
+            title: None,
+            activity_label: request.activity_label.clone(),
+            activity_unit: request.activity_unit.clone(),
+            direction: request.direction,
+            molecules,
+            descriptors: envelope,
+        })
     }
 }
