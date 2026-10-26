@@ -3474,6 +3474,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A transfer function's Bode and Nyquist plots with its margins.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "bode"
+            }
+          },
+          "$ref": "#/$defs/BodeBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -6286,6 +6300,184 @@ expression: "schemars::schema_for!(Block)"
         "normalization",
         "criteria",
         "options"
+      ]
+    },
+    "FrequencyUnit": {
+      "description": "How frequencies are shown.",
+      "oneOf": [
+        {
+          "description": "Radians per second.",
+          "type": "string",
+          "const": "rad_per_s"
+        },
+        {
+          "description": "Hertz (ω / 2π).",
+          "type": "string",
+          "const": "hz"
+        }
+      ]
+    },
+    "BodePoint": {
+      "description": "One frequency of the response.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "description": "Frequency, rad/s.",
+          "type": "number",
+          "format": "double"
+        },
+        "magnitude_db": {
+          "description": "20·log10 |G(jω)|.",
+          "type": "number",
+          "format": "double"
+        },
+        "phase_deg": {
+          "description": "arg G(jω) in degrees, unwrapped along the sweep.",
+          "type": "number",
+          "format": "double"
+        },
+        "re": {
+          "description": "Re G(jω).",
+          "type": "number",
+          "format": "double"
+        },
+        "im": {
+          "description": "Im G(jω).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "w",
+        "magnitude_db",
+        "phase_deg",
+        "re",
+        "im"
+      ]
+    },
+    "Complex": {
+      "description": "A complex number (a pole or zero).",
+      "type": "object",
+      "properties": {
+        "re": {
+          "description": "Real part.",
+          "type": "number",
+          "format": "double"
+        },
+        "im": {
+          "description": "Imaginary part.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "re"
+      ]
+    },
+    "Crossover": {
+      "description": "A crossover: where |G| = 1 (gain) or the phase is −180° + k·360°\n(phase), with the margin there.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "description": "Frequency, rad/s.",
+          "type": "number",
+          "format": "double"
+        },
+        "margin": {
+          "description": "Phase margin in degrees (gain crossover) or gain margin in dB\n(phase crossover).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "w",
+        "margin"
+      ]
+    },
+    "BodeBody": {
+      "description": "Body of a Bode / Nyquist card.",
+      "type": "object",
+      "properties": {
+        "numerator": {
+          "description": "Numerator coefficients, highest power of s first (gain included).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "denominator": {
+          "description": "Denominator coefficients, highest power of s first.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "delay": {
+          "description": "Dead time T in seconds (0 for none).",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "unit": {
+          "description": "How frequencies are shown.",
+          "$ref": "#/$defs/FrequencyUnit",
+          "default": "rad_per_s"
+        },
+        "points": {
+          "description": "The sweep, ascending in ω.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BodePoint"
+          }
+        },
+        "zeros": {
+          "description": "Zeros of N(s).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        },
+        "poles": {
+          "description": "Poles (zeros of D(s)).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        },
+        "gain_crossovers": {
+          "description": "Gain crossovers with the phase margin at each.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Crossover"
+          },
+          "default": []
+        },
+        "phase_crossovers": {
+          "description": "Phase crossovers with the gain margin at each.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Crossover"
+          },
+          "default": []
+        },
+        "closed_loop_poles": {
+          "description": "Poles of G/(1+G) (roots of D + N), when there is no delay.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator",
+        "points"
       ]
     },
     "FormField": {

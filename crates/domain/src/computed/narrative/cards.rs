@@ -594,7 +594,7 @@ pub(super) fn sentence(template: &str, computed: &Computed, body: &ComputedBody)
                 d.normalization.label()
             ))
         }
-        _ => None,
+        _ => super::engineering::sentence(template, computed, body),
     }
 }
 

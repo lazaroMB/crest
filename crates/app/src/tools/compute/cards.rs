@@ -493,7 +493,7 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
                 f.values.len() + f.forecast.len().saturating_sub(1)
             );
         }
-        _ => {}
+        other => super::engineering::notes(other, out),
     }
 }
 
