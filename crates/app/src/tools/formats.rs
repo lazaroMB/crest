@@ -13,8 +13,9 @@
 //! (`show_netlist`), [`material`] (`show_material`), [`step`]
 //! (`show_step`), [`dxf`] (`show_dxf`) and [`ifc`]
 //! (`show_ifc_schedule`), and the science viewers [`sequence`]
-//! (`show_sequence`), [`reaction`] (`show_reaction`) and
-//! [`molecule_grid`] (`show_molecule_grid`).
+//! (`show_sequence`), [`reaction`] (`show_reaction`),
+//! [`molecule_grid`] (`show_molecule_grid`) and [`spectrum`]
+//! (`show_spectrum`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -63,6 +64,7 @@ pub mod netlist;
 pub mod query_plan;
 pub mod reaction;
 pub mod sequence;
+pub mod spectrum;
 pub mod step;
 pub mod terraform;
 pub mod waveform;
@@ -85,6 +87,9 @@ pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
+pub use spectrum::{
+    MAX_SPECTRUM_BYTES, SHOW_SPECTRUM, ShowSpectrumTool, read_spectrum, spectrum_summary,
+};
 pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
@@ -1172,6 +1177,9 @@ only when it says so, and use the coefficients it suggests.
 - `show_molecule_grid`: show a series of compounds (SMILES with ids and \
 activities) as a SAR grid; cite the MW, cLogP, TPSA, HBD/HBA and other \
 descriptors it computes, never your own.
+- `show_spectrum`: show an IR, Raman, UV-Vis or NMR spectrum (JCAMP-DX) or a \
+mass spectrum (mzML, MGF) with its peaks; base assignments on the peaks it \
+returns and cite their positions, not values you expect.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1181,8 +1189,8 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
-/// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction` and
-/// `show_molecule_grid`.
+/// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
+/// `show_molecule_grid` and `show_spectrum`.
 ///
 /// # Errors
 ///
@@ -1214,7 +1222,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowIfcScheduleTool::new(ports.clone()))?;
     registry.register_typed(ShowSequenceTool::new(ports.clone()))?;
     registry.register_typed(ShowReactionTool::new(ports.clone()))?;
-    registry.register_typed(ShowMoleculeGridTool::new(ports.clone()))
+    registry.register_typed(ShowMoleculeGridTool::new(ports.clone()))?;
+    registry.register_typed(ShowSpectrumTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1332,7 +1341,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 24);
+        assert_eq!(registry.names().len(), 25);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

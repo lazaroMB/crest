@@ -36,7 +36,8 @@
 //! `H2 + O2 → H2O` (O unbalanced, 2 H2 + O2 → 2 H2O suggested) unless its
 //! SMILES is `bad`; every molecule grid gives each entry ethanol's
 //! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
-//! `bad`.
+//! `bad`; every spectrum is an IR transmittance trace 4000–400 cm⁻¹ with
+//! one dip picked at 1715 cm⁻¹.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -73,6 +74,7 @@ use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
+use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
 use domain::science::reaction::{
     ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
 };
@@ -83,7 +85,7 @@ use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    MoleculeGridRequest, SequenceRequest, StepRequest, WaveRequest,
+    MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -1039,6 +1041,52 @@ impl FormatsPort for FakeFormats {
             direction: request.direction,
             molecules,
             descriptors: envelope,
+        })
+    }
+
+    fn parse_spectrum(
+        &self,
+        _bytes: &[u8],
+        request: &SpectrumRequest,
+    ) -> Result<SpectrumSpec, FormatError> {
+        self.record("parse_spectrum", &request.path)?;
+        let mut picking = Computed::new(
+            "ch_peaks",
+            "chem.peak_picking",
+            "Peak picking by prominence",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        picking
+            .values
+            .insert("peak.1.x".into(), ComputedValue::new(1715.0));
+        Ok(SpectrumSpec {
+            title: None,
+            path: request.path.clone(),
+            format: SpectrumFormat::Jcamp,
+            kind: SpectrumKind::Infrared,
+            name: Some("acetone".into()),
+            x_label: "wavenumber (cm⁻¹)".into(),
+            y_label: "transmittance".into(),
+            x_reversed: true,
+            x: vec![4000.0, 3000.0, 1715.0, 1000.0, 400.0],
+            y: vec![0.95, 0.9, 0.2, 0.9, 0.95],
+            sticks: false,
+            peaks: vec![Peak {
+                x: 1715.0,
+                y: 0.2,
+                prominence: Some(0.7),
+            }],
+            sense: PeakSense::Minima,
+            picking,
+            metadata: vec![("origin".into(), "crest".into())],
+            blocks: 1,
+            block: 0,
+            warnings: Vec::new(),
         })
     }
 }

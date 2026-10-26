@@ -3,7 +3,7 @@
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
-//! `show_reaction` and `show_molecule_grid` tools from Lua. Each returns a block (wrapped like
+//! `show_reaction`, `show_molecule_grid` and `show_spectrum` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -26,6 +26,7 @@
 //! return app.formats.sequence{ path = 'dna/puc19.gb' }
 //! return app.formats.reaction{ smiles = 'C.O=O>>O=C=O.O' }
 //! return app.formats.molecule_grid{ molecules = { { id = 'A1', smiles = 'CCO', activity = 12 } } }
+//! return app.formats.spectrum{ path = 'spectra/ir.jdx' }
 //! ```
 //!
 //! | Function | Block |
@@ -49,6 +50,7 @@
 //! | `sequence{ path or sequence, record, alphabet, circular, enzymes, title }` | a GenBank, FASTA or plain sequence with features, frames and (circular DNA) a plasmid map; `record` 1-based, `alphabet` `dna`/`rna`/`protein`, `enzymes` (default true) searches the bundled restriction enzymes |
 //! | `reaction{ smiles, coefficients, conditions, names, title }` | a reaction scheme with its atom and charge balance and, when unbalanced, suggested coefficients (raises on a SMILES that does not parse) |
 //! | `molecule_grid{ molecules or path, activity_column, activity_label, activity_unit, direction, title }` | a SAR grid with computed descriptors (`molecules`: `{ id, smiles, name, activity }` tables; `path`: CSV/TSV with a `smiles` column; `direction`: `higher` or `lower`) |
+//! | `spectrum{ path, block, threshold, max_peaks, title }` | a JCAMP-DX (IR, Raman, UV-Vis, NMR), mzML or MGF spectrum with its picked peaks (`block` 1-based) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -67,7 +69,7 @@ use application::tools::formats::{
     grid_entries,
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
     collect_benchmarks, dataset_format, read_dataset, read_har, read_ifc, read_log, read_report,
-    read_step, read_wave,
+    read_spectrum, read_step, read_wave,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
@@ -557,6 +559,38 @@ fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
+fn spectrum(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "spectrum";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let block = match args.get::<Option<i64>>("block")? {
+        Some(n) if n >= 1 => usize::try_from(n - 1).unwrap_or(0),
+        Some(_) => return Err(error(F, "`block` counts from 1")),
+        None => 0,
+    };
+    let max_peaks = match args.get::<Option<i64>>("max_peaks")? {
+        Some(n) if n >= 1 => Some(usize::try_from(n).unwrap_or(1)),
+        Some(_) => return Err(error(F, "`max_peaks` must be at least 1")),
+        None => None,
+    };
+    let bytes = context(lua)?
+        .block_on(read_spectrum(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = application::ports::formats::SpectrumRequest {
+        path: path.clone(),
+        block,
+        threshold: args.get::<Option<f64>>("threshold")?,
+        max_peaks,
+    };
+    let mut spec = services
+        .formats
+        .parse_spectrum(&bytes, &request)
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Spectrum(Box::new(spec)))
+}
+
 fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "molecule_grid";
     let services = services(lua, F)?;
@@ -650,6 +684,13 @@ fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "spectrum",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => spectrum(lua, &args),
+            _ => Err(error("spectrum", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "molecule_grid",
         lua.create_function(|lua, args: Value| match args {
@@ -816,6 +857,7 @@ mod tests {
             .with_file("dwg/plate.dxf", "0\nEOF\n")
             .with_file("bim/house.ifc", "ISO-10303-21;\n")
             .with_file("dna/p.gb", "LOCUS x\n")
+            .with_file("spectra/ir.jdx", "##TITLE=x\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -1041,6 +1083,15 @@ mod tests {
         };
         assert_eq!(spec.molecules[0].activity, Some(12.0));
         assert!(run_code("return app.formats.molecule_grid{}", formats()).is_err());
+        let out = run_code(
+            "return app.formats.spectrum{ path = 'spectra/ir.jdx', max_peaks = 5 }",
+            formats(),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Spectrum(spec)) = out else {
+            panic!("not a spectrum: {out:?}");
+        };
+        assert_eq!(spec.peaks.len(), 1);
     }
 
     #[test]

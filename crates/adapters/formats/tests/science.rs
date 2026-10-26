@@ -220,3 +220,102 @@ fn molecule_grid_descriptors_match_reference_values() {
     };
     assert!(Formats::new().molecule_grid(&twice).is_err());
 }
+
+fn spectrum(name: &str, block: usize) -> domain::science::spectrum::SpectrumSpec {
+    use application::ports::formats::SpectrumRequest;
+    Formats::new()
+        .parse_spectrum(
+            &fixture(name),
+            &SpectrumRequest {
+                path: format!("spectra/{name}"),
+                block,
+                threshold: None,
+                max_peaks: None,
+            },
+        )
+        .unwrap()
+}
+
+#[test]
+fn jcamp_ir_with_difdup_compression_picks_the_dips() {
+    use domain::science::spectrum::{PeakSense, SpectrumFormat, SpectrumKind};
+    let ir = spectrum("ir_difdup.jdx", 0);
+    ir.validate().unwrap();
+    assert_eq!((ir.format, ir.kind), (SpectrumFormat::Jcamp, SpectrumKind::Infrared));
+    assert_eq!(ir.x.len(), 1801);
+    assert!(ir.warnings.is_empty(), "{:?}", ir.warnings);
+    assert_eq!((ir.x[0], ir.x[1800]), (4000.0, 400.0));
+    assert!(ir.x_reversed);
+    assert_eq!(ir.sense, PeakSense::Minima);
+    assert_eq!(ir.x_label, "wavenumber (cm⁻¹)");
+    assert_eq!(ir.y_label, "transmittance");
+    // The generator's dips, deepest first.
+    let xs: Vec<f64> = ir.peaks.iter().map(|p| p.x).collect();
+    // 1715 falls between two samples of the 2 cm⁻¹ grid: the flat
+    // bottom is found at its first point.
+    assert_eq!(xs, [1716.0, 1100.0, 2950.0]);
+    assert!((ir.peaks[0].y - 0.262).abs() < 0.0005, "{}", ir.peaks[0].y);
+    assert_eq!(ir.picking.value("peak.1.x").unwrap().v, 1716.0);
+    assert_eq!(ir.picking.value("peaks").unwrap().v, 3.0);
+    assert!(ir.metadata.iter().any(|(k, v)| k == "formula" && v == "C 3 H 6 O"));
+}
+
+#[test]
+fn jcamp_nmr_in_hz_becomes_ppm() {
+    use domain::science::spectrum::SpectrumKind;
+    let nmr = spectrum("nmr_hz.jdx", 0);
+    assert_eq!(nmr.kind, SpectrumKind::Nmr);
+    assert_eq!(nmr.x_label, "δ 1H (ppm)");
+    assert!(nmr.x_reversed);
+    assert!((nmr.x[0] - 4000.0 / 400.13).abs() < 1e-9);
+    let xs: Vec<f64> = nmr.peaks.iter().map(|p| (p.x * 100.0).round() / 100.0).collect();
+    assert_eq!(xs, [2.17, 7.26]);
+    assert!(nmr.metadata.iter().any(|(k, v)| k == "frequency" && v == "400.13 MHz"));
+    assert!(nmr.metadata.iter().any(|(k, v)| k == "solvent" && v == "CDCl3"));
+}
+
+#[test]
+fn jcamp_linked_blocks_and_peak_tables() {
+    use domain::science::spectrum::SpectrumKind;
+    let uv = spectrum("linked.jdx", 0);
+    assert_eq!((uv.kind, uv.blocks), (SpectrumKind::UvVis, 2));
+    assert!(!uv.x_reversed);
+    assert_eq!(uv.x_label, "wavelength (nm)");
+    assert_eq!(uv.peaks[0].x, 254.0);
+    assert_eq!(uv.peaks[1].x, 320.0);
+    let ms = spectrum("linked.jdx", 1);
+    assert_eq!(ms.kind, SpectrumKind::Mass);
+    assert!(ms.sticks);
+    let top: Vec<f64> = ms.peaks.iter().map(|p| p.x).collect();
+    assert_eq!(top, [43.0, 58.0, 42.0, 15.0]);
+    use application::ports::formats::SpectrumRequest;
+    let missing = Formats::new().parse_spectrum(
+        &fixture("linked.jdx"),
+        &SpectrumRequest {
+            path: "x.jdx".into(),
+            block: 2,
+            ..SpectrumRequest::default()
+        },
+    );
+    assert!(missing.unwrap_err().to_string().contains("does not exist"));
+}
+
+#[test]
+fn mass_spectra_from_mgf_and_mzml() {
+    use domain::science::spectrum::{SpectrumFormat, SpectrumKind};
+    let mgf = spectrum("scans.mgf", 0);
+    assert_eq!((mgf.format, mgf.kind, mgf.blocks), (SpectrumFormat::Mgf, SpectrumKind::Mass, 2));
+    assert_eq!(mgf.peaks[0].x, 244.17);
+    assert!(mgf.metadata.iter().any(|(k, v)| k == "precursor" && v.starts_with("m/z 445.12")), "{:?}", mgf.metadata);
+    let second = spectrum("scans.mgf", 1);
+    assert_eq!(second.x, [100.1, 200.2]);
+    let mzml = spectrum("scan.mzML", 0);
+    assert_eq!(mzml.format, SpectrumFormat::Mzml);
+    assert_eq!(mzml.x, [100.0, 150.5, 200.25, 250.125]);
+    assert_eq!(mzml.y, [10.0, 400.0, 1000.0, 5.0]);
+    assert!(mzml.sticks);
+    // 5 % of the base peak drops the 5-count and 10-count sticks.
+    let xs: Vec<f64> = mzml.peaks.iter().map(|p| p.x).collect();
+    assert_eq!(xs, [200.25, 150.5]);
+    assert_eq!(mzml.name.as_deref(), Some("scan=1"));
+}

@@ -23,6 +23,7 @@
 //! | sequence | FASTA, features CSV, cut sites CSV (when searched) |
 //! | reaction | reaction SMILES, the equation (and the balanced one), balance CSV |
 //! | molecule grid | CSV of ids, SMILES, activities and descriptors; SMILES list |
+//! | spectrum | points CSV, peaks CSV |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -577,6 +578,10 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::Spectrum(spec) => vec![
+            CopyFormat::new("peaks", "peaks CSV", spec.peaks_csv()),
+            CopyFormat::new("points", "points CSV", spec.to_csv()),
+        ],
         BlockKind::MoleculeGrid(spec) => vec![
             CopyFormat::new("csv", "CSV", spec.to_csv()),
             CopyFormat::new(
