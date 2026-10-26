@@ -12,6 +12,7 @@
 
 pub mod cad;
 pub mod drawing;
+pub mod ifc;
 pub mod material;
 pub mod netlist;
 pub mod waveform;

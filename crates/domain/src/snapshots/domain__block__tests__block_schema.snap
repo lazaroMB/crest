@@ -671,6 +671,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "An IFC model's room schedule by storey (tool `show_ifc_schedule`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ifc_schedule"
+        }
+      },
+      "$ref": "#/$defs/IfcScheduleSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -11270,6 +11284,214 @@ expression: "schemars::schema_for!(Block)"
         "path",
         "layers",
         "entities"
+      ]
+    },
+    "IfcStorey": {
+      "description": "A building storey.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "elevation": {
+          "description": "Elevation in [`IfcScheduleSpec::length_unit`], when given.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "building": {
+          "description": "The building it belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spaces": {
+          "description": "Its spaces, in file order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IfcSpace"
+          },
+          "default": []
+        },
+        "elements": {
+          "description": "Walls, doors and windows contained in it (or in its spaces).",
+          "$ref": "#/$defs/ElementCounts",
+          "default": {
+            "walls": 0,
+            "doors": 0,
+            "windows": 0
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "IfcSpace": {
+      "description": "A space (room) of a storey.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its `Name` (often the room number).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "long_name": {
+          "description": "Its `LongName` (often the room's use).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "area": {
+          "description": "Floor area in [`IfcScheduleSpec::area_unit`], when the file gives\none.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "area_source": {
+          "description": "Where the area was read (`Qto_SpaceBaseQuantities.NetFloorArea`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "global_id": {
+          "description": "Its `GlobalId`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ElementCounts": {
+      "description": "Building elements counted per storey.",
+      "type": "object",
+      "properties": {
+        "walls": {
+          "description": "`IfcWall` and its standard/elemented cases.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "doors": {
+          "description": "`IfcDoor` (and `IfcDoorStandardCase`).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "windows": {
+          "description": "`IfcWindow` (and `IfcWindowStandardCase`).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "IfcScheduleSpec": {
+      "description": "The schedule of an IFC file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title above the schedule; defaults to the file name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The file, relative to the workspace.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "The schema of the header (`IFC2X3`, `IFC4`, `IFC4X3`).",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "site": {
+          "description": "The site's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "buildings": {
+          "description": "Building names.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "length_unit": {
+          "description": "The project's length unit (`m`, `mm`, `ft`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "area_unit": {
+          "description": "The project's area unit (`m²`, `ft²`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storeys": {
+          "description": "The storeys, by elevation (file order when not given).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IfcStorey"
+          }
+        },
+        "unplaced_spaces": {
+          "description": "Spaces in no storey.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IfcSpace"
+          },
+          "default": []
+        },
+        "unplaced": {
+          "description": "Walls, doors and windows in no storey.",
+          "$ref": "#/$defs/ElementCounts",
+          "default": {
+            "walls": 0,
+            "doors": 0,
+            "windows": 0
+          }
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "path",
+        "schema",
+        "storeys"
       ]
     }
   }

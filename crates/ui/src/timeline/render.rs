@@ -53,6 +53,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Material(_) => "material",
         BlockKind::CadModel(_) => "cad_model",
         BlockKind::Drawing(_) => "drawing",
+        BlockKind::IfcSchedule(_) => "ifc_schedule",
     }
 }
 

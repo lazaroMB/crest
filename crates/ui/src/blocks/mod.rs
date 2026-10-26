@@ -21,6 +21,7 @@ pub mod findings;
 pub mod flame;
 pub mod form;
 pub mod har;
+pub mod ifc;
 pub mod image;
 pub mod image_view;
 pub mod json;
@@ -97,6 +98,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Material(_) => material::render(entry, window, cx),
         BlockKind::CadModel(_) => cad::render(entry, window, cx),
         BlockKind::Drawing(_) => drawing::render(entry, window, cx),
+        BlockKind::IfcSchedule(_) => ifc::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

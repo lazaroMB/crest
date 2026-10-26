@@ -256,6 +256,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::IfcSchedule(schedule) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[ifc schedule: {} storeys, {} spaces, {} without area]",
+                schedule.storeys.len(),
+                schedule.space_count(),
+                schedule.missing_areas()
+            ),
+        ),
         BlockKind::Drawing(drawing) => w.line(
             Some(Style::Dim),
             &format!(
