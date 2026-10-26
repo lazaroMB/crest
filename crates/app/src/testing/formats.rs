@@ -21,7 +21,9 @@
 //! deploy` plus `lint -> test` with `build` and `test` in cluster `ci`;
 //! every DDL is `users` and `orders` (`orders.user_id` → `users.id`);
 //! benchmarks are `fib/20` regressed (+14%) and `sort/1k` unchanged, plus
-//! one per directory of the request beyond those two, without baseline.
+//! one per directory of the request beyond those two, without baseline;
+//! every waveform is `tb.clk` (period 10 ns) and an 8-bit `tb.count`
+//! counting 00, 01, 02 on its rising edges, over 0–30 ns.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -40,6 +42,9 @@ use domain::devops::terraform::{
     AttrChange, AttrValue, PlanAction, PlanSource, ResourceChange, TerraformPlanSpec,
 };
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
+use domain::engineering::waveform::{
+    SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal, WaveformSpec,
+};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
@@ -51,7 +56,7 @@ use serde_json::Map;
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -596,6 +601,62 @@ impl FormatsPort for FakeFormats {
             noise_threshold: NOISE_THRESHOLD,
             benches,
             skipped: Vec::new(),
+        })
+    }
+
+    fn parse_waveform(
+        &self,
+        _bytes: &[u8],
+        request: &WaveRequest,
+    ) -> Result<WaveformSpec, FormatError> {
+        self.record("parse_waveform", &request.path)?;
+        let changes = |list: &[(u64, &str)]| {
+            list.iter()
+                .map(|(t, v)| WaveChange {
+                    t: *t,
+                    v: (*v).to_owned(),
+                })
+                .collect()
+        };
+        let signal = |name: &str, kind, width, list: &[(u64, &str)]| WaveSignal {
+            name: name.to_owned(),
+            scope: "tb".to_owned(),
+            kind,
+            width,
+            changes: changes(list),
+            truncated: false,
+        };
+        Ok(WaveformSpec {
+            title: None,
+            path: request.path.clone(),
+            format: WaveFormat::Vcd,
+            timescale: Timescale::default(),
+            start: 0,
+            end: 30,
+            signals: vec![
+                signal(
+                    "clk",
+                    SignalKind::Bit,
+                    1,
+                    &[
+                        (0, "0"),
+                        (5, "1"),
+                        (10, "0"),
+                        (15, "1"),
+                        (20, "0"),
+                        (25, "1"),
+                    ],
+                ),
+                signal(
+                    "count[7:0]",
+                    SignalKind::Vector,
+                    8,
+                    &[(0, "00000000"), (15, "00000001"), (25, "00000010")],
+                ),
+            ],
+            total_signals: 2,
+            radix: request.radix,
+            generator: None,
         })
     }
 }

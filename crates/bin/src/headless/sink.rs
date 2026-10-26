@@ -228,6 +228,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::Waveform(wave) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[waveform: {} signals, {} – {}]",
+                wave.signals.len(),
+                wave.time_text(wave.start),
+                wave.time_text(wave.end)
+            ),
+        ),
         BlockKind::Benchmarks(bench) => w.line(
             Some(Style::Dim),
             &format!(

@@ -1,0 +1,67 @@
+---
+source: crates/app/src/tools/formats/waveform.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_waveform",
+  "description": "Shows a digital simulation dump (VCD, FST or GHW in `path`) as waves in the user's timeline: the signal tree by scope, one-bit signals as high/low traces with x and z marked, buses with their values in hex, binary or decimal, zoom and pan in time and a cursor that reads every signal's value at that time. Returns the timescale, time range, scopes, clocks with their periods, signals with unknown bits and the values at the end: do not repeat the waves in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A waveform dump of the workspace: `.vcd` (Verilator, Icarus,\ncocotb, GHDL `--vcd`), `.fst` (GTKWave, Verilator `--trace-fst`)\nor `.ghw` (GHDL `--wave`)."
+      },
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Signals to show: dotted paths or patterns with `*` (`tb.dut.*`,\n`*clk*`). All signals (up to 2000) when empty.",
+        "default": []
+      },
+      "radix": {
+        "$ref": "#/$defs/Radix",
+        "description": "How buses are written at first: `hex` (default), `bin` or `dec`;\nthe user can switch.",
+        "default": "hex"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the waves; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_waveform`.",
+    "title": "ShowWaveform",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Radix": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "hex",
+            "description": "Hexadecimal digits (`3f`); a digit with an unknown bit is `x`."
+          },
+          {
+            "type": "string",
+            "const": "bin",
+            "description": "The bits as written."
+          },
+          {
+            "type": "string",
+            "const": "dec",
+            "description": "Unsigned decimal; unknown when any bit is not 0 or 1."
+          }
+        ],
+        "description": "How a bus value is written."
+      }
+    }
+  }
+}

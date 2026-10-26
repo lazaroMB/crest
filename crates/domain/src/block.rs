@@ -24,6 +24,7 @@ use crate::devops::logs::LogSpec;
 use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
+use crate::engineering::waveform::WaveformSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
@@ -143,6 +144,7 @@ impl Block {
             BlockKind::TerraformPlan(spec) => spec.validate(),
             BlockKind::Diagram(spec) => spec.validate(),
             BlockKind::Benchmarks(spec) => spec.validate(),
+            BlockKind::Waveform(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -312,6 +314,9 @@ pub enum BlockKind {
     /// Criterion benchmarks, baseline against new (tool
     /// `show_benchmarks`).
     Benchmarks(Box<BenchSpec>),
+    /// Digital waveforms from a VCD, FST or GHW dump (tool
+    /// `show_waveform`).
+    Waveform(Box<WaveformSpec>),
 }
 
 /// Lifecycle of a tool call.

@@ -1,7 +1,7 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
-//! `show_er` and `show_benchmarks` tools from Lua. Each returns a block (wrapped like
+//! `show_er`, `show_benchmarks` and `show_waveform` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -16,6 +16,7 @@
 //! return app.formats.dot{ source = 'digraph { a -> b }' }
 //! return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }
 //! return app.formats.benchmarks{ path = 'target/criterion', baseline = 'base' }
+//! return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'tb.dut.*' } }
 //! ```
 //!
 //! | Function | Block |
@@ -31,6 +32,7 @@
 //! | `dot{ path or source, title }` | a Graphviz DOT graph on the graph widget |
 //! | `er{ path or sql, dialect, title }` | an ER diagram from SQL DDL (tables, foreign keys) |
 //! | `benchmarks{ path, baseline, filter, title }` | criterion results, baseline against new (`target/criterion`, `base` by default) |
+//! | `waveform{ path, signals, radix, title }` | a VCD, FST or GHW dump as digital waves (`signals`: paths or `*` patterns; `radix`: `hex`, `bin`, `dec`) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -40,14 +42,17 @@
 
 use std::sync::Arc;
 
-use application::ports::formats::{DatasetRequest, FormatsPort, LogRequest, ProfileRequest};
+use application::ports::formats::{
+    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
+};
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
-    collect_benchmarks, dataset_format, read_dataset, read_har, read_log, read_report,
+    collect_benchmarks, dataset_format, read_dataset, read_har, read_log, read_report, read_wave,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
+use domain::engineering::waveform::Radix;
 use mlua::{Lua, Table, Value};
 use serde_json::json;
 
@@ -354,6 +359,62 @@ fn benchmarks(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Benchmarks(Box::new(spec)))
 }
 
+/// A list of strings (or one string).
+fn strings(args: &Table, function: &str, key: &str) -> mlua::Result<Vec<String>> {
+    match args.get::<Value>(key)? {
+        Value::Nil => Ok(Vec::new()),
+        Value::String(s) => Ok(vec![s.to_str()?.to_owned()]),
+        Value::Table(list) => list
+            .sequence_values::<Value>()
+            .map(|v| match v? {
+                Value::String(s) => Ok(s.to_str()?.to_owned()),
+                other => Err(error(
+                    function,
+                    format!("`{key}` must hold strings, got {}", other.type_name()),
+                )),
+            })
+            .collect(),
+        other => Err(error(
+            function,
+            format!(
+                "`{key}` must be a list of strings, got {}",
+                other.type_name()
+            ),
+        )),
+    }
+}
+
+/// The radix field (`hex`, `bin`, `dec`; `hex` when absent).
+fn radix(args: &Table, function: &str) -> mlua::Result<Radix> {
+    match text(args, function, "radix")? {
+        Some(name) => serde_json::from_value(json!(name))
+            .map_err(|_| error(function, format!("unknown `radix` `{name}`"))),
+        None => Ok(Radix::default()),
+    }
+}
+
+fn waveform(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "waveform";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_wave(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = WaveRequest {
+        path: path.clone(),
+        signals: strings(args, F, "signals")?,
+        radix: radix(args, F)?,
+    };
+    let mut spec = services
+        .formats
+        .parse_waveform(&bytes, &request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Waveform(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -390,6 +451,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => benchmarks(lua, &args),
             _ => Err(error("benchmarks", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "waveform",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => waveform(lua, &args),
+            _ => Err(error("waveform", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -462,6 +530,7 @@ mod tests {
             .with_file("infra/plan.json", "{}")
             .with_file("db/schema.sql", "create table a (id int);")
             .with_file("target/criterion/fib/new/estimates.json", "{}")
+            .with_file("sim/tb.vcd", "$enddefinitions $end")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -586,6 +655,22 @@ mod tests {
             (spec.path.as_str(), spec.baseline.as_str()),
             ("target/criterion", "base")
         );
+        let out = run_code(
+            "return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'tb.*' }, radix = 'dec' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Waveform(spec)) = out else {
+            panic!("not a waveform: {out:?}");
+        };
+        assert_eq!(spec.radix, domain::engineering::waveform::Radix::Dec);
+        let bad = run_code(
+            "return app.formats.waveform{ path = 'sim/tb.vcd', radix = 'oct' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("unknown `radix`"), "{bad}");
     }
 
     #[test]
