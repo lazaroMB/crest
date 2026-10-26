@@ -23,7 +23,8 @@
 //! estimates, and cash flows in decimal arithmetic (NPV, every IRR, MIRR,
 //! payback) and decision matrices with exact weight sensitivity. The
 //! engineering cards run as `crest-solve` too: Bode / Nyquist plots with
-//! margins (`bode`). Resampling and simulation draw from a seeded
+//! margins (`bode`) and Karnaugh maps by Quine–McCluskey and Petrick
+//! (`karnaugh`). Resampling and simulation draw from a seeded
 //! ChaCha20 stream (`rng`), recorded in the envelope.
 //!
 //! Reference tests (`tests/reference.rs`, `tests/cards.rs`) check the
@@ -50,6 +51,7 @@ mod envelope;
 mod equations;
 mod exprs;
 mod forecast;
+mod karnaugh;
 mod linalg;
 mod math;
 mod ols;
@@ -124,6 +126,7 @@ impl StatsEngine {
             ComputeRequest::Simulate(r) => simulate::run(r, id)?,
             ComputeRequest::CashFlow(r) => cash_flow::run(r, id)?,
             ComputeRequest::Decide(r) => decide::run(r, id)?,
+            ComputeRequest::Karnaugh(r) => karnaugh::run(r, id)?,
             ComputeRequest::Bode(r) => bode::run(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
@@ -155,6 +158,7 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Simulate(_) => "simulate",
         ComputeRequest::CashFlow(_) => "cash_flow",
         ComputeRequest::Decide(_) => "decide",
+        ComputeRequest::Karnaugh(_) => "karnaugh",
         ComputeRequest::Bode(_) => "bode",
     }
 }
@@ -226,6 +230,10 @@ impl ComputePort for StatsEngine {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.execute(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Karnaugh(request.clone()), None)
     }
 
     fn bode(&self, request: &BodeRequest) -> ComputeResult {

@@ -31,6 +31,7 @@
 //! | `cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback |
 //! | `decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | decision matrix |
 //! | `bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode / Nyquist, margins |
+//! | `karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map, minimal SOP and POS |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -39,7 +40,7 @@
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
 //! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate`,
-//! `cash_flow`, `decide` and `bode` read no data.
+//! `cash_flow`, `decide`, `bode` and `karnaugh` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -230,6 +231,7 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             | "cash_flow"
             | "decide"
             | "bode"
+            | "karnaugh"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -300,6 +302,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "cash_flow",
         "decide",
         "bode",
+        "karnaugh",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -486,6 +489,15 @@ mod tests {
         };
         assert_eq!(bode.denominator, [1.0, 1.0, 0.0]);
         assert_eq!(bode.points, 400);
+        run_code(
+            "return app.compute.karnaugh{ expression = \"AB' + C\", dont_cares = { 0 } }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Karnaugh(k) = &engine.requests()[1] else {
+            panic!("not a Karnaugh request");
+        };
+        assert_eq!(k.dont_cares, [0]);
     }
 
     #[test]

@@ -1,0 +1,61 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(KarnaughTool::new(ports))"
+---
+{
+  "name": "karnaugh",
+  "description": "Minimises a Boolean function of up to six variables with crest's deterministic engine (Quine–McCluskey prime implicants, essential primes, then Petrick's method): give `minterms`, `maxterms` or an `expression` (`AB' + C`, `!a & b | c`, `A ^ B`), with optional `dont_cares` and `variables` (most significant first). The user sees the Karnaugh map with the chosen groups, the minimal sum of products and product of sums, the prime implicants and the truth table. You get both expressions and their term and literal counts; quote the expressions as given, never simplify by hand.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "variables": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Variable names, most significant first (`[\"A\", \"B\", \"C\"]`); taken\nfrom the expression in alphabetical order when absent, else\nA, B, C… for as many as the terms need.",
+        "default": []
+      },
+      "minterms": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "description": "Minterms where F = 1 (`[1, 3, 5, 7]`). Give these, `maxterms` or\n`expression`.",
+        "default": []
+      },
+      "maxterms": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "description": "Maxterms where F = 0; every other term (not a don't-care) is 1.",
+        "default": []
+      },
+      "dont_cares": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "description": "Don't-care terms.",
+        "default": []
+      },
+      "expression": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "F as an expression: `'` or `!`/`~` for NOT, `&`, `*`, `·` or\njuxtaposition for AND, `+` or `|` for OR, `^` for XOR,\nparentheses, 0 and 1 (`AB' + C(A ^ D)`). Without `variables`, a\nname is one letter with optional digits (`x1x2` is x1·x2)."
+      }
+    },
+    "description": "Input of `karnaugh`: a Boolean function of up to six variables, as\nminterms, maxterms or an expression, with optional don't-cares.",
+    "title": "KarnaughRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

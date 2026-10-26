@@ -3488,6 +3488,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A Boolean function's Karnaugh map with minimal SOP and POS.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "karnaugh"
+            }
+          },
+          "$ref": "#/$defs/KarnaughBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -6478,6 +6492,138 @@ expression: "schemars::schema_for!(Block)"
         "numerator",
         "denominator",
         "points"
+      ]
+    },
+    "Implicant": {
+      "description": "A product term (or, in a POS, the sum term of a group of zeros).",
+      "type": "object",
+      "properties": {
+        "care": {
+          "description": "Bit `n − 1 − i` set when variable `i` appears.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "value": {
+          "description": "The values of the variables that appear.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "term": {
+          "description": "The term as written (`AB'`, or `(A' + B)` in a POS).",
+          "type": "string"
+        },
+        "covers": {
+          "description": "The minterms (or maxterms) it covers, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "essential": {
+          "description": "Whether it is essential (the only prime covering some minterm).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "care",
+        "value",
+        "term",
+        "covers"
+      ]
+    },
+    "CoverMethod": {
+      "description": "How the cover was chosen.",
+      "oneOf": [
+        {
+          "description": "Essential primes, then Petrick's method: a cover with the fewest\nterms, then the fewest literals.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Essential primes, then the prime covering most uncovered minterms\n(Petrick's expansion grew too large): minimal not guaranteed.",
+          "type": "string",
+          "const": "greedy"
+        }
+      ]
+    },
+    "KarnaughBody": {
+      "description": "Body of a Karnaugh-map card.",
+      "type": "object",
+      "properties": {
+        "variables": {
+          "description": "Variable names, most significant first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "minterms": {
+          "description": "Minterms where F = 1, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "dont_cares": {
+          "description": "Don't-care minterms, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "default": []
+        },
+        "prime_implicants": {
+          "description": "Every prime implicant of F (ones and don't-cares).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          },
+          "default": []
+        },
+        "sop": {
+          "description": "The chosen product terms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          }
+        },
+        "sop_expression": {
+          "description": "The minimal sum of products, e.g. `AB' + C`.",
+          "type": "string"
+        },
+        "pos": {
+          "description": "The chosen sum terms (groups of zeros).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          }
+        },
+        "pos_expression": {
+          "description": "The minimal product of sums, e.g. `(A + C)(B' + C)`.",
+          "type": "string"
+        },
+        "method": {
+          "description": "How the covers were chosen.",
+          "$ref": "#/$defs/CoverMethod"
+        }
+      },
+      "required": [
+        "variables",
+        "minterms",
+        "sop",
+        "sop_expression",
+        "pos",
+        "pos_expression",
+        "method"
       ]
     },
     "FormField": {

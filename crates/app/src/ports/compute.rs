@@ -429,6 +429,8 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::karnaugh`].
+    Karnaugh(KarnaughRequest),
     /// [`ComputePort::bode`].
     Bode(BodeRequest),
 }
@@ -469,6 +471,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Karnaugh(_)
             | Self::Bode(_) => None,
         }
     }
@@ -494,6 +497,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Karnaugh(_)
             | Self::Bode(_) => None,
         }
     }
@@ -646,11 +650,25 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
-    /// The frequency response of a transfer function: Bode magnitude and phase, the Nyquist curve, poles and zeros, crossovers with gain and phase margins and the closed-loop poles.
+    /// A Boolean function of up to six variables: its Karnaugh map, prime
+    /// implicants and a minimal sum of products and product of sums.
     ///
     /// # Errors
     ///
-    /// [`ComputeError::Invalid`] for an empty or zero denominator, a numerator of higher degree than the denominator, or complex roots without their conjugates.
+    /// [`ComputeError::Invalid`] for more than six variables, out-of-range
+    /// terms, a term that is both a minterm and a don't-care, or an
+    /// expression that does not parse.
+    fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult;
+
+    /// The frequency response of a transfer function: Bode magnitude and
+    /// phase, the Nyquist curve, poles and zeros, crossovers with gain and
+    /// phase margins and the closed-loop poles.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for a zero denominator or numerator,
+    /// degrees above 30, a pole on the sweep, or complex roots without
+    /// their conjugates.
     fn bode(&self, request: &BodeRequest) -> ComputeResult;
 
     /// Re-runs `envelope` from its stored request. The result keeps the
@@ -687,6 +705,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Karnaugh(r) => self.karnaugh(r),
             ComputeRequest::Bode(r) => self.bode(r),
         }
     }

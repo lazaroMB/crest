@@ -319,6 +319,32 @@ impl FakeCompute {
                     closed_loop_poles: vec![Complex { re: -2.0, im: 0.0 }],
                 }),
             ),
+            ComputeRequest::Karnaugh(r) => (
+                "solve.karnaugh",
+                "Karnaugh map",
+                "karnaugh",
+                ComputedBody::Karnaugh(KarnaughBody {
+                    variables: if r.variables.is_empty() {
+                        vec!["A".into(), "B".into()]
+                    } else {
+                        r.variables.clone()
+                    },
+                    minterms: r.minterms.clone(),
+                    dont_cares: r.dont_cares.clone(),
+                    prime_implicants: Vec::new(),
+                    sop: vec![Implicant {
+                        care: 0b10,
+                        value: 0b10,
+                        term: "A".into(),
+                        covers: vec![2, 3],
+                        essential: true,
+                    }],
+                    sop_expression: "A".into(),
+                    pos: Vec::new(),
+                    pos_expression: "A".into(),
+                    method: CoverMethod::Exact,
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -652,6 +678,10 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Karnaugh(request.clone()), None)
     }
 
     fn bode(&self, request: &BodeRequest) -> ComputeResult {

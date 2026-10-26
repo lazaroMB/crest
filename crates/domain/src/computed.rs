@@ -27,6 +27,7 @@ pub mod decision_matrix;
 pub mod distribution;
 pub mod equations;
 pub mod forecast;
+pub mod karnaugh;
 pub mod lint;
 pub mod narrative;
 pub mod optimization;
@@ -55,6 +56,7 @@ pub use self::distribution::{
 };
 pub use self::equations::{EquationsBody, PlugBack, SolveMethod, SolvedUnknown};
 pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
+pub use self::karnaugh::{CoverMethod, Implicant, KarnaughBody};
 pub use self::optimization::{
     ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
 };
@@ -645,6 +647,8 @@ pub enum ComputedBody {
     DecisionMatrix(DecisionMatrixBody),
     /// A transfer function's Bode and Nyquist plots with its margins.
     Bode(BodeBody),
+    /// A Boolean function's Karnaugh map with minimal SOP and POS.
+    Karnaugh(KarnaughBody),
 }
 
 impl ComputedBody {
@@ -683,6 +687,7 @@ impl ComputedBody {
             Self::CashFlow(body) => body.validate(),
             Self::DecisionMatrix(body) => body.validate(),
             Self::Bode(body) => body.validate(),
+            Self::Karnaugh(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

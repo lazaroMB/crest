@@ -10,7 +10,7 @@
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
 //!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
-//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], [`cash_flow`], [`decision_matrix`], and the engineering cards: [`bode`]),
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], [`cash_flow`], [`decision_matrix`], and the engineering cards: [`bode`], [`karnaugh`]),
 //!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
@@ -42,6 +42,7 @@ pub mod distribution;
 pub mod equations;
 pub mod forecast;
 pub mod grid;
+pub mod karnaugh;
 pub mod optimization;
 pub mod power;
 pub mod regression;
@@ -514,6 +515,7 @@ impl ComputedCard {
             }
             ComputedBody::DecisionMatrix(body) => decision_matrix::render(&id, body, cx),
             ComputedBody::Bode(body) => bode::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::Karnaugh(body) => karnaugh::render(&id, body, cx),
             ComputedBody::Simulation(body) => {
                 simulation::render(&id, &self.envelope, body, window, cx)
             }
