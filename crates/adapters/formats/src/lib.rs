@@ -27,7 +27,8 @@
 //! - sequences: GenBank, FASTA and bare residues ([`sequence`], gb-io and
 //!   our own FASTA reader);
 //! - reaction schemes with their balance ([`reaction`], chematic's
-//!   reaction SMILES; envelopes from [`chem`]).
+//!   reaction SMILES; envelopes from [`chem`]);
+//! - molecule grids with descriptors ([`molecule_grid`], chematic).
 
 pub mod bench;
 pub mod chem;
@@ -42,6 +43,7 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod molecule_grid;
 pub mod netlist;
 pub mod query_plan;
 pub mod reaction;
@@ -55,7 +57,7 @@ pub mod waveform;
 
 use application::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    SequenceRequest, StepRequest, WaveRequest,
+    MoleculeGridRequest, SequenceRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -73,6 +75,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 
@@ -211,5 +214,12 @@ impl FormatsPort for Formats {
 
     fn depict_reaction(&self, smiles: &str, coefficients: Option<&[u32]>) -> ReactionSpec {
         reaction::depict(smiles, coefficients)
+    }
+
+    fn molecule_grid(
+        &self,
+        request: &MoleculeGridRequest,
+    ) -> Result<MoleculeGridSpec, FormatError> {
+        molecule_grid::grid(request).map_err(FormatError::Invalid)
     }
 }

@@ -34,6 +34,7 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
@@ -150,6 +151,7 @@ impl Block {
             BlockKind::IfcSchedule(spec) => spec.validate(),
             BlockKind::Sequence(spec) => spec.validate(),
             BlockKind::Reaction(spec) => spec.validate(),
+            BlockKind::MoleculeGrid(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -341,6 +343,9 @@ pub enum BlockKind {
     /// A reaction scheme with its atom and charge balance (tool
     /// `show_reaction`).
     Reaction(Box<ReactionSpec>),
+    /// A grid of molecules with descriptors and activities (tool
+    /// `show_molecule_grid`).
+    MoleculeGrid(Box<MoleculeGridSpec>),
 }
 
 /// Lifecycle of a tool call.

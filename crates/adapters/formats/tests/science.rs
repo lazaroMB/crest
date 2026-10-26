@@ -172,3 +172,51 @@ fn reaction_balance_suggestions_and_errors() {
     assert_eq!(bad.balance.status, ComputedStatus::Error);
     assert!(formats.depict_reaction("CCO", None).error.unwrap().contains("not a reaction"));
 }
+
+#[test]
+fn molecule_grid_descriptors_match_reference_values() {
+    use application::ports::formats::{GridEntry, MoleculeGridRequest};
+    use domain::science::molecule_grid::ActivityDirection;
+    let entry = |id: &str, smiles: &str, activity: Option<f64>| GridEntry {
+        id: id.into(),
+        smiles: smiles.into(),
+        name: None,
+        activity,
+    };
+    let request = MoleculeGridRequest {
+        molecules: vec![
+            entry("ASA", "CC(=O)Oc1ccccc1C(=O)O", Some(1000.0)),
+            entry("CAF", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C", Some(20.0)),
+            entry("bad", "C1CC", None),
+        ],
+        activity_label: Some("IC50".into()),
+        activity_unit: Some("nM".into()),
+        direction: ActivityDirection::Lower,
+    };
+    let spec = Formats::new().molecule_grid(&request).unwrap();
+    spec.validate().unwrap();
+    let close = |a: f64, b: f64, tol: f64| assert!((a - b).abs() <= tol, "{a} vs {b}");
+    // Reference values as RDKit computes them (Descriptors.MolWt,
+    // Crippen.MolLogP, rdMolDescriptors.CalcTPSA).
+    let asa = spec.molecules[0].descriptors.as_ref().unwrap();
+    close(asa.mw, 180.159, 0.01);
+    close(asa.logp, 1.3101, 0.001);
+    close(asa.tpsa, 63.6, 0.01);
+    assert_eq!((asa.heavy_atoms, asa.hbd, asa.hba, asa.rings, asa.aromatic_rings), (13, 1, 3, 1, 1));
+    let caf = spec.molecules[1].descriptors.as_ref().unwrap();
+    close(caf.mw, 194.194, 0.01);
+    close(caf.logp, -1.0293, 0.001);
+    close(caf.tpsa, 61.82, 0.01);
+    assert_eq!((caf.hbd, caf.rotatable_bonds, caf.rings), (0, 0, 2));
+    assert_eq!(spec.descriptors.value("ASA.tpsa").unwrap().v, asa.tpsa);
+    assert_eq!(spec.descriptors.value("CAF.hba").unwrap().v, f64::from(caf.hba));
+    assert!(spec.molecules[2].descriptors.is_none());
+    assert_eq!(spec.failed().len(), 1);
+    assert!(spec.descriptors.warnings[0].text.contains("1 SMILES"));
+    assert_eq!(spec.activity_score(20.0), Some(1.0));
+    let twice = MoleculeGridRequest {
+        molecules: vec![entry("a", "C", None), entry("a", "CC", None)],
+        ..MoleculeGridRequest::default()
+    };
+    assert!(Formats::new().molecule_grid(&twice).is_err());
+}

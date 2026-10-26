@@ -56,6 +56,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::IfcSchedule(_) => "ifc_schedule",
         BlockKind::Sequence(_) => "sequence",
         BlockKind::Reaction(_) => "reaction",
+        BlockKind::MoleculeGrid(_) => "molecule_grid",
     }
 }
 

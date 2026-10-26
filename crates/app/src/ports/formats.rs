@@ -31,6 +31,7 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 
@@ -135,6 +136,35 @@ pub struct SequenceRequest {
     pub topology: Option<Topology>,
     /// Search the bundled restriction enzymes (nucleic acids).
     pub enzymes: bool,
+}
+
+/// One molecule of a [`MoleculeGridRequest`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GridEntry {
+    /// Compound id, unique in the grid (`CMP-001`).
+    pub id: String,
+    /// Its structure as SMILES.
+    pub smiles: String,
+    /// A name shown under the id.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The measured activity, in the grid's unit.
+    #[serde(default)]
+    pub activity: Option<f64>,
+}
+
+/// What [`FormatsPort::molecule_grid`] computes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MoleculeGridRequest {
+    /// The molecules, in order.
+    pub molecules: Vec<GridEntry>,
+    /// What the activity is (`IC50`).
+    pub activity_label: Option<String>,
+    /// Its unit (`nM`).
+    pub activity_unit: Option<String>,
+    /// Which way is better.
+    pub direction: ActivityDirection,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -381,6 +411,16 @@ pub trait FormatsPort: Send + Sync {
     /// when it does not balance, the smallest integer coefficients that do.
     /// A reaction that cannot be read comes back with `error` set.
     fn depict_reaction(&self, smiles: &str, coefficients: Option<&[u32]>) -> ReactionSpec;
+
+    /// A grid of molecules: each SMILES depicted with its descriptors
+    /// (MW, heavy atoms, HBD/HBA, rotatable bonds, rings, Crippen logP,
+    /// TPSA) in an envelope; a SMILES that does not parse keeps its error.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an empty or oversized grid or a
+    /// repeated id.
+    fn molecule_grid(&self, request: &MoleculeGridRequest) -> Result<MoleculeGridSpec, FormatError>;
 }
 
 #[cfg(test)]
