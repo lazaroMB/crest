@@ -213,6 +213,7 @@ fn builtin_effect(name: &str) -> &'static str {
         | "decision_matrix"
         | "bode"
         | "karnaugh"
+        | "beam"
         | "show_trace"
         | "show_flamegraph"
         | "show_logs"

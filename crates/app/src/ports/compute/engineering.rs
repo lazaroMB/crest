@@ -1,7 +1,9 @@
 //! Requests of the engineering cards: Bode / Nyquist plots of a transfer
-//! function, and Karnaugh maps.
+//! function, Karnaugh maps and beams.
 
-use domain::computed::{Complex, FrequencyUnit};
+use domain::computed::{
+    BeamLoad, BeamSupport, Complex, ForceUnit, FrequencyUnit, InertiaUnit, LengthUnit, ModulusUnit,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -74,4 +76,47 @@ pub struct KarnaughRequest {
     /// name is one letter with optional digits (`x1x2` is x1·x2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expression: Option<String>,
+}
+
+fn default_segments() -> u32 {
+    200
+}
+
+/// Input of `beam`: a straight beam, its supports and loads, and
+/// optionally E and I for the deflection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BeamRequest {
+    /// Span, in `length_unit`.
+    pub length: f64,
+    /// `m` (default), `mm`, `ft` or `in`; for the span and every position.
+    #[serde(default)]
+    pub length_unit: LengthUnit,
+    /// `kN` (default), `N`, `lbf` or `kip`; moments are this × length and
+    /// distributed loads this / length.
+    #[serde(default)]
+    pub force_unit: ForceUnit,
+    /// Supports: `{at, kind}` with `kind` `pin` (default), `roller` or
+    /// `fixed`. A cantilever is one `fixed` support.
+    pub supports: Vec<BeamSupport>,
+    /// Loads: `{kind: "point", at, value}` (downward positive),
+    /// `{kind: "distributed", at, end, value, end_value}` (per length,
+    /// downward positive, linear from `value` to `end_value`) or
+    /// `{kind: "moment", at, value}` (counterclockwise positive).
+    pub loads: Vec<BeamLoad>,
+    /// Young's modulus, in `e_unit`; with `i`, the deflection is computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e: Option<f64>,
+    /// `GPa` (default), `MPa`, `kPa`, `Pa`, `psi` or `ksi`.
+    #[serde(default)]
+    pub e_unit: ModulusUnit,
+    /// Second moment of area, in `i_unit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i: Option<f64>,
+    /// `mm4` (default), `cm4`, `m4` or `in4`.
+    #[serde(default)]
+    pub i_unit: InertiaUnit,
+    /// Elements of the stiffness model between the key points (default
+    /// 200); nodes sit at every support, load point and load end too.
+    #[serde(default = "default_segments")]
+    pub segments: u32,
 }

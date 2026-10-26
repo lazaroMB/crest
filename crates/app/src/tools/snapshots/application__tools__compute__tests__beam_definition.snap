@@ -1,0 +1,295 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(BeamTool::new(ports))"
+---
+{
+  "name": "beam",
+  "description": "Analyses a straight beam with crest's deterministic engine (Euler–Bernoulli, direct stiffness method, so continuous and propped beams work too): `length`, `supports` (`pin`, `roller`, `fixed` at positions), `loads` (point and distributed loads positive downward, moments positive counterclockwise), units (`length_unit`, `force_unit`) and optionally `e` and `i` with their units for the deflection. The user sees the reactions, the shear, bending-moment and deflection diagrams with their extremes; you get the reactions, the largest moments, shear and deflection with their positions as slots to cite. State the assumptions (small deflections, uniform E·I).",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "length": {
+        "type": "number",
+        "format": "double",
+        "description": "Span, in `length_unit`."
+      },
+      "length_unit": {
+        "$ref": "#/$defs/LengthUnit",
+        "description": "`m` (default), `mm`, `ft` or `in`; for the span and every position.",
+        "default": "m"
+      },
+      "force_unit": {
+        "$ref": "#/$defs/ForceUnit",
+        "description": "`kN` (default), `N`, `lbf` or `kip`; moments are this × length and\ndistributed loads this / length.",
+        "default": "kN"
+      },
+      "supports": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/BeamSupport"
+        },
+        "description": "Supports: `{at, kind}` with `kind` `pin` (default), `roller` or\n`fixed`. A cantilever is one `fixed` support."
+      },
+      "loads": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/BeamLoad"
+        },
+        "description": "Loads: `{kind: \"point\", at, value}` (downward positive),\n`{kind: \"distributed\", at, end, value, end_value}` (per length,\ndownward positive, linear from `value` to `end_value`) or\n`{kind: \"moment\", at, value}` (counterclockwise positive)."
+      },
+      "e": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Young's modulus, in `e_unit`; with `i`, the deflection is computed."
+      },
+      "e_unit": {
+        "$ref": "#/$defs/ModulusUnit",
+        "description": "`GPa` (default), `MPa`, `kPa`, `Pa`, `psi` or `ksi`.",
+        "default": "GPa"
+      },
+      "i": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Second moment of area, in `i_unit`."
+      },
+      "i_unit": {
+        "$ref": "#/$defs/InertiaUnit",
+        "description": "`mm4` (default), `cm4`, `m4` or `in4`.",
+        "default": "mm4"
+      },
+      "segments": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Elements of the stiffness model between the key points (default\n200); nodes sit at every support, load point and load end too.",
+        "default": 200
+      }
+    },
+    "required": [
+      "length",
+      "supports",
+      "loads"
+    ],
+    "description": "Input of `beam`: a straight beam, its supports and loads, and\noptionally E and I for the deflection.",
+    "title": "BeamRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "LengthUnit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "m",
+            "description": "Metres."
+          },
+          {
+            "type": "string",
+            "const": "mm",
+            "description": "Millimetres."
+          },
+          {
+            "type": "string",
+            "const": "ft",
+            "description": "Feet."
+          },
+          {
+            "type": "string",
+            "const": "in",
+            "description": "Inches."
+          }
+        ],
+        "description": "Length units."
+      },
+      "ForceUnit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "N",
+            "description": "Newtons."
+          },
+          {
+            "type": "string",
+            "const": "kN",
+            "description": "Kilonewtons."
+          },
+          {
+            "type": "string",
+            "const": "lbf",
+            "description": "Pounds-force."
+          },
+          {
+            "type": "string",
+            "const": "kip",
+            "description": "Kips (1000 lbf)."
+          }
+        ],
+        "description": "Force units."
+      },
+      "BeamSupport": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "number",
+            "format": "double",
+            "description": "Position from the left end."
+          },
+          "kind": {
+            "$ref": "#/$defs/SupportKind",
+            "description": "Its kind.",
+            "default": "pin"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "description": "A support."
+      },
+      "SupportKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "pin",
+            "description": "A pin: no vertical movement, free rotation."
+          },
+          {
+            "type": "string",
+            "const": "roller",
+            "description": "A roller: as a pin for a beam without axial load."
+          },
+          {
+            "type": "string",
+            "const": "fixed",
+            "description": "Fixed (clamped): no movement, no rotation."
+          }
+        ],
+        "description": "How a support restrains the beam."
+      },
+      "BeamLoad": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/BeamLoadKind",
+            "description": "Its kind.",
+            "default": "point"
+          },
+          "at": {
+            "type": "number",
+            "format": "double",
+            "description": "Position (start of a distributed load)."
+          },
+          "end": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "End of a distributed load (default the beam's end)."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "Force, force per length or moment."
+          },
+          "end_value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Intensity at `end` for a linearly varying load."
+          }
+        },
+        "required": [
+          "at",
+          "value"
+        ],
+        "description": "A load."
+      },
+      "BeamLoadKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "point",
+            "description": "A concentrated force at `at` (positive downward)."
+          },
+          {
+            "type": "string",
+            "const": "distributed",
+            "description": "A force per length from `at` to `end`, `value` at `at` and\n`end_value` (default the same) at `end` (positive downward)."
+          },
+          {
+            "type": "string",
+            "const": "moment",
+            "description": "A concentrated moment at `at` (positive counterclockwise)."
+          }
+        ],
+        "description": "What a load is."
+      },
+      "ModulusUnit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "Pa",
+            "description": "Pascals."
+          },
+          {
+            "type": "string",
+            "const": "kPa",
+            "description": "Kilopascals."
+          },
+          {
+            "type": "string",
+            "const": "MPa",
+            "description": "Megapascals (N/mm²)."
+          },
+          {
+            "type": "string",
+            "const": "GPa",
+            "description": "Gigapascals."
+          },
+          {
+            "type": "string",
+            "const": "psi",
+            "description": "Pounds per square inch."
+          },
+          {
+            "type": "string",
+            "const": "ksi",
+            "description": "Kips per square inch."
+          }
+        ],
+        "description": "Units of Young's modulus."
+      },
+      "InertiaUnit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "m4",
+            "description": "m⁴."
+          },
+          {
+            "type": "string",
+            "const": "cm4",
+            "description": "cm⁴ (steel tables in Europe)."
+          },
+          {
+            "type": "string",
+            "const": "mm4",
+            "description": "mm⁴."
+          },
+          {
+            "type": "string",
+            "const": "in4",
+            "description": "in⁴ (AISC tables)."
+          }
+        ],
+        "description": "Units of the second moment of area."
+      }
+    }
+  }
+}

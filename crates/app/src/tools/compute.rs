@@ -54,7 +54,7 @@ pub use self::cards::{
     SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
     StatsForecastTool, StatsPowerTool,
 };
-pub use self::engineering::{Bode, BodeTool, Karnaugh, KarnaughTool};
+pub use self::engineering::{Beam, BeamTool, Bode, BodeTool, Karnaugh, KarnaughTool};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -765,7 +765,8 @@ For NPV, IRR or payback of a series of cash flows, call `cash_flow`; to compare 
 against weighted criteria, `decision_matrix`.
 
 For engineering: the frequency response, margins and crossovers of a transfer function come \
-from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`.
+from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`; reactions, shear, moment and \
+deflection of a beam come from `beam`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -805,7 +806,8 @@ pub fn register_compute_tools(
     registry.register_typed(CashFlowTool::new(ports.clone()))?;
     registry.register_typed(DecisionMatrixTool::new(ports.clone()))?;
     registry.register_typed(BodeTool::new(ports.clone()))?;
-    registry.register_typed(KarnaughTool::new(ports.clone()))
+    registry.register_typed(KarnaughTool::new(ports.clone()))?;
+    registry.register_typed(BeamTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -920,7 +922,11 @@ mod tests {
             definition(DecisionMatrixTool::new(ports.clone()))
         );
         insta::assert_json_snapshot!("bode_definition", definition(BodeTool::new(ports.clone())));
-        insta::assert_json_snapshot!("karnaugh_definition", definition(KarnaughTool::new(ports)));
+        insta::assert_json_snapshot!(
+            "karnaugh_definition",
+            definition(KarnaughTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!("beam_definition", definition(BeamTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1205,6 +1211,7 @@ mod tests {
         assert_eq!(
             registry.names(),
             [
+                "beam",
                 "bode",
                 "calc",
                 "cash_flow",

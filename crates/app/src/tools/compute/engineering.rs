@@ -1,4 +1,4 @@
-//! The engineering compute tools: `bode`, `karnaugh`, and what the model is told
+//! The engineering compute tools: `bode`, `karnaugh`, `beam`, and what the model is told
 //! about each engineering card beyond its slots ([`notes`]).
 
 use std::fmt::Write as _;
@@ -96,6 +96,47 @@ given, never simplify by hand.";
 /// `karnaugh`.
 pub type KarnaughTool = UnitsTool<Karnaugh>;
 
+/// `beam`.
+#[derive(Debug, Clone, Copy)]
+pub struct Beam;
+
+impl UnitsKind for Beam {
+    type Request = BeamRequest;
+    const NAME: &'static str = "beam";
+    const DESCRIPTION: &'static str = "\
+Analyses a straight beam with crest's deterministic engine (Euler–Bernoulli, direct stiffness \
+method, so continuous and propped beams work too): `length`, `supports` (`pin`, `roller`, \
+`fixed` at positions), `loads` (point and distributed loads positive downward, moments positive \
+counterclockwise), units (`length_unit`, `force_unit`) and optionally `e` and `i` with their \
+units for the deflection. The user sees the reactions, the shear, bending-moment and deflection \
+diagrams with their extremes; you get the reactions, the largest moments, shear and deflection \
+with their positions as slots to cite. State the assumptions (small deflections, uniform E·I).";
+    fn wrap(request: BeamRequest) -> ComputeRequest {
+        ComputeRequest::Beam(request)
+    }
+    fn subject(request: &BeamRequest) -> String {
+        format!(
+            "{} {} span, {} supports, {} loads",
+            request.length,
+            request.length_unit.symbol(),
+            request.supports.len(),
+            request.loads.len()
+        )
+    }
+    fn check(request: &BeamRequest) -> Result<(), String> {
+        if request.supports.is_empty() {
+            return Err("give the `supports` (a cantilever is one `fixed` support)".into());
+        }
+        if request.e.is_some() != request.i.is_some() {
+            return Err("give both `e` and `i` for the deflection, or neither".into());
+        }
+        Ok(())
+    }
+}
+
+/// `beam`.
+pub type BeamTool = UnitsTool<Beam>;
+
 /// What the model is told about an engineering card beyond its values.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
     if let ComputedBody::Karnaugh(k) = body {
@@ -110,6 +151,24 @@ pub(super) fn notes(body: &ComputedBody, out: &mut String) {
             let _ = writeln!(
                 out,
                 "The cover was completed greedily and may not be minimal."
+            );
+        }
+    }
+    if let ComputedBody::Beam(b) = body {
+        let _ = writeln!(
+            out,
+            "Units: positions in {}, forces in {}, moments in {}, deflection in {} (negative = \
+             downward). Support names A, B… run from the left.",
+            b.length_unit.symbol(),
+            b.force_unit.symbol(),
+            b.moment_unit(),
+            b.length_unit.deflection_unit().symbol()
+        );
+        if b.indeterminacy > 0 {
+            let _ = writeln!(
+                out,
+                "Statically indeterminate to degree {}: the reactions assume a uniform E·I.",
+                b.indeterminacy
             );
         }
     }
@@ -209,5 +268,21 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn beam_needs_supports_and_both_stiffness_terms() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(BeamTool::new(ports(Arc::clone(&engine))));
+        let input = json!({
+            "length": 6, "supports": [{ "at": 0 }, { "at": 6, "kind": "roller" }],
+            "loads": [{ "kind": "distributed", "at": 0, "value": 10 }]
+        });
+        let prepared = tool.prepare(input, &ctx()).await.unwrap();
+        assert_eq!(prepared.subject, "6 m span, 2 supports, 1 loads");
+        let text = prepared.run.await.unwrap().text_content();
+        assert!(text.contains("moments in kN·m"), "{text}");
+        let half = json!({ "length": 6, "supports": [{ "at": 0, "kind": "fixed" }], "loads": [], "e": 200 });
+        assert!(tool.prepare(half, &ctx()).await.is_err());
     }
 }

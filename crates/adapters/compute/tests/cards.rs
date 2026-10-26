@@ -1471,3 +1471,269 @@ fn karnaugh_six_variables_stay_fast_and_correct() {
     let (c, _) = engine().karnaugh(&kmap(&[], &dense, &[0, 7])).unwrap();
     assert_eq!(c.assumptions[0].status, AssumptionStatus::Pass);
 }
+
+// --- Beam ------------------------------------------------------------------------
+
+fn support(at: f64, kind: SupportKind) -> BeamSupport {
+    BeamSupport { at, kind }
+}
+
+fn point(at: f64, value: f64) -> BeamLoad {
+    BeamLoad {
+        kind: BeamLoadKind::Point,
+        at,
+        end: None,
+        value,
+        end_value: None,
+    }
+}
+
+fn udl(at: f64, end: f64, value: f64) -> BeamLoad {
+    BeamLoad {
+        kind: BeamLoadKind::Distributed,
+        at,
+        end: Some(end),
+        value,
+        end_value: None,
+    }
+}
+
+fn beam(length: f64, supports: Vec<BeamSupport>, loads: Vec<BeamLoad>) -> BeamRequest {
+    BeamRequest {
+        length,
+        length_unit: LengthUnit::M,
+        force_unit: ForceUnit::KN,
+        supports,
+        loads,
+        e: Some(200.0),
+        e_unit: ModulusUnit::GPa,
+        i: Some(8.0e7),
+        i_unit: InertiaUnit::Mm4,
+        segments: 200,
+    }
+}
+
+/// E·I of [`beam`] in kN·m²: 200 GPa × 8e7 mm⁴ = 16 000 kN·m².
+const EI: f64 = 16_000.0;
+
+fn rel(actual: f64, expected: f64, tol: f64) {
+    near(actual / expected, 1.0, tol);
+}
+
+#[test]
+fn beam_simply_supported_udl_matches_the_closed_forms() {
+    // w = 10 kN/m on 6 m: R = wL/2, Mmax = wL²/8 at midspan, δ = 5wL⁴/384EI.
+    let (w, l) = (10.0, 6.0);
+    let request = beam(
+        l,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(l, SupportKind::Roller),
+        ],
+        vec![udl(0.0, l, w)],
+    );
+    let (c, body) = engine().beam(&request).unwrap();
+    assert_eq!(c.status, ComputedStatus::Ok, "{:?}", c.warnings);
+    rel(v(&c, "reaction.A"), w * l / 2.0, 1e-9);
+    rel(v(&c, "reaction.B"), w * l / 2.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / 8.0, 1e-9);
+    near(v(&c, "max_moment_at"), l / 2.0, 1e-9);
+    rel(v(&c, "max_shear").abs(), w * l / 2.0, 1e-9);
+    // Downward: negative; in mm.
+    rel(
+        -v(&c, "max_deflection"),
+        5.0 * w * l.powi(4) / (384.0 * EI) * 1000.0,
+        1e-9,
+    );
+    near(v(&c, "indeterminacy"), 0.0, 0.0);
+    let ComputedBody::Beam(b) = body else {
+        panic!()
+    };
+    assert_eq!(c.assumptions[1].status, AssumptionStatus::Pass);
+    assert_eq!(b.x.len(), b.moment.len());
+    assert_eq!(b.deflection.len(), b.x.len());
+}
+
+#[test]
+fn beam_cantilever_tip_load_and_fixed_end_moment() {
+    // P = 5 kN at the tip of a 2 m cantilever: M_A = PL (ccw), M(0) = −PL,
+    // δ = PL³/3EI.
+    let (p, l) = (5.0, 2.0);
+    let request = beam(l, vec![support(0.0, SupportKind::Fixed)], vec![point(l, p)]);
+    let (c, _) = engine().beam(&request).unwrap();
+    rel(v(&c, "reaction.A"), p, 1e-9);
+    rel(v(&c, "moment.A"), p * l, 1e-9);
+    rel(v(&c, "min_moment"), -p * l, 1e-9);
+    near(v(&c, "min_moment_at"), 0.0, 1e-12);
+    assert!(c.value("max_moment").is_none());
+    rel(
+        -v(&c, "max_deflection"),
+        p * l.powi(3) / (3.0 * EI) * 1000.0,
+        1e-9,
+    );
+    near(v(&c, "max_deflection_at"), l, 1e-12);
+}
+
+#[test]
+fn beam_indeterminate_cases_match_the_textbook_reactions() {
+    let (w, l) = (12.0, 5.0);
+    // Propped cantilever, UDL: R_B = 3wL/8, M_A = wL²/8.
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Fixed),
+                support(l, SupportKind::Roller),
+            ],
+            vec![udl(0.0, l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 3.0 * w * l / 8.0, 1e-9);
+    rel(v(&c, "moment.A"), w * l * l / 8.0, 1e-9);
+    near(v(&c, "indeterminacy"), 1.0, 0.0);
+    // Fixed both ends, UDL: end moments wL²/12, midspan wL²/24, δ = wL⁴/384EI.
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Fixed),
+                support(l, SupportKind::Fixed),
+            ],
+            vec![udl(0.0, l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "min_moment"), -w * l * l / 12.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / 24.0, 1e-9);
+    rel(
+        -v(&c, "max_deflection"),
+        w * l.powi(4) / (384.0 * EI) * 1000.0,
+        1e-9,
+    );
+    // Two equal spans, UDL: middle reaction 1.25wL, ends 0.375wL, M_B = −wL²/8.
+    let (c, _) = engine()
+        .beam(&beam(
+            2.0 * l,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(l, SupportKind::Roller),
+                support(2.0 * l, SupportKind::Roller),
+            ],
+            vec![udl(0.0, 2.0 * l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 1.25 * w * l, 1e-9);
+    rel(v(&c, "reaction.A"), 0.375 * w * l, 1e-9);
+    rel(v(&c, "min_moment"), -w * l * l / 8.0, 1e-9);
+    near(v(&c, "min_moment_at"), l, 1e-9);
+}
+
+#[test]
+fn beam_overhang_point_moment_and_triangular_loads() {
+    // Supports at 0 and 4 m, P = 10 kN at the tip of a 6 m beam:
+    // R_B = P·6/4 = 15, R_A = −5, M_B = −P·2 = −20.
+    let (c, _) = engine()
+        .beam(&beam(
+            6.0,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(4.0, SupportKind::Roller),
+            ],
+            vec![point(6.0, 10.0)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 15.0, 1e-9);
+    rel(v(&c, "reaction.A"), -5.0, 1e-9);
+    rel(v(&c, "min_moment"), -20.0, 1e-9);
+    // A 30 kN·m counterclockwise moment at midspan of a 6 m simple beam:
+    // R_A = M/L up, R_B = M/L down; the moment jumps from +15 to −15.
+    let moment = BeamLoad {
+        kind: BeamLoadKind::Moment,
+        at: 3.0,
+        end: None,
+        value: 30.0,
+        end_value: None,
+    };
+    let (c, _) = engine()
+        .beam(&beam(
+            6.0,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(6.0, SupportKind::Roller),
+            ],
+            vec![moment],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.A"), 5.0, 1e-9);
+    rel(v(&c, "reaction.B"), -5.0, 1e-9);
+    rel(v(&c, "min_moment"), -15.0, 1e-9);
+    rel(v(&c, "max_moment"), 15.0, 1e-9);
+    // Triangular load 0 → w on a simple beam: R_B = wL/3, Mmax = wL²/(9√3)
+    // at L/√3.
+    let (w, l) = (9.0, 6.0);
+    let triangle = BeamLoad {
+        kind: BeamLoadKind::Distributed,
+        at: 0.0,
+        end: Some(l),
+        value: 0.0,
+        end_value: Some(w),
+    };
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(l, SupportKind::Roller),
+            ],
+            vec![triangle],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), w * l / 3.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / (9.0 * 3f64.sqrt()), 1e-9);
+    near(v(&c, "max_moment_at"), l / 3f64.sqrt(), 1e-9);
+}
+
+#[test]
+fn beam_rejects_mechanisms_and_bad_positions() {
+    let one_pin = beam(
+        4.0,
+        vec![support(0.0, SupportKind::Pin)],
+        vec![point(2.0, 1.0)],
+    );
+    assert!(engine().beam(&one_pin).is_err());
+    let outside = beam(
+        4.0,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(5.0, SupportKind::Roller),
+        ],
+        vec![],
+    );
+    assert!(engine().beam(&outside).is_err());
+    let mut imperial = beam(
+        10.0,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(10.0, SupportKind::Roller),
+        ],
+        vec![point(5.0, 1.0)],
+    );
+    imperial.length_unit = LengthUnit::Ft;
+    imperial.force_unit = ForceUnit::Kip;
+    imperial.e = Some(29_000.0);
+    imperial.e_unit = ModulusUnit::Ksi;
+    imperial.i = Some(100.0);
+    imperial.i_unit = InertiaUnit::In4;
+    // PL³/48EI with L = 120 in, P = 1 kip, E = 29 000 ksi: 0.012414 in.
+    let (c, _) = engine().beam(&imperial).unwrap();
+    rel(
+        -v(&c, "max_deflection"),
+        120f64.powi(3) / (48.0 * 29_000.0 * 100.0),
+        1e-9,
+    );
+    assert_eq!(
+        c.value("max_deflection")
+            .and_then(|x| x.unit.clone())
+            .as_deref(),
+        Some("in")
+    );
+}

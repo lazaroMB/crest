@@ -3502,6 +3502,20 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "A beam's reactions, shear, moment and deflection.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "beam"
+            }
+          },
+          "$ref": "#/$defs/BeamBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -6624,6 +6638,293 @@ expression: "schemars::schema_for!(Block)"
         "pos",
         "pos_expression",
         "method"
+      ]
+    },
+    "LengthUnit": {
+      "description": "Length units.",
+      "oneOf": [
+        {
+          "description": "Metres.",
+          "type": "string",
+          "const": "m"
+        },
+        {
+          "description": "Millimetres.",
+          "type": "string",
+          "const": "mm"
+        },
+        {
+          "description": "Feet.",
+          "type": "string",
+          "const": "ft"
+        },
+        {
+          "description": "Inches.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "ForceUnit": {
+      "description": "Force units.",
+      "oneOf": [
+        {
+          "description": "Newtons.",
+          "type": "string",
+          "const": "N"
+        },
+        {
+          "description": "Kilonewtons.",
+          "type": "string",
+          "const": "kN"
+        },
+        {
+          "description": "Pounds-force.",
+          "type": "string",
+          "const": "lbf"
+        },
+        {
+          "description": "Kips (1000 lbf).",
+          "type": "string",
+          "const": "kip"
+        }
+      ]
+    },
+    "BeamSupport": {
+      "description": "A support.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "Position from the left end.",
+          "type": "number",
+          "format": "double"
+        },
+        "kind": {
+          "description": "Its kind.",
+          "$ref": "#/$defs/SupportKind",
+          "default": "pin"
+        }
+      },
+      "required": [
+        "at"
+      ]
+    },
+    "SupportKind": {
+      "description": "How a support restrains the beam.",
+      "oneOf": [
+        {
+          "description": "A pin: no vertical movement, free rotation.",
+          "type": "string",
+          "const": "pin"
+        },
+        {
+          "description": "A roller: as a pin for a beam without axial load.",
+          "type": "string",
+          "const": "roller"
+        },
+        {
+          "description": "Fixed (clamped): no movement, no rotation.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "BeamLoad": {
+      "description": "A load.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Its kind.",
+          "$ref": "#/$defs/BeamLoadKind",
+          "default": "point"
+        },
+        "at": {
+          "description": "Position (start of a distributed load).",
+          "type": "number",
+          "format": "double"
+        },
+        "end": {
+          "description": "End of a distributed load (default the beam's end).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "value": {
+          "description": "Force, force per length or moment.",
+          "type": "number",
+          "format": "double"
+        },
+        "end_value": {
+          "description": "Intensity at `end` for a linearly varying load.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "at",
+        "value"
+      ]
+    },
+    "BeamLoadKind": {
+      "description": "What a load is.",
+      "oneOf": [
+        {
+          "description": "A concentrated force at `at` (positive downward).",
+          "type": "string",
+          "const": "point"
+        },
+        {
+          "description": "A force per length from `at` to `end`, `value` at `at` and\n`end_value` (default the same) at `end` (positive downward).",
+          "type": "string",
+          "const": "distributed"
+        },
+        {
+          "description": "A concentrated moment at `at` (positive counterclockwise).",
+          "type": "string",
+          "const": "moment"
+        }
+      ]
+    },
+    "BeamReaction": {
+      "description": "A support reaction.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Support name (`A`, `B`… from the left).",
+          "type": "string"
+        },
+        "at": {
+          "description": "Position.",
+          "type": "number",
+          "format": "double"
+        },
+        "kind": {
+          "description": "Kind of support.",
+          "$ref": "#/$defs/SupportKind"
+        },
+        "force": {
+          "description": "Vertical force, positive upward.",
+          "type": "number",
+          "format": "double"
+        },
+        "moment": {
+          "description": "Moment of a fixed support, positive counterclockwise.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "at",
+        "kind",
+        "force"
+      ]
+    },
+    "BeamBody": {
+      "description": "Body of a beam card.",
+      "type": "object",
+      "properties": {
+        "length": {
+          "description": "Span.",
+          "type": "number",
+          "format": "double"
+        },
+        "length_unit": {
+          "description": "Unit of positions and the span.",
+          "$ref": "#/$defs/LengthUnit"
+        },
+        "force_unit": {
+          "description": "Unit of forces (moments are force × length).",
+          "$ref": "#/$defs/ForceUnit"
+        },
+        "supports": {
+          "description": "The supports, from the left.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamSupport"
+          }
+        },
+        "loads": {
+          "description": "The loads as given.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamLoad"
+          }
+        },
+        "reactions": {
+          "description": "One reaction per support, from the left.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamReaction"
+          }
+        },
+        "x": {
+          "description": "Section positions; a position repeats where shear or moment jumps\n(left value, then right).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "shear": {
+          "description": "Shear at each position.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "moment": {
+          "description": "Bending moment at each position.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "deflection": {
+          "description": "Deflection at each position, in [`LengthUnit::deflection_unit`];\nempty without E·I.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "ei": {
+          "description": "E·I in N·m², when given.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "indeterminacy": {
+          "description": "Reactions beyond the two statics gives (0: statically\ndeterminate).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "length",
+        "length_unit",
+        "force_unit",
+        "supports",
+        "loads",
+        "reactions",
+        "x",
+        "shear",
+        "moment",
+        "indeterminacy"
       ]
     },
     "FormField": {

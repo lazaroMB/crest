@@ -429,6 +429,8 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::beam`].
+    Beam(BeamRequest),
     /// [`ComputePort::karnaugh`].
     Karnaugh(KarnaughRequest),
     /// [`ComputePort::bode`].
@@ -471,6 +473,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Beam(_)
             | Self::Karnaugh(_)
             | Self::Bode(_) => None,
         }
@@ -497,6 +500,7 @@ impl ComputeRequest {
             | Self::Simulate(_)
             | Self::CashFlow(_)
             | Self::Decide(_)
+            | Self::Beam(_)
             | Self::Karnaugh(_)
             | Self::Bode(_) => None,
         }
@@ -650,6 +654,16 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
+    /// A straight Euler-Bernoulli beam by the stiffness method: reactions,
+    /// shear and bending-moment diagrams and, given E and I, the deflection.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for positions outside the span, a beam that
+    /// is not held (a mechanism), loads with no extent, or non-finite
+    /// numbers.
+    fn beam(&self, request: &BeamRequest) -> ComputeResult;
+
     /// A Boolean function of up to six variables: its Karnaugh map, prime
     /// implicants and a minimal sum of products and product of sums.
     ///
@@ -705,6 +719,7 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Beam(r) => self.beam(r),
             ComputeRequest::Karnaugh(r) => self.karnaugh(r),
             ComputeRequest::Bode(r) => self.bode(r),
         }
