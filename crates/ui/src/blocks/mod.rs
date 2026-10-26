@@ -33,6 +33,7 @@ pub mod measured;
 pub mod mermaid;
 pub mod model_view;
 pub mod molecule;
+pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
 pub mod plate;
@@ -107,6 +108,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Reaction(_) => reaction::render(entry, window, cx),
         BlockKind::MoleculeGrid(_) => molecule_grid::render(entry, window, cx),
         BlockKind::Spectrum(_) => spectrum::render(entry, window, cx),
+        BlockKind::Molecule3d(_) => molecule3d::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

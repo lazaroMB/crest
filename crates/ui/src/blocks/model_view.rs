@@ -40,6 +40,7 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::render3d::camera::OrbitCamera;
 use crate::render3d::math::V3;
+use domain::sysmodel::scene::Rgb;
 use crate::render3d::mesh::{Mesh, Placement};
 use crate::render3d::section::{self, Section};
 use crate::sysboard::{Backend, auto_backend};
@@ -126,6 +127,11 @@ pub struct ModelView {
     points: Vec<V3>,
     /// Fixed viewport height when shown inline; the modal share otherwise.
     height: Option<f32>,
+    /// A colour per triangle (linear RGB), instead of clay.
+    colors: Option<Rc<[Rgb]>>,
+    /// Points (file coordinates) a measured point snaps to, e.g. atom
+    /// centres.
+    snap: Rc<[V3]>,
 }
 
 impl ModelView {
@@ -151,6 +157,8 @@ impl ModelView {
             measuring: false,
             points: Vec::new(),
             height: None,
+            colors: None,
+            snap: Rc::from(Vec::new()),
         };
         view.rebuild();
         view
@@ -161,12 +169,17 @@ impl ModelView {
         if fingerprint(spec) == self.fingerprint {
             return;
         }
-        let height = self.height;
+        let (height, colors, snap) = (self.height, self.colors.clone(), Rc::clone(&self.snap));
         *self = Self {
             backend: self.backend.clone(),
             ..Self::new(spec, cx)
         };
         self.height = height;
+        self.snap = snap;
+        if colors.is_some() {
+            self.colors = colors;
+            self.rebuild();
+        }
     }
 
     /// Builds the drawn mesh again (hidden ranges, section), keeping the
@@ -174,10 +187,17 @@ impl ModelView {
     fn rebuild(&mut self) {
         let hidden = self.hidden.clone();
         let keep = move |i: usize| !hidden.iter().any(|r| r.contains(&i));
-        self.mesh = Rc::new(Mesh::from_model_cut(
+        let colors = self.colors.clone();
+        let color = move |i: usize| {
+            colors
+                .as_ref()
+                .and_then(|c| c.get(i).copied())
+                .unwrap_or(CLAY)
+        };
+        self.mesh = Rc::new(Mesh::from_model_painted(
             &self.spec.mesh,
             &self.placement,
-            CLAY,
+            &color,
             &keep,
             self.section.as_ref(),
         ));
@@ -244,6 +264,27 @@ impl ModelView {
         self.camera = self.fitted;
         self.rebuild();
         cx.notify();
+    }
+
+    /// Colours the triangles one by one (linear RGB; clay past the end), or
+    /// all clay again with `None`.
+    pub fn set_colors(&mut self, colors: Option<Rc<[Rgb]>>, cx: &mut Context<Self>) {
+        let same = match (&self.colors, &colors) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            self.colors = colors;
+            self.rebuild();
+            cx.notify();
+        }
+    }
+
+    /// Measured points snap to the nearest of `points` (file coordinates):
+    /// atom centres for a molecule. Empty: no snapping.
+    pub fn set_snap(&mut self, points: Rc<[V3]>) {
+        self.snap = points;
     }
 
     /// Leaves the triangles in `ranges` out (hidden solids).
@@ -356,6 +397,12 @@ impl ModelView {
         let Some(p) = self.pick_at(at) else {
             return false;
         };
+        let p = self
+            .snap
+            .iter()
+            .copied()
+            .min_by(|a, b| section::distance(*a, p).total_cmp(&section::distance(*b, p)))
+            .unwrap_or(p);
         if self.points.len() >= 2 {
             self.points.clear();
         }

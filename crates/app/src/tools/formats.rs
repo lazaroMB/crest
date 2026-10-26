@@ -14,8 +14,8 @@
 //! (`show_step`), [`dxf`] (`show_dxf`) and [`ifc`]
 //! (`show_ifc_schedule`), and the science viewers [`sequence`]
 //! (`show_sequence`), [`reaction`] (`show_reaction`),
-//! [`molecule_grid`] (`show_molecule_grid`) and [`spectrum`]
-//! (`show_spectrum`).
+//! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
+//! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -59,6 +59,7 @@ pub mod dxf;
 pub mod har;
 pub mod ifc;
 pub mod material;
+pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
 pub mod query_plan;
@@ -82,6 +83,7 @@ pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
 pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
+pub use molecule3d::{SHOW_MOLECULE_3D, ShowMolecule3dTool, molecule3d_summary};
 pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_entries, grid_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
@@ -1180,6 +1182,9 @@ descriptors it computes, never your own.
 - `show_spectrum`: show an IR, Raman, UV-Vis or NMR spectrum (JCAMP-DX) or a \
 mass spectrum (mzML, MGF) with its peaks; base assignments on the peaks it \
 returns and cite their positions, not values you expect.
+- `show_molecule_3d`: show a molecule in 3D from a structure file (MOL/SDF, \
+XYZ, PDB) or a SMILES the engine embeds; say an embedded geometry is a \
+computed conformer, and quote no bond lengths or angles it did not give.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1190,7 +1195,7 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
-/// `show_molecule_grid` and `show_spectrum`.
+/// `show_molecule_grid`, `show_spectrum` and `show_molecule_3d`.
 ///
 /// # Errors
 ///
@@ -1223,7 +1228,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowSequenceTool::new(ports.clone()))?;
     registry.register_typed(ShowReactionTool::new(ports.clone()))?;
     registry.register_typed(ShowMoleculeGridTool::new(ports.clone()))?;
-    registry.register_typed(ShowSpectrumTool::new(ports.clone()))
+    registry.register_typed(ShowSpectrumTool::new(ports.clone()))?;
+    registry.register_typed(ShowMolecule3dTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1341,7 +1347,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 25);
+        assert_eq!(registry.names().len(), 26);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

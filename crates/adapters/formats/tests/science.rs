@@ -319,3 +319,56 @@ fn mass_spectra_from_mgf_and_mzml() {
     assert_eq!(xs, [200.25, 150.5]);
     assert_eq!(mzml.name.as_deref(), Some("scan=1"));
 }
+
+#[test]
+fn molecules_in_3d_from_smiles_and_files() {
+    use application::ports::formats::Molecule3dSource;
+    use domain::science::molecule3d::{CoordinateSource, StructureFormat};
+    let formats = Formats::new();
+    // The engine's conformer of ethanol, hydrogens added.
+    let embedded = formats
+        .molecule_3d(&Molecule3dSource::Smiles("CCO".into()))
+        .unwrap();
+    embedded.validate().unwrap();
+    assert!(matches!(embedded.source, CoordinateSource::Embedded { .. }));
+    assert_eq!(embedded.formula(), "C2H6O");
+    assert_eq!(embedded.bonds.len(), 8);
+    let cc = embedded.distance(0, 1).unwrap();
+    let co = embedded.distance(1, 2).unwrap();
+    assert!((1.40..1.65).contains(&cc), "C–C {cc}");
+    assert!((1.30..1.55).contains(&co), "C–O {co}");
+    assert!(embedded.warnings[0].contains("computed conformer"));
+    assert!(formats.molecule_3d(&Molecule3dSource::Smiles("C1CC".into())).is_err());
+
+    let file = |name: &str| Molecule3dSource::File {
+        path: format!("mol/{name}"),
+        bytes: fixture(name),
+    };
+    let mol = formats.molecule_3d(&file("ethanol.mol")).unwrap();
+    assert_eq!(
+        mol.source,
+        CoordinateSource::File {
+            format: StructureFormat::Mol
+        }
+    );
+    assert_eq!((mol.atoms.len(), mol.bonds.len()), (9, 8));
+    assert_eq!(mol.name.as_deref(), Some("ethanol"));
+    assert!((mol.distance(0, 1).unwrap() - 1.52).abs() < 1e-9);
+    assert!(!mol.bonds_inferred);
+
+    let water = formats.molecule_3d(&file("water.xyz")).unwrap();
+    assert_eq!(water.formula(), "H2O");
+    assert_eq!(water.bonds.len(), 2);
+    assert!(water.bonds_inferred);
+    // A planar molecule is still 3D data: only all-zero z is refused.
+    assert!(water.atoms.iter().all(|a| a.position[2] == 0.0));
+
+    let gly = formats.molecule_3d(&file("glycine.pdb")).unwrap();
+    assert_eq!(gly.atoms.len(), 5);
+    assert_eq!(gly.bonds.len(), 4);
+    assert_eq!(gly.atom_label(1), "C2 CA (GLY 1 A)");
+    assert_eq!(gly.name.as_deref(), Some("GLYCINE"));
+
+    let flat = formats.molecule_3d(&file("ethanol-2d.sdf"));
+    assert!(flat.unwrap_err().to_string().contains("only 2D coordinates"));
+}

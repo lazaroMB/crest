@@ -37,7 +37,8 @@
 //! SMILES is `bad`; every molecule grid gives each entry ethanol's
 //! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
 //! `bad`; every spectrum is an IR transmittance trace 4000–400 cm⁻¹ with
-//! one dip picked at 1715 cm⁻¹.
+//! one dip picked at 1715 cm⁻¹; every 3D molecule is water (O and two H
+//! 0.9572 Å from it) unless its SMILES is `bad`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -73,6 +74,9 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::molecule3d::{
+    Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
+};
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
 use domain::science::reaction::{
@@ -85,7 +89,7 @@ use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    Molecule3dSource, MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -1086,6 +1090,55 @@ impl FormatsPort for FakeFormats {
             metadata: vec![("origin".into(), "crest".into())],
             blocks: 1,
             block: 0,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError> {
+        let (arg, smiles, path, coordinates) = match source {
+            Molecule3dSource::Smiles(s) => (
+                s.clone(),
+                Some(s.clone()),
+                None,
+                CoordinateSource::Embedded {
+                    method: "fake embedding".into(),
+                },
+            ),
+            Molecule3dSource::File { path, .. } => (
+                path.clone(),
+                None,
+                Some(path.clone()),
+                CoordinateSource::File {
+                    format: StructureFormat::Xyz,
+                },
+            ),
+        };
+        self.record("molecule_3d", &arg)?;
+        if arg == "bad" {
+            return Err(FormatError::Invalid("invalid SMILES: bad".into()));
+        }
+        let atom = |element: &str, position: [f64; 3]| Atom3d {
+            element: element.to_owned(),
+            position,
+            name: None,
+            residue: None,
+        };
+        Ok(Molecule3dSpec {
+            title: None,
+            name: Some("water".into()),
+            smiles,
+            path,
+            source: coordinates,
+            atoms: vec![
+                atom("O", [0.0, 0.0, 0.0]),
+                atom("H", [0.9572, 0.0, 0.0]),
+                atom("H", [-0.24, 0.9266, 0.0]),
+            ],
+            bonds: vec![
+                Bond3d { a: 0, b: 1, order: 1 },
+                Bond3d { a: 0, b: 2, order: 1 },
+            ],
+            bonds_inferred: false,
             warnings: Vec::new(),
         })
     }

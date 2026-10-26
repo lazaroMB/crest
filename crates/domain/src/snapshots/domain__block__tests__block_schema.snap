@@ -741,6 +741,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A molecule in 3D as ball and stick (tool `show_molecule_3d`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "molecule3d"
+        }
+      },
+      "$ref": "#/$defs/Molecule3dSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -12399,6 +12413,209 @@ expression: "schemars::schema_for!(Block)"
         "x",
         "y",
         "picking"
+      ]
+    },
+    "CoordinateSource": {
+      "description": "Where the coordinates come from.",
+      "oneOf": [
+        {
+          "description": "Read from a structure file.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "file"
+            },
+            "format": {
+              "description": "Its format.",
+              "$ref": "#/$defs/StructureFormat"
+            }
+          },
+          "required": [
+            "kind",
+            "format"
+          ]
+        },
+        {
+          "description": "Embedded from SMILES by the engine (a computed conformer, not an\nexperimental structure).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "embedded"
+            },
+            "method": {
+              "description": "The method, e.g. `distance geometry + DREIDING (chematic 1.2.1)`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "method"
+          ]
+        }
+      ]
+    },
+    "StructureFormat": {
+      "description": "The file the coordinates come from.",
+      "oneOf": [
+        {
+          "description": "MDL molfile (V2000 or V3000).",
+          "type": "string",
+          "const": "mol"
+        },
+        {
+          "description": "SD file (its first record).",
+          "type": "string",
+          "const": "sdf"
+        },
+        {
+          "description": "XYZ.",
+          "type": "string",
+          "const": "xyz"
+        },
+        {
+          "description": "Protein Data Bank.",
+          "type": "string",
+          "const": "pdb"
+        }
+      ]
+    },
+    "Atom3d": {
+      "description": "An atom with its position in Å.",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Element symbol (`C`, `Cl`).",
+          "type": "string"
+        },
+        "position": {
+          "description": "Position, Å.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "name": {
+          "description": "Atom name from the file (PDB `CA`), when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "residue": {
+          "description": "Residue (`ALA 12 A`), for PDB atoms.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "element",
+        "position"
+      ]
+    },
+    "Bond3d": {
+      "description": "A bond between two atoms (indices into the atoms).",
+      "type": "object",
+      "properties": {
+        "a": {
+          "description": "First atom.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "b": {
+          "description": "Second atom.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "order": {
+          "description": "1, 2 or 3; 4 for aromatic.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "order"
+      ]
+    },
+    "Molecule3dSpec": {
+      "description": "A molecule in 3D.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the view.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name of the molecule (the file's title line, or the call's).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smiles": {
+          "description": "The SMILES embedded, when it came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Where the coordinates come from.",
+          "$ref": "#/$defs/CoordinateSource"
+        },
+        "atoms": {
+          "description": "The atoms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Atom3d"
+          }
+        },
+        "bonds": {
+          "description": "The bonds.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bond3d"
+          },
+          "default": []
+        },
+        "bonds_inferred": {
+          "description": "Whether the bonds were inferred from distances (XYZ, PDB).",
+          "type": "boolean",
+          "default": false
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "atoms"
       ]
     }
   }

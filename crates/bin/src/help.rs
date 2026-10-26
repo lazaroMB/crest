@@ -234,7 +234,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_sequence"
         | "show_reaction"
         | "show_molecule_grid"
-        | "show_spectrum" => "read",
+        | "show_spectrum"
+        | "show_molecule_3d" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

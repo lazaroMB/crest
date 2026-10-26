@@ -67,7 +67,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Sequence(_)
         | BlockKind::Reaction(_)
         | BlockKind::MoleculeGrid(_)
-        | BlockKind::Spectrum(_) => BlockWidth::Wide,
+        | BlockKind::Spectrum(_)
+        | BlockKind::Molecule3d(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

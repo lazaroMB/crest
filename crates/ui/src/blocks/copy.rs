@@ -24,6 +24,7 @@
 //! | reaction | reaction SMILES, the equation (and the balanced one), balance CSV |
 //! | molecule grid | CSV of ids, SMILES, activities and descriptors; SMILES list |
 //! | spectrum | points CSV, peaks CSV |
+//! | molecule 3D | XYZ, the SMILES embedded |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -575,6 +576,13 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             ];
             if spec.enzyme_source.is_some() {
                 formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
+            }
+            formats
+        }
+        BlockKind::Molecule3d(spec) => {
+            let mut formats = vec![CopyFormat::new("xyz", "XYZ", spec.to_xyz())];
+            if let Some(smiles) = &spec.smiles {
+                formats.push(CopyFormat::new("smiles", "SMILES", smiles.clone()));
             }
             formats
         }

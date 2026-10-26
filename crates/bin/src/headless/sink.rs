@@ -256,6 +256,15 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::Molecule3d(molecule) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[molecule 3D: {}, {} atoms, {} bonds]",
+                molecule.formula(),
+                molecule.atoms.len(),
+                molecule.bonds.len()
+            ),
+        ),
         BlockKind::Spectrum(spectrum) => w.line(
             Some(Style::Dim),
             &format!(
