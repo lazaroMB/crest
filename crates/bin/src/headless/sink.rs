@@ -228,6 +228,19 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::Benchmarks(bench) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[benchmarks: {}, {} regressed, {} improved]",
+                bench.benches.len(),
+                bench
+                    .with_verdict(domain::devops::bench::Verdict::Regressed)
+                    .len(),
+                bench
+                    .with_verdict(domain::devops::bench::Verdict::Improved)
+                    .len()
+            ),
+        ),
         BlockKind::Diagram(diagram) => w.line(
             Some(Style::Dim),
             &format!(

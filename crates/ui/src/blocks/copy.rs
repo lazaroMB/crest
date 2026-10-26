@@ -493,6 +493,9 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
             CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
         ],
+        BlockKind::Benchmarks(spec) => {
+            vec![CopyFormat::new("csv", "CSV", spec.to_csv())]
+        }
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }

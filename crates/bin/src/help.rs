@@ -218,7 +218,8 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_har"
         | "show_terraform_plan"
         | "show_dot"
-        | "show_er" => "read",
+        | "show_er"
+        | "show_benchmarks" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

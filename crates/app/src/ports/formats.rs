@@ -4,8 +4,8 @@
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
 //! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
 //! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
-//! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans and diagrams
-//! (Graphviz DOT, ER from SQL DDL).
+//! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
+//! (Graphviz DOT, ER from SQL DDL) and criterion benchmark results.
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -14,6 +14,7 @@
 //! CPU-bound and synchronous: async callers run it on a blocking thread.
 
 use domain::dataset::{DatasetFormat, DatasetSpec};
+use domain::devops::bench::BenchSpec;
 use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
@@ -59,6 +60,33 @@ pub struct LogRequest {
     /// The bytes are only the head of a larger file (the last line may be
     /// cut).
     pub truncated: bool,
+}
+
+/// The criterion files of one benchmark, for
+/// [`FormatsPort::parse_benchmarks`]; a file that is missing is `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BenchFiles {
+    /// The benchmark's directory, relative to the criterion root.
+    pub dir: String,
+    /// `new/benchmark.json` (the benchmark's id).
+    pub benchmark: Option<Vec<u8>>,
+    /// `new/estimates.json`: the last run.
+    pub new: Option<Vec<u8>>,
+    /// `<baseline>/estimates.json`.
+    pub base: Option<Vec<u8>>,
+    /// `change/estimates.json`: the relative change against the baseline.
+    pub change: Option<Vec<u8>>,
+}
+
+/// What [`FormatsPort::parse_benchmarks`] reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BenchRequest {
+    /// Workspace path of the criterion directory (`target/criterion`).
+    pub path: String,
+    /// The baseline compared against (`base`).
+    pub baseline: String,
+    /// The benchmarks found under it.
+    pub benches: Vec<BenchFiles>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -217,6 +245,15 @@ pub trait FormatsPort: Send + Sync {
         dialect: Option<&str>,
         path: Option<&str>,
     ) -> Result<DiagramSpec, FormatError>;
+
+    /// Criterion results: each benchmark's estimates for the new run and
+    /// the baseline and its change, as criterion wrote them, with a
+    /// verdict from the change's interval against the noise threshold.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when no benchmark has a readable new run.
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError>;
 }
 
 #[cfg(test)]

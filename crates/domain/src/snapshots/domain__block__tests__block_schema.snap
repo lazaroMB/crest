@@ -587,6 +587,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Criterion benchmarks, baseline against new (tool\n`show_benchmarks`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "benchmarks"
+        }
+      },
+      "$ref": "#/$defs/BenchSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -8759,6 +8773,237 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "source",
         "graph"
+      ]
+    },
+    "Bench": {
+      "description": "One benchmark.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Criterion's id (`group/function/value`).",
+          "type": "string"
+        },
+        "dir": {
+          "description": "Directory under the criterion root.",
+          "type": "string"
+        },
+        "new": {
+          "description": "The new run.",
+          "$ref": "#/$defs/RunEstimates"
+        },
+        "base": {
+          "description": "The baseline run, when there is one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunEstimates"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "change": {
+          "description": "Relative change of the mean (fractions), from the change file.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_change": {
+          "description": "Relative change of the median, from the change file.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "The verdict on [`Self::change`].",
+          "$ref": "#/$defs/Verdict"
+        },
+        "ratio": {
+          "description": "`new mean / base mean − 1` when there is a baseline but no change\nfile (no interval).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "new",
+        "verdict"
+      ]
+    },
+    "RunEstimates": {
+      "description": "The estimates of one run, in nanoseconds per iteration.",
+      "type": "object",
+      "properties": {
+        "mean": {
+          "description": "Mean time.",
+          "$ref": "#/$defs/Estimate"
+        },
+        "median": {
+          "description": "Median time.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std_dev": {
+          "description": "Standard deviation.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slope": {
+          "description": "Slope of the linear regression (iteration count against time), when\ncriterion used linear sampling.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mean"
+      ]
+    },
+    "Estimate": {
+      "description": "A point estimate with its confidence interval.",
+      "type": "object",
+      "properties": {
+        "point": {
+          "description": "The point estimate.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower bound of the interval.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound of the interval.",
+          "type": "number",
+          "format": "double"
+        },
+        "confidence": {
+          "description": "Confidence level of the interval (0.95).",
+          "type": "number",
+          "format": "double"
+        },
+        "standard_error": {
+          "description": "Standard error, when the file gives it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "point",
+        "lo",
+        "hi",
+        "confidence"
+      ]
+    },
+    "Verdict": {
+      "description": "What the change of the mean says.",
+      "oneOf": [
+        {
+          "description": "The whole interval is above +noise: slower.",
+          "type": "string",
+          "const": "regressed"
+        },
+        {
+          "description": "The whole interval is below −noise: faster.",
+          "type": "string",
+          "const": "improved"
+        },
+        {
+          "description": "The interval excludes 0 but not the noise band.",
+          "type": "string",
+          "const": "within_noise"
+        },
+        {
+          "description": "The interval includes 0.",
+          "type": "string",
+          "const": "no_change"
+        },
+        {
+          "description": "No change file: nothing to judge.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "BenchSpec": {
+      "description": "The benchmarks of a criterion directory.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the directory when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the criterion directory.",
+          "type": "string"
+        },
+        "baseline": {
+          "description": "Name of the baseline compared against (`base`, or a\n`--save-baseline` name).",
+          "type": "string"
+        },
+        "noise_threshold": {
+          "description": "Noise threshold of the verdicts.",
+          "type": "number",
+          "format": "double"
+        },
+        "benches": {
+          "description": "Benchmarks, by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bench"
+          }
+        },
+        "skipped": {
+          "description": "Directories that had estimates for neither run, or did not parse.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "baseline",
+        "noise_threshold",
+        "benches"
       ]
     }
   }

@@ -1,0 +1,49 @@
+---
+source: crates/app/src/tools/formats/bench.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_benchmarks",
+  "description": "Shows criterion benchmark results (`target/criterion` after `cargo bench`) in the user's timeline: per benchmark the new and baseline mean with confidence intervals, the change in % with its interval and a regressed / improved / no change verdict, plus a forest plot of the changes. The numbers are criterion's own estimates read from its files. Returns the counts per verdict and the regressed and improved benchmarks with those numbers: quote them, do not compute your own.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The criterion output directory; `target/criterion` by default (or\none benchmark group inside it, e.g. `target/criterion/parse`).",
+        "default": null
+      },
+      "baseline": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The baseline to compare against: `base` (the previous run, the\ndefault) or a name saved with `--save-baseline`. Criterion's change\nestimates (with confidence intervals) exist for `base`; for another\nname only the ratio of the means is shown.",
+        "default": null
+      },
+      "filter": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Keep only benchmarks whose directory contains this text.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the table; defaults to the directory.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_benchmarks`.",
+    "title": "ShowBenchmarks",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

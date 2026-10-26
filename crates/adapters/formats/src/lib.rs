@@ -17,8 +17,10 @@
 //! - HTTP archives ([`har`], own serde);
 //! - Terraform / OpenTofu plans ([`terraform`], serde_json);
 //! - Graphviz DOT ([`dot`], own reduced parser) and ER diagrams from SQL
-//!   DDL ([`er`], sqlparser).
+//!   DDL ([`er`], sqlparser);
+//! - criterion benchmark estimates ([`bench`], serde).
 
+pub mod bench;
 pub mod dataset;
 pub mod dot;
 pub mod er;
@@ -35,9 +37,10 @@ pub mod trace;
 pub mod wave;
 
 use application::ports::formats::{
-    DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
 };
 use domain::dataset::DatasetSpec;
+use domain::devops::bench::BenchSpec;
 use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
 use domain::devops::har::HarSpec;
@@ -138,5 +141,9 @@ impl FormatsPort for Formats {
         path: Option<&str>,
     ) -> Result<DiagramSpec, FormatError> {
         er::parse(sql, dialect, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError> {
+        bench::parse(request).map_err(FormatError::Invalid)
     }
 }

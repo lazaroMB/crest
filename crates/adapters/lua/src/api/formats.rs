@@ -1,7 +1,7 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
-//! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot` and
-//! `show_er` tools from Lua. Each returns a block (wrapped like
+//! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
+//! `show_er` and `show_benchmarks` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -15,6 +15,7 @@
 //! return app.formats.terraform_plan{ path = 'infra/plan.json' }
 //! return app.formats.dot{ source = 'digraph { a -> b }' }
 //! return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }
+//! return app.formats.benchmarks{ path = 'target/criterion', baseline = 'base' }
 //! ```
 //!
 //! | Function | Block |
@@ -29,6 +30,7 @@
 //! | `terraform_plan{ path, title }` | a Terraform plan (`terraform show -json`) as a tree of resource changes |
 //! | `dot{ path or source, title }` | a Graphviz DOT graph on the graph widget |
 //! | `er{ path or sql, dialect, title }` | an ER diagram from SQL DDL (tables, foreign keys) |
+//! | `benchmarks{ path, baseline, filter, title }` | criterion results, baseline against new (`target/criterion`, `base` by default) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -41,8 +43,8 @@ use std::sync::Arc;
 use application::ports::formats::{DatasetRequest, FormatsPort, LogRequest, ProfileRequest};
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
-    DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS, dataset_format, read_dataset, read_har, read_log,
-    read_report,
+    DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
+    collect_benchmarks, dataset_format, read_dataset, read_har, read_log, read_report,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
@@ -328,6 +330,30 @@ fn er(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Diagram(Box::new(spec)))
 }
 
+fn benchmarks(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "benchmarks";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.unwrap_or_else(|| DEFAULT_CRITERION_DIR.to_owned());
+    let baseline = text(args, F, "baseline")?.unwrap_or_else(|| DEFAULT_BASELINE.to_owned());
+    let filter = text(args, F, "filter")?;
+    let request = context(lua)?
+        .block_on(collect_benchmarks(
+            services.fs.as_ref(),
+            &path,
+            &baseline,
+            filter.as_deref(),
+        ))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_benchmarks(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Benchmarks(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -357,6 +383,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => flamegraph(lua, &args),
             _ => Err(error("flamegraph", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "benchmarks",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => benchmarks(lua, &args),
+            _ => Err(error("benchmarks", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -428,6 +461,7 @@ mod tests {
             .with_file("net/app.har", "{}")
             .with_file("infra/plan.json", "{}")
             .with_file("db/schema.sql", "create table a (id int);")
+            .with_file("target/criterion/fib/new/estimates.json", "{}")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -540,6 +574,18 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(bad.contains("`path` or `sql`"), "{bad}");
+        let out = run_code(
+            "return app.formats.benchmarks{}",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Benchmarks(spec)) = out else {
+            panic!("not benchmarks: {out:?}");
+        };
+        assert_eq!(
+            (spec.path.as_str(), spec.baseline.as_str()),
+            ("target/criterion", "base")
+        );
     }
 
     #[test]

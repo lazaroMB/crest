@@ -19,7 +19,9 @@
 //! `password` of `aws_db_instance.main`, creates `aws_s3_bucket.logs`
 //! and leaves 4 resources unchanged; every DOT graph is `build -> test ->
 //! deploy` plus `lint -> test` with `build` and `test` in cluster `ci`;
-//! every DDL is `users` and `orders` (`orders.user_id` → `users.id`).
+//! every DDL is `users` and `orders` (`orders.user_id` → `users.id`);
+//! benchmarks are `fib/20` regressed (+14%) and `sort/1k` unchanged, plus
+//! one per directory of the request beyond those two, without baseline.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -28,6 +30,7 @@ use std::sync::{Mutex, PoisonError};
 use domain::block::{Cell, Column, SourceRef, TableSpec};
 use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
+use domain::devops::bench::{Bench, BenchSpec, Estimate, NOISE_THRESHOLD, RunEstimates, Verdict};
 use domain::devops::diagram::{DiagramSource, DiagramSpec, ErColumn, ErTable};
 use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
 use domain::devops::har::{HarEntry, HarHeader, HarSpec, HarTimings};
@@ -47,7 +50,9 @@ use serde_json::Map;
 
 use domain::science::{MoleculeSpec, formulas_match};
 
-use crate::ports::formats::{DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest};
+use crate::ports::formats::{
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+};
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -539,6 +544,58 @@ impl FormatsPort for FakeFormats {
                 },
             ],
             warnings: Vec::new(),
+        })
+    }
+
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError> {
+        self.record("parse_benchmarks", &request.path)?;
+        let est = |point: f64, lo: f64, hi: f64| Estimate {
+            point,
+            lo,
+            hi,
+            confidence: 0.95,
+            standard_error: None,
+        };
+        let run = |mean: Estimate| RunEstimates {
+            mean,
+            median: None,
+            std_dev: None,
+            slope: None,
+        };
+        let bench = |id: &str, new, base: Option<Estimate>, change: Option<Estimate>| Bench {
+            id: id.to_owned(),
+            dir: id.to_owned(),
+            new: run(new),
+            base: base.map(run),
+            verdict: change.map_or(Verdict::Unknown, |c| Verdict::of(&c, NOISE_THRESHOLD)),
+            change,
+            median_change: None,
+            ratio: None,
+        };
+        let mut benches = vec![
+            bench(
+                "fib/20",
+                est(25_100.0, 24_900.0, 25_300.0),
+                Some(est(22_000.0, 21_800.0, 22_200.0)),
+                Some(est(0.142, 0.129, 0.156)),
+            ),
+            bench(
+                "sort/1k",
+                est(1_000_000.0, 990_000.0, 1_010_000.0),
+                Some(est(1_000_000.0, 990_000.0, 1_010_000.0)),
+                Some(est(0.002, -0.01, 0.014)),
+            ),
+        ];
+        for files in request.benches.iter().skip(2) {
+            benches.push(bench(&files.dir, est(10.0, 9.0, 11.0), None, None));
+        }
+        Ok(BenchSpec {
+            title: None,
+            path: request.path.clone(),
+            baseline: request.baseline.clone(),
+            noise_threshold: NOISE_THRESHOLD,
+            benches,
+            skipped: Vec::new(),
         })
     }
 }
