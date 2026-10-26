@@ -86,7 +86,8 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
-| `Ctrl+C` | `input.cancel` | In order: copies the text selected in the prompt; clears the prompt (`Up` brings the text back); interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. While a picker or a dialog is open it only interrupts. |
+| `Ctrl+C` | `input.cancel` | In the prompt, as in a terminal: copies the text selected in the prompt; else clears the prompt (`Up` brings the text back); else interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. With the focus on the chat and text selected in it, it copies that text; without a selection it interrupts. While a picker or a dialog is open it only interrupts. |
+| `Ctrl+Shift+C`, `Ctrl+Insert` | `selection.copy` | Copies the selected text, from the prompt or else from the chat. Never interrupts. (On macOS, `Cmd+C`.) Selecting text with the mouse in the chat gives it the focus and shows a **Copy** hint next to the selection. |
 | `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
 
 You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetkeys-action)). A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning.

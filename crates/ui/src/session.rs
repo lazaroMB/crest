@@ -751,6 +751,15 @@ impl Session {
         })
     }
 
+    /// `Ctrl+C` with no other modifier (Shift makes it `Ctrl+Shift+C`).
+    fn is_ctrl_c(key: &Key) -> bool {
+        key.code == KeyCode::Char('c')
+            && key.mods.ctrl
+            && !key.mods.alt
+            && !key.mods.cmd
+            && !key.mods.shift
+    }
+
     fn outside_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.input.read(cx).owns_focus(window, cx) {
             return;
@@ -763,6 +772,17 @@ impl Session {
             if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
                 self.interrupt(cx);
             }
+            return;
+        }
+        // Ctrl+C with the chat focused and text selected in it copies, as
+        // in Windows Terminal; without a selection it keeps its meaning.
+        if Self::is_ctrl_c(&key)
+            && self.timeline.focus_handle(cx).contains_focused(window, cx)
+            && self
+                .timeline
+                .update(cx, |timeline, cx| timeline.copy_selection(window, cx))
+        {
+            cx.stop_propagation();
             return;
         }
         let consumed = self
@@ -1518,6 +1538,17 @@ impl Session {
             INTERRUPT_ACTION => {
                 if !self.interrupt(cx) {
                     self.notice(NoticeLevel::Info, "nothing to interrupt", cx);
+                }
+            }
+            // Copies from anywhere and never interrupts: the prompt's
+            // selection first, else the chat's.
+            "selection.copy" => {
+                let copied = self.input.read(cx).copy_selection(cx)
+                    || self
+                        .timeline
+                        .update(cx, |timeline, cx| timeline.copy_selection(window, cx));
+                if !copied {
+                    self.notice(NoticeLevel::Info, "nothing selected to copy", cx);
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),
