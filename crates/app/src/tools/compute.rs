@@ -54,7 +54,7 @@ pub use self::cards::{
     SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
     StatsForecastTool, StatsPowerTool,
 };
-pub use self::engineering::{Bode, BodeTool};
+pub use self::engineering::{Bode, BodeTool, Karnaugh, KarnaughTool};
 
 use super::registry::{
     PreparedCall, RegisterError, ToolContext, ToolError, ToolOutput, ToolRegistry, TypedTool,
@@ -765,7 +765,7 @@ For NPV, IRR or payback of a series of cash flows, call `cash_flow`; to compare 
 against weighted criteria, `decision_matrix`.
 
 For engineering: the frequency response, margins and crossovers of a transfer function come \
-from `bode`.
+from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`.
 
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
@@ -804,7 +804,8 @@ pub fn register_compute_tools(
     registry.register_typed(SimulateTool::new(ports.clone()))?;
     registry.register_typed(CashFlowTool::new(ports.clone()))?;
     registry.register_typed(DecisionMatrixTool::new(ports.clone()))?;
-    registry.register_typed(BodeTool::new(ports.clone()))
+    registry.register_typed(BodeTool::new(ports.clone()))?;
+    registry.register_typed(KarnaughTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -918,7 +919,8 @@ mod tests {
             "decision_matrix_definition",
             definition(DecisionMatrixTool::new(ports.clone()))
         );
-        insta::assert_json_snapshot!("bode_definition", definition(BodeTool::new(ports)));
+        insta::assert_json_snapshot!("bode_definition", definition(BodeTool::new(ports.clone())));
+        insta::assert_json_snapshot!("karnaugh_definition", definition(KarnaughTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1208,6 +1210,7 @@ mod tests {
                 "cash_flow",
                 "convert",
                 "decision_matrix",
+                "karnaugh",
                 "monte_carlo",
                 "solve_equations",
                 "solve_lp",

@@ -1,4 +1,4 @@
-//! The engineering compute tools: `bode`, and what the model is told
+//! The engineering compute tools: `bode`, `karnaugh`, and what the model is told
 //! about each engineering card beyond its slots ([`notes`]).
 
 use std::fmt::Write as _;
@@ -54,8 +54,65 @@ margins, the crossover frequencies, the DC gain and the −3 dB bandwidth as slo
 /// `bode`.
 pub type BodeTool = UnitsTool<Bode>;
 
+/// `karnaugh`.
+#[derive(Debug, Clone, Copy)]
+pub struct Karnaugh;
+
+impl UnitsKind for Karnaugh {
+    type Request = KarnaughRequest;
+    const NAME: &'static str = "karnaugh";
+    const DESCRIPTION: &'static str = "\
+Minimises a Boolean function of up to six variables with crest's deterministic engine \
+(Quine–McCluskey prime implicants, essential primes, then Petrick's method): give `minterms`, \
+`maxterms` or an `expression` (`AB' + C`, `!a & b | c`, `A ^ B`), with optional `dont_cares` \
+and `variables` (most significant first). The user sees the Karnaugh map with the chosen \
+groups, the minimal sum of products and product of sums, the prime implicants and the truth \
+table. You get both expressions and their term and literal counts; quote the expressions as \
+given, never simplify by hand.";
+    fn wrap(request: KarnaughRequest) -> ComputeRequest {
+        ComputeRequest::Karnaugh(request)
+    }
+    fn subject(request: &KarnaughRequest) -> String {
+        match &request.expression {
+            Some(e) => e.clone(),
+            None if !request.maxterms.is_empty() => format!("ΠM({} terms)", request.maxterms.len()),
+            None => format!("Σm({} terms)", request.minterms.len()),
+        }
+    }
+    fn check(request: &KarnaughRequest) -> Result<(), String> {
+        if request.minterms.is_empty()
+            && request.maxterms.is_empty()
+            && request
+                .expression
+                .as_deref()
+                .is_none_or(|e| e.trim().is_empty())
+        {
+            return Err("give `minterms`, `maxterms` or an `expression`".into());
+        }
+        Ok(())
+    }
+}
+
+/// `karnaugh`.
+pub type KarnaughTool = UnitsTool<Karnaugh>;
+
 /// What the model is told about an engineering card beyond its values.
 pub(super) fn notes(body: &ComputedBody, out: &mut String) {
+    if let ComputedBody::Karnaugh(k) = body {
+        let _ = writeln!(
+            out,
+            "Variables (most significant first): {}.",
+            k.variables.join(", ")
+        );
+        let _ = writeln!(out, "Minimal SOP: F = {}", k.sop_expression);
+        let _ = writeln!(out, "Minimal POS: F = {}", k.pos_expression);
+        if k.method == domain::computed::CoverMethod::Greedy {
+            let _ = writeln!(
+                out,
+                "The cover was completed greedily and may not be minimal."
+            );
+        }
+    }
     if let ComputedBody::Bode(b) = body {
         let _ = writeln!(out, "G(s) = {}.", b.transfer_text());
         let roots = |rs: &[domain::computed::Complex]| {
@@ -127,5 +184,30 @@ mod tests {
                 .is_err()
         );
         assert_eq!(engine.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn karnaugh_returns_the_expressions() {
+        let engine = Arc::new(FakeCompute::new());
+        let tool = Typed(KarnaughTool::new(ports(Arc::clone(&engine))));
+        let prepared = tool
+            .prepare(
+                json!({ "minterms": [2, 3], "variables": ["A", "B"] }),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.subject, "Σm(2 terms)");
+        let text = prepared.run.await.unwrap().text_content();
+        assert!(text.contains("Minimal SOP: F = A\n"), "{text}");
+        assert!(
+            text.contains("Variables (most significant first): A, B."),
+            "{text}"
+        );
+        assert!(
+            tool.prepare(json!({ "expression": " " }), &ctx())
+                .await
+                .is_err()
+        );
     }
 }

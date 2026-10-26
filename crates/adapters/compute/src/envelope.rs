@@ -73,6 +73,7 @@ pub fn derive_id(request: &ComputeRequest) -> String {
         | ComputeRequest::Simulate(_)
         | ComputeRequest::CashFlow(_)
         | ComputeRequest::Decide(_)
+        | ComputeRequest::Karnaugh(_)
         | ComputeRequest::Bode(_) => "so",
         _ => "st",
     };

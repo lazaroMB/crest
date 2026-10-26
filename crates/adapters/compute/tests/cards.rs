@@ -1353,3 +1353,121 @@ fn bode_dead_time_adds_minus_omega_t_to_the_phase() {
     lone.poles = vec![Complex { re: -1.0, im: 1.0 }];
     assert!(engine().bode(&lone).is_err());
 }
+
+// --- Karnaugh map --------------------------------------------------------------
+
+fn kmap(variables: &[&str], minterms: &[u32], dont_cares: &[u32]) -> KarnaughRequest {
+    KarnaughRequest {
+        variables: variables.iter().map(|s| (*s).to_owned()).collect(),
+        minterms: minterms.to_vec(),
+        maxterms: Vec::new(),
+        dont_cares: dont_cares.to_vec(),
+        expression: None,
+    }
+}
+
+fn terms(implicants: &[Implicant]) -> std::collections::BTreeSet<String> {
+    implicants.iter().map(|i| i.term.clone()).collect()
+}
+
+#[test]
+fn karnaugh_four_variables_match_the_textbook_sop_and_pos() {
+    // Mano: F(w,x,y,z) = Σm(0,1,2,4,5,6,8,9,12,13,14) = y' + w'z' + xz'.
+    let request = kmap(
+        &["w", "x", "y", "z"],
+        &[0, 1, 2, 4, 5, 6, 8, 9, 12, 13, 14],
+        &[],
+    );
+    let (c, body) = engine().karnaugh(&request).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        terms(&k.sop),
+        ["w'z'", "xz'", "y'"].map(String::from).into()
+    );
+    // Zeros 3, 7, 10, 11, 15: (y' + z')(w' + x + y').
+    assert_eq!(
+        terms(&k.pos),
+        ["(w' + x + y')", "(y' + z')"].map(String::from).into()
+    );
+    assert_eq!(v(&c, "sop_terms"), 3.0);
+    assert_eq!(v(&c, "sop_literals"), 5.0);
+    assert_eq!(k.method, CoverMethod::Exact);
+    assert_eq!(c.assumptions[0].status, AssumptionStatus::Pass);
+}
+
+#[test]
+fn karnaugh_dont_cares_and_five_variables() {
+    // Σm(1,3,7,11,15) + d(0,2,5): two terms of two literals (yz + w'x').
+    let (c, _) = engine()
+        .karnaugh(&kmap(&["w", "x", "y", "z"], &[1, 3, 7, 11, 15], &[0, 2, 5]))
+        .unwrap();
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (2.0, 4.0));
+    // Mano: F(A..E) = Σm(0,2,4,6,9,13,21,23,25,29,31) = A'B'E' + BD'E + ACE.
+    let (_, body) = engine()
+        .karnaugh(&kmap(
+            &["A", "B", "C", "D", "E"],
+            &[0, 2, 4, 6, 9, 13, 21, 23, 25, 29, 31],
+            &[],
+        ))
+        .unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        terms(&k.sop),
+        ["A'B'E'", "ACE", "BD'E"].map(String::from).into()
+    );
+    assert_eq!(k.maps().len(), 2);
+}
+
+#[test]
+fn karnaugh_expressions_constants_and_errors() {
+    let mut request = kmap(&[], &[], &[]);
+    request.expression = Some("A ^ B ^ C".into());
+    let (c, body) = engine().karnaugh(&request).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(k.variables, ["A", "B", "C"]);
+    assert_eq!(k.minterms, [1, 2, 4, 7]);
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (4.0, 12.0));
+    let (_, body) = engine()
+        .karnaugh(&kmap(&["A", "B"], &[0, 1, 2, 3], &[]))
+        .unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        (k.sop_expression.as_str(), k.pos_expression.as_str()),
+        ("1", "1")
+    );
+    let mut zeros = kmap(&["A", "B"], &[], &[]);
+    zeros.maxterms = vec![0, 1, 2, 3];
+    let (_, body) = engine().karnaugh(&zeros).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        (k.sop_expression.as_str(), k.pos_expression.as_str()),
+        ("0", "0")
+    );
+    assert!(engine().karnaugh(&kmap(&["A"], &[2], &[])).is_err());
+    assert!(engine().karnaugh(&kmap(&["A", "B"], &[1], &[1])).is_err());
+    let seven = kmap(&["A", "B", "C", "D", "E", "F", "G"], &[1], &[]);
+    assert!(engine().karnaugh(&seven).is_err());
+}
+
+#[test]
+fn karnaugh_six_variables_stay_fast_and_correct() {
+    // Every term with an odd number of ones: no two ones are adjacent, so
+    // 32 primes of six literals and no merging.
+    let odd: Vec<u32> = (0..64u32).filter(|m| m.count_ones() % 2 == 1).collect();
+    let (c, _) = engine().karnaugh(&kmap(&[], &odd, &[])).unwrap();
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (32.0, 192.0));
+    // A dense function with many primes.
+    let dense: Vec<u32> = (0..64u32).filter(|m| m % 7 != 0).collect();
+    let (c, _) = engine().karnaugh(&kmap(&[], &dense, &[0, 7])).unwrap();
+    assert_eq!(c.assumptions[0].status, AssumptionStatus::Pass);
+}

@@ -1,5 +1,5 @@
 //! Requests of the engineering cards: Bode / Nyquist plots of a transfer
-//! function.
+//! function, and Karnaugh maps.
 
 use domain::computed::{Complex, FrequencyUnit};
 use schemars::JsonSchema;
@@ -47,4 +47,31 @@ pub struct BodeRequest {
     /// `rad_per_s` (default) or `hz`, for `w_min`/`w_max` and the card.
     #[serde(default)]
     pub unit: FrequencyUnit,
+}
+
+/// Input of `karnaugh`: a Boolean function of up to six variables, as
+/// minterms, maxterms or an expression, with optional don't-cares.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct KarnaughRequest {
+    /// Variable names, most significant first (`["A", "B", "C"]`); taken
+    /// from the expression in alphabetical order when absent, else
+    /// A, B, C… for as many as the terms need.
+    #[serde(default)]
+    pub variables: Vec<String>,
+    /// Minterms where F = 1 (`[1, 3, 5, 7]`). Give these, `maxterms` or
+    /// `expression`.
+    #[serde(default)]
+    pub minterms: Vec<u32>,
+    /// Maxterms where F = 0; every other term (not a don't-care) is 1.
+    #[serde(default)]
+    pub maxterms: Vec<u32>,
+    /// Don't-care terms.
+    #[serde(default)]
+    pub dont_cares: Vec<u32>,
+    /// F as an expression: `'` or `!`/`~` for NOT, `&`, `*`, `·` or
+    /// juxtaposition for AND, `+` or `|` for OR, `^` for XOR,
+    /// parentheses, 0 and 1 (`AB' + C(A ^ D)`). Without `variables`, a
+    /// name is one letter with optional digits (`x1x2` is x1·x2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
 }

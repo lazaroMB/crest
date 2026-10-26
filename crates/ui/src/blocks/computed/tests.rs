@@ -577,6 +577,11 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::Bode(super::bode::tests::body()),
             &["magnitude", "phase", "nyquist"],
         ),
+        (
+            card("solve.karnaugh", "Karnaugh map"),
+            ComputedBody::Karnaugh(super::karnaugh::tests::body()),
+            &[],
+        ),
     ]
 }
 

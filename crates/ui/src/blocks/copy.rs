@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response, Karnaugh SOP / POS / truth table), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -386,6 +386,15 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
             ));
         }
         formats.push(CopyFormat::new("response", "frequency response CSV", csv));
+    }
+    if let ComputedBody::Karnaugh(k) = body {
+        formats.push(CopyFormat::new("sop", "SOP", k.sop_expression.clone()));
+        formats.push(CopyFormat::new("pos", "POS", k.pos_expression.clone()));
+        formats.push(CopyFormat::new(
+            "truth",
+            "truth table CSV",
+            k.truth_table_csv(),
+        ));
     }
     formats
 }
