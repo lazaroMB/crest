@@ -136,6 +136,19 @@ impl Mesh {
         keep: &dyn Fn(usize) -> bool,
         section: Option<&Section>,
     ) -> Self {
+        Self::from_model_painted(model, placement, &|_| color, keep, section)
+    }
+
+    /// [`Self::from_model_cut`] with a colour per triangle (`color` of
+    /// the triangle's index), for a model coloured by part (atoms).
+    #[must_use]
+    pub fn from_model_painted(
+        model: &ModelMesh,
+        placement: &Placement,
+        color: &dyn Fn(usize) -> Rgb,
+        keep: &dyn Fn(usize) -> bool,
+        section: Option<&Section>,
+    ) -> Self {
         let mut mesh = Self {
             vertices: Vec::with_capacity(model.triangles.len() * 3 * FLOATS_PER_VERTEX),
             indices: Vec::with_capacity(model.triangles.len() * 3),
@@ -167,7 +180,7 @@ impl Mesh {
             } else {
                 [0.0, 1.0, 0.0]
             };
-            mesh.polygon(&placed, n, color, [0.0; 3]);
+            mesh.polygon(&placed, n, color(index), [0.0; 3]);
         }
         mesh
     }

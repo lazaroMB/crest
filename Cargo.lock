@@ -1389,12 +1389,33 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3984b40375959d8baf0c5bfb35ee7a7769a82a731a0bd21e07892cc3fe1911b"
 dependencies = [
+ "chematic-3d",
  "chematic-chem",
  "chematic-core",
  "chematic-depict",
+ "chematic-mol",
  "chematic-perception",
  "chematic-rxn",
  "chematic-smiles",
+]
+
+[[package]]
+name = "chematic-3d"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f9dfd4450f976132959673c067a8071d30229d30f7c0a41900277fcfb22b1a"
+dependencies = [
+ "chematic-chem",
+ "chematic-core",
+ "chematic-ff",
+ "chematic-fp",
+ "chematic-perception",
+ "chematic-smarts",
+ "chematic-smiles",
+ "libm",
+ "rayon",
+ "serde_json",
+ "web-time",
 ]
 
 [[package]]
@@ -1447,6 +1468,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "chematic-ff"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdc260cc23f9a8d1fada621619a8827af0c8e13ea3e2b32decd54607b440d4dc"
+dependencies = [
+ "chematic-core",
+ "chematic-perception",
+ "chematic-smarts",
+ "libm",
+ "rayon",
+ "rustc-hash 2.1.3",
+]
+
+[[package]]
 name = "chematic-fp"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1471,6 +1506,26 @@ checksum = "2ba500bc087fa1636adacab8f785bb7db73837aac83aa71f32251c907e9b6a2b"
 dependencies = [
  "chematic-core",
  "chematic-perception",
+]
+
+[[package]]
+name = "chematic-mol"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d3884b58d131d9c50630f993cbef7c23c210d59cca7319a071eb3df446eb284"
+dependencies = [
+ "chematic-3d",
+ "chematic-chem",
+ "chematic-core",
+ "chematic-depict",
+ "chematic-perception",
+ "chematic-rxn",
+ "chematic-smiles",
+ "flate2",
+ "memchr",
+ "roxmltree 0.20.0",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

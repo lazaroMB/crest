@@ -1,0 +1,49 @@
+---
+source: crates/app/src/tools/formats/molecule3d.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_molecule_3d",
+  "description": "Shows a molecule in 3D as ball and stick in the user's timeline (CPK colours, orbit and zoom; the user clicks atoms to read them and measure distances): from a structure file with 3D coordinates (`path`: MOL/SDF, XYZ, PDB) or from `smiles`, which the engine embeds (hydrogens added, distance geometry and a force-field minimisation: a computed conformer, not an experimental structure). Returns the formula, counts and where the coordinates come from; never state geometry the tool did not compute.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "smiles": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A SMILES to embed in 3D (a computed conformer, hydrogens added).",
+        "default": null
+      },
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Instead of `smiles`: a structure file of the workspace with 3D\ncoordinates (`.mol`, `.sdf`, `.xyz`, `.pdb`).",
+        "default": null
+      },
+      "name": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Name shown with the model.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the view.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_molecule_3d`.",
+    "title": "ShowMolecule3d",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

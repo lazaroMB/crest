@@ -3,7 +3,8 @@
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
-//! `show_reaction`, `show_molecule_grid` and `show_spectrum` tools from Lua. Each returns a block (wrapped like
+//! `show_reaction`, `show_molecule_grid`, `show_spectrum` and
+//! `show_molecule_3d` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -27,6 +28,7 @@
 //! return app.formats.reaction{ smiles = 'C.O=O>>O=C=O.O' }
 //! return app.formats.molecule_grid{ molecules = { { id = 'A1', smiles = 'CCO', activity = 12 } } }
 //! return app.formats.spectrum{ path = 'spectra/ir.jdx' }
+//! return app.formats.molecule_3d{ smiles = 'CCO' }
 //! ```
 //!
 //! | Function | Block |
@@ -51,6 +53,7 @@
 //! | `reaction{ smiles, coefficients, conditions, names, title }` | a reaction scheme with its atom and charge balance and, when unbalanced, suggested coefficients (raises on a SMILES that does not parse) |
 //! | `molecule_grid{ molecules or path, activity_column, activity_label, activity_unit, direction, title }` | a SAR grid with computed descriptors (`molecules`: `{ id, smiles, name, activity }` tables; `path`: CSV/TSV with a `smiles` column; `direction`: `higher` or `lower`) |
 //! | `spectrum{ path, block, threshold, max_peaks, title }` | a JCAMP-DX (IR, Raman, UV-Vis, NMR), mzML or MGF spectrum with its picked peaks (`block` 1-based) |
+//! | `molecule_3d{ smiles or path, name, title }` | ball and stick in the 3D view: a SMILES embedded by the engine, or a MOL/SDF, XYZ or PDB file's coordinates |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -559,6 +562,32 @@ fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
+fn molecule_3d(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "molecule_3d";
+    let services = services(lua, F)?;
+    let source = match (text(args, F, "smiles")?, text(args, F, "path")?) {
+        (Some(_), Some(_)) => return Err(error(F, "give `smiles` or `path`, not both")),
+        (None, None) => return Err(error(F, "`smiles` or `path` is required")),
+        (Some(smiles), None) => application::ports::formats::Molecule3dSource::Smiles(smiles),
+        (None, Some(path)) => {
+            let bytes = context(lua)?
+                .block_on(read_report(services.fs.as_ref(), &path))?
+                .map_err(|e| error(F, e))?;
+            application::ports::formats::Molecule3dSource::File { path, bytes }
+        }
+    };
+    let mut spec = services
+        .formats
+        .molecule_3d(&source)
+        .map_err(|e| error(F, e))?;
+    if let Some(name) = text(args, F, "name")? {
+        spec.name = Some(name);
+    }
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Molecule3d(Box::new(spec)))
+}
+
 fn spectrum(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "spectrum";
     let services = services(lua, F)?;
@@ -684,6 +713,13 @@ fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "molecule_3d",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => molecule_3d(lua, &args),
+            _ => Err(error("molecule_3d", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "spectrum",
         lua.create_function(|lua, args: Value| match args {
@@ -1092,6 +1128,12 @@ mod tests {
             panic!("not a spectrum: {out:?}");
         };
         assert_eq!(spec.peaks.len(), 1);
+        let out = run_code("return app.formats.molecule_3d{ smiles = 'O', name = 'w' }", formats())
+            .unwrap();
+        let PluginOutput::Block(BlockKind::Molecule3d(spec)) = out else {
+            panic!("not a 3D molecule: {out:?}");
+        };
+        assert_eq!((spec.atoms.len(), spec.name.as_deref()), (3, Some("w")));
     }
 
     #[test]

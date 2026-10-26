@@ -32,6 +32,7 @@ use domain::engineering::waveform::{Radix, WaveformSpec};
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
+use domain::science::molecule3d::Molecule3dSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 use domain::science::spectrum::SpectrumSpec;
@@ -180,6 +181,20 @@ pub struct SpectrumRequest {
     pub threshold: Option<f64>,
     /// Most peaks kept (20 when absent).
     pub max_peaks: Option<usize>,
+}
+
+/// Where [`FormatsPort::molecule_3d`] gets its atoms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Molecule3dSource {
+    /// A SMILES the engine embeds in 3D.
+    Smiles(String),
+    /// A structure file (MOL/SDF, XYZ, PDB) with its coordinates.
+    File {
+        /// Workspace path, for the format and messages.
+        path: String,
+        /// Its bytes.
+        bytes: Vec<u8>,
+    },
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -450,6 +465,17 @@ pub trait FormatsPort: Send + Sync {
         bytes: &[u8],
         request: &SpectrumRequest,
     ) -> Result<SpectrumSpec, FormatError>;
+
+    /// A molecule in 3D: a SMILES embedded by the engine (hydrogens added,
+    /// distance geometry and a force-field minimisation), or the
+    /// coordinates of a MOL/SDF, XYZ or PDB file (bonds inferred from
+    /// distances where the file has none).
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for a SMILES that does not parse or embed,
+    /// or a file without 3D coordinates.
+    fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError>;
 }
 
 #[cfg(test)]

@@ -34,6 +34,7 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::molecule3d::Molecule3dSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
@@ -163,6 +164,7 @@ impl Block {
             BlockKind::Reaction(spec) => spec.validate(),
             BlockKind::MoleculeGrid(spec) => spec.validate(),
             BlockKind::Spectrum(spec) => spec.validate(),
+            BlockKind::Molecule3d(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -360,6 +362,8 @@ pub enum BlockKind {
     /// An IR, UV-Vis, NMR or mass spectrum with its peaks (tool
     /// `show_spectrum`).
     Spectrum(Box<SpectrumSpec>),
+    /// A molecule in 3D as ball and stick (tool `show_molecule_3d`).
+    Molecule3d(Box<Molecule3dSpec>),
 }
 
 /// Lifecycle of a tool call.

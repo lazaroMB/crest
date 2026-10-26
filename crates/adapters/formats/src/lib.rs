@@ -30,7 +30,9 @@
 //!   reaction SMILES; envelopes from [`chem`]);
 //! - molecule grids with descriptors ([`molecule_grid`], chematic);
 //! - spectra with picked peaks ([`spectrum`]: our own JCAMP-DX reader,
-//!   mzdata for mzML and MGF).
+//!   mzdata for mzML and MGF);
+//! - molecules in 3D ([`molecule3d`]: chematic's embedding, our own
+//!   V2000 reader, chematic's V3000, XYZ and PDB readers).
 
 pub mod bench;
 pub mod chem;
@@ -45,6 +47,7 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
 pub mod query_plan;
@@ -60,7 +63,7 @@ pub mod waveform;
 
 use application::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    Molecule3dSource, MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -79,6 +82,7 @@ use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
+use domain::science::molecule3d::Molecule3dSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 use domain::science::spectrum::SpectrumSpec;
@@ -233,5 +237,13 @@ impl FormatsPort for Formats {
         request: &SpectrumRequest,
     ) -> Result<SpectrumSpec, FormatError> {
         spectrum::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError> {
+        match source {
+            Molecule3dSource::Smiles(smiles) => molecule3d::embed(smiles),
+            Molecule3dSource::File { path, bytes } => molecule3d::read(bytes, path),
+        }
+        .map_err(FormatError::Invalid)
     }
 }
