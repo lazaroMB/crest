@@ -227,6 +227,7 @@ impl TypedTool for ShowPlotTool {
             y_scale: input.y_scale,
             aspect: input.aspect,
             x_reversed: false,
+            looks: Vec::new(),
         };
         spec.validate()
             .map_err(|err| invalid(SHOW_PLOT, err.to_string()))?;

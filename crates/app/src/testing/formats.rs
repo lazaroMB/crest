@@ -44,7 +44,9 @@
 //! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it;
 //! every array file is HDF5 with `/temp` (2 × 3 f32, a 2 × 3 preview from
 //! 1 to 6, one missing); every network is the path `a – b – c` (b in
-//! the middle: betweenness 1, PageRank 0.486).
+//! the middle: betweenness 1, PageRank 0.486); every training log is one
+//! run `a` with `loss` 1.0, 0.5, 0.25, 0.4 at steps 10–40 (best 0.25 at
+//! step 30).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -95,12 +97,13 @@ use domain::science::sequence::{
     Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
 };
 use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
+use domain::science::training::TrainingSpec;
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
     ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
     MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
-    SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, TrainingRequest, WaveRequest,
 };
 
 mod sciences;
@@ -1194,5 +1197,11 @@ impl FormatsPort for FakeFormats {
             request.path.as_deref().unwrap_or("inline"),
         )?;
         Ok(sciences::network(request))
+    }
+
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError> {
+        let first = request.files.first().map_or("none", |f| f.path.as_str());
+        self.record("training_curves", first)?;
+        Ok(sciences::training(request))
     }
 }

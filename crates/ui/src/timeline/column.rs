@@ -73,7 +73,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::GeoMap(_)
         | BlockKind::Gantt(_)
         | BlockKind::ArrayFile(_)
-        | BlockKind::Network(_) => BlockWidth::Wide,
+        | BlockKind::Network(_)
+        | BlockKind::TrainingCurves(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

@@ -17,7 +17,8 @@
 //! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
 //! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`), and the
 //! science B viewers [`geomap`] (`show_map`), [`gantt`] (`show_gantt`),
-//! [`arrays`] (`show_array_file`) and [`network`] (`show_network`).
+//! [`arrays`] (`show_array_file`), [`network`] (`show_network`) and
+//! [`training`] (`show_training_curves`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -74,6 +75,7 @@ pub mod sequence;
 pub mod spectrum;
 pub mod step;
 pub mod terraform;
+pub mod training;
 pub mod waveform;
 
 pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary, read_array};
@@ -104,6 +106,7 @@ pub use spectrum::{
 };
 pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
+pub use training::{SHOW_TRAINING_CURVES, ShowTrainingCurvesTool, training_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
 
 /// Largest report file the tools read, in bytes.
@@ -1207,6 +1210,8 @@ so and never present them as the whole variable's.
 - `show_network`: show a network (edge list or node-link JSON, or inline \
 edges) with degree, betweenness, closeness, PageRank and communities; \
 name central nodes from its rankings, not from impressions.
+- `show_training_curves`: plot ML training logs (CSV or JSON lines, one or \
+more runs); compare runs by the best, last and minimum values it returns.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1218,7 +1223,8 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
 /// `show_molecule_grid`, `show_spectrum`, `show_molecule_3d` and
-/// `show_map`, `show_gantt`, `show_array_file` and `show_network`.
+/// `show_map`, `show_gantt`, `show_array_file`, `show_network` and
+/// `show_training_curves`.
 ///
 /// # Errors
 ///
@@ -1256,7 +1262,8 @@ pub fn register_format_tools(
     registry.register_typed(ShowMapTool::new(ports.clone()))?;
     registry.register_typed(ShowGanttTool::new(ports.clone()))?;
     registry.register_typed(ShowArrayFileTool::new(ports.clone()))?;
-    registry.register_typed(ShowNetworkTool::new(ports.clone()))
+    registry.register_typed(ShowNetworkTool::new(ports.clone()))?;
+    registry.register_typed(ShowTrainingCurvesTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1374,7 +1381,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 30);
+        assert_eq!(registry.names().len(), 31);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

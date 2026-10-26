@@ -288,9 +288,15 @@ fn plot_frame(
         font: window.text_style().font(),
         size: window.rem_size() * 0.75,
     };
-    let colors: Rc<[Hsla]> = (0..scene.layers.len().max(1))
-        .map(|ix| series_color(ix, cx))
-        .collect();
+    let slots = scene
+        .layers
+        .iter()
+        .map(|l| l.color + 1)
+        .max()
+        .unwrap_or(0)
+        .max(scene.layers.len())
+        .max(1);
+    let colors: Rc<[Hsla]> = (0..slots).map(|ix| series_color(ix, cx)).collect();
     let (view, axes) = (scene.view, scene.axes);
     let canvas = PlotCanvas {
         id,
@@ -332,7 +338,7 @@ fn legend(scene: &Scene, cx: &App) -> Option<AnyElement> {
             .gap_y_1()
             .text_xs()
             .text_color(theme.muted_foreground)
-            .children(scene.layers.iter().map(|layer| {
+            .children(scene.layers.iter().filter(|l| !l.faint).map(|layer| {
                 h_flex()
                     .gap_1()
                     .child(

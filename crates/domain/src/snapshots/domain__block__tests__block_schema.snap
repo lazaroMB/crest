@@ -825,6 +825,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "Machine-learning training curves with smoothing and per-run\nsummaries (tool `show_training_curves`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "training_curves"
+        }
+      },
+      "$ref": "#/$defs/TrainingSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1848,6 +1862,25 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "SeriesLook": {
+      "description": "The colour and weight of one series.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Palette slot; the layer's position when absent (series sharing a\nslot share a colour, as a raw and a smoothed curve).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "faint": {
+          "description": "Drawn faint (and left out of the legend), as raw values under\ntheir smoothed curve.",
+          "type": "boolean"
+        }
+      }
+    },
     "PlotSpec": {
       "description": "A plot of functions and series.",
       "type": "object",
@@ -1934,6 +1967,13 @@ expression: "schemars::schema_for!(Block)"
         "x_reversed": {
           "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
           "type": "boolean"
+        },
+        "looks": {
+          "description": "How each series looks, by index (missing entries: the default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesLook"
+          }
         }
       }
     },
@@ -14002,6 +14042,298 @@ expression: "schemars::schema_for!(Block)"
         "modularity",
         "seed",
         "metrics"
+      ]
+    },
+    "TrainingRun": {
+      "description": "One run.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name (the file, or the `run` column).",
+          "type": "string"
+        },
+        "axes": {
+          "description": "The x values of its rows.",
+          "$ref": "#/$defs/RunAxes"
+        },
+        "series": {
+          "description": "Its metrics.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetricSeries"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "axes",
+        "series"
+      ]
+    },
+    "RunAxes": {
+      "description": "The x values of a run's rows.",
+      "type": "object",
+      "properties": {
+        "step": {
+          "description": "Step per row.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "epoch": {
+          "description": "Epoch per row, when logged.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "time": {
+          "description": "Seconds since the first row, when a time was logged.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "step"
+      ]
+    },
+    "MetricSeries": {
+      "description": "One metric of one run.",
+      "type": "object",
+      "properties": {
+        "metric": {
+          "description": "The metric's name.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Rows of the run where it was logged.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "values": {
+          "description": "The values logged, one per row.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "smoothed": {
+          "description": "The engine's EMA of the values.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "metric",
+        "rows",
+        "values",
+        "smoothed"
+      ]
+    },
+    "TrainingAxis": {
+      "description": "What the x axis counts.",
+      "oneOf": [
+        {
+          "description": "Optimizer steps (or the row number when the log has none).",
+          "type": "string",
+          "const": "step"
+        },
+        {
+          "description": "Epochs.",
+          "type": "string",
+          "const": "epoch"
+        },
+        {
+          "description": "Seconds since the run's first logged row.",
+          "type": "string",
+          "const": "time"
+        }
+      ]
+    },
+    "SeriesSummary": {
+      "description": "The engine's summary of one series.",
+      "type": "object",
+      "properties": {
+        "run": {
+          "description": "Run name.",
+          "type": "string"
+        },
+        "metric": {
+          "description": "Metric name.",
+          "type": "string"
+        },
+        "n": {
+          "description": "Values logged.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "min": {
+          "description": "Lowest value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "max": {
+          "description": "Highest value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "last": {
+          "description": "Last value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "goal": {
+          "description": "Lower or higher is better.",
+          "$ref": "#/$defs/Goal"
+        },
+        "goal_given": {
+          "description": "Whether the goal was given rather than guessed from the name.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "run",
+        "metric",
+        "n",
+        "min",
+        "max",
+        "last",
+        "goal"
+      ]
+    },
+    "AtRow": {
+      "description": "A value with the row it was logged at.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "description": "The value.",
+          "type": "number",
+          "format": "double"
+        },
+        "row": {
+          "description": "Its row in the run.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "row"
+      ]
+    },
+    "Goal": {
+      "description": "Whether lower or higher is better.",
+      "oneOf": [
+        {
+          "description": "Lower is better (losses, errors).",
+          "type": "string",
+          "const": "minimize"
+        },
+        {
+          "description": "Higher is better (accuracy, F1, AUC).",
+          "type": "string",
+          "const": "maximize"
+        }
+      ]
+    },
+    "TrainingSpec": {
+      "description": "Training runs with their curves.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the plot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paths": {
+          "description": "The workspace files read.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runs": {
+          "description": "The runs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrainingRun"
+          }
+        },
+        "metrics": {
+          "description": "Metric names in first-seen order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metric": {
+          "description": "The metric shown at first.",
+          "type": "string"
+        },
+        "axis": {
+          "description": "The x axis at first.",
+          "$ref": "#/$defs/TrainingAxis",
+          "default": "step"
+        },
+        "smoothing": {
+          "description": "EMA weight from 0 (none) to below 1.",
+          "type": "number",
+          "format": "double"
+        },
+        "log_y": {
+          "description": "Whether the y axis starts logarithmic.",
+          "type": "boolean",
+          "default": false
+        },
+        "summaries": {
+          "description": "The summaries, run by run, metric by metric.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesSummary"
+          }
+        },
+        "stats": {
+          "description": "The summaries as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths",
+        "runs",
+        "metrics",
+        "metric",
+        "smoothing",
+        "summaries",
+        "stats"
       ]
     }
   }

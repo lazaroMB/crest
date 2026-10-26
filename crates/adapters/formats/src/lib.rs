@@ -38,7 +38,8 @@
 //! - Gantt charts scheduled by the critical path method ([`gantt`]);
 //! - HDF5, NetCDF-4 and NetCDF-3 structure with bounded previews
 //!   ([`arrays`]: hdf5-pure, our own NetCDF-3 reader);
-//! - networks with centralities and communities ([`network`], petgraph).
+//! - networks with centralities and communities ([`network`], petgraph);
+//! - training curves from CSV and JSON lines logs ([`training`]).
 
 pub mod arrays;
 pub mod bench;
@@ -69,13 +70,14 @@ pub mod spectrum;
 pub mod step;
 pub mod terraform;
 pub mod trace;
+pub mod training;
 pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
     ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
     MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
-    SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, TrainingRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -102,6 +104,7 @@ use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 use domain::science::spectrum::SpectrumSpec;
+use domain::science::training::TrainingSpec;
 
 /// The formats adapter. Stateless.
 #[derive(Debug, Clone, Copy, Default)]
@@ -281,5 +284,9 @@ impl FormatsPort for Formats {
 
     fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError> {
         network::analyse(request).map_err(FormatError::Invalid)
+    }
+
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError> {
+        training::curves(request).map_err(FormatError::Invalid)
     }
 }

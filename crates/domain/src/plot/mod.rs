@@ -65,6 +65,22 @@ pub struct PlotSpec {
     /// chemical shifts).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub x_reversed: bool,
+    /// How each series looks, by index (missing entries: the default).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub looks: Vec<SeriesLook>,
+}
+
+/// The colour and weight of one series.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct SeriesLook {
+    /// Palette slot; the layer's position when absent (series sharing a
+    /// slot share a colour, as a raw and a smoothed curve).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<usize>,
+    /// Drawn faint (and left out of the legend), as raw values under
+    /// their smoothed curve.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub faint: bool,
 }
 
 /// How an axis maps values to positions.

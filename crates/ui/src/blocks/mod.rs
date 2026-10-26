@@ -56,6 +56,7 @@ pub mod terraform;
 pub mod test_report;
 pub mod thinking;
 pub mod trace;
+pub mod training;
 pub mod waveform;
 
 use std::any::TypeId;
@@ -119,6 +120,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Gantt(_) => gantt::render(entry, window, cx),
         BlockKind::ArrayFile(_) => arrays::render(entry, window, cx),
         BlockKind::Network(_) => network::render(entry, window, cx),
+        BlockKind::TrainingCurves(_) => training::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }
