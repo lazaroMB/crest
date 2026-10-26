@@ -653,10 +653,7 @@ impl SequenceSpec {
     /// [`SearchError`] for an empty query or a character that is not a
     /// residue code.
     pub fn search(&self, query: &str) -> Result<Vec<SeqHit>, SearchError> {
-        let query: Vec<u8> = query
-            .bytes()
-            .filter(|b| !b.is_ascii_whitespace())
-            .collect();
+        let query: Vec<u8> = query.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
         if query.is_empty() {
             return Err(SearchError::Empty);
         }
@@ -700,7 +697,15 @@ impl SequenceSpec {
                 }
             }
         };
-        scan(&query, if nucleic { Strand::Forward } else { Strand::None }, &mut hits);
+        scan(
+            &query,
+            if nucleic {
+                Strand::Forward
+            } else {
+                Strand::None
+            },
+            &mut hits,
+        );
         if nucleic {
             let rc: Vec<u8> = query.iter().rev().map(|&b| complement(b, false)).collect();
             if rc != query {
@@ -725,7 +730,9 @@ impl SequenceSpec {
     pub fn composition(&self) -> BTreeMap<char, usize> {
         let mut counts = BTreeMap::new();
         for b in self.sequence.bytes().filter(|&b| b != b'-') {
-            *counts.entry(char::from(b.to_ascii_uppercase())).or_default() += 1;
+            *counts
+                .entry(char::from(b.to_ascii_uppercase()))
+                .or_default() += 1;
         }
         counts
     }
@@ -841,7 +848,11 @@ impl SequenceSpec {
     pub fn sites_csv(&self) -> String {
         let mut out = String::from("enzyme,site,position,cut_after,strand\n");
         for c in &self.cut_sites {
-            let strand = if c.strand == Strand::Reverse { "-" } else { "+" };
+            let strand = if c.strand == Strand::Reverse {
+                "-"
+            } else {
+                "+"
+            };
             let _ = writeln!(
                 out,
                 "{},{},{},{},{strand}",
@@ -985,7 +996,10 @@ mod tests {
         spec.features[0].segments[0] = SeqSpan { start: 3, end: 12 };
         let issues = spec.cds_issues();
         assert!(issues.iter().any(|i| i.contains("premature")), "{issues:?}");
-        assert!(issues.iter().any(|i| i.contains("does not start")), "{issues:?}");
+        assert!(
+            issues.iter().any(|i| i.contains("does not start")),
+            "{issues:?}"
+        );
         assert_eq!(
             plasmid().features_csv(),
             "kind,label,location,strand,length\nCDS,orf,1..9,+,9\n"

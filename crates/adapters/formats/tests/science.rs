@@ -8,7 +8,10 @@ use application::ports::formats::{FormatsPort, SequenceRequest};
 use domain::science::sequence::{Alphabet, SequenceFormat, Strand, Topology};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/tests/fixtures/science/{name}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/tests/fixtures/science/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
     std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -55,7 +58,11 @@ fn genbank_plasmid_with_features_and_sites() {
     assert_eq!(ori.len(), 60);
     // The three sites the generator placed, each cut once.
     for (enzyme, cut) in [("EcoRI", 41), ("BamHI", 234), ("HindIII", 360)] {
-        let sites: Vec<_> = spec.cut_sites.iter().filter(|s| s.enzyme == enzyme).collect();
+        let sites: Vec<_> = spec
+            .cut_sites
+            .iter()
+            .filter(|s| s.enzyme == enzyme)
+            .collect();
         assert_eq!(sites.len(), 1, "{enzyme}");
         assert_eq!(sites[0].cut, cut, "{enzyme}");
     }
@@ -74,11 +81,18 @@ fn fasta_records_and_inline_residues() {
     assert_eq!(protein.format, SequenceFormat::Fasta);
     assert_eq!(protein.alphabet, Alphabet::Protein);
     assert_eq!(protein.name.as_deref(), Some("crsA"));
-    assert_eq!(protein.description.as_deref(), Some("test protein of pCrest1"));
+    assert_eq!(
+        protein.description.as_deref(),
+        Some("test protein of pCrest1")
+    );
     assert_eq!(protein.records, 2);
     assert_eq!(protein.sequence, "MPFSRGNTSETPANFEIKTRRTITDRNSATF");
     assert!(protein.cut_sites.is_empty());
-    assert!(protein.warnings[0].contains("2 records"), "{:?}", protein.warnings);
+    assert!(
+        protein.warnings[0].contains("2 records"),
+        "{:?}",
+        protein.warnings
+    );
     let second = formats
         .parse_sequence(
             &fixture("crsa.fasta"),
@@ -150,17 +164,24 @@ fn reaction_balance_suggestions_and_errors() {
     // With those coefficients it balances.
     let given = formats.depict_reaction("C.O=O>>O=C=O.O", Some(&[1, 2, 1, 2]));
     assert!(given.is_balanced());
-    assert!(formats
-        .depict_reaction("C.O=O>>O=C=O.O", Some(&[1, 2]))
-        .error
-        .unwrap()
-        .contains("2 coefficients given for 4"));
+    assert!(
+        formats
+            .depict_reaction("C.O=O>>O=C=O.O", Some(&[1, 2]))
+            .error
+            .unwrap()
+            .contains("2 coefficients given for 4")
+    );
 
     // Fe2+ to Fe3+ balances in iron but never in charge.
     let fe = formats.depict_reaction("[Fe+2]>>[Fe+3]", None);
     assert_eq!(fe.charge, (2, 3));
     assert_eq!(fe.stoichiometry, Stoichiometry::Impossible);
-    assert!(fe.balance.warnings.iter().any(|w| w.code == "cannot_balance"));
+    assert!(
+        fe.balance
+            .warnings
+            .iter()
+            .any(|w| w.code == "cannot_balance")
+    );
 
     // Agents are drawn but not counted.
     let hyd = formats.depict_reaction("CC=C.[H][H]>[Pd]>CCC", None);
@@ -170,7 +191,13 @@ fn reaction_balance_suggestions_and_errors() {
     let bad = formats.depict_reaction("C1CC>>C", None);
     assert!(bad.error.is_some());
     assert_eq!(bad.balance.status, ComputedStatus::Error);
-    assert!(formats.depict_reaction("CCO", None).error.unwrap().contains("not a reaction"));
+    assert!(
+        formats
+            .depict_reaction("CCO", None)
+            .error
+            .unwrap()
+            .contains("not a reaction")
+    );
 }
 
 #[test]
@@ -202,14 +229,26 @@ fn molecule_grid_descriptors_match_reference_values() {
     close(asa.mw, 180.159, 0.01);
     close(asa.logp, 1.3101, 0.001);
     close(asa.tpsa, 63.6, 0.01);
-    assert_eq!((asa.heavy_atoms, asa.hbd, asa.hba, asa.rings, asa.aromatic_rings), (13, 1, 3, 1, 1));
+    assert_eq!(
+        (
+            asa.heavy_atoms,
+            asa.hbd,
+            asa.hba,
+            asa.rings,
+            asa.aromatic_rings
+        ),
+        (13, 1, 3, 1, 1)
+    );
     let caf = spec.molecules[1].descriptors.as_ref().unwrap();
     close(caf.mw, 194.194, 0.01);
     close(caf.logp, -1.0293, 0.001);
     close(caf.tpsa, 61.82, 0.01);
     assert_eq!((caf.hbd, caf.rotatable_bonds, caf.rings), (0, 0, 2));
     assert_eq!(spec.descriptors.value("ASA.tpsa").unwrap().v, asa.tpsa);
-    assert_eq!(spec.descriptors.value("CAF.hba").unwrap().v, f64::from(caf.hba));
+    assert_eq!(
+        spec.descriptors.value("CAF.hba").unwrap().v,
+        f64::from(caf.hba)
+    );
     assert!(spec.molecules[2].descriptors.is_none());
     assert_eq!(spec.failed().len(), 1);
     assert!(spec.descriptors.warnings[0].text.contains("1 SMILES"));
@@ -241,7 +280,10 @@ fn jcamp_ir_with_difdup_compression_picks_the_dips() {
     use domain::science::spectrum::{PeakSense, SpectrumFormat, SpectrumKind};
     let ir = spectrum("ir_difdup.jdx", 0);
     ir.validate().unwrap();
-    assert_eq!((ir.format, ir.kind), (SpectrumFormat::Jcamp, SpectrumKind::Infrared));
+    assert_eq!(
+        (ir.format, ir.kind),
+        (SpectrumFormat::Jcamp, SpectrumKind::Infrared)
+    );
     assert_eq!(ir.x.len(), 1801);
     assert!(ir.warnings.is_empty(), "{:?}", ir.warnings);
     assert_eq!((ir.x[0], ir.x[1800]), (4000.0, 400.0));
@@ -257,7 +299,11 @@ fn jcamp_ir_with_difdup_compression_picks_the_dips() {
     assert!((ir.peaks[0].y - 0.262).abs() < 0.0005, "{}", ir.peaks[0].y);
     assert_eq!(ir.picking.value("peak.1.x").unwrap().v, 1716.0);
     assert_eq!(ir.picking.value("peaks").unwrap().v, 3.0);
-    assert!(ir.metadata.iter().any(|(k, v)| k == "formula" && v == "C 3 H 6 O"));
+    assert!(
+        ir.metadata
+            .iter()
+            .any(|(k, v)| k == "formula" && v == "C 3 H 6 O")
+    );
 }
 
 #[test]
@@ -268,10 +314,22 @@ fn jcamp_nmr_in_hz_becomes_ppm() {
     assert_eq!(nmr.x_label, "δ 1H (ppm)");
     assert!(nmr.x_reversed);
     assert!((nmr.x[0] - 4000.0 / 400.13).abs() < 1e-9);
-    let xs: Vec<f64> = nmr.peaks.iter().map(|p| (p.x * 100.0).round() / 100.0).collect();
+    let xs: Vec<f64> = nmr
+        .peaks
+        .iter()
+        .map(|p| (p.x * 100.0).round() / 100.0)
+        .collect();
     assert_eq!(xs, [2.17, 7.26]);
-    assert!(nmr.metadata.iter().any(|(k, v)| k == "frequency" && v == "400.13 MHz"));
-    assert!(nmr.metadata.iter().any(|(k, v)| k == "solvent" && v == "CDCl3"));
+    assert!(
+        nmr.metadata
+            .iter()
+            .any(|(k, v)| k == "frequency" && v == "400.13 MHz")
+    );
+    assert!(
+        nmr.metadata
+            .iter()
+            .any(|(k, v)| k == "solvent" && v == "CDCl3")
+    );
 }
 
 #[test]
@@ -304,9 +362,18 @@ fn jcamp_linked_blocks_and_peak_tables() {
 fn mass_spectra_from_mgf_and_mzml() {
     use domain::science::spectrum::{SpectrumFormat, SpectrumKind};
     let mgf = spectrum("scans.mgf", 0);
-    assert_eq!((mgf.format, mgf.kind, mgf.blocks), (SpectrumFormat::Mgf, SpectrumKind::Mass, 2));
+    assert_eq!(
+        (mgf.format, mgf.kind, mgf.blocks),
+        (SpectrumFormat::Mgf, SpectrumKind::Mass, 2)
+    );
     assert_eq!(mgf.peaks[0].x, 244.17);
-    assert!(mgf.metadata.iter().any(|(k, v)| k == "precursor" && v.starts_with("m/z 445.12")), "{:?}", mgf.metadata);
+    assert!(
+        mgf.metadata
+            .iter()
+            .any(|(k, v)| k == "precursor" && v.starts_with("m/z 445.12")),
+        "{:?}",
+        mgf.metadata
+    );
     let second = spectrum("scans.mgf", 1);
     assert_eq!(second.x, [100.1, 200.2]);
     let mzml = spectrum("scan.mzML", 0);
@@ -338,7 +405,11 @@ fn molecules_in_3d_from_smiles_and_files() {
     assert!((1.40..1.65).contains(&cc), "C–C {cc}");
     assert!((1.30..1.55).contains(&co), "C–O {co}");
     assert!(embedded.warnings[0].contains("computed conformer"));
-    assert!(formats.molecule_3d(&Molecule3dSource::Smiles("C1CC".into())).is_err());
+    assert!(
+        formats
+            .molecule_3d(&Molecule3dSource::Smiles("C1CC".into()))
+            .is_err()
+    );
 
     let file = |name: &str| Molecule3dSource::File {
         path: format!("mol/{name}"),
@@ -370,5 +441,9 @@ fn molecules_in_3d_from_smiles_and_files() {
     assert_eq!(gly.name.as_deref(), Some("GLYCINE"));
 
     let flat = formats.molecule_3d(&file("ethanol-2d.sdf"));
-    assert!(flat.unwrap_err().to_string().contains("only 2D coordinates"));
+    assert!(
+        flat.unwrap_err()
+            .to_string()
+            .contains("only 2D coordinates")
+    );
 }

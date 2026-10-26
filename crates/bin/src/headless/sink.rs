@@ -256,6 +256,19 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::Ghs(card) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[ghs: {}, {}, retrieved {}]",
+                card.name.as_deref().unwrap_or(&card.query),
+                if card.found() {
+                    format!("{} sources", card.classifications.len())
+                } else {
+                    "not found".to_owned()
+                },
+                card.retrieved
+            ),
+        ),
         BlockKind::Molecule3d(molecule) => w.line(
             Some(Style::Dim),
             &format!(

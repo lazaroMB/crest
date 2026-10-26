@@ -236,7 +236,7 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_molecule_grid"
         | "show_spectrum"
         | "show_molecule_3d" => "read",
-        "web_search" | "web_fetch" => "network (no approval)",
+        "web_search" | "web_fetch" | "show_ghs" => "network (no approval)",
         _ => "",
     }
 }

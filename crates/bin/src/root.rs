@@ -51,6 +51,7 @@ use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, regist
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::form::{FORM_TOOL_PROMPT, register_form_tool};
 use application::tools::formats::{FORMAT_TOOLS_PROMPT, FormatToolPorts, register_format_tools};
+use application::tools::ghs::{GHS_TOOL_PROMPT, ShowGhsTool};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::simulate::SimulateTool;
@@ -614,7 +615,11 @@ pub async fn build_app(
             warnings.push(format!("app.compute unavailable: {err}"));
         }
         if let Err(err) = host
-            .provide_formats(Arc::clone(&formats), Arc::clone(&compute.fs))
+            .provide_formats(
+                Arc::clone(&formats),
+                Arc::clone(&compute.fs),
+                web.as_ref().map(|w| Arc::clone(&w.web)),
+            )
             .await
         {
             warnings.push(format!("app.formats unavailable: {err}"));
@@ -625,6 +630,9 @@ pub async fn build_app(
     }
     if let Some(web) = &web {
         web.register(&mut tools).context("tool registration")?;
+        tools
+            .register_typed(ShowGhsTool::new(Arc::clone(&web.web), now_ms))
+            .context("tool registration")?;
     }
     let task = TaskTool::new(
         TaskPorts {
@@ -792,6 +800,8 @@ pub async fn build_app(
     if web.is_some() {
         prompt.push_str("\n\n");
         prompt.push_str(WEB_TOOLS_PROMPT);
+        prompt.push_str("\n\n");
+        prompt.push_str(GHS_TOOL_PROMPT);
     }
     let mut service = AgentService::new(deps, tools, policy, permissions)
         .with_system_prompt(prompt)

@@ -307,7 +307,10 @@ impl Molecule3dSpec {
             .iter()
             .find(|b| b.a as usize >= n || b.b as usize >= n || b.a == b.b)
         {
-            return Err(invalid(format!("bond {}–{} is not between two atoms", b.a, b.b)));
+            return Err(invalid(format!(
+                "bond {}–{} is not between two atoms",
+                b.a, b.b
+            )));
         }
         Ok(())
     }
@@ -370,7 +373,10 @@ impl Molecule3dSpec {
     /// Distance between atoms `a` and `b`, Å.
     #[must_use]
     pub fn distance(&self, a: usize, b: usize) -> Option<f64> {
-        Some(norm(sub(self.atoms.get(a)?.position, self.atoms.get(b)?.position)))
+        Some(norm(sub(
+            self.atoms.get(a)?.position,
+            self.atoms.get(b)?.position,
+        )))
     }
 
     /// The label of atom `i`: element and 1-based index, with its name and
@@ -409,7 +415,12 @@ impl Molecule3dSpec {
             colors: Vec::new(),
         };
         for a in &self.atoms {
-            b.sphere(a.position, ball_radius(&a.element), cpk_rgb(&a.element), detail);
+            b.sphere(
+                a.position,
+                ball_radius(&a.element),
+                cpk_rgb(&a.element),
+                detail,
+            );
         }
         for bond in &self.bonds {
             let (Some(pa), Some(pb)) = (
@@ -486,7 +497,18 @@ mod tests {
                     residue: None,
                 },
             ],
-            bonds: vec![Bond3d { a: 0, b: 1, order: 1 }, Bond3d { a: 0, b: 2, order: 1 }],
+            bonds: vec![
+                Bond3d {
+                    a: 0,
+                    b: 1,
+                    order: 1,
+                },
+                Bond3d {
+                    a: 0,
+                    b: 2,
+                    order: 1,
+                },
+            ],
             bonds_inferred: true,
             warnings: Vec::new(),
         }
@@ -507,7 +529,11 @@ mod tests {
         assert_eq!(colors[0], cpk_rgb("O"));
         assert!(colors.contains(&cpk_rgb("H")));
         let mut bad = water();
-        bad.bonds.push(Bond3d { a: 0, b: 9, order: 1 });
+        bad.bonds.push(Bond3d {
+            a: 0,
+            b: 9,
+            order: 1,
+        });
         assert!(bad.validate().is_err());
         assert!(w.to_xyz().starts_with("3\nwater\nO "));
     }

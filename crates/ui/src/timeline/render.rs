@@ -59,6 +59,7 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::MoleculeGrid(_) => "molecule_grid",
         BlockKind::Spectrum(_) => "spectrum",
         BlockKind::Molecule3d(_) => "molecule_3d",
+        BlockKind::Ghs(_) => "ghs",
     }
 }
 

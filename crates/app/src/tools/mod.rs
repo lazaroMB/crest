@@ -6,6 +6,7 @@ pub mod compute;
 pub mod files;
 pub mod form;
 pub mod formats;
+pub mod ghs;
 pub mod mcp;
 pub mod plugin;
 pub mod registry;

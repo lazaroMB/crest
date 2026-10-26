@@ -211,11 +211,18 @@ impl SpectrumView {
                     }))
                     .child(div().w_6().text_color(muted).child(format!("{}.", i + 1)))
                     .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{:.4}", p.x).trim_end_matches('0').trim_end_matches('.').to_owned()),
+                        div().font_weight(FontWeight::SEMIBOLD).child(
+                            format!("{:.4}", p.x)
+                                .trim_end_matches('0')
+                                .trim_end_matches('.')
+                                .to_owned(),
+                        ),
                     )
-                    .child(div().text_color(muted).child(format!("y {:.4}{prominence}", p.y)))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(format!("y {:.4}{prominence}", p.y)),
+                    )
                     .into_any_element()
             })
             .collect();
@@ -227,7 +234,9 @@ impl SpectrumView {
             .border_color(border)
             .pt_1()
             .children(rows)
-            .when(more > 0, |d| d.child(div().text_color(muted).child(format!("… {more} more"))))
+            .when(more > 0, |d| {
+                d.child(div().text_color(muted).child(format!("… {more} more")))
+            })
     }
 }
 
@@ -272,7 +281,11 @@ impl Render for SpectrumView {
             .child(
                 tool_button(
                     "spectrum-peaks-toggle",
-                    if self.peaks { "peaks: on" } else { "peaks: off" },
+                    if self.peaks {
+                        "peaks: on"
+                    } else {
+                        "peaks: off"
+                    },
                     cx,
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -336,7 +349,12 @@ impl Render for SpectrumView {
 }
 
 /// The spectrum entity of block `id`, in sync with `spec`.
-pub fn view(id: BlockId, spec: &SpectrumSpec, window: &mut Window, cx: &mut App) -> Entity<SpectrumView> {
+pub fn view(
+    id: BlockId,
+    spec: &SpectrumSpec,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SpectrumView> {
     let view = super::block_state(id, window, cx, |_, _| SpectrumView::new(id, spec));
     view.update(cx, |view, _| view.sync(spec));
     view

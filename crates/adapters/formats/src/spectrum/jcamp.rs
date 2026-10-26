@@ -41,7 +41,8 @@ impl Block {
     /// The number under `key`.
     #[must_use]
     pub fn number(&self, key: &str) -> Option<f64> {
-        self.get(key).and_then(|v| v.split_whitespace().next()?.parse().ok())
+        self.get(key)
+            .and_then(|v| v.split_whitespace().next()?.parse().ok())
     }
 }
 
@@ -122,9 +123,9 @@ fn tokens(line: &str) -> Result<Vec<Token>, String> {
                 && (chars[i].is_ascii_digit()
                     || chars[i] == '.'
                     || ((chars[i] == 'E' || chars[i] == 'e')
-                        && chars.get(i + 1).is_some_and(|n| {
-                            n.is_ascii_digit() || *n == '+' || *n == '-'
-                        })))
+                        && chars
+                            .get(i + 1)
+                            .is_some_and(|n| n.is_ascii_digit() || *n == '+' || *n == '-')))
             {
                 if chars[i] == 'E' || chars[i] == 'e' {
                     i += 2;
@@ -182,7 +183,10 @@ fn xydata(lines: &[&str], warnings: &mut Vec<String>) -> Result<(Vec<f64>, Vec<f
             continue;
         };
         let Token::Abs(x) = *first else {
-            return Err(format!("XYDATA line {} does not start with an x value", n + 1));
+            return Err(format!(
+                "XYDATA line {} does not start with an x value",
+                n + 1
+            ));
         };
         line_x.push(x);
         let mut values: Vec<f64> = Vec::new();
@@ -197,14 +201,20 @@ fn xydata(lines: &[&str], warnings: &mut Vec<String>) -> Result<(Vec<f64>, Vec<f
                 Token::Dif(d) => {
                     let base = values.last().copied().or_else(|| ys.last().copied());
                     let Some(base) = base else {
-                        return Err(format!("XYDATA line {}: a difference with no value before it", n + 1));
+                        return Err(format!(
+                            "XYDATA line {}: a difference with no value before it",
+                            n + 1
+                        ));
                     };
                     values.push(base + d);
                     last_was_dif = true;
                 }
                 Token::Dup(count) => {
                     let Some(p) = prev else {
-                        return Err(format!("XYDATA line {}: a repeat with nothing to repeat", n + 1));
+                        return Err(format!(
+                            "XYDATA line {}: a repeat with nothing to repeat",
+                            n + 1
+                        ));
                     };
                     for _ in 1..count {
                         match p {
@@ -256,7 +266,11 @@ fn groups(lines: &[&str], width: usize) -> Result<Vec<Vec<f64>>, String> {
             }
         }
     }
-    Ok(numbers.chunks(width).filter(|c| c.len() >= 2).map(<[f64]>::to_vec).collect())
+    Ok(numbers
+        .chunks(width)
+        .filter(|c| c.len() >= 2)
+        .map(<[f64]>::to_vec)
+        .collect())
 }
 
 /// The data blocks of a JCAMP-DX file, in file order.
@@ -424,7 +438,10 @@ mod tests {
                 Token::Dup(2)
             ]
         );
-        assert_eq!(tokens("-1.5E2 +3").unwrap(), vec![Token::Abs(-150.0), Token::Abs(3.0)]);
+        assert_eq!(
+            tokens("-1.5E2 +3").unwrap(),
+            vec![Token::Abs(-150.0), Token::Abs(3.0)]
+        );
         assert!(tokens("1 #").is_err());
     }
 

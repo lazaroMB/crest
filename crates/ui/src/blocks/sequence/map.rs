@@ -193,7 +193,8 @@ pub fn plasmid_svg(spec: &SequenceSpec, colors: &MapColors) -> String {
             right: a.cos() >= 0.0,
         });
     }
-    let (mut left, mut right): (Vec<Label>, Vec<Label>) = labels.into_iter().partition(|l| !l.right);
+    let (mut left, mut right): (Vec<Label>, Vec<Label>) =
+        labels.into_iter().partition(|l| !l.right);
     spread(&mut left);
     spread(&mut right);
     for label in left.iter().chain(right.iter()) {
@@ -262,7 +263,13 @@ mod tests {
             features: vec![SeqFeature {
                 kind: "CDS".into(),
                 label: Some("bla".into()),
-                segments: vec![SeqSpan { start: 900, end: 1000 }, SeqSpan { start: 0, end: 100 }],
+                segments: vec![
+                    SeqSpan {
+                        start: 900,
+                        end: 1000,
+                    },
+                    SeqSpan { start: 0, end: 100 },
+                ],
                 strand: Strand::Forward,
                 qualifiers: Vec::new(),
             }],

@@ -158,14 +158,17 @@ fn from_jcamp(text: &str, request: &SpectrumRequest) -> Result<SpectrumSpec, Str
                 for x in &mut spec.x {
                     *x /= mhz;
                 }
-                spec.metadata.push(("frequency".into(), format!("{mhz} MHz")));
+                spec.metadata
+                    .push(("frequency".into(), format!("{mhz} MHz")));
             }
-            None => spec
-                .warnings
-                .push("x is in Hz and the file gives no .OBSERVE FREQUENCY: not converted to ppm".into()),
+            None => spec.warnings.push(
+                "x is in Hz and the file gives no .OBSERVE FREQUENCY: not converted to ppm".into(),
+            ),
         }
     }
-    let nucleus = block.get(".OBSERVENUCLEUS").map(|n| n.trim_start_matches('^').to_owned());
+    let nucleus = block
+        .get(".OBSERVENUCLEUS")
+        .map(|n| n.trim_start_matches('^').to_owned());
     spec.x_label = match spec.kind {
         SpectrumKind::Infrared => "wavenumber (cm⁻¹)".into(),
         SpectrumKind::Raman => "Raman shift (cm⁻¹)".into(),
@@ -207,13 +210,20 @@ fn from_jcamp(text: &str, request: &SpectrumRequest) -> Result<SpectrumSpec, Str
             .map(|(i, b)| format!("{}: {}", i + 1, b.get("TITLE").unwrap_or("untitled")))
             .take(8)
             .collect();
-        spec.warnings
-            .push(format!("{count} data blocks ({}); showing {}", names.join(", "), request.block + 1));
+        spec.warnings.push(format!(
+            "{count} data blocks ({}); showing {}",
+            names.join(", "),
+            request.block + 1
+        ));
     }
     Ok(spec)
 }
 
-fn from_ms(bytes: &[u8], format: MsFormat, request: &SpectrumRequest) -> Result<SpectrumSpec, String> {
+fn from_ms(
+    bytes: &[u8],
+    format: MsFormat,
+    request: &SpectrumRequest,
+) -> Result<SpectrumSpec, String> {
     let (scan, count) = ms::read(bytes, format, request.block)?;
     let mut spec = empty(
         request,
@@ -243,14 +253,20 @@ fn from_ms(bytes: &[u8], format: MsFormat, request: &SpectrumRequest) -> Result<
     if spec.x.is_empty() {
         return Err(format!("scan {} has no peaks", request.block + 1));
     }
-    spec.metadata.push(("MS level".into(), scan.level.to_string()));
+    spec.metadata
+        .push(("MS level".into(), scan.level.to_string()));
     if let Some((mz, charge)) = scan.precursor {
-        let charge = charge.map(|z| format!(", charge {z:+}")).unwrap_or_default();
-        spec.metadata.push(("precursor".into(), format!("m/z {mz:.4}{charge}")));
+        let charge = charge
+            .map(|z| format!(", charge {z:+}"))
+            .unwrap_or_default();
+        spec.metadata
+            .push(("precursor".into(), format!("m/z {mz:.4}{charge}")));
     }
     if count > 1 {
-        spec.warnings
-            .push(format!("{count} scans in the file; showing {}", request.block + 1));
+        spec.warnings.push(format!(
+            "{count} scans in the file; showing {}",
+            request.block + 1
+        ));
     }
     Ok(spec)
 }
@@ -323,7 +339,11 @@ pub fn pick_trace(x: &[f64], y: &[f64], sense: PeakSense, threshold: f64, max: u
             prominence: Some(p),
         })
         .collect();
-    peaks.sort_by(|a, b| b.prominence.unwrap_or(0.0).total_cmp(&a.prominence.unwrap_or(0.0)));
+    peaks.sort_by(|a, b| {
+        b.prominence
+            .unwrap_or(0.0)
+            .total_cmp(&a.prominence.unwrap_or(0.0))
+    });
     peaks.truncate(max);
     peaks
 }
@@ -363,7 +383,10 @@ fn pick_into(spec: &mut SpectrumSpec, bytes: &[u8], request: &SpectrumRequest) {
         .threshold
         .filter(|t| t.is_finite() && *t >= 0.0 && *t < 1.0)
         .unwrap_or(DEFAULT_THRESHOLD);
-    let max = request.max_peaks.unwrap_or(DEFAULT_PEAKS).clamp(1, MAX_PEAKS);
+    let max = request
+        .max_peaks
+        .unwrap_or(DEFAULT_PEAKS)
+        .clamp(1, MAX_PEAKS);
     spec.peaks = if spec.sticks {
         pick_sticks(&spec.x, &spec.y, threshold, max)
     } else {

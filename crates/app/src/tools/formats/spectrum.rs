@@ -138,8 +138,10 @@ impl TypedTool for ShowSpectrumTool {
                 max_peaks: input.max_peaks,
             };
             let formats = Arc::clone(&ports.formats);
-            let parsed =
-                offloaded(&ports.offload, move || formats.parse_spectrum(&bytes, &request)).await;
+            let parsed = offloaded(&ports.offload, move || {
+                formats.parse_spectrum(&bytes, &request)
+            })
+            .await;
             let mut spec = match parsed {
                 Some(Ok(spec)) => spec,
                 Some(Err(err)) => {
@@ -187,7 +189,12 @@ pub fn spectrum_summary(spec: &SpectrumSpec) -> String {
     if spec.blocks > 1 {
         let _ = write!(out, " (block {} of {})", spec.block + 1, spec.blocks);
     }
-    let _ = write!(out, ": {} {}", spec.x.len(), if spec.sticks { "sticks" } else { "points" });
+    let _ = write!(
+        out,
+        ": {} {}",
+        spec.x.len(),
+        if spec.sticks { "sticks" } else { "points" }
+    );
     if let Some((lo, hi)) = spec.x_range() {
         let _ = write!(
             out,
@@ -212,7 +219,11 @@ pub fn spectrum_summary(spec: &SpectrumSpec) -> String {
         (false, PeakSense::Maxima) => "maxima",
     };
     if spec.peaks.is_empty() {
-        let _ = write!(out, "\nNo peaks above the threshold (envelope `{}`).", spec.picking.id);
+        let _ = write!(
+            out,
+            "\nNo peaks above the threshold (envelope `{}`).",
+            spec.picking.id
+        );
     } else {
         let _ = write!(
             out,
@@ -300,9 +311,19 @@ mod tests {
              1. 1715.0 → 0.2000 (prominence 0.7000)"
         );
         assert!(matches!(out.block_update, Some(BlockKind::Spectrum(_))));
-        assert!(call(&tool, json!({ "path": "x.jdx", "block": 0 })).await.is_err());
-        assert!(call(&tool, json!({ "path": "x.jdx", "threshold": 2 })).await.is_err());
-        let missing = call(&tool, json!({ "path": "spectra/none.jdx" })).await.unwrap();
+        assert!(
+            call(&tool, json!({ "path": "x.jdx", "block": 0 }))
+                .await
+                .is_err()
+        );
+        assert!(
+            call(&tool, json!({ "path": "x.jdx", "threshold": 2 }))
+                .await
+                .is_err()
+        );
+        let missing = call(&tool, json!({ "path": "spectra/none.jdx" }))
+            .await
+            .unwrap();
         assert!(missing.is_error);
     }
 }

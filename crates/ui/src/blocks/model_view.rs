@@ -40,11 +40,11 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::render3d::camera::OrbitCamera;
 use crate::render3d::math::V3;
-use domain::sysmodel::scene::Rgb;
 use crate::render3d::mesh::{Mesh, Placement};
 use crate::render3d::section::{self, Section};
 use crate::sysboard::{Backend, auto_backend};
 use crate::theme::token;
+use domain::sysmodel::scene::Rgb;
 
 /// Zoom step of one wheel notch.
 const WHEEL_STEP: f32 = 1.15;

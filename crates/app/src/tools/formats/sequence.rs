@@ -280,7 +280,11 @@ pub fn sequence_summary(spec: &SequenceSpec, find: Option<&str>) -> String {
                     "\n`{query}`: {} hits at {}{}.",
                     hits.len(),
                     listed.join(", "),
-                    if hits.len() > MAX_HITS_LISTED { ", …" } else { "" }
+                    if hits.len() > MAX_HITS_LISTED {
+                        ", …"
+                    } else {
+                        ""
+                    }
                 );
             }
             Err(err) => {
@@ -357,7 +361,11 @@ mod tests {
             .unwrap();
         assert!(inline.text_content().starts_with("Linear DNA"));
         assert!(call(&tool, json!({})).await.is_err());
-        assert!(call(&tool, json!({ "sequence": "A", "record": 0 })).await.is_err());
+        assert!(
+            call(&tool, json!({ "sequence": "A", "record": 0 }))
+                .await
+                .is_err()
+        );
         let missing = call(&tool, json!({ "path": "dna/none.gb" })).await.unwrap();
         assert!(missing.is_error);
     }

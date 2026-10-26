@@ -143,7 +143,10 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         Depictions(svgs.iter().map(|s| s.as_deref().map(svg_data)).collect())
     });
     let data = depictions.read(cx).0.clone();
-    let mut card = v_flex().w_full().gap_2().debug_selector(|| "reaction".to_owned());
+    let mut card = v_flex()
+        .w_full()
+        .gap_2()
+        .debug_selector(|| "reaction".to_owned());
     if let Some(title) = &spec.title {
         card = card.child(
             div()
@@ -171,11 +174,22 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     }
     let side = |role: ReactionRole, window: &mut Window, cx: &mut App| {
         let mut items: Vec<AnyElement> = Vec::new();
-        for (ix, c) in spec.components.iter().enumerate().filter(|(_, c)| c.role == role) {
+        for (ix, c) in spec
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.role == role)
+        {
             if !items.is_empty() {
                 items.push(div().text_lg().child("+").into_any_element());
             }
-            items.push(molecule_card(ix, c, data.get(ix).and_then(Option::as_ref), window, cx));
+            items.push(molecule_card(
+                ix,
+                c,
+                data.get(ix).and_then(Option::as_ref),
+                window,
+                cx,
+            ));
         }
         items
     };
@@ -334,7 +348,10 @@ mod tests {
     fn verdict_and_table() {
         assert_eq!(
             verdict(&spec()),
-            ("✗ not balanced · balances as 2 H2 + O2 → 2 H2O".to_owned(), false)
+            (
+                "✗ not balanced · balances as 2 H2 + O2 → 2 H2O".to_owned(),
+                false
+            )
         );
         let grid = balance_grid(&spec(), gpui::red());
         assert_eq!(grid.rows.len(), 3);

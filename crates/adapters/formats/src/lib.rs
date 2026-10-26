@@ -62,8 +62,9 @@ pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    Molecule3dSource, MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
+    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
+    WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;

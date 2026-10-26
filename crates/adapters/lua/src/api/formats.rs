@@ -3,8 +3,8 @@
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
 //! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
 //! `show_step`, `show_dxf`, `show_ifc_schedule`, `show_sequence`,
-//! `show_reaction`, `show_molecule_grid`, `show_spectrum` and
-//! `show_molecule_3d` tools from Lua. Each returns a block (wrapped like
+//! `show_reaction`, `show_molecule_grid`, `show_spectrum`,
+//! `show_molecule_3d` and `show_ghs` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -29,6 +29,7 @@
 //! return app.formats.molecule_grid{ molecules = { { id = 'A1', smiles = 'CCO', activity = 12 } } }
 //! return app.formats.spectrum{ path = 'spectra/ir.jdx' }
 //! return app.formats.molecule_3d{ smiles = 'CCO' }
+//! return app.formats.ghs{ query = 'acetone' }
 //! ```
 //!
 //! | Function | Block |
@@ -54,6 +55,7 @@
 //! | `molecule_grid{ molecules or path, activity_column, activity_label, activity_unit, direction, title }` | a SAR grid with computed descriptors (`molecules`: `{ id, smiles, name, activity }` tables; `path`: CSV/TSV with a `smiles` column; `direction`: `higher` or `lower`) |
 //! | `spectrum{ path, block, threshold, max_peaks, title }` | a JCAMP-DX (IR, Raman, UV-Vis, NMR), mzML or MGF spectrum with its picked peaks (`block` 1-based) |
 //! | `molecule_3d{ smiles or path, name, title }` | ball and stick in the 3D view: a SMILES embedded by the engine, or a MOL/SDF, XYZ or PDB file's coordinates |
+//! | `ghs{ query or cid }` | the GHS hazard card PubChem gives for a name, CAS number or CID, with its source and date (needs the web on; a compound PubChem does not know is a card that says so) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -69,10 +71,9 @@ use application::ports::formats::{
 };
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
-    grid_entries,
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
-    collect_benchmarks, dataset_format, read_dataset, read_har, read_ifc, read_log, read_report,
-    read_spectrum, read_step, read_wave,
+    collect_benchmarks, dataset_format, grid_entries, read_dataset, read_har, read_ifc, read_log,
+    read_report, read_spectrum, read_step, read_wave,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
@@ -91,6 +92,8 @@ pub struct FormatsServices {
     pub formats: Arc<dyn FormatsPort>,
     /// Reads data files of the workspace.
     pub fs: Arc<dyn FileSystemPort>,
+    /// The web, when `app.opt.web` has it on (PubChem lookups).
+    pub web: Option<Arc<dyn application::ports::web::WebPort>>,
 }
 
 impl std::fmt::Debug for FormatsServices {
@@ -562,6 +565,35 @@ fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
+fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "ghs";
+    let services = services(lua, F)?;
+    let web = services
+        .web
+        .clone()
+        .ok_or_else(|| error(F, "the web is off (app.opt.web.enabled)"))?;
+    let cid = match args.get::<Option<i64>>("cid")? {
+        Some(n) if n >= 1 => Some(u64::try_from(n).unwrap_or(1)),
+        Some(_) => return Err(error(F, "`cid` must be positive")),
+        None => None,
+    };
+    let (query, cid) =
+        application::tools::ghs::target(text(args, F, "query")?, cid).map_err(|e| error(F, e))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let spec = context(lua)?
+        .block_on(application::tools::ghs::lookup(
+            web.as_ref(),
+            &query,
+            cid,
+            now,
+        ))?
+        .map_err(|e| error(F, e))?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Ghs(Box::new(spec)))
+}
+
 fn molecule_3d(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "molecule_3d";
     let services = services(lua, F)?;
@@ -623,20 +655,20 @@ fn spectrum(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "molecule_grid";
     let services = services(lua, F)?;
-    let listed: Vec<application::ports::formats::GridEntry> = match args.get::<Value>("molecules")? {
-        Value::Nil => Vec::new(),
-        value @ Value::Table(_) => {
-            let json = convert::to_json(lua, value)?;
-            serde_json::from_value(json)
-                .map_err(|e| error(F, format!("`molecules`: {e}")))?
-        }
-        other => {
-            return Err(error(
-                F,
-                format!("`molecules` must be a list, got {}", other.type_name()),
-            ));
-        }
-    };
+    let listed: Vec<application::ports::formats::GridEntry> =
+        match args.get::<Value>("molecules")? {
+            Value::Nil => Vec::new(),
+            value @ Value::Table(_) => {
+                let json = convert::to_json(lua, value)?;
+                serde_json::from_value(json).map_err(|e| error(F, format!("`molecules`: {e}")))?
+            }
+            other => {
+                return Err(error(
+                    F,
+                    format!("`molecules` must be a list, got {}", other.type_name()),
+                ));
+            }
+        };
     let molecules = match (text(args, F, "path")?, listed.is_empty()) {
         (Some(_), false) => return Err(error(F, "give `molecules` or `path`, not both")),
         (None, true) => return Err(error(F, "`molecules` or `path` is required")),
@@ -648,12 +680,8 @@ fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
             let text_body = String::from_utf8(bytes)
                 .map_err(|_| error(F, format!("`{path}` is not UTF-8 text")))?;
             let column = text(args, F, "activity_column")?.unwrap_or_else(|| "activity".into());
-            grid_entries(
-                &text_body,
-                application::csv::delimiter_for(&path),
-                &column,
-            )
-            .map_err(|e| error(F, format!("`{path}`: {e}")))?
+            grid_entries(&text_body, application::csv::delimiter_for(&path), &column)
+                .map_err(|e| error(F, format!("`{path}`: {e}")))?
         }
     };
     let direction = match text(args, F, "direction")? {
@@ -713,6 +741,13 @@ fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
+    formats.set(
+        "ghs",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => ghs(lua, &args),
+            _ => Err(error("ghs", "expected a table of arguments")),
+        })?,
+    )?;
     formats.set(
         "molecule_3d",
         lua.create_function(|lua, args: Value| match args {
@@ -900,6 +935,7 @@ mod tests {
             ctx.provide_formats(FormatsServices {
                 formats,
                 fs: Arc::new(fs),
+                web: Some(Arc::new(application::testing::web::ScriptedWeb::new())),
             });
         }
         lua.set_app_data(Arc::new(ctx));
@@ -1094,8 +1130,11 @@ mod tests {
             panic!("not a sequence: {out:?}");
         };
         assert_eq!((spec.len(), spec.is_circular()), (30, false));
-        let err = run_code("return app.formats.sequence{ sequence = 'ACGT', record = 0 }", formats())
-            .unwrap_err();
+        let err = run_code(
+            "return app.formats.sequence{ sequence = 'ACGT', record = 0 }",
+            formats(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("counts from 1"), "{err}");
         let out = run_code(
             "return app.formats.reaction{ smiles = '[H][H].O=O>>O', names = { 'h2' } }",
@@ -1128,12 +1167,22 @@ mod tests {
             panic!("not a spectrum: {out:?}");
         };
         assert_eq!(spec.peaks.len(), 1);
-        let out = run_code("return app.formats.molecule_3d{ smiles = 'O', name = 'w' }", formats())
-            .unwrap();
+        let out = run_code(
+            "return app.formats.molecule_3d{ smiles = 'O', name = 'w' }",
+            formats(),
+        )
+        .unwrap();
         let PluginOutput::Block(BlockKind::Molecule3d(spec)) = out else {
             panic!("not a 3D molecule: {out:?}");
         };
         assert_eq!((spec.atoms.len(), spec.name.as_deref()), (3, Some("w")));
+        // The scripted web knows nothing: the card says so.
+        let out = run_code("return app.formats.ghs{ query = 'unobtainium' }", formats()).unwrap();
+        let PluginOutput::Block(BlockKind::Ghs(spec)) = out else {
+            panic!("not a GHS card: {out:?}");
+        };
+        assert!(!spec.found());
+        assert!(run_code("return app.formats.ghs{}", formats()).is_err());
     }
 
     #[test]

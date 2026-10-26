@@ -198,11 +198,7 @@ impl ReactionSpec {
                         .formula
                         .clone()
                         .unwrap_or_else(|| c.molecule.smiles.clone());
-                    if n == 1 {
-                        name
-                    } else {
-                        format!("{n} {name}")
-                    }
+                    if n == 1 { name } else { format!("{n} {name}") }
                 })
                 .collect::<Vec<_>>()
                 .join(" + ")

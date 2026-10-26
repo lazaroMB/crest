@@ -755,6 +755,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A GHS hazard card fetched from PubChem (tool `show_ghs`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ghs"
+        }
+      },
+      "$ref": "#/$defs/GhsSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -12616,6 +12630,183 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "source",
         "atoms"
+      ]
+    },
+    "GhsClassification": {
+      "description": "One source's classification.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The source (`European Chemicals Agency (ECHA)`).",
+          "type": "string"
+        },
+        "substance": {
+          "description": "What the source calls the substance.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "The source's page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "license": {
+          "description": "The source's licence note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pictograms": {
+          "description": "Pictograms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Pictogram"
+          },
+          "default": []
+        },
+        "signal": {
+          "description": "`Danger` or `Warning`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hazards": {
+          "description": "Hazard statements.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HazardStatement"
+          },
+          "default": []
+        },
+        "precautionary": {
+          "description": "Precautionary statement codes (`P210`, `P305+P351+P338`); PubChem\ngives the codes, not their texts.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "notes": {
+          "description": "The source's notes (share of non-classified reports).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "Pictogram": {
+      "description": "A pictogram of a classification.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "`GHS01` … `GHS09`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "The hazard it stands for, as the source labels it (`Flammable`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "HazardStatement": {
+      "description": "A hazard statement.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "`H225`, `EUH066`.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Its text as given, with the class in brackets when the source\nadds it.",
+          "type": "string"
+        },
+        "share": {
+          "description": "The share of notifications that report it (`> 99.9%`), for\naggregated sources.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "text"
+      ]
+    },
+    "GhsSpec": {
+      "description": "A GHS card.",
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "What was looked up (name, CAS number or CID).",
+          "type": "string"
+        },
+        "cid": {
+          "description": "PubChem's compound id, when the compound was found.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "description": "PubChem's name of the compound.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "classifications": {
+          "description": "The classifications, one per source.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GhsClassification"
+          },
+          "default": []
+        },
+        "source_url": {
+          "description": "The PubChem page to check (the compound's GHS section).",
+          "type": "string"
+        },
+        "fetched_url": {
+          "description": "The URL fetched.",
+          "type": "string"
+        },
+        "retrieved": {
+          "description": "When it was fetched (UTC date, `YYYY-MM-DD`).",
+          "type": "string"
+        },
+        "message": {
+          "description": "Why there is nothing to show (not found, no classification).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "query",
+        "source_url",
+        "fetched_url",
+        "retrieved"
       ]
     }
   }

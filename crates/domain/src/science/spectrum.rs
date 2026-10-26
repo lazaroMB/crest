@@ -178,7 +178,10 @@ impl SpectrumSpec {
             return Err(invalid("a point is not finite".into()));
         }
         if self.peaks.len() > MAX_PEAKS {
-            return Err(invalid(format!("{} peaks; at most {MAX_PEAKS}", self.peaks.len())));
+            return Err(invalid(format!(
+                "{} peaks; at most {MAX_PEAKS}",
+                self.peaks.len()
+            )));
         }
         self.picking
             .validate()
@@ -265,7 +268,10 @@ pub fn decimate(x: &[f64], y: &[f64], lo: f64, hi: f64, columns: usize) -> (Vec<
     if inside.len() <= columns.max(1) * 2 || hi <= lo {
         let mut idx = inside;
         idx.sort_by(|&a, &b| x[a].total_cmp(&x[b]));
-        return (idx.iter().map(|&i| x[i]).collect(), idx.iter().map(|&i| y[i]).collect());
+        return (
+            idx.iter().map(|&i| x[i]).collect(),
+            idx.iter().map(|&i| y[i]).collect(),
+        );
     }
     let width = (hi - lo) / columns as f64;
     let mut buckets: Vec<Option<(usize, usize)>> = vec![None; columns];

@@ -36,7 +36,11 @@ fn order(o: BondOrder) -> u8 {
     }
 }
 
-fn spec_of(mol: &Molecule, coords: &Coords3D, source: CoordinateSource) -> Result<Molecule3dSpec, String> {
+fn spec_of(
+    mol: &Molecule,
+    coords: &Coords3D,
+    source: CoordinateSource,
+) -> Result<Molecule3dSpec, String> {
     if coords.points.len() != mol.atom_count() {
         return Err(format!(
             "{} coordinates for {} atoms",
@@ -101,7 +105,9 @@ fn check(spec: &Molecule3dSpec) -> Result<(), String> {
 pub fn embed(smiles_text: &str) -> Result<Molecule3dSpec, String> {
     let source = smiles_text.trim();
     if source.len() > MAX_SMILES_BYTES {
-        return Err(format!("SMILES is too long (limit {MAX_SMILES_BYTES} bytes)"));
+        return Err(format!(
+            "SMILES is too long (limit {MAX_SMILES_BYTES} bytes)"
+        ));
     }
     let mol = smiles::parse(source).map_err(|e| format!("invalid SMILES: {e}"))?;
     let heavy = chem::heavy_atom_count(&mol);
@@ -146,7 +152,10 @@ pub fn format_of(path: &str, text: &str) -> Option<StructureFormat> {
         Some(StructureFormat::Sdf)
     } else if text.contains("V2000") || text.contains("V3000") {
         Some(StructureFormat::Mol)
-    } else if text.lines().any(|l| l.starts_with("ATOM  ") || l.starts_with("HETATM")) {
+    } else if text
+        .lines()
+        .any(|l| l.starts_with("ATOM  ") || l.starts_with("HETATM"))
+    {
         Some(StructureFormat::Pdb)
     } else if text
         .lines()
@@ -206,10 +215,7 @@ fn counts(line: &str) -> Option<(usize, usize)> {
 fn molfile(text: &str, format: StructureFormat) -> Result<Molecule3dSpec, String> {
     // The first record of an SD file.
     let record = text.split("$$$$").next().unwrap_or(text);
-    let records = text
-        .split("$$$$")
-        .filter(|r| !r.trim().is_empty())
-        .count();
+    let records = text.split("$$$$").filter(|r| !r.trim().is_empty()).count();
     let lines: Vec<&str> = record.lines().collect();
     let name = lines
         .first()
@@ -231,8 +237,9 @@ fn molfile(text: &str, format: StructureFormat) -> Result<Molecule3dSpec, String
     };
     spec.name = name;
     if records > 1 {
-        spec.warnings
-            .push(format!("{records} records in the SD file; showing the first"));
+        spec.warnings.push(format!(
+            "{records} records in the SD file; showing the first"
+        ));
     }
     Ok(spec)
 }
@@ -282,7 +289,10 @@ fn v2000(lines: &[&str], format: StructureFormat) -> Result<Molecule3dSpec, Stri
         };
         let (a, b, t) = (field(0, 3)?, field(3, 6)?, field(6, 9)?);
         if a == 0 || b == 0 || a as usize > atoms_n || b as usize > atoms_n {
-            return Err(format!("bond line {} names an atom that is not there", i + 1));
+            return Err(format!(
+                "bond line {} names an atom that is not there",
+                i + 1
+            ));
         }
         bonds.push(Bond3d {
             a: a - 1,
@@ -316,9 +326,13 @@ fn xyz(text: &str) -> Result<Molecule3dSpec, String> {
         .map(|((_, a), p)| (a.element, *p))
         .collect();
     let bonded = threed::determine_bonds(&atoms, BOND_TOLERANCE).map_err(|e| e.to_string())?;
-    let mut spec = spec_of(&bonded, &coords, CoordinateSource::File {
-        format: StructureFormat::Xyz,
-    })?;
+    let mut spec = spec_of(
+        &bonded,
+        &coords,
+        CoordinateSource::File {
+            format: StructureFormat::Xyz,
+        },
+    )?;
     spec.name = name;
     spec.bonds_inferred = true;
     Ok(spec)
@@ -330,13 +344,21 @@ fn pdb(text: &str) -> Result<Molecule3dSpec, String> {
         return Err("the PDB file has no ATOM or HETATM records".into());
     }
     let (mol, coords) = threed::pdb_to_molecule(&atoms);
-    let mut spec = spec_of(&mol, &coords, CoordinateSource::File {
-        format: StructureFormat::Pdb,
-    })?;
+    let mut spec = spec_of(
+        &mol,
+        &coords,
+        CoordinateSource::File {
+            format: StructureFormat::Pdb,
+        },
+    )?;
     for (a, p) in spec.atoms.iter_mut().zip(&atoms) {
         let name = p.name.trim();
         a.name = (!name.is_empty()).then(|| name.to_owned());
-        a.residue = Some(format!("{} {} {}", p.res_name.trim(), p.res_seq, p.chain_id).trim().to_owned());
+        a.residue = Some(
+            format!("{} {} {}", p.res_name.trim(), p.res_seq, p.chain_id)
+                .trim()
+                .to_owned(),
+        );
     }
     let record = |tag: &str| {
         text.lines()
@@ -360,9 +382,15 @@ mod tests {
     #[test]
     fn formats_from_names_and_content() {
         assert_eq!(format_of("a/b.SDF", ""), Some(StructureFormat::Sdf));
-        assert_eq!(format_of("x", "3\nwater\nO 0 0 0\n"), Some(StructureFormat::Xyz));
+        assert_eq!(
+            format_of("x", "3\nwater\nO 0 0 0\n"),
+            Some(StructureFormat::Xyz)
+        );
         assert_eq!(format_of("x", "HETATM    1  O"), Some(StructureFormat::Pdb));
         assert_eq!(format_of("x", "hello"), None);
-        assert_eq!(counts("  3  2  0  0  0  0  0  0  0  0999 V2000"), Some((3, 2)));
+        assert_eq!(
+            counts("  3  2  0  0  0  0  0  0  0  0999 V2000"),
+            Some((3, 2))
+        );
     }
 }
