@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceRoot};
 
 use crate::ports::fs::{
-    EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, MAX_READ_BYTES,
+    DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, MAX_READ_BYTES,
     PendingChange, ReadFileRequest, WriteFileRequest, replace_unique,
 };
 use crate::ports::search::{
@@ -272,6 +272,36 @@ impl FileSystemPort for InMemoryFs {
         self.check_inside(path)?;
         let files = self.lock();
         Ok(files.contains_key(path) || is_dir(&files, path))
+    }
+
+    async fn list_dir(&self, path: &WorkspacePath) -> Result<Vec<DirEntry>, FsError> {
+        self.check_access(path)?;
+        let files = self.lock();
+        if files.contains_key(path) {
+            return Err(FsError::Io(format!("{path} is not a directory")));
+        }
+        if !is_dir(&files, path) {
+            return Err(FsError::NotFound { path: path.clone() });
+        }
+        let depth = path.components().count();
+        let mut out: Vec<DirEntry> = Vec::new();
+        for file in files.keys().filter(|f| *f != path && is_within(f, path)) {
+            if self.rules.matching_pattern(file).is_some() {
+                continue;
+            }
+            let parts: Vec<_> = file.components().collect();
+            let Some(name) = parts.get(depth) else {
+                continue;
+            };
+            let name = name.to_string();
+            let is_dir = parts.len() > depth + 1;
+            match out.iter_mut().find(|e| e.name == name) {
+                Some(entry) => entry.is_dir |= is_dir,
+                None => out.push(DirEntry { name, is_dir }),
+            }
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
     }
 
     async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
