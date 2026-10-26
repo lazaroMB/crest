@@ -130,8 +130,9 @@ parquet = { version = "=60.0.0", default-features = false, features = ["snap", "
 # both already in the tree (opentelemetry-otlp, parquet).
 prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }
 flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
-# 2D molecules: SMILES parsing, formula/mass and SVG depiction (pure Rust).
-chematic = { version = "=1.2.1", default-features = false, features = ["smiles", "depict", "chem"] }
+# Molecules: SMILES parsing, formula/mass, descriptors, SVG depiction and
+# reaction SMILES (pure Rust, MIT OR Apache-2.0).
+chematic = { version = "=1.2.1", default-features = false, features = ["smiles", "depict", "chem", "rxn"] }
 # ER diagrams from SQL DDL (show_er): Apache-2.0, std only. Without
 # `recursive-protection` (stacker's C build); the parser's own depth limit
 # still bounds nesting.

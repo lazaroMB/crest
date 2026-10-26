@@ -34,6 +34,7 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
@@ -148,6 +149,7 @@ impl Block {
             BlockKind::Drawing(spec) => spec.validate(),
             BlockKind::IfcSchedule(spec) => spec.validate(),
             BlockKind::Sequence(spec) => spec.validate(),
+            BlockKind::Reaction(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -336,6 +338,9 @@ pub enum BlockKind {
     /// A DNA, RNA or protein sequence with its features (tool
     /// `show_sequence`).
     Sequence(Box<SequenceSpec>),
+    /// A reaction scheme with its atom and charge balance (tool
+    /// `show_reaction`).
+    Reaction(Box<ReactionSpec>),
 }
 
 /// Lifecycle of a tool call.

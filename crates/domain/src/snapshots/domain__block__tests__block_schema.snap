@@ -699,6 +699,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A reaction scheme with its atom and charge balance (tool\n`show_reaction`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reaction"
+        }
+      },
+      "$ref": "#/$defs/ReactionSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -11715,6 +11729,248 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "alphabet",
         "sequence"
+      ]
+    },
+    "ReactionComponent": {
+      "description": "One molecule of the scheme.",
+      "type": "object",
+      "properties": {
+        "role": {
+          "description": "Its side.",
+          "$ref": "#/$defs/ReactionRole"
+        },
+        "molecule": {
+          "description": "The molecule (SMILES, depiction, computed formula, mass, charge).",
+          "$ref": "#/$defs/MoleculeSpec"
+        },
+        "coefficient": {
+          "description": "Its coefficient as given (1 when none was).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "atoms": {
+          "description": "Atom counts of one molecule by element, implicit hydrogens\nincluded.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "default": {}
+        }
+      },
+      "required": [
+        "role",
+        "molecule"
+      ]
+    },
+    "ReactionRole": {
+      "description": "The side of the arrow a molecule is on.",
+      "oneOf": [
+        {
+          "description": "Left of the arrow.",
+          "type": "string",
+          "const": "reactant"
+        },
+        {
+          "description": "Over the arrow (catalysts, solvents): not counted.",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "Right of the arrow.",
+          "type": "string",
+          "const": "product"
+        }
+      ]
+    },
+    "ElementBalance": {
+      "description": "One element's count on each side, with the coefficients given.",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Element symbol.",
+          "type": "string"
+        },
+        "reactants": {
+          "description": "Atoms on the left.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "products": {
+          "description": "Atoms on the right.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "element",
+        "reactants",
+        "products"
+      ]
+    },
+    "Stoichiometry": {
+      "description": "What the coefficient search found.",
+      "oneOf": [
+        {
+          "description": "The given coefficients balance.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "balanced"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "These smallest integer coefficients (reactants then products, in\norder) balance it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "suggested"
+            },
+            "coefficients": {
+              "description": "One per counted molecule.",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "coefficients"
+          ]
+        },
+        {
+          "description": "No positive coefficients balance these molecules: something is\nmissing (a by-product, a counter-ion) or a structure is wrong.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "impossible"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "More than one independent set of coefficients balances it (two\nreactions in one); none is suggested.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ambiguous"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The search was not run (a molecule did not parse).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_checked"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "ReactionSpec": {
+      "description": "A reaction drawn from reaction SMILES with its balance.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smiles": {
+          "description": "Reaction SMILES as given (`A.B>agent>C.D`).",
+          "type": "string"
+        },
+        "conditions": {
+          "description": "Conditions written over the arrow (`Δ, 2 h`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "description": "The molecules, reactants then agents then products.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReactionComponent"
+          }
+        },
+        "elements": {
+          "description": "Element counts per side with the given coefficients (implicit H\nincluded), by symbol.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ElementBalance"
+          },
+          "default": []
+        },
+        "charge": {
+          "description": "Net charge on the left and on the right.",
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "format": "int64"
+            },
+            {
+              "type": "integer",
+              "format": "int64"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2,
+          "default": [
+            0,
+            0
+          ]
+        },
+        "stoichiometry": {
+          "description": "The coefficient search.",
+          "$ref": "#/$defs/Stoichiometry"
+        },
+        "balance": {
+          "description": "The balance check as a computed envelope (values `balanced`,\n`charge_delta`, `delta.<element>`, `suggested.<n>`).",
+          "$ref": "#/$defs/Computed"
+        },
+        "error": {
+          "description": "Why the reaction could not be read, when it could not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "smiles",
+        "components",
+        "stoichiometry",
+        "balance"
       ]
     }
   }

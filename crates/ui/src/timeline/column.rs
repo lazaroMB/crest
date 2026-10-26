@@ -64,7 +64,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::CadModel(_)
         | BlockKind::Drawing(_)
         | BlockKind::IfcSchedule(_)
-        | BlockKind::Sequence(_) => BlockWidth::Wide,
+        | BlockKind::Sequence(_)
+        | BlockKind::Reaction(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

@@ -1,0 +1,61 @@
+---
+source: crates/app/src/tools/formats/reaction.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_reaction",
+  "description": "Draws a reaction scheme in the user's timeline from reaction SMILES (`reactants>agents>products`): every molecule with its computed formula, and an engine check that every element and the charge balance (implicit hydrogens counted, agents not). When it does not balance it returns what is off and the smallest integer coefficients that balance it, or that none exist (a missing by-product). Cite this result; never claim a reaction is balanced without it.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "smiles": {
+        "type": "string",
+        "description": "Reaction SMILES: reactants, agents (catalysts, solvents; may be\nempty) and products separated by `>`, molecules by `.`, e.g.\n`CCO.O=O>>CC(=O)O.O`."
+      },
+      "coefficients": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "description": "Stoichiometric coefficients, one per reactant then per product (not\nagents), e.g. `[1, 2, 1, 2]`; 1 each when absent.",
+        "default": null
+      },
+      "conditions": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Conditions written over the arrow, e.g. `H2SO4, reflux, 2 h`.",
+        "default": null
+      },
+      "names": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Names of the molecules in order (reactants, agents, products), shown\nunder each drawing.",
+        "default": []
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the scheme.",
+        "default": null
+      }
+    },
+    "required": [
+      "smiles"
+    ],
+    "description": "Input of `show_reaction`.",
+    "title": "ShowReaction",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

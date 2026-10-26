@@ -114,3 +114,61 @@ fn fasta_records_and_inline_residues() {
     assert_eq!(inline.cut_sites.len(), 1);
     assert!(formats.parse_sequence(b"   \n", &request("x")).is_err());
 }
+
+#[test]
+fn reaction_balance_suggestions_and_errors() {
+    use domain::computed::ComputedStatus;
+    use domain::science::reaction::{ReactionRole, Stoichiometry};
+    let formats = Formats::new();
+    // Ethanol to acetic acid: balanced as written.
+    let ox = formats.depict_reaction("CCO.O=O>>CC(=O)O.O", None);
+    assert_eq!(ox.error, None);
+    ox.validate().unwrap();
+    assert!(ox.is_balanced());
+    assert_eq!(ox.stoichiometry, Stoichiometry::Balanced);
+    assert_eq!(ox.balance.value("balanced").unwrap().v, 1.0);
+    assert_eq!(ox.balance.status, ComputedStatus::Ok);
+    assert_eq!(ox.equation(None), "C2H6O + O2 → C2H4O2 + H2O");
+    assert!(ox.components[0].molecule.svg.is_some());
+
+    // Methane combustion needs 1, 2, 1, 2.
+    let burn = formats.depict_reaction("C.O=O>>O=C=O.O", None);
+    assert!(!burn.is_balanced());
+    assert_eq!(
+        burn.stoichiometry,
+        Stoichiometry::Suggested {
+            coefficients: vec![1, 2, 1, 2]
+        }
+    );
+    assert_eq!(burn.balance.value("delta.O").unwrap().v, 1.0);
+    assert_eq!(burn.balance.value("suggested.2").unwrap().v, 2.0);
+    assert_eq!(burn.balance.status, ComputedStatus::Warning);
+    assert_eq!(
+        burn.balance.method.params["suggested"],
+        "CH4 + 2 O2 → CO2 + 2 H2O"
+    );
+    // With those coefficients it balances.
+    let given = formats.depict_reaction("C.O=O>>O=C=O.O", Some(&[1, 2, 1, 2]));
+    assert!(given.is_balanced());
+    assert!(formats
+        .depict_reaction("C.O=O>>O=C=O.O", Some(&[1, 2]))
+        .error
+        .unwrap()
+        .contains("2 coefficients given for 4"));
+
+    // Fe2+ to Fe3+ balances in iron but never in charge.
+    let fe = formats.depict_reaction("[Fe+2]>>[Fe+3]", None);
+    assert_eq!(fe.charge, (2, 3));
+    assert_eq!(fe.stoichiometry, Stoichiometry::Impossible);
+    assert!(fe.balance.warnings.iter().any(|w| w.code == "cannot_balance"));
+
+    // Agents are drawn but not counted.
+    let hyd = formats.depict_reaction("CC=C.[H][H]>[Pd]>CCC", None);
+    assert!(hyd.is_balanced());
+    assert_eq!(hyd.side(ReactionRole::Agent).count(), 1);
+
+    let bad = formats.depict_reaction("C1CC>>C", None);
+    assert!(bad.error.is_some());
+    assert_eq!(bad.balance.status, ComputedStatus::Error);
+    assert!(formats.depict_reaction("CCO", None).error.unwrap().contains("not a reaction"));
+}

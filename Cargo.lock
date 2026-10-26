@@ -177,6 +177,7 @@ name = "adapter-formats"
 version = "0.14.0"
 dependencies = [
  "application",
+ "blake3",
  "bytes",
  "chematic",
  "domain",
@@ -1381,6 +1382,7 @@ dependencies = [
  "chematic-core",
  "chematic-depict",
  "chematic-perception",
+ "chematic-rxn",
  "chematic-smiles",
 ]
 
