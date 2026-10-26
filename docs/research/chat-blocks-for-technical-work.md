@@ -308,6 +308,8 @@ Crest is GPL-3.0-or-later (see `Cargo.toml`), so copyleft alone is not a blocker
 
 Still unverified or unknown: licenses of `dxf`, `serde-sarif`, `quick-junit`, `wavedrom`, `kiutils_kicad`, `foxtrot`, opencascade-rs, `mzdata`, `proj4rs`, georust crates, `layout-rs`, `vte`, `gix`, `git-graph`, `jsonschema`, Typst (believed Apache-2.0), RDKit (believed BSD-3), ngspice. Also unknown: the crates.io version of RaTeX; the current versions of `plotters`, `arrow`/`parquet` and `opentelemetry-proto`; `layout-rs` 0.1.2 vs 0.1.3; `har` 0.8.1 vs 0.9.0; ranging and IIS support in the `highs` Rust wrapper; the `statrs` `stats_tests` module; truck-stepio's coverage of real SolidWorks/Fusion exports; IFClite's native (non-WASM) crate set; how chematic and cosmolkit depictions compare with RDKit.
 
+Settled during phase 2 (from the crates' manifests): `dxf` MIT, `mzdata` Apache-2.0, `proj4rs`, `geo` and `geojson` MIT OR Apache-2.0, `layout-rs` MIT (not used), `har` (not used), `opentelemetry-proto` (not used), `inferno` (not used); truck-stepio's coverage is in the phase 2 spike verdict. The licences of the crates crest now depends on are listed in [architecture.md](../architecture.md#third-party-crates-added-for-the-chat-blocks-phase-2).
+
 ## Roadmap
 
 Costs follow the modal note: S = a few days, M = 1–3 weeks, L = more than 3 weeks.
@@ -337,20 +339,38 @@ Carried over to phase 2 (gaps left by phase 1):
 
 ### Phase 2: shared widgets and domain viewers (about 12–16 weeks)
 
-| Item | Approach | Estimate |
-| --- | --- | --- |
-| Timeline canvas, filterable list, node-link graph, extended tree | GPUI components exposed as `CustomNode` variants | 3–4 weeks |
-| Python/R subprocess bridge | fixed runner, `emit(envelope)`, env hashing | 1–2 weeks |
-| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks |
-| Trace waterfall, flame graph, log viewer, SQL plan, HAR, IaC plan, DOT/ER, benchmark | widgets + parsers, sniffers | 3–4 weeks |
-| Waveform, netlist, beam/frame, Bode, K-map, tolerance, material, BOM, STEP via truck, clip/measure, DXF, IFC schedule | wellen, truck, dxf, ifc-lite-core spikes first | 3–4 weeks |
-| Sequence, plasmid, reaction, SAR grid, spectrum, ball-and-stick, GHS card, map + CRS card, Gantt, decision matrix, HDF5/NetCDF, network graph, training curves | gb-io, chematic, mzdata, georust, hdf5-pure | 3–4 weeks |
-| A2UI and Adaptive Cards inbound, Jupyter MIME mapping, MCP Apps `structuredContent` rendering | node vocabulary alignment | 1–2 weeks |
+**Status: implemented (2026-10-26), except the Python/R bridge.** By user decision there is no bridge, and none of the cards that depend on it; everything else is native Rust. Each piece ran its crates' targeted tests and clippy; the full `make check` is left for a local run. User documentation: [usage.md](../usage.md#shared-widgets) and [plugins.md](../plugins.md#appformats-file-viewers).
+
+| Item | Approach | Estimate | Status |
+| --- | --- | --- | --- |
+| Timeline canvas, filterable list, node-link graph, extended tree | GPUI components exposed as `CustomNode` variants | 3–4 weeks | Done: `domain::widget` specs, `ui::widgets`, `app.ui.timeline/filter_list/graph/tree`. The layered layout is our own Sugiyama (layout-rs 0.1.3 gives coordinates only through a render backend, keeps long-edge bends internal, uses its own text metric and asserts on input), plus a seeded force layout and a grid; both run off the UI thread. |
+| Python/R subprocess bridge | fixed runner, `emit(envelope)`, env hashing | 1–2 weeks | Not done (user decision); moved to phase 3. |
+| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks | Done except GLM and derivations: `stats_distribution/contingency/power/ab_test/bootstrap/forecast`, `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`, `decision_matrix`. statrs has no noncentral t or F, so both are our own (with a noncentral beta); r×c Fisher is our own enumeration, simulated beyond a step limit; augurs 0.10.2 gives MSTL + AutoETS; microlp 0.6.0 instead of `highs` (C++ build) and without `good_lp`; microlp gives no duals or basis, so duals come from solving the dual LP and ranging is not reported; cash flows in `rust_decimal`. |
+| Trace waterfall, flame graph, log viewer, SQL plan, HAR, IaC plan, DOT/ER, benchmark | widgets + parsers, sniffers | 3–4 weeks | Done without sniffers. OTLP, Jaeger and Zipkin through our own serde structs (no `opentelemetry-proto`); our own folded-stack parser (inferno's CAL-1.0 licence avoided) and pprof through `prost` derive; HAR through our own lenient structs (`har` 0.9.0 needs `serde_with` and rejects common exporter quirks); our own reduced DOT parser; ER from `sqlparser` 0.63.0; criterion's `estimates.json` read directly. |
+| Waveform, netlist, beam/frame, Bode, K-map, tolerance, material, BOM, STEP via truck, clip/measure, DXF, IFC schedule | wellen, truck, dxf, ifc-lite-core spikes first | 3–4 weeks | Done; beams only (no frames). The waveform view has its own canvas (the timeline widget has no levels, bus boxes or cursor). The STEP spike passed with guards (below). DXF on dxf 0.6.2, read through its UTF-8 path to avoid a dropped trailing escape on the 1252 path; IFC on ifc-lite-core 22.6.0 (schedule only). The material card has no bundled table: every value is the caller's, unverified without a source. |
+| Sequence, plasmid, reaction, SAR grid, spectrum, ball-and-stick, GHS card, map + CRS card, Gantt, decision matrix, HDF5/NetCDF, network graph, training curves | gb-io, chematic, mzdata, georust, hdf5-pure | 3–4 weeks | Done (the decision matrix with the solver cards). Our own JCAMP-DX reader and our own exact rational stoichiometry solver; chematic's descriptors match RDKit for aspirin and caffeine; chematic's V2000 reader drops z, so V2000 is read by our own code. NetCDF-3 is our own reader (netcdf3 0.6.1 reads only whole variables or records); petgraph 0.8.3 for storage and components, with our own Brandes betweenness, closeness, PageRank (petgraph's is quadratic and drops the teleport term on linked pairs) and seeded label propagation. GHS data comes from PubChem over `WebPort`, only what it returns. |
+| A2UI and Adaptive Cards inbound, Jupyter MIME mapping, MCP Apps `structuredContent` rendering | node vocabulary alignment | 1–2 weeks | Done as pure mappings in `application::interop` (no new crates): A2UI v0.9 (v0.8 normalised), Adaptive Cards 1.0–1.6 with `Action.Execute`, both answerable through the form block (`show_card`); MIME bundles drawn as the richest type, with simple single-view Vega-Lite as native charts; MCP `structuredContent` and user-audience items drawn, `_meta.ui.visibility` honoured. |
+
+**STEP spike verdict.** truck-stepio 0.3.0 and truck-meshalgo 0.4.0 (Apache-2.0, stale since 2024) were tried on 31 public files before integration. Every file with geometry from FreeCAD, KiCad, OCCT and Onshape meshed completely in 1–100 ms and under 30 MB peak memory, also on a worker thread. The CATIA sub-parts of one CAx-IF sample panic inside truck's triangulation (caught per shell and reported as faces not meshed), one file fails ruststep's tokenizer, and four are assembly-only (external references). truck 0.3 does not apply assembly placements. Without meshalgo's default `vtk` feature the pair adds about 25 crates and no C build. The adapter parses on its own thread with a 60 s limit, a million-triangle cap and `catch_unwind` per shell.
+
+The spikes asked for before phase 2: truck passed (above); IFClite's native `ifc-lite-core` works without WASM; chematic's descriptors agree with RDKit on the molecules checked (depictions were not compared); `highs` was not needed (microlp); vl-convert was not tried (phase 3).
+
+Deviations from the plan, in short: own code instead of `layout-rs` (layout), `har` (HAR), `netcdf3` (NetCDF-3), `inferno` (folded stacks), `opentelemetry-proto` (OTLP), petgraph's `page_rank` and statrs' missing noncentral distributions; no `good_lp`; no sniffers for pasted content; the waveform view does not use the timeline widget; chemistry and science envelopes live inside their viewer specs (`adapter-formats`), so they have no Recompute.
+
+Moved to phase 3 (or later):
+
+- The Python/R bridge and its dependents: GLM, derivations checked by SymPy, SARIMAX, and running the Python and R reproduce lines.
+- Editable inputs on the power and decision cards (a "re-run with this request" path), the session tally for contingency and A/B tests, LP ranging.
+- Sniffers for pasted plans, HARs and logs; flame graph differential mode and speedscope/perf-script input; log histogram filtering and tail reads; MySQL/SQLite/DuckDB plans and text `EXPLAIN`.
+- STEP assembly placements, face and edge picking, mass properties and section caps; DXF text rotation, hatches and dimensions, DXF in `/open`; the IFC 3D model and storey plan (already in phase 3); beam frames, hinges and springs; root locus.
+- Raster map tiles (behind a setting, respecting the OSM usage policy) and WKT CRS; Louvain and GraphML; Gantt holidays and dependency arrows; TensorBoard event files; reverse frames, MW/pI and a linear map for sequences; 2D NMR and spectrum overlays; official GHS pictograms and P-statement texts.
+- A2UI function calls and checks, live Modal/Tabs, other catalogs; Adaptive Card templating, `selectAction`, live `ToggleVisibility`; fuller Vega-Lite (with vl-convert below); card inputs in place.
 
 ### Phase 3: heavy and niche (about 10–14 weeks)
 
 | Item | Approach | Estimate |
 | --- | --- | --- |
+| Python/R subprocess bridge, GLM, SymPy derivations, SARIMAX (moved from phase 2) | fixed runner, `emit(envelope)`, env hashing | 2–3 weeks |
 | Typst document/diagram preview | typst + typst-render | 1–2 weeks |
 | Vega-Lite via vl-convert-rs (feature-gated) | off-thread render; scenegraph tooltips later | 1 week |
 | Bayesian posterior, survival, ODE / phase portrait | bridge + plot painter | 2–3 weeks |
@@ -358,4 +378,4 @@ Carried over to phase 2 (gaps left by phase 1):
 | Schematic/PCB, SPICE, cartoon proteins, CIF, MSA, Lean proof state, quantum circuit, ONNX graph, git/CI/k8s/OpenAPI adapters, coverage | Lua plugins on shared widgets where possible | 3–4 weeks |
 | Math painted as glyphs, promote-to-artifact, MCP Apps open-in-browser bridge | — | 2 weeks |
 
-Before phase 2, run short spikes on the facts most likely to change the plan: truck-stepio on real exports, IFClite's native crates, chematic depictions vs RDKit, `highs` ranging, and the vl-convert binary size.
+Before phase 3, spike the vl-convert binary size and the bridge's environment hashing.

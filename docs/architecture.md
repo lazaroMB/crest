@@ -17,6 +17,7 @@ flowchart TB
     end
     subgraph ui["crates/ui · GPUI"]
         session["Session, Timeline, Input, Status, Picker, Tree, Approval, UiForm, ModalHost, SysBoard, render3d"]
+        widgets["widgets/ · timeline, list, graph, tree"]
     end
     subgraph adapters["crates/adapters/*"]
         anthropic["anthropic"]
@@ -28,13 +29,15 @@ flowchart TB
         mcp["mcp (rmcp)"]
         telemetry["telemetry"]
         export["export (board.html)"]
-        compute["compute (stats, numbat)"]
-        formats["formats (JUnit, SARIF, WaveDrom, datasets, molecules)"]
+        compute["compute (stats, solvers, engineering, numbat)"]
+        formats["formats (reports, devops, engineering and science files)"]
+        web["web (curl)"]
     end
     subgraph app["crates/app · application"]
         ports["ports/*"]
-        usecases["usecases/ · run_turn, compact, resume, simulate, compute"]
-        tools["tools/ · registry, files, components, compute, formats, form, task, simulate, mcp, plugin"]
+        usecases["usecases/ · run_turn, compact, resume, simulate, compute, open_file"]
+        tools["tools/ · registry, files, components, compute, formats, form, card, ghs, task, simulate, mcp, plugin"]
+        interop["interop/ · A2UI, Adaptive Cards, MIME bundles, MCP structuredContent"]
         flows["flows/ · research, implement"]
         keymap["keymap.rs, cost.rs"]
     end
@@ -48,8 +51,8 @@ flowchart TB
 
 | Crate (package) | Path | Contents |
 | --- | --- | --- |
-| `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`), the `plan.json` schema and `sysmodel` (the `crest.sysmodel/v1` model, its expression language, lint, the deterministic simulator, traces, the assertion checker, the board layout and its renderer-agnostic 3D scene). No tokio, no I/O. |
-| `application` | `crates/app` | Ports (async traits), retries and model fallback over any provider (`llm_retry`), the router of prefixed model ids (`providers`), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, the keymap parser, cost, the graph-flow workflows and the fakes (`testing`, behind the `testing` feature). |
+| `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`), the `plan.json` schema, the chat-block specs (`computed` envelopes and card bodies, `widget` specs for the timeline, list, graph and tree with their pure layouts, `devops`, `engineering`, `science`, `gantt` and `interop` specs, each with `validate()`) and `sysmodel` (the `crest.sysmodel/v1` model, its expression language, lint, the deterministic simulator, traces, the assertion checker, the board layout and its renderer-agnostic 3D scene). No tokio, no I/O. |
+| `application` | `crates/app` | Ports (async traits), retries and model fallback over any provider (`llm_retry`), the router of prefixed model ids (`providers`), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, `interop` (pure mappings of A2UI, Adaptive Cards, Jupyter MIME bundles and MCP `structuredContent` onto crest blocks and forms), the keymap parser, cost, the graph-flow workflows and the fakes (`testing`, behind the `testing` feature). |
 | `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, the `GET /v1/models` catalog and server tools (web search and fetch); also the client of OpenCode's Messages endpoint and the keyring entries of every key. |
 | `adapter-openai` | `crates/adapters/openai` | OpenAI Chat Completions and Responses with SSE streaming, and the `GET /models` catalog (OpenCode's GPT, Grok and open models). |
 | `adapter-search` | `crates/adapters/search` | `rg --files`, `rg --json` and `fzf --filter` as processes without a shell. Includes version detection. |
@@ -60,10 +63,10 @@ flowchart TB
 | `adapter-lua` | `crates/adapters/lua` | `mlua` host (Lua 5.4) on its own thread, with the sandbox, config loading and merging, and the `app` API. |
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |
 | `adapter-export` | `crates/adapters/export` | `SimExport`: the self-contained `board.html` replay of a simulated board, with three.js r160 vendored in `vendor/three/` (MIT) and inlined. |
-| `adapter-compute` | `crates/adapters/compute` | `StatsEngine`: crest-stats (descriptives, t / rank / χ² / Fisher tests, OLS, correlation with assumption checks and misuse warnings, on `statrs`) and crest-calc (`numbat` unit sheets and conversions); every result is a `Computed` envelope with BLAKE3 input hashes and reproduce lines. Synchronous and CPU-bound: callers run it on a blocking thread. |
-| `adapter-formats` | `crates/adapters/formats` | `Formats`: JUnit XML (`quick-xml`), SARIF 2.1.0 (own serde structs), WaveDrom to SVG (`wavedrom`), CSV/TSV/JSON-lines/Parquet previews and profiles (`parquet` record API, no arrow) and 2D molecules from SMILES (`chematic`). |
+| `adapter-compute` | `crates/adapters/compute` | `StatsEngine`: crest-stats (descriptives, t / rank / χ² / Fisher tests, OLS, correlation with assumption checks and misuse warnings, on `statrs`) and crest-calc (`numbat` unit sheets and conversions), plus the phase-2 cards: distributions, contingency tables, power (own noncentral t and F), A/B tests, bootstrap, forecasts (`augurs` MSTL + AutoETS) and, as crest-solve, LP/MILP (`microlp`, duals from the dual LP), equations, Monte Carlo (seeded ChaCha20), cash flows and BOMs (`rust_decimal`), decision matrices, Bode, Karnaugh maps, beams and tolerance stacks; every result is a `Computed` envelope with BLAKE3 input hashes and reproduce lines. Synchronous and CPU-bound: callers run it on a blocking thread. |
+| `adapter-formats` | `crates/adapters/formats` | `Formats`: JUnit XML (`quick-xml`) and libtest/nextest JSON, SARIF 2.1.0 (own serde structs), WaveDrom to SVG (`wavedrom`), CSV/TSV/JSON-lines/Parquet previews and profiles (`parquet` record API, no arrow) and 2D molecules from SMILES (`chematic`); traces, folded stacks and pprof (`prost`), logs, PostgreSQL plans, HAR, Terraform plans, DOT and SQL DDL (`sqlparser`), criterion results; waveforms (`wellen`), netlists, STEP (`truck-stepio`, `truck-meshalgo`), DXF (`dxf`), IFC schedules (`ifc-lite-core`); sequences (`gb-io`), reactions, SAR descriptors and 3D embedding (`chematic`), spectra (own JCAMP-DX reader, `mzdata`), GeoJSON maps (`geojson`, `geo`, `proj4rs`), CPM schedules, HDF5/NetCDF (`hdf5-pure`, own NetCDF-3 reader) and networks (`petgraph`). Chemistry and science results carry their own `Computed` envelopes (engines `crest-chem`, `crest-geo`, `crest-plan`, `crest-array`, `crest-graph`, `crest-curves`) inside the viewer specs. Synchronous; callers run it on a blocking thread. |
 | `adapter-telemetry` | `crates/adapters/telemetry` | `tracing` spans and, with the `langfuse` feature, OTLP export to Langfuse. |
-| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog, plugin modals, the simulation board (`sysboard/`) and its offscreen wgpu renderer (`render3d/`). |
+| `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog, plugin modals, the simulation board (`sysboard/`) and its offscreen wgpu renderer (`render3d/`, with the CPU section plane and picking). `widgets/` holds the shared timeline, filterable list, graph and tree table that the domain blocks and `CustomNode` variants draw with. |
 | `crest` | `crates/bin` | Composition root: CLI, adapter construction, window or headless. |
 
 ## Ports and adapters
@@ -72,8 +75,8 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | `LlmPort` | `ports/llm.rs` | `stream(LlmRequest)`, `count_tokens` | `adapter_anthropic::AnthropicLlm`. In the research workflow it is wrapped by `WebToolsLlm` (bin). | `llm::ScriptedLlm` |
 | `ModelCatalogPort` | `ports/llm.rs` | `list_models()` | `adapter_anthropic::AnthropicCatalog` | `llm::FakeModelCatalog` |
-| `McpPort` | `ports/mcp.rs` | `list_tools`, `call_tool`, `servers` | `adapter_mcp::McpManager` (with the bin's `TimedMcp`, for per-server timeouts) | `llm::FakeMcp` |
-| `FileSystemPort` | `ports/fs.rs` | `root`, `read_file`, `read_bytes`, `read_head`, `exists`, `prepare_edit`, `prepare_write`, `apply` | `adapter_fs::LocalFs` | `fs::InMemoryFs` |
+| `McpPort` | `ports/mcp.rs` | `list_tools`, `call_tool`, `servers` (tools carry `output_schema` and `_meta.ui` visibility; results `structured_content`, `meta` and per-item `audience`) | `adapter_mcp::McpManager` (with the bin's `TimedMcp`, for per-server timeouts) | `llm::FakeMcp` |
+| `FileSystemPort` | `ports/fs.rs` | `root`, `read_file`, `read_bytes`, `read_head`, `exists`, `list_dir` (sorted `DirEntry`s, sensitive entries left out, at most 10 000), `prepare_edit`, `prepare_write`, `apply` | `adapter_fs::LocalFs` | `fs::InMemoryFs` |
 | `FileSearchPort` | `ports/search.rs` | `list_files`, `find_file`, `tree` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ContentSearchPort` | `ports/search.rs` | `grep` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ShellPort` | `ports/shell.rs` | `run`, `classify` | `adapter_shell::LocalShell` | `fs::ScriptedShell` |
@@ -82,9 +85,10 @@ flowchart TB
 | `SessionStorePort` | `ports/store.rs` | `save`, `load`, `latest_for_workspace`, `list`, `delete` | `adapter_store::SqliteSessionStore` | `system::InMemorySessionStore` |
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
 | `ThemeSourcePort` | `ports/theme.rs` | `list`, `load(name)` (sync; theme files are small and local) | `adapter_lua::LuaThemeSource` (`<config dir>/themes/*.lua`, each in a fresh sandbox) | `theme::FakeThemes` |
-| `ComputePort` | `ports/compute.rs` | `describe`, `test`, `regress`, `correlate`, `calc`, `convert`, `recompute`, `run` (sync, CPU-bound) | `adapter_compute::StatsEngine` | `compute::FakeCompute` |
-| `FormatsPort` | `ports/formats.rs` | `parse_test_report`, `parse_sarif`, `render_wavedrom`, `preview_dataset`, `depict_molecule` (sync) | `adapter_formats::Formats` | `formats::FakeFormats` |
-| `FormPort` | `ports/form.rs` | `ask(FormRequest) → FormResponse` | `ui::form::UiForm` (window), `crest::headless::StdinForm` (terminal) | `form::ScriptedForm` |
+| `ComputePort` | `ports/compute.rs` (requests in `compute/{stats,solve,engineering}.rs`) | `describe`, `test`, `regress`, `correlate`, `calc`, `convert`, `distribution`, `contingency`, `power`, `ab_test`, `bootstrap`, `forecast`, `optimize`, `solve`, `simulate`, `cash_flow`, `decide`, `bom`, `tolerance`, `beam`, `karnaugh`, `bode`, `recompute`, `run` (sync, CPU-bound; `run` dispatches a stored `ComputeRequest`) | `adapter_compute::StatsEngine` | `compute::FakeCompute` |
+| `FormatsPort` | `ports/formats.rs` (science requests in `formats/sciences.rs`) | `parse_test_report`, `parse_sarif`, `render_wavedrom`, `preview_dataset`, `depict_molecule`; `parse_trace`, `parse_profile`, `parse_logs`, `parse_query_plan`, `parse_har`, `parse_terraform_plan`, `parse_dot`, `parse_ddl`, `parse_benchmarks`; `parse_waveform`, `parse_netlist`, `parse_step`, `parse_dxf`, `parse_ifc_schedule`; `parse_sequence`, `depict_reaction`, `molecule_grid`, `parse_spectrum`, `molecule_3d`, `parse_geojson`, `schedule_gantt`, `inspect_array_file`, `analyse_network`, `training_curves` (sync; bytes in, a domain spec out) | `adapter_formats::Formats` | `formats::FakeFormats` |
+| `FormPort` | `ports/form.rs` | `ask(FormRequest) → FormResponse` (`Submitted{answer, action}` carries the button pressed on a card form) | `ui::form::UiForm` (window), `crest::headless::StdinForm` (terminal) | `form::ScriptedForm` |
+| `WebPort` | `ports/web.rs` | `search`, `fetch`, `backend` | `adapter_web::CurlWeb`; besides the web tools, `show_ghs` and `app.formats.ghs` fetch PubChem through it | `web::ScriptedWeb` |
 | `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |
 | `SessionStorage` (graph-flow trait) | — | — | `adapter_store::SqliteFlowStorage` | graph-flow's in-memory storage |
@@ -92,6 +96,40 @@ flowchart TB
 Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
 The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command` and `recompute` (re-runs a computed card's envelope). The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
+
+## Chat blocks
+
+The blocks for technical work follow one layout ([research note](research/chat-blocks-for-technical-work.md)):
+
+- **Domain**: a spec per block kind (`domain::{computed, devops, engineering, science, gantt, widget, interop}`) with `validate()` and pure helpers (statistics of a plan, the critical path of a trace, a sequence search, the graph layouts). Specs are `BlockKind` variants (boxed when large), widgets also `CustomNode` variants, so Lua can build them.
+- **Ports**: parsers and engines sit behind `FormatsPort` (file → spec) and `ComputePort` (request → `Computed` envelope); the request of every computed card is stored in its envelope, so `ComputePort::run` can recompute it.
+- **Tools** in `application::tools::{compute, formats, form, card, ghs}`: each reads its file through `FileSystemPort` (with the `read_file` guard and a size cap), runs the port through the `Offload` (a blocking thread), emits the block and returns a compact summary with number slots; the model never gets the data.
+- **UI**: one renderer per block in `ui::blocks`, built from the shared widgets in `ui::widgets` where they fit; copy-as entries in `ui::blocks::copy`. The headless sink prints one tag line per block.
+- **Interop**: `application::interop` maps A2UI streams and Adaptive Cards to `Custom` trees (`CustomNode::Card`, `Placeholder`) plus a `FormSpec` with a `body` and `actions` when the card can be answered, MIME bundles to the block of their richest media type, and MCP results to a block next to the text the model gets. It is pure code with caps on size, nodes and depth; nothing is fetched or run.
+
+### Third-party crates added for the chat blocks (phase 2)
+
+All are pinned in the root `Cargo.toml` and compatible with crest's GPL-3.0-or-later.
+
+| Crate | Version | Licence | Used by |
+| --- | --- | --- | --- |
+| `rand_chacha` | 0.10.0 | MIT OR Apache-2.0 | `adapter-compute`: seeded resampling and simulation |
+| `augurs-core`, `augurs-ets`, `augurs-mstl` | 0.10.2 | MIT OR Apache-2.0 | `adapter-compute`: forecasts |
+| `microlp` | 0.6.0 | Apache-2.0 | `adapter-compute`: LP/MILP |
+| `rust_decimal` | 1.43.0 | MIT | `adapter-compute`: cash flows, BOM |
+| `prost` (derive only), `flate2` | 0.14.4, 1.1.10 | Apache-2.0; MIT OR Apache-2.0 | `adapter-formats`: pprof profiles |
+| `sqlparser` | 0.63.0 | Apache-2.0 | `adapter-formats`: ER diagrams |
+| `wellen` | 0.25.7 | BSD-3-Clause | `adapter-formats`: VCD, FST, GHW |
+| `ruststep`, `truck-stepio`, `truck-meshalgo` | 0.4.0, 0.3.0, 0.4.0 | Apache-2.0 | `adapter-formats`: STEP |
+| `dxf`, `encoding_rs` | 0.6.2, 0.8.42 | MIT; (Apache-2.0 OR MIT) AND BSD-3-Clause | `adapter-formats`: DXF |
+| `ifc-lite-core` | 22.6.0 | MPL-2.0 (unmodified) | `adapter-formats`: IFC |
+| `gb-io` | 0.9.0 | MIT | `adapter-formats`: GenBank |
+| `mzdata` | 0.67.4 | Apache-2.0 | `adapter-formats`: mzML, MGF |
+| `geojson`, `geo`, `proj4rs` | 1.0.0, 0.33.1, 0.2.1 | MIT OR Apache-2.0 | `adapter-formats`: maps |
+| `hdf5-pure` | 0.47.0 | MIT OR Apache-2.0 (with HDF5/ZFP BSD-3 notices) | `adapter-formats`: HDF5, NetCDF-4 |
+| `petgraph` | 0.8.3 | MIT OR Apache-2.0 | `adapter-formats`: networks |
+
+`chematic` gained the `rxn`, `threed` and `mol` features (MIT OR Apache-2.0), `adapter-formats` uses `blake3` for its envelopes, and `ui` uses `regex` for the list filter. Features are chosen to keep C and C++ builds out (no `vtk` feature for truck-meshalgo, no `recursive-protection` for sqlparser, `zlib-rs` for flate2 and mzdata).
 
 ## A turn: `run_turn`
 
@@ -254,7 +292,7 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 3. Sensitive paths, `RipgrepSearch` and the `rg` and `fzf` checks.
 4. API key, `AnthropicLlm` and catalog validation (5 s at most).
 5. `SqliteSessionStore`.
-6. `ToolRegistry`: file tools, component tools, `task`, `simulate_solution` (over the `Simulator`, which `/simulate` and `--simulate` share), plugin tools and MCP tools (with trust-based admission).
+6. `ToolRegistry`: file tools, component tools, compute, format and form tools (`ask_user`, `show_card`), `show_ghs` when the web tools are on, `task`, `simulate_solution` (over the `Simulator`, which `/simulate` and `--simulate` share), plugin tools and MCP tools (with trust-based admission).
 7. Session resume, `AgentService` with compaction, hooks and `CostTracker`.
 8. `SqliteFlowStorage`, `ResearchSession` and `ImplementDeps`.
 

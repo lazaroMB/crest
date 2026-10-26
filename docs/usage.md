@@ -165,9 +165,9 @@ A path with spaces is quoted: `@"My Docs/notes v2.md"`. Completion switches to t
 
 ### Opening files (`/open @path`)
 
-`/open @src/main.rs` shows the file in a modal (`Esc` closes it). The `@` is not part of the path, which is resolved from the workspace root whatever the directory of a command or subprocess. The viewer depends on the extension: Markdown is rendered, JSON is a collapsible tree (or source when it does not parse), `.mmd`/`.mermaid` a diagram, `.diff`/`.patch` a colored diff, png/jpeg/gif/webp/svg/bmp/ico a picture with zoom and pan, `.obj`/`.stl`/`.ply` a 3D model, and anything else highlighted source, HTML and CSV included. The file is only shown, never run or rendered as a page.
+`/open @src/main.rs` shows the file in a modal (`Esc` closes it). The `@` is not part of the path, which is resolved from the workspace root whatever the directory of a command or subprocess. The viewer depends on the extension: Markdown is rendered, JSON is a collapsible tree (or source when it does not parse), `.mmd`/`.mermaid` a diagram, `.diff`/`.patch` a colored diff, png/jpeg/gif/webp/svg/bmp/ico a picture with zoom and pan, `.obj`/`.stl`/`.ply`/`.step`/`.stp` a 3D model, and anything else highlighted source, HTML and CSV included. The file is only shown, never run or rendered as a page.
 
-A 3D model (OBJ, ASCII or binary STL, ASCII or binary PLY) opens in a viewer with an orbit camera, fitted to the model. Drag orbits; right-drag, middle-drag or `Shift`+drag pans; the wheel zooms. With the viewer focused (click it), `+`/`-` zoom, `0` fits the model again, `i` switches to the isometric view and `u` swaps the up axis (STL and PLY start with Z up, OBJ with Y up); the buttons in the corner do the same. Only the geometry is shown, flat shaded: materials, textures and colours are ignored. The line under the viewer gives the vertices, triangles and size in the file's units. Without a GPU (or with `CREST_RENDER3D=off`) the model is drawn with 2D paths, at most 20 000 triangles of it.
+A 3D model (OBJ, ASCII or binary STL, ASCII or binary PLY, or a STEP part tessellated as in [`show_step`](#engineering)) opens in a viewer with an orbit camera, fitted to the model. Drag orbits; right-drag, middle-drag or `Shift`+drag pans; the wheel zooms. With the viewer focused (click it), `+`/`-` zoom, `0` fits the model again, `i` switches to the isometric view and `u` swaps the up axis (STL and PLY start with Z up, OBJ with Y up); the buttons in the corner do the same. Only the geometry is shown, flat shaded: materials, textures and colours are ignored. `s` cycles a section plane across x, y, z and off, `f` flips the kept side and `[`/`]` move it by a twentieth of the model (the cut is open, with no cap); `m` turns on measuring, where two clicks on the surface give their distance and the difference per axis, and `Esc` clears the points. The line under the viewer gives the vertices, triangles and size in the file's units (the length unit a STEP file declares; OBJ, STL and PLY declare none, so plain units). Without a GPU (or with `CREST_RENDER3D=off`) the model is drawn with 2D paths, at most 20 000 triangles of it.
 
 It follows the file tools' rules: a path outside the workspace (`..`, an absolute path elsewhere, a symlink pointing out) or matching the sensitive-path patterns is refused, and so are directories, binaries that are not pictures or models and files over 2 MiB (64 MiB and a million triangles for a model). Files longer than 20 000 lines are cut, and the title says so. The status bar says why a file did not open.
 
@@ -267,22 +267,27 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Table | `show_table` tool | Fills the block's width; long cells wrap (up to 8 lines) and numbers stay on one line, right-aligned. Shows 12 rows until **Show all N rows** (at most 500 drawn; `y` copies all). Clicking a header cycles descending → ascending → original, over every row. |
 | Mermaid | `show_mermaid` tool | Dragging pans the diagram; `Ctrl`/`Cmd` + wheel zooms; with the diagram focused (click), `+`/`-` zoom and `0` resets. `t` shows the source. If it does not parse, the source and the error are shown. |
 | Markdown | `show_markdown` tool | Document typography; `t` shows the source. |
-| Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
+| Custom | Lua plugin tools, `show_card`, MCP results, `app.ui.mime` | See [plugins.md](plugins.md#appui-custom-blocks). Plugins can also use the timeline, filterable list, graph and tree widgets described in [Shared widgets](#shared-widgets); cards from other formats are in [Cards from other formats](#cards-from-other-formats). |
 | Sources, StageHeader | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
 | Image | [Pasted images](#pasted-images), research workflow, `show_wavedrom` | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. SVG is rasterized off the UI thread at the window's scale (sharper when zoomed). |
-| Computed | `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate`, `calc`, `convert`, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations). |
-| Form | `ask_user` | Typed questions the turn waits on; see [Forms](#forms-ask_user). |
-| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on numeric axes, a slider per parameter; hovering shows a crosshair with the values. |
+| Computed | `stats_*`, `calc`, `convert`, the solver and engineering card tools, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations) and [Solver and engineering cards](#solver-and-engineering-cards). |
+| Form | `ask_user`, `show_card`, `app.ask` | Typed questions the turn waits on, optionally under a card's content and with one button per action; see [Forms](#forms-ask_user). |
+| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on linear or log axes (optionally equal aspect), a slider per parameter; hovering shows a crosshair with the values and a dot in each layer's colour. |
 | Test report | `show_test_report` | Totals by outcome, failures first; a click on a chip filters, on a case shows its trace, on its location opens the file. |
-| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page. |
+| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page. A suggested fix is shown as a diff against the file. |
 | Dataset | `show_dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
-| Molecule | `show_molecule` | 2D structure on a light card and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
-| Plate | `show_plate` | A 96- or 384-well heatmap with a legend; each well has a tooltip with its name, label and value. |
+| Molecule | `show_molecule` | 2D structure in the theme's colours and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
+| Plate | `show_plate`, `app.ui.plate` | A 96- or 384-well heatmap (sequential, diverging or log scale) with a legend; each well has a tooltip with its name, label and value. |
+| Trace, Flame graph, Logs | `show_trace`, `show_flamegraph`, `show_logs` | See [Developer and ops viewers](#developer-and-ops-viewers). |
+| Query plan, HAR, Terraform plan, Diagram, Benchmarks | `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks` | Same section. |
+| Waveform, Netlist, Material, CAD model, Drawing, IFC schedule | `show_waveform`, `show_netlist`, `show_material`, `show_step`, `show_dxf`, `show_ifc_schedule` | See [Engineering](#engineering). |
+| Sequence, Reaction, Molecule grid, Spectrum, Molecule 3D, GHS | `show_sequence`, `show_reaction`, `show_molecule_grid`, `show_spectrum`, `show_molecule_3d`, `show_ghs` | See [Sciences](#sciences). |
+| Map, Gantt, Array file, Network, Training curves | `show_map`, `show_gantt`, `show_array_file`, `show_network`, `show_training_curves` | Same section. |
 | Error | API, tool or config failures | Message and suggested action. |
 
 In the table, `Enter` means `Ctrl+G o` from the prompt or `o`/`Enter` with the timeline focused, and `t` means `Ctrl+G t` from the prompt or `t` with the timeline focused. `t` only has an effect on Chart, Markdown and Mermaid. `Ctrl+G y` (or `y` with the timeline focused) copies the content of the selected block.
 
-**Copy as.** The selected block shows a `copy as` row under it with the other forms it can be copied in: TSV and CSV for tables and charts (a chart as its data table), the JSON of a plot, the Mermaid source, the failing tests of a report, the `file:line` list of findings, the plain output of a Shell block (without colours), the profile and preview CSV of a dataset, the SMILES, canonical SMILES, formula and SVG of a molecule, a plate as CSV, and for a computed card the APA line, its reproduce lines (Lua, Python, R, shell) and the envelope JSON.
+**Copy as.** The selected block shows a `copy as` row under it with the other forms it can be copied in: TSV and CSV for tables and charts (a chart as its data table), the JSON of a plot, the Mermaid source, the failing tests of a report, the `file:line` list of findings, the plain output of a Shell block (without colours), the profile and preview CSV of a dataset, the SMILES, canonical SMILES, formula and SVG of a molecule, a plate as CSV, and for a computed card the APA line, its reproduce lines (Lua, Python, R, shell), the envelope JSON and the card's own table as CSV (bins, cells, the chain of a tolerance stack, beam diagrams, a BOM...). The phase-2 viewers add their own forms: trace spans as CSV and the critical path, folded stacks and the top frames of a flame graph, log lines, a plan's tree and node CSV, HAR requests (URLs redacted), Terraform changes, DOT, Mermaid ER and tables, benchmark CSV, waveform changes, nets and components, FASTA, features and cut sites, reaction SMILES and balance, a SAR grid's CSV, peaks and points of a spectrum, XYZ, a GHS card's text, map features, a schedule, array nodes and previews, network metrics and edges, run summaries; widgets in a Custom block copy their own data (spans, lines, DOT, tree text), and cards from other formats their plain text and raw JSON.
 
 ### Statistics and calculations
 
@@ -294,6 +299,12 @@ The model is told never to compute numbers in its head: it calls an engine, and 
 | `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). |
 | `stats_regress` | OLS with coefficients, SE, t, p, CI, standardized β and VIF; R², adjusted R², F, AIC/BIC; Durbin-Watson, Jarque-Bera, Breusch-Pagan, the largest Cook's distance and the condition number as diagnostics. |
 | `stats_correlate` | Pearson, Spearman or Kendall matrix with Holm (default), BH or Bonferroni adjustment. |
+| `stats_distribution` | Histogram (Freedman-Diaconis, Sturges, Scott or a given width), kernel density, box and violin, normal QQ with a band and the ECDF with a DKW band, per group with `by`. |
+| `stats_contingency` | A cross-table from data or counts with expected counts, row and column percentages and standardized residuals; χ², or Fisher's exact test (r×c too, simulated when it would take too long) chosen automatically when expected counts are small. |
+| `stats_power` | Power, sample size or minimum effect for two-sample, one-sample and paired t, one-way ANOVA and one or two proportions (noncentral t and F), with a power curve. |
+| `stats_ab_test` | Two conversion rates: lift with its interval, the probability that B beats A, a sample-ratio-mismatch check against `expected_split` and a warning when the result was peeked at (`looks`). |
+| `stats_bootstrap` | A seeded bootstrap of a mean, median, trimmed mean, SD, a two-group difference of means or medians, or a correlation: percentile, BCa, basic and normal intervals with their Monte Carlo error. |
+| `stats_forecast` | MSTL decomposition (trend, one component per seasonal period, remainder) and an AutoETS forecast with 80 % and 95 % intervals; with `holdout`, the last points are forecast from the rest and compared (MAPE, sMAPE, MAE). |
 | `calc` | A sheet of named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) evaluated in order by numbat; each line shows its value, unit and dimension, and a unit error appears on its line. |
 | `convert` | A unit conversion with the factor, whether it is exact, the dimension and an optional uncertainty. |
 
@@ -310,23 +321,135 @@ After Recompute the header shows **✓ Verified · reproduced <time>** when ever
 
 **Number slots.** Each tool result lists the card's values as slots, and the model cites them in its reply as `⟦id.key⟧` (for example `⟦st_1a2b3c4d5e6f.p_value⟧`; the ASCII form `[[calc:id.key]]` also works). The timeline replaces each slot with the engine's value as the card displays it; a slot that names no known value stays as written. Any other number the model typed (outside slots, math, code, years, versions and the numbers in your prompt; whole numbers up to 10 are ignored) is counted in a chip under the reply, **⚠ N numbers not from an engine**; a click lists them.
 
+**Multiple tests.** From the third `stats_test` of a session on, each new card carries a warning that counts the tests run so far and suggests a Holm or Benjamini-Hochberg adjustment; the p-values themselves are not changed. The count starts again when crest restarts.
+
+**Seeds.** The bootstrap, simulated Fisher tests, Monte Carlo and tolerance cards draw from a seeded ChaCha20 stream (`seed`, 20261025 by default), recorded in the envelope, so Recompute reproduces them exactly.
+
+### Solver and engineering cards
+
+The same card anatomy (header, provenance chip, results, sentence, Recompute) for answers the model should not work out itself:
+
+| Tool | What the engine does |
+| --- | --- |
+| `solve_lp` | A linear or mixed-integer program (`objective`, `variables` with bounds or `integer`/`binary`, `constraints` such as `2x + y <= 14`): the optimum, each variable's value and reduced cost, and per constraint its activity, slack, whether it binds and its dual value. Infeasible and unbounded problems say so. |
+| `solve_equations` | One equation or a system: damped Newton from the given guesses, or, for one unknown with a `range`, every sign change refined by bisection. Each equation is plugged back with its residual; a non-converged solve says so. |
+| `monte_carlo` | A quantity from uncertain inputs (fixed, uniform, normal, lognormal, triangular or PERT): the histogram, percentiles, a convergence plot and a tornado chart of each input's swing between its 10th and 90th percentile. Without a `model` the output is the product of the inputs: a Fermi estimate, with each factor as a lognormal "between low and high". |
+| `cash_flow` | NPV, every IRR (with a warning when the flows change sign more than once), MIRR, payback and discounted payback of a series of flows, in decimal arithmetic, with an NPV curve. |
+| `decision_matrix` | Options scored on weighted criteria (each to maximize or minimize): normalized scores, totals, the ranking and, per criterion, the weight at which the leader would change. |
+| `bode` | A transfer function from coefficients or zeros, poles and gain (with an optional dead time): Bode magnitude and phase, Nyquist plot, gain and phase margins and crossovers, poles and zeros, and whether the closed loop is stable. |
+| `karnaugh` | A Boolean function from minterms, maxterms, don't-cares or an expression (up to 6 variables): the Karnaugh map, prime implicants and a minimal SOP and POS (Quine-McCluskey with Petrick's method, greedy beyond its limit). |
+| `beam` | A straight beam on pins, rollers or fixed supports with point, distributed and moment loads: reactions, shear, moment and (with E and I) deflection diagrams, with their extremes; statically indeterminate beams are solved too. |
+| `tolerance_stack` | A one-dimensional stack of dimensions with their tolerances: worst case, RSS and a seeded Monte Carlo of the result, each dimension's share, and with limits the share out of spec and Cpk. |
+| `bom_cost` | A bill of materials (a CSV/JSON file or inline items): extended cost per line, totals per category and for `builds` units, in decimal arithmetic; lines without a price or a part number are flagged. |
+
+Example prompts:
+
+```text
+How many users per arm do I need to detect a 2-point lift on a 10 % conversion rate with 80 % power?
+Forecast monthly sales in data/sales.csv for the next 12 months and hold out the last 6 to check it.
+We can make chairs (3 h, $40 profit) and tables (5 h, $70); 120 h available, at most 20 tables. What mix maximizes profit?
+A 6 m simply supported beam carries 10 kN/m over its length and 20 kN at 2 m. Reactions and the maximum moment?
+Phase margin of G(s) = 10 / (s (s + 1) (s + 5))?
+```
+
 ### Math in text
 
 TeX math in replies and markdown blocks is typeset with RaTeX: inline `$..$`, `\(..\)` and `\ce{..}` (mhchem) on the text baseline, and display `$$..$$`, `\[..\]` and ```` ```math ```` fences centered (scrolled sideways when wider than the column). A single `$` follows pandoc's rule, so prices such as `$5 and $20` stay prose; code spans and fences are left alone. A formula that does not parse shows as a monospace chip with the source, the error and **Copy LaTeX**. A calc sheet shows its lines' formulas the same way.
 
 ### Forms (`ask_user`)
 
-When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
+When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. After a submit the focus goes back to the prompt. A form left by an interrupted turn is saved as cancelled ("not answered"), and it and any form of a resumed session show "Not waiting for an answer". A form opened by `show_card` can also show the card's content above its fields and one button per action instead of Submit (`Enter` presses the first primary one); the answer records which button was pressed. In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
 
 ### Plots, reports, data and lab blocks
 
-- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. Axes are linear.
-- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`). Passed tests are folded into one row.
-- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. Suggested fixes are not shown.
-- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block (white background).
+- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. `x_scale`/`y_scale` = `log` give logarithmic axes with decade ticks (points that are not positive are dropped, and a note says how many), and `aspect = "equal"` keeps one unit the same length on both axes.
+- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`) or a saved libtest or nextest JSON event stream (one suite per test binary, the failure message and location taken from the panic). Passed tests are folded into one row.
+- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. A result's first suggested fix is shown as a unified diff against the current file (or as its list of edits when the file cannot be read); it is never applied.
+- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block in the theme's colours.
 - **`show_dataset`**: CSV, TSV, JSON lines or Parquet. Text files are read up to 32 MiB (beyond that the profile covers the first rows and says `sampled`), Parquet files up to 256 MiB; Arrow IPC is not supported. The model is told to look at a file this way before running statistics on it.
 - **`show_molecule`**: a structure from SMILES with values computed from it, never from the model. With `claimed_formula` a chip shows whether the model's formula matches; a SMILES that does not parse shows the error (and the model gets it too).
-- **`show_plate`**: a 96- or 384-well plate map; labels are drawn inside the wells of a 96-well plate.
+- **`show_plate`**: a 96- or 384-well plate map; labels are drawn inside the wells (in a smaller font on 384-well plates). `scale` is `sequential` (default), `diverging` (centred on `center`, else on 0 when the values straddle it, else on the median) or `log`.
+
+### Shared widgets
+
+The viewers below are built on four widgets, which plugins can use too ([plugins.md](plugins.md#appui-custom-blocks)):
+
+- **Timeline**: rows of spans on a time axis (trace waterfalls, HAR, Gantt charts). `Ctrl`/`Cmd` + wheel, `+`/`-` or the toolbar zoom around the cursor; a drag or `Shift` + wheel pans in time; the plain wheel scrolls the rows while there are more. Hovering a bar shows its label, times, duration and attributes; a click selects it and shows it in the detail line. Failed spans take the theme's danger colour, warnings its warning colour.
+- **Filterable list**: records in a virtual list (logs, HAR requests), so hundreds of thousands of rows stay fast. The filter takes text (case-insensitive unless it has a capital letter) or `/regex/` (`/…/i` ignores case) and searches the text, timestamp, level and fields; chips narrow by level and by facet fields (values of one facet are or-ed, facets and-ed). A click on a row opens its fields. **Follow** keeps the last row in view; scrolling up turns it off. **Copy** copies the visible rows.
+- **Graph**: nodes and edges laid out in layers, by forces or on a grid, off the UI thread (DOT, ER, netlists, networks). A drag or `Shift` + wheel pans, `Ctrl`/`Cmd` + wheel or `+`/`-` zoom, `0` fits. A click on a node focuses it: its neighbours stay bright, the rest dims and a detail line lists its fields; `Esc` or a click on the background clears it. Graphs over 2 000 nodes show a message instead of a layout.
+- **Tree table**: nested rows with typed columns (text, number, duration, bar), badges and bars scaled to the column's largest value (query plans, Terraform plans, schedules). A click opens or closes a row; the toolbar expands or collapses everything. At most 2 000 rows are drawn, and the block says how many it left out.
+
+### Developer and ops viewers
+
+Each tool reads a workspace file through the `read_file` guard, draws it and returns a short summary to the model (counts, the slowest or failing items), never the file.
+
+- **`show_trace`**: OTLP JSON (an export request or the collector's JSON lines), Jaeger JSON or Zipkin v2 JSON as a waterfall: one row per span under its parent, coloured by service, failed spans in red, events as ticks, attributes on hover. A toggle shows only the critical path. Up to 20 000 spans.
+- **`show_flamegraph`**: folded stacks (`stackcollapse-perf.pl`, `cargo flamegraph`, py-spy raw, async-profiler collapsed) or a pprof profile (`.pb.gz`, `.pprof`; `sample_type` picks `cpu`, `alloc_space`...) as an icicle: a click zooms to a frame (the breadcrumb goes back), the search highlights matching frames with their share, and a table lists the functions with the most self time.
+- **`show_logs`**: JSON lines (pino, bunyan, zap, slog, tracing), logfmt or plain text (log4j/logback, Python logging, env_logger) on the filterable list with level colours, chips by level and by fields such as the service, each line's fields and stack trace on click, and a histogram of errors, warnings and other lines over time. The model gets the counts per level and the error messages grouped by shape. Only the first 16 MiB of a file are read.
+- **`show_query_plan`**: a PostgreSQL `EXPLAIN (FORMAT JSON)` plan (best with `ANALYZE, BUFFERS`; a file, or pasted psql output with its header and `+` marks) on the tree table: per node its time, self time and rows as bars, estimated against actual rows with the misestimate factor, loops, buffers and cost; nodes with a tenth of the time or more are badged hot, and spills and filtering sequential scans are noted. Text `EXPLAIN` output is refused with a hint.
+- **`show_har`**: an HTTP archive (DevTools "Save all as HAR", mitmproxy, Charles, Fiddler) as a waterfall of each request's phases plus the request list with status, type, method and host chips. A selected request opens an inspector with headers, query, request and response bodies and timing; cookies, authorization headers and token-like parameters are masked until **Reveal**, and **Copy as curl** copies the request. The summary the model gets has URLs redacted and no header values.
+- **`show_terraform_plan`**: `terraform show -json tfplan` (or OpenTofu's) as a tree of resource changes: counts to add, change, replace and destroy, each resource badged with its action and its attribute diff, sensitive values masked, unknown ones shown as known after apply and the attributes that force a replacement flagged. The JSON lines of `terraform plan -json` give the actions only.
+- **`show_dot`**: a Graphviz DOT file or source on the graph widget, in the graph's `rankdir`, with clusters as boxes and edge labels. Shapes and literal colours are not drawn: a node's `color` picks a palette class.
+- **`show_er`**: an entity-relationship diagram from SQL DDL (a schema dump or migrations, `dialect` `postgresql`, `mysql`, `sqlite`...): a node per table, an edge per foreign key, and a tables list with column types and PK/FK badges. Statements that do not parse are skipped and listed. Copy as Mermaid or DOT.
+- **`show_benchmarks`**: criterion's results under `target/criterion` (`filter` narrows them): per benchmark the new and baseline estimates with their intervals, the change with its interval and a verdict (regressed, improved, within the ±1 % noise threshold, no change), plus a forest plot. Change intervals exist for the `base` baseline; another baseline gets the ratio of the means.
+
+```text
+Show me where the time goes in traces/checkout.json.
+Here is the plan from EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) in plans/slow.json: why is it slow?
+Draw the ER diagram of db/schema.sql.
+I ran cargo bench against the saved baseline; did anything regress?
+```
+
+### Engineering
+
+- **`show_waveform`**: a VCD, FST or GHW dump (Verilator, Icarus, cocotb, GHDL) as waves: the signal tree by scope (scopes fold), one-bit signals as high/low traces with x and z marked, buses with their values in hex, binary or decimal (switchable), zoom and pan in time and a cursor that reads every signal at that time. `signals` takes paths or `*` patterns; at most 2 000 signals.
+- **`show_netlist`**: a SPICE deck or a KiCad `.net` export as a component–net graph (ground and single-pin nets marked) and a table of each component's pins and nets. Subcircuits are listed, not flattened, and `.include` is not followed.
+- **`show_material`**: a material data card with the properties the model passes, each with its unit, condition and source; a value without a source carries an **unverified** badge. crest has no material database of its own.
+- **`show_step`**: a STEP part (AP203, AP214, AP242 B-rep; up to 64 MiB) tessellated into the 3D viewer, with a list of solids to hide, the section plane and measuring of [`/open`](#opening-files-open-path), and the box, faces and triangles of each solid. Faces that could not be meshed are listed. Assembly placements are not applied, so the parts of an assembly are drawn where each was modelled.
+- **`show_dxf`**: a 2D DXF drawing (R12 to R2018) with lines, arcs, circles, polylines, ellipses, splines, text and expanded block inserts in their layer colours, a layer list to turn layers on and off, zoom, pan, fit and the cursor's coordinates. Text is drawn unrotated; hatches, dimensions and images are counted, not drawn.
+- **`show_ifc_schedule`**: an IFC model's storeys by elevation with their spaces, floor areas and the quantity or property each area was read from, and the walls, doors and windows per storey. A space without an area in the file says `not given`; nothing is computed from geometry, and there is no 3D view.
+- The `bode`, `karnaugh`, `beam`, `tolerance_stack` and `bom_cost` cards are in [Solver and engineering cards](#solver-and-engineering-cards).
+
+```text
+Show the waves of sim/tb.vcd for tb.dut.*: what is the clock period?
+Which nets of hw/amp.cir have only one pin?
+I exported cad/bracket.step from CadQuery; show it and give me its bounding box.
+Room schedule of bim/house.ifc.
+```
+
+### Sciences
+
+- **`show_sequence`**: a GenBank, FASTA or plain sequence (a file or inline) with a ruler, feature tracks, the three forward translation frames, search with IUPAC codes on both strands (`find`), and for circular DNA a plasmid map with the cutters of 50 common restriction enzymes. A selection can be copied as is or reverse-complemented. The model gets the length, GC content, features, CDS problems and single cutters.
+- **`show_reaction`**: a scheme from reaction SMILES with each molecule's formula and a check that every element and the charge balance; when they do not, the smallest integer coefficients that would, or that none exist.
+- **`show_molecule_grid`**: a SAR grid from SMILES (inline or a CSV/TSV with a `smiles` column) with computed MW, heavy atoms, HBD/HBA, rotatable bonds, rings, Crippen cLogP, TPSA and rule-of-five violations next to the given activity, coloured by activity. The grid sorts by any of them, filters (text matches the id, name, formula or SMILES; `mw < 500, logp <= 3` compares values, every clause applies) and can show only rule-of-five compliant compounds.
+- **`show_spectrum`**: JCAMP-DX (IR, Raman, UV-Vis, NMR, with wavenumber and ppm axes running right to left) or mzML/MGF mass spectra on a plot with zoom and pan, and the engine's picked peaks (`threshold`, `max_peaks`) in a list that focuses each one. One block or scan is shown (`block`).
+- **`show_molecule_3d`**: ball and stick in the 3D viewer from a MOL/SDF, XYZ or PDB file, or from a SMILES the engine embeds (hydrogens added, a force-field-minimized conformer, labelled as computed). Clicking atoms reads them and measures distances in Å.
+- **`show_ghs`**: looks a chemical up on PubChem (name, CAS number or CID) and shows its GHS card per source: pictograms (drawn as diamonds with their code), signal word, hazard statements and precautionary codes, with the PubChem link and the retrieval date. It needs the web tools on; a compound PubChem does not know gives a card that says so.
+- **`show_map`**: GeoJSON (a file or inline) on a map with pan, zoom, fit, a scale bar, the cursor's coordinates, colouring by a property and an inspector for the clicked feature. Coordinates are WGS 84 unless `crs` (an EPSG code from a bundled list, or a PROJ string) or the file's legacy `crs` says otherwise. The engine measures geodesic area, length and the box. There is no base map: only the data is drawn.
+- **`show_gantt`**: a project (a CSV/JSON file or inline tasks with durations in days or start and finish dates, and dependencies such as `A`, `A SS`, `A FS+2`) scheduled by the critical path method on the timeline widget: critical tasks marked, slack drawn after each task, milestones, and a table of early and late dates with total and free slack. `calendar = weekdays` counts Monday to Friday (no holidays). A dependency cycle is an error that names it.
+- **`show_array_file`**: an HDF5, NetCDF-4 or NetCDF-3 file (up to 512 MiB) as a tree of groups and variables with types, shapes, dimensions, chunking, filters and attributes, and up to six bounded previews (a line for 1D, a heatmap of the first 2D slice otherwise) with statistics that cover the preview only, as the card says.
+- **`show_network`**: an edge list (CSV/TSV) or node-link JSON on a force layout, nodes sized by degree, betweenness, closeness or PageRank (switchable) and coloured by community (seeded label propagation, with its modularity), and a metrics table. Betweenness and closeness count hops, ignoring weights.
+- **`show_training_curves`**: training logs (Keras or Lightning CSV, wandb or TensorBoard scalar exports, JSON lines) as one curve per run of the chosen metric against step, epoch or time, smoothed with TensorBoard's EMA over the raw values drawn faint, with a log-y toggle and a table of each run's min, max, last and best.
+
+```text
+Show the plasmid in dna/pcrest1.gb and tell me which enzymes cut it once.
+Is CH4 + O2 >> CO2 + H2O balanced? Draw it.
+Plot the IR spectrum in spectra/ir.jdx and assign the main peaks.
+Schedule the tasks in plan/project.csv starting 2026-11-02, weekdays only. What is the critical path?
+Compare val_loss of runs/a.csv and runs/b.csv.
+```
+
+### Cards from other formats
+
+crest draws some formats other agents and tools produce with its own blocks, without running their HTML or scripts:
+
+- **`show_card`** takes an A2UI v0.9 stream (v0.8 is read too) or an Adaptive Card (schema 1.0 to 1.6) from the model, for example one a tool handed it. Text, images, rows and columns, lists, fact sets, tables and containers become native nodes; components crest does not know show as placeholders with their raw JSON a click away (or an Adaptive Card's `fallback`). A card with submit buttons becomes a form: its inputs are drawn as fields below its content, one button per action, and the model gets the card's own response format (an A2UI `action` message, or the Adaptive Card's `data` with the inputs merged). Images are drawn only from `data:` URIs; remote images become links, never fetched.
+- **MCP results**: a tool's `structuredContent` is drawn as a block under its call (a MIME bundle, an Adaptive Card or A2UI read-only, a table for a list of records, otherwise a JSON tree), with titles from its `outputSchema`; so are content items meant for the user (images, user-only text, embedded resources of a type crest draws). Items annotated for the model only are never drawn, and user-only items never reach the model. Tools whose `_meta.ui.visibility` leaves the model out are not offered to it. An MCP Apps HTML view (`ui://`) is not run: a note says so and the data is drawn natively.
+- **Jupyter MIME bundles** (in MCP results and from `app.ui.mime`) are drawn as their richest type crest knows: a crest `Computed` envelope as a card (its verification is reset and a warning names where it came from; Recompute verifies it when the engine is crest's), a simple single-view Vega-Lite spec as a chart or plot (others as JSON), A2UI, an Adaptive Card, PNG/JPEG, a self-contained SVG, markdown, LaTeX, HTML as source (never rendered), JSON or plain text.
+
+```text
+Here is the Adaptive Card the deploy bot sent: <paste>. Show it to me and send back my answer.
+```
 
 ### Plugin modals
 
@@ -494,7 +617,7 @@ printf 'y\n' | crest --headless "add a test for parse()" --workspace .
 - the first one cancels the turn (`^C interrupting the turn (again to quit)`) and exits with 130 after saving the session;
 - the second one exits immediately with 130.
 
-An `ask_user` form is asked field by field on the terminal: each shows its label (`*` when required), description and options. `Enter` alone keeps the default or skips an optional field, a choice takes the option's number or value (several separated by commas), a boolean `y` or `n`, and a text area reads lines until one with a single `.`. A value the field does not accept is explained and asked again; `/cancel` cancels the form. When stdin is not a terminal (piped input, CI) nobody can answer, so every form is cancelled with that reason and the model goes on without it. The new blocks print one dim line each (`[computed: Welch two-sample t-test]`, `[dataset: data/cars.csv]`, `[molecule: CCO]`...).
+An `ask_user` form is asked field by field on the terminal: each shows its label (`*` when required), description and options. `Enter` alone keeps the default or skips an optional field, a choice takes the option's number or value (several separated by commas), a boolean `y` or `n`, and a text area reads lines until one with a single `.`. A value the field does not accept is explained and asked again; `/cancel` cancels the form. When stdin is not a terminal (piped input, CI) nobody can answer, so every form is cancelled with that reason and the model goes on without it. A form from `show_card` prints the card's text first and, when it has several buttons, asks which one as a numbered choice. The new blocks print one dim line each (`[computed: Welch two-sample t-test]`, `[dataset: data/cars.csv]`, `[molecule: CCO]`, `[trace: 42 spans, 2 errors]`, `[har: 120 requests, 3 failed]`, `[gantt: 12 tasks, 30 d, critical A → C → F]`...); a card from another format prints its name and up to 40 lines of its text, with a count of the parts it could not draw.
 
 With `--research` and `--implement`, however, `Ctrl+C` kills the process: there is no orderly cancellation, and the workflow stays at its last checkpoint.
 
@@ -531,7 +654,29 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
 | `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |
 | `show_molecule` | `smiles`, `name?`, `claimed_formula?` | read |
-| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?` | read |
+| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?`, `scale` (`sequential`), `center?` | read |
+| `stats_distribution`, `stats_contingency`, `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast` | `data` as above (not for power and A/B) and the request ([Statistics and calculations](#statistics-and-calculations)) | read |
+| `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`, `decision_matrix`, `bode`, `karnaugh`, `beam`, `tolerance_stack`, `bom_cost` | the problem ([Solver and engineering cards](#solver-and-engineering-cards)); `bom_cost` takes `data` or `items` | read |
+| `show_trace`, `show_flamegraph` (`sample_type?`), `show_logs` (`format?`), `show_har`, `show_terraform_plan` | `path`, `title?` | read |
+| `show_query_plan` | `path` or `plan`, `title?` | read |
+| `show_dot`, `show_er` | `path` or `source` / `sql`, `dialect?` (ER), `title?` | read |
+| `show_benchmarks` | `path` (`target/criterion`), `baseline` (`base`), `filter?`, `title?` | read |
+| `show_waveform` | `path`, `signals` (paths or `*` patterns), `radix` (`hex`), `title?` | read |
+| `show_netlist` | `path` or `source`, `format?` (`spice`, `kicad`), `title?` | read |
+| `show_material` | `name`, `designation?`, `condition?`, `properties` (`name`, `symbol?`, `value`, `unit?`, `condition?`, `source?`), `source?`, `notes?` | read |
+| `show_step`, `show_dxf`, `show_ifc_schedule` | `path`, `tolerance?` (STEP), `title?` | read |
+| `show_sequence` | `path` or `sequence`, `record?`, `alphabet?`, `circular?`, `enzymes` (true), `find?`, `title?` | read |
+| `show_reaction` | `smiles`, `coefficients?`, `conditions?`, `names?`, `title?` | read |
+| `show_molecule_grid` | `molecules` or `path`, `activity_column?`, `activity_label?`, `activity_unit?`, `direction?`, `title?` | read |
+| `show_spectrum` | `path`, `block?`, `threshold?` (0.05), `max_peaks?` (20), `title?` | read |
+| `show_molecule_3d` | `smiles` or `path`, `name?`, `title?` | read |
+| `show_map` | `path` or `geojson`, `crs?`, `color_by?`, `title?` | read |
+| `show_gantt` | `path` or `tasks`, `start?`, `calendar` (`all_days`), `title?` | read |
+| `show_array_file` | `path`, `variable?`, `title?` | read |
+| `show_network` | `path` or `edges`, `directed?`, `source?`, `target?`, `weight?`, `size_by` (`degree`), `seed?`, `title?` | read |
+| `show_training_curves` | `path` or `paths`, `metric?`, `x` (`step`), `smoothing` (0.6), `log_y`, `goal?`, `title?` | read |
+| `show_card` | `format` (`a2ui` or `adaptive_card`), `card`, `title?`: waits for a button when the card has submit actions | read |
+| `show_ghs` | `query` (name or CAS number) or `cid` (only with the web tools on) | network, no approval |
 | `web_search` | `query`, `max_results?` (1–10; `app.opt.web.max_results`, 8, by default): title, URL and snippet of each result | network, no approval |
 | `web_fetch` | `url` (http or https): the page as text, with its final URL and title | network, no approval |
 | `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls, with the web tools when they are on) that returns a summary | read |
@@ -547,7 +692,7 @@ All paths are relative to the workspace. A path that leaves it, even through a s
 
 ## MCP servers and trust
 
-Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their tools appear as `mcp__<server>__<tool>` and go through the same approvals as everything else, according to the server's `effect`.
+Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their tools appear as `mcp__<server>__<tool>` and go through the same approvals as everything else, according to the server's `effect`. A result with `structuredContent`, or with content meant for the user, is also drawn as a block under the call ([Cards from other formats](#cards-from-other-formats)); tools visible only to their own MCP Apps view are not offered to the model.
 
 - **Global config and plugins**: they start when crest opens.
 - **Workspace config** (`.crest/init.lua`): they **do not start** until you trust them, because running them means running a program or contacting a URL chosen by whoever wrote the repository. Until then you see the notice:

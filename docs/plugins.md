@@ -73,6 +73,8 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
 | `app.compute.*` | `table → block` | Inside a tool handler (or a callback); see [below](#appcompute-engine-computed-cards). |
+| `app.formats.*` | `table → block` | Inside a tool handler (or a callback); see [below](#appformats-file-viewers). |
+| `app.ask{ title, description, schema, submit_label, order }` | `table → answer \| nil, why` | Inside a tool handler or a command (not a hook); see [below](#appask-forms). |
 | `app.modal.open(def)`, `app.modal.update(id, node)`, `app.modal.close(id)` | see [below](#appmodal-modal-windows) | Anywhere: handlers, commands, keymaps, hooks. |
 | `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
 | `app.http.request(opts)`, `app.http.get(url, opts)`, `app.http.post(url, opts)` | → response table | Inside handlers and callbacks, with a `network:` capability. |
@@ -226,13 +228,47 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | `app.ui.link(text, url)` or `app.ui.link(url)` | link | Opens the URL in your browser. Only `http`, `https` and `mailto` are accepted. |
 | `app.ui.diff(unified)` | colored diff | A unified diff (`@@`, `+`, `-` lines). |
 | `app.ui.csv(text [, { header = true, delimiter = "," }])` | table | Parses CSV (quotes, `""`, quoted newlines, `\r\n`) into a table node. Numbers become numbers (so they sort as such), empty cells nulls; short rows are padded. `header = false` names the columns `column 1`, `column 2`... Use `delimiter = "\t"` for TSV. |
+| `app.ui.timeline{ title, unit, rows, range }` | timeline | Rows of spans on a time axis ([usage.md](usage.md#shared-widgets)). `unit` is `"ns"`, `"us"`, `"ms"` (default), `"s"` or `"date"`. Each row is `{ id, label, depth, group, spans, markers }`; a span is `{ start, stop, label, color_key, status, attrs }` (`stop` because `end` is a Lua keyword; `["end"]` works too), `status` `"ok"`, `"warning"`, `"error"`, `"critical"` or `"slack"`; a marker is `{ at, label, color_key }`. `range = { start = 0, ["end"] = 200 }` fixes the visible extent (here `end` has no `stop` alias). A span that ends before it starts is an error. |
+| `app.ui.filter_list{ title, columns, items, facets, follow }` | filterable list | Records with a text or `/regex/` filter and chips. An item is `{ level, ts, text, fields }`; `facets` names the fields that get chips (each once); `columns` the fields shown as columns; `follow = true` keeps the last item in view. (`app.ui.list` stays the bulleted list.) |
+| `app.ui.graph{ title, directed, layout, direction, seed, nodes, edges, groups }` | node-link graph | `nodes` are `{ id, label, group, kind, size, attrs }` (`kind` picks the colour, `size` 0–1 grows the box up to twice), `edges` `{ from, to, label, weight }` (an unknown node is an error), `groups` `{ id, label }` (boxes around their nodes). `layout` is `"layered"` (default), `"force"` or `"grid"`, `direction` `"down"` or `"right"`, `directed` defaults to true. Up to 50 000 nodes are accepted and 2 000 drawn. |
+| `app.ui.tree{ title, columns, nodes, expand_depth }` | tree table | `columns` are `{ name, kind, unit }` with `kind` `"text"`, `"number"`, `"duration"` (`unit` `ns`/`us`/`ms`/`s`, default `ms`) or `"bar"`; `nodes` are `{ label, badge, tone, values, children }`, `values` keyed by column name (a number column needs a number), `tone` `"neutral"`, `"info"`, `"ok"`, `"warning"` or `"error"`. The first `expand_depth` levels (2) start open. |
+| `app.ui.a2ui(messages)` | card | An A2UI v0.9 stream (a list of messages, or JSON lines as a string; v0.8 is read too), drawn read-only: inputs show their values and buttons do nothing. What it cannot draw becomes placeholders, with notes under the card. |
+| `app.ui.adaptive_card(card)` | card | An Adaptive Card (a table or its JSON text, schema 1.0–1.6), drawn read-only like `a2ui`. |
 | `app.ui.block(name, node)` | the `Custom` block | Validates the whole tree and wraps it as the plugin's block. It must be **returned** from the handler. |
+
+Three constructors return a whole **block** (already wrapped like `app.ui.block`) instead of a node; return it from the handler:
+
+| Constructor | Block |
+| --- | --- |
+| `app.ui.plate{ format, wells, value_label, title, scale, center }` | A plate map, the fields of `show_plate`: `wells = { { well = "A1", value = 0.04, label = "blank" }, ... }`. |
+| `app.ui.material{ name, designation, condition, properties, notes }` | A material data card: `properties = { { name, symbol, value, unit, condition, source }, ... }`; a property without `source` shows as unverified. |
+| `app.ui.mime(bundle)` | The richest block of a Jupyter MIME bundle (`{ ["text/markdown"] = "# Hi", ["image/png"] = "<base64>" }`, or `{ data = {...}, metadata = {...} }`), chosen as in [usage.md](usage.md#cards-from-other-formats): a `Computed` card, a Vega-Lite chart, an image, markdown, math... The block belongs to the `interop` plugin. |
+
+```lua
+app.tools.register({
+  name = "request_spans",
+  description = "Shows the spans of the last request.",
+  effect = "read",
+  handler = function()
+    return app.ui.block("spans", app.ui.timeline({
+      title = "GET /checkout", unit = "ms",
+      rows = {
+        { id = "root", label = "GET /checkout", spans = { { start = 0, stop = 120 } } },
+        { id = "db", label = "SELECT orders", depth = 1,
+          spans = { { start = 10, stop = 80, status = "warning", attrs = { rows = 3 } } } },
+      },
+    }))
+  end,
+})
+```
+
+In the widget constructors an empty table `{}` under a list field (`rows`, `spans`, `items`, `nodes`, `edges`, `children`...) is read as an empty list.
 
 An invalid argument (a table row of a different width, a series of a different length...) raises a Lua error prefixed with `app.ui.<function>:`, and the tool fails with that message. If you nest deeper than the window draws, the excess is cut off with a marker.
 
 ### `app.compute`: engine-computed cards
 
-The same engine the `stats_*`, `calc` and `convert` tools use ([usage.md](usage.md#statistics-and-calculations)). Each function takes the tool's request as a table and returns the **block** (a statistics card, a calc sheet or a conversion card): return it from a tool or command handler to show the card. The `reproduce.lua` line of every card is such a call, so it runs as written.
+The same engine the `stats_*`, `calc`, `convert` and solver and engineering card tools use ([usage.md](usage.md#statistics-and-calculations)). Each function takes the tool's request as a table and returns the **block** (a statistics card, a calc sheet, a conversion or a solver card): return it from a tool or command handler to show the card. The `reproduce.lua` line of every card is such a call, so it runs as written.
 
 | Function | Request |
 | --- | --- |
@@ -242,6 +278,24 @@ The same engine the `stats_*`, `calc` and `convert` tools use ([usage.md](usage.
 | `app.compute.correlate{ data, variables, method, adjustment, conf_level }` | Correlation matrix; `method` is `"pearson"`, `"spearman"` or `"kendall"`, `adjustment` `"holm"` (default), `"bh"`, `"bonferroni"` or `"none"`. |
 | `app.compute.calc{ lines, significant_digits }` | A calc sheet: `lines = { "v = 100 km/h", "t = 90 min", "d = v * t -> km" }`. Reads no data. |
 | `app.compute.convert{ value, from, to, uncertainty, significant_digits }` | A unit conversion (`from = "mi/h", to = "km/h"`; without `value`, `from` may be a whole quantity such as `"5 ft + 3 in"`). Reads no data. |
+| `app.compute.distribution{ data, variable, by, bin_rule, bins, bandwidth_rule, bandwidth, conf_level }` | Histogram, density, box/violin, QQ and ECDF of one variable. |
+| `app.compute.contingency{ data, row, column, table, row_labels, column_labels, test, correct, alternative, conf_level, seed, simulations }` | A contingency table with χ² or Fisher's test, from data or a `table` of counts. |
+| `app.compute.power{ test, n, effect, p1, p2, alpha, power, groups, alternative, solve_for }` | Power or sample size. Reads no data. |
+| `app.compute.ab_test{ control = { name, visitors, conversions }, treatment = {...}, expected_split, conf_level, alternative, looks, planned_visitors, minimum_lift }` | An A/B test of two conversion rates. Reads no data. |
+| `app.compute.bootstrap{ data, y, statistic, group, y2, levels, trim, resamples, seed, conf_level }` | A seeded bootstrap. |
+| `app.compute.forecast{ data, y, time, periods, horizon, holdout }` | MSTL decomposition and forecast. |
+| `app.compute.optimize{ sense, objective, variables = { { name, lower, upper, integer, binary } }, constraints = { { name, expr } } }` | LP/MILP with duals and slack (the `solve_lp` tool). |
+| `app.compute.solve{ equations, unknowns = { { name, guess } }, range, tolerance, max_iterations }` | Equation solver (`solve_equations`). |
+| `app.compute.simulate{ inputs = { { name, distribution = { type = "normal", mean, sd }, source, unit } }, model, output, unit, samples, seed }` | Monte Carlo, tornado and Fermi estimates (`monte_carlo`). |
+| `app.compute.cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback. |
+| `app.compute.decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | Decision matrix (`decision_matrix`). |
+| `app.compute.bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode and Nyquist with margins. |
+| `app.compute.karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map with minimal SOP and POS. |
+| `app.compute.beam{ length, length_unit, force_unit, supports = { { at, kind } }, loads = { { kind, at, end, value, end_value } }, e, e_unit, i, i_unit, segments }` | Beam reactions, shear, moment and deflection. |
+| `app.compute.tolerance{ dimensions = { { name, nominal, tolerance, plus, minus, direction, distribution } }, lower_limit, upper_limit, unit, sigmas, samples, seed }` | Tolerance stack-up (`tolerance_stack`). |
+| `app.compute.bom{ data, items = { { part, quantity, unit_cost, category, reference, mpn } }, part, quantity, unit_cost, category, reference, mpn, builds, currency }` | BOM costing (`bom_cost`); `data` may also be a `.json` array of records. |
+
+The other fields are those of the tools ([usage.md](usage.md#solver-and-engineering-cards)); where the Lua name differs from the tool's, the table names the tool.
 
 `data` is either a CSV/TSV **path** of the workspace, read through the same guard as the model's `read_file` (`delimiter = "\t"` picks the separator; by default a tab for `.tsv` and a comma otherwise), or an **inline** table `{ columns = { { name = "x", values = { 1.5, nil, 3 }, unit = "mm" }, ... } }`. Values are numbers or strings, and `nil` holes are missing values; a column shorter than the longest is padded with missing values, so a trailing `nil` is not lost.
 
@@ -257,6 +311,71 @@ app.tools.register({
 ```
 
 The envelope is in `result["$crest_block"].envelope` (its `values`, `method`, `warnings`...), so a handler can read a number before returning the card. The card records `plugin:<name>` as its agent. A request the engine rejects (an unknown column, a path outside the workspace) raises a Lua error prefixed with `app.compute.<function>:`; the calls block the VM while the engine runs.
+
+### `app.formats`: file viewers
+
+The viewers of the `show_*` file tools ([usage.md](usage.md#developer-and-ops-viewers)) from Lua. Each function takes the tool's input as a table and returns the **block**; return it from a tool or command handler to show it. Paths go through the same guard as the model's `read_file`.
+
+| Function | Block |
+| --- | --- |
+| `app.formats.dataset{ path, rows }` | A data file's shape, column profile and first rows (CSV, TSV, JSON lines, Parquet). |
+| `app.formats.molecule{ smiles, name, claimed_formula }` | A 2D structure with its computed formula, mass and charge. |
+| `app.formats.trace{ path, title }`, `flamegraph{ path, sample_type, title }`, `logs{ path, format }` | A trace waterfall, a flame graph, a log list (`format` `"json"`, `"logfmt"` or `"text"`, guessed when absent). |
+| `app.formats.query_plan{ path or plan, title }`, `har{ path, title }`, `terraform_plan{ path, title }` | A PostgreSQL JSON plan, an HTTP archive, a Terraform plan. |
+| `app.formats.dot{ path or source, title }`, `er{ path or sql, dialect, title }` | A DOT graph, an ER diagram from SQL DDL. |
+| `app.formats.benchmarks{ path, baseline, filter, title }` | Criterion results (`target/criterion` and `base` by default). |
+| `app.formats.waveform{ path, signals, radix, title }`, `netlist{ path or source, format, title }` | Digital waves (VCD, FST, GHW), a SPICE or KiCad netlist. |
+| `app.formats.step{ path, tolerance, title }`, `dxf{ path, title }`, `ifc_schedule{ path, title }` | A STEP part in the 3D view, a DXF drawing, an IFC room schedule. |
+| `app.formats.sequence{ path or sequence, record, alphabet, circular, enzymes, title }` | A sequence with features and, for circular DNA, a plasmid map. |
+| `app.formats.reaction{ smiles, coefficients, conditions, names, title }` | A reaction scheme with its balance check. |
+| `app.formats.molecule_grid{ molecules or path, activity_column, activity_label, activity_unit, direction, title }` | A SAR grid; `molecules` are `{ id, smiles, name, activity }`. |
+| `app.formats.spectrum{ path, block, threshold, max_peaks, title }` | A spectrum with its picked peaks. |
+| `app.formats.molecule_3d{ smiles or path, name, title }` | Ball and stick in the 3D view. |
+| `app.formats.ghs{ query or cid }` | A GHS card from PubChem. Needs the web on (`app.opt.web`); otherwise it raises an error. |
+| `app.formats.map{ path or geojson, crs, color_by, title }` | GeoJSON on a map (`geojson` as text or a table). |
+| `app.formats.gantt{ path or tasks, start, calendar, title }` | A project scheduled by the critical path method; `tasks` are `{ id, name, group, duration, start, finish, depends_on, milestone }`, `depends_on` like `{ "a", "b SS+2" }`. A cycle raises an error. |
+| `app.formats.array_file{ path, variable, title }` | An HDF5 or NetCDF file's tree with previews. |
+| `app.formats.network{ path or edges, directed, source, target, weight, size_by, seed, title }` | A network with its metrics; `edges` are `{ source, target, weight }`. |
+| `app.formats.training_curves{ path or paths, metric, x, smoothing, log_y, goal, title }` | Training curves per run. |
+
+```lua
+app.commands.register("plan", function()
+  return app.formats.gantt{
+    start = "2026-11-02", calendar = "weekdays",
+    tasks = {
+      { id = "design", duration = 5 },
+      { id = "build", duration = 10, depends_on = { "design" } },
+      { id = "docs", duration = 3, depends_on = { "design SS+2" } },
+    },
+  }
+end, { desc = "Schedule the release" })
+```
+
+The block's data is in `result["$crest_block"]` (for example a molecule's `formula`), so a handler can read it before returning the block. A file that cannot be read or parsed, or a SMILES that does not parse, raises a Lua error prefixed with `app.formats.<function>:`. The calls block the VM while they read and parse.
+
+### `app.ask`: forms
+
+`app.ask{...}` shows the same form as the `ask_user` tool and waits for the answer: the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer, as in headless mode with piped input).
+
+```lua
+local answer, why = app.ask{
+  title = "Deploy",
+  schema = {
+    properties = {
+      env = { type = "string", enum = { "staging", "prod" } },
+      dry_run = { type = "boolean", default = true },
+    },
+    required = { "env" },
+  },
+  order = { "env", "dry_run" },
+}
+if not answer then return "cancelled: " .. why end
+```
+
+- The fields are those of `ask_user` (`title`, `description`, `schema`, `submit_label`; the schema subset is described in [usage.md](usage.md#forms-ask_user)) plus `order`, the property names in display order: Lua tables have no order, so without it the fields are sorted by name. `schema` may also be a JSON string, which keeps its order.
+- An answer that does not fit the fields is asked again with the reason, up to 3 times.
+- It holds the VM while it waits, so hooks and other plugin calls wait too: use it in tools and commands, not in hooks.
+- The form block belongs to this run, like modals: it is not saved with the session.
 
 ### `app.modal`: modal windows
 
