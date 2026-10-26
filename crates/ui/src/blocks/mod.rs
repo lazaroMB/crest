@@ -40,6 +40,7 @@ pub mod plot;
 pub mod query_plan;
 pub mod reaction;
 pub mod sequence;
+pub mod spectrum;
 pub mod shell;
 pub mod sources;
 pub mod stage;
@@ -105,6 +106,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Sequence(_) => sequence::render(entry, window, cx),
         BlockKind::Reaction(_) => reaction::render(entry, window, cx),
         BlockKind::MoleculeGrid(_) => molecule_grid::render(entry, window, cx),
+        BlockKind::Spectrum(_) => spectrum::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

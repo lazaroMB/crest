@@ -66,7 +66,8 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::IfcSchedule(_)
         | BlockKind::Sequence(_)
         | BlockKind::Reaction(_)
-        | BlockKind::MoleculeGrid(_) => BlockWidth::Wide,
+        | BlockKind::MoleculeGrid(_)
+        | BlockKind::Spectrum(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

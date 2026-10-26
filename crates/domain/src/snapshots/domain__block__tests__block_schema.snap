@@ -727,6 +727,20 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "An IR, UV-Vis, NMR or mass spectrum with its peaks (tool\n`show_spectrum`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "spectrum"
+        }
+      },
+      "$ref": "#/$defs/SpectrumSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1832,6 +1846,10 @@ expression: "schemars::schema_for!(Block)"
         "aspect": {
           "description": "Shape of the plot area.",
           "$ref": "#/$defs/PlotAspect"
+        },
+        "x_reversed": {
+          "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
+          "type": "boolean"
         }
       }
     },
@@ -12247,6 +12265,235 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "molecules",
         "descriptors"
+      ]
+    },
+    "SpectrumFormat": {
+      "description": "The file format read.",
+      "oneOf": [
+        {
+          "description": "JCAMP-DX 4.24 / 5.01.",
+          "type": "string",
+          "const": "jcamp"
+        },
+        {
+          "description": "mzML (HUPO-PSI).",
+          "type": "string",
+          "const": "mzml"
+        },
+        {
+          "description": "Mascot generic format.",
+          "type": "string",
+          "const": "mgf"
+        }
+      ]
+    },
+    "SpectrumKind": {
+      "description": "What was measured.",
+      "oneOf": [
+        {
+          "description": "Infrared (wavenumber, right to left).",
+          "type": "string",
+          "const": "infrared"
+        },
+        {
+          "description": "Raman (shift, left to right).",
+          "type": "string",
+          "const": "raman"
+        },
+        {
+          "description": "UV-visible (wavelength).",
+          "type": "string",
+          "const": "uv_vis"
+        },
+        {
+          "description": "NMR (chemical shift, right to left).",
+          "type": "string",
+          "const": "nmr"
+        },
+        {
+          "description": "Mass spectrum (m/z).",
+          "type": "string",
+          "const": "mass"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "Peak": {
+      "description": "A picked peak.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Position on the x axis.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Height (or depth) as read.",
+          "type": "number",
+          "format": "double"
+        },
+        "prominence": {
+          "description": "Prominence above (below) the surrounding baseline, in y units;\n`None` for a listed stick.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "PeakSense": {
+      "description": "Whether peaks are maxima (absorbance, counts) or minima (IR\ntransmittance).",
+      "oneOf": [
+        {
+          "description": "Peaks point up.",
+          "type": "string",
+          "const": "maxima"
+        },
+        {
+          "description": "Peaks point down.",
+          "type": "string",
+          "const": "minima"
+        }
+      ]
+    },
+    "SpectrumSpec": {
+      "description": "A spectrum with its peaks.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the plot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Its format.",
+          "$ref": "#/$defs/SpectrumFormat"
+        },
+        "kind": {
+          "description": "What was measured.",
+          "$ref": "#/$defs/SpectrumKind"
+        },
+        "name": {
+          "description": "The block's or scan's own title or id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_label": {
+          "description": "x axis label with its unit (`wavenumber (cm⁻¹)`, `δ (ppm)`, `m/z`).",
+          "type": "string"
+        },
+        "y_label": {
+          "description": "y axis label with its unit (`transmittance`, `intensity`).",
+          "type": "string"
+        },
+        "x_reversed": {
+          "description": "Whether x runs right to left (IR wavenumber, NMR shift).",
+          "type": "boolean",
+          "default": false
+        },
+        "x": {
+          "description": "The points, in file order.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "y": {
+          "description": "One y per x.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "sticks": {
+          "description": "Whether the points are sticks (centroided MS, a peak table)\nrather than a continuous trace.",
+          "type": "boolean",
+          "default": false
+        },
+        "peaks": {
+          "description": "The peaks picked by the engine (or the file's sticks, strongest\nfirst), at most [`MAX_PEAKS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Peak"
+          },
+          "default": []
+        },
+        "sense": {
+          "description": "Which way peaks point.",
+          "$ref": "#/$defs/PeakSense",
+          "default": "maxima"
+        },
+        "picking": {
+          "description": "The peak picking as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "metadata": {
+          "description": "Header values worth showing (origin, owner, molecular formula,\nnucleus, frequency, precursor).",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "blocks": {
+          "description": "Data blocks or scans in the file.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1
+        },
+        "block": {
+          "description": "The block or scan shown, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "format",
+        "kind",
+        "x_label",
+        "y_label",
+        "x",
+        "y",
+        "picking"
       ]
     }
   }

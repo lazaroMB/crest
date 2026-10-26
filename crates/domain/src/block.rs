@@ -37,6 +37,7 @@ use crate::report::{FindingsSpec, TestReportSpec};
 use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
+use crate::science::spectrum::SpectrumSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
@@ -161,6 +162,7 @@ impl Block {
             BlockKind::Sequence(spec) => spec.validate(),
             BlockKind::Reaction(spec) => spec.validate(),
             BlockKind::MoleculeGrid(spec) => spec.validate(),
+            BlockKind::Spectrum(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -355,6 +357,9 @@ pub enum BlockKind {
     /// A grid of molecules with descriptors and activities (tool
     /// `show_molecule_grid`).
     MoleculeGrid(Box<MoleculeGridSpec>),
+    /// An IR, UV-Vis, NMR or mass spectrum with its peaks (tool
+    /// `show_spectrum`).
+    Spectrum(Box<SpectrumSpec>),
 }
 
 /// Lifecycle of a tool call.

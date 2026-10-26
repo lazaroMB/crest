@@ -36,6 +36,8 @@ pub struct Axes {
     pub y: AxisScale,
     /// One axis unit as long on both axes.
     pub equal: bool,
+    /// The x axis runs right to left.
+    pub x_reversed: bool,
 }
 
 /// The visible ranges of both axes, each with `min < max`.
@@ -242,6 +244,7 @@ impl PlotLayout {
     /// Screen position of a data point.
     pub fn to_px(&self, p: (f64, f64)) -> (f32, f32) {
         let (nx, ny) = self.view.normalize(p);
+        let nx = if self.axes.x_reversed { 1.0 - nx } else { nx };
         (
             self.plot.x + (nx as f32) * self.plot.w,
             self.plot.bottom() - (ny as f32) * self.plot.h,
@@ -251,6 +254,7 @@ impl PlotLayout {
     /// The data point at a screen position.
     pub fn to_data(&self, x: f32, y: f32) -> (f64, f64) {
         let nx = f64::from((x - self.plot.x) / self.plot.w.max(1.0));
+        let nx = if self.axes.x_reversed { 1.0 - nx } else { nx };
         let ny = f64::from((self.plot.bottom() - y) / self.plot.h.max(1.0));
         self.view.denormalize((nx, ny))
     }
@@ -389,6 +393,26 @@ mod tests {
 
     fn measure(text: &str) -> f32 {
         text.chars().count() as f32 * 7.0
+    }
+
+    #[test]
+    fn a_reversed_x_axis_runs_right_to_left() {
+        let view = View {
+            x: (0.0, 10.0),
+            y: (0.0, 1.0),
+        };
+        let reversed = Axes {
+            x_reversed: true,
+            ..Axes::default()
+        };
+        let layout = plan(view, None, None, 600.0, &measure, reversed);
+        let (left, _) = layout.to_px((10.0, 0.0));
+        let (right, _) = layout.to_px((0.0, 0.0));
+        assert!((left - layout.plot.x).abs() < 1e-3 && right > left);
+        let (x, _) = layout.to_data(left, layout.plot.bottom());
+        assert!((x - 10.0).abs() < 1e-6);
+        // The tick labels follow: the first tick (0) sits at the right.
+        assert!(layout.x_ticks[0].pos > layout.x_ticks[1].pos);
     }
 
     #[test]

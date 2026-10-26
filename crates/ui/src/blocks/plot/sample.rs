@@ -413,6 +413,7 @@ pub fn scene(spec: &PlotSpec, compiled: &[CompiledFunction], values: &[f64]) -> 
         x: spec.x_scale,
         y: spec.y_scale,
         equal: spec.aspect == PlotAspect::Equal,
+        x_reversed: spec.x_reversed,
     };
     let (tx, ty) = (|v| axes.x.forward(v), |v| axes.y.forward(v));
     let (ix, iy) = (|u| axes.x.inverse(u), |u| axes.y.inverse(u));

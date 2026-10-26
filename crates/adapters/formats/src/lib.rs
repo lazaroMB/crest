@@ -28,7 +28,9 @@
 //!   our own FASTA reader);
 //! - reaction schemes with their balance ([`reaction`], chematic's
 //!   reaction SMILES; envelopes from [`chem`]);
-//! - molecule grids with descriptors ([`molecule_grid`], chematic).
+//! - molecule grids with descriptors ([`molecule_grid`], chematic);
+//! - spectra with picked peaks ([`spectrum`]: our own JCAMP-DX reader,
+//!   mzdata for mzML and MGF).
 
 pub mod bench;
 pub mod chem;
@@ -49,6 +51,7 @@ pub mod query_plan;
 pub mod reaction;
 pub mod sarif;
 pub mod sequence;
+pub mod spectrum;
 pub mod step;
 pub mod terraform;
 pub mod trace;
@@ -57,7 +60,7 @@ pub mod waveform;
 
 use application::ports::formats::{
     BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    MoleculeGridRequest, SequenceRequest, StepRequest, WaveRequest,
+    MoleculeGridRequest, SequenceRequest, SpectrumRequest, StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -78,6 +81,7 @@ use domain::science::MoleculeSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
+use domain::science::spectrum::SpectrumSpec;
 
 /// The formats adapter. Stateless.
 #[derive(Debug, Clone, Copy, Default)]
@@ -221,5 +225,13 @@ impl FormatsPort for Formats {
         request: &MoleculeGridRequest,
     ) -> Result<MoleculeGridSpec, FormatError> {
         molecule_grid::grid(request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_spectrum(
+        &self,
+        bytes: &[u8],
+        request: &SpectrumRequest,
+    ) -> Result<SpectrumSpec, FormatError> {
+        spectrum::parse(bytes, request).map_err(FormatError::Invalid)
     }
 }

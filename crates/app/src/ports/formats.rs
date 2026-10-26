@@ -34,6 +34,7 @@ use domain::science::MoleculeSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
+use domain::science::spectrum::SpectrumSpec;
 
 /// What [`FormatsPort::preview_dataset`] reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +166,20 @@ pub struct MoleculeGridRequest {
     pub activity_unit: Option<String>,
     /// Which way is better.
     pub direction: ActivityDirection,
+}
+
+/// What [`FormatsPort::parse_spectrum`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SpectrumRequest {
+    /// Workspace path of the file, for the block and messages.
+    pub path: String,
+    /// The data block (JCAMP-DX) or scan (mzML, MGF) to show, 0-based.
+    pub block: usize,
+    /// Smallest peak prominence kept, as a share of the y range (0.05
+    /// when absent).
+    pub threshold: Option<f64>,
+    /// Most peaks kept (20 when absent).
+    pub max_peaks: Option<usize>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -421,6 +436,20 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for an empty or oversized grid or a
     /// repeated id.
     fn molecule_grid(&self, request: &MoleculeGridRequest) -> Result<MoleculeGridSpec, FormatError>;
+
+    /// A spectrum: JCAMP-DX (IR, Raman, UV-Vis, NMR; XYDATA with AFFN or
+    /// ASDF compression, XYPOINTS, PEAK TABLE, linked blocks), mzML or MGF
+    /// (mass spectra), told apart by content, with its peaks picked.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when the file is none of these, holds no
+    /// data or the block does not exist.
+    fn parse_spectrum(
+        &self,
+        bytes: &[u8],
+        request: &SpectrumRequest,
+    ) -> Result<SpectrumSpec, FormatError>;
 }
 
 #[cfg(test)]
