@@ -9,6 +9,7 @@
 //! with its raw JSON instead of being dropped.
 
 pub mod a2ui;
+pub mod adaptive;
 pub mod card;
 
 pub use card::{Card, CardError, CardFormat, plain_text};
@@ -25,6 +26,8 @@ use serde_json::Value;
 pub enum CardKind {
     /// A2UI v0.9 messages (v0.8 read too).
     A2ui,
+    /// An Adaptive Card, schema 1.0 to 1.6.
+    AdaptiveCard,
 }
 
 /// A card mapped from any format, with what answering it needs.
@@ -32,6 +35,8 @@ pub enum CardKind {
 pub enum Mapped {
     /// From A2UI.
     A2ui(a2ui::Rendered),
+    /// From an Adaptive Card.
+    AdaptiveCard(adaptive::Rendered),
 }
 
 impl Mapped {
@@ -40,6 +45,7 @@ impl Mapped {
     pub fn card(&self) -> &Card {
         match self {
             Self::A2ui(r) => &r.card,
+            Self::AdaptiveCard(r) => &r.card,
         }
     }
 
@@ -55,6 +61,7 @@ impl Mapped {
     ) -> Result<(), String> {
         match self {
             Self::A2ui(r) => r.check(answer, action),
+            Self::AdaptiveCard(r) => r.check(answer, action),
         }
     }
 
@@ -64,11 +71,12 @@ impl Mapped {
     pub fn response(&self, answer: &BTreeMap<String, Value>, action: Option<&str>) -> Value {
         match self {
             Self::A2ui(r) => r.response(answer, action),
+            Self::AdaptiveCard(r) => r.response(answer, action),
         }
     }
 }
 
-/// Maps `payload` in `kind`; see [`a2ui::map`].
+/// Maps `payload` in `kind`; see [`a2ui::map`] and [`adaptive::map`].
 ///
 /// # Errors
 ///
@@ -76,6 +84,7 @@ impl Mapped {
 pub fn map_card(kind: CardKind, payload: &Value, interactive: bool) -> Result<Mapped, CardError> {
     match kind {
         CardKind::A2ui => a2ui::map(payload, interactive).map(Mapped::A2ui),
+        CardKind::AdaptiveCard => adaptive::map(payload, interactive).map(Mapped::AdaptiveCard),
     }
 }
 

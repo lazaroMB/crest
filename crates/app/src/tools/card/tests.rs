@@ -152,3 +152,27 @@ async fn invalid_cards_are_input_errors() {
         assert!(matches!(err, ToolError::InvalidInput { .. }), "{err:?}");
     }
 }
+
+const EXPENSE: &str = include_str!("../../../tests/fixtures/interop/adaptive_expense.json");
+
+#[tokio::test]
+async fn an_adaptive_card_executes_with_its_verb_and_data() {
+    let port = Arc::new(ScriptedForm::new([FormResponse::Submitted {
+        answer: serde_json::from_value(json!({"code": "CC-0042", "notify": true})).unwrap(),
+        action: Some("1".into()),
+    }]));
+    let card: Value = serde_json::from_str(EXPENSE).unwrap();
+    let call = tool(&port)
+        .prepare(json!({"format": "adaptive_card", "card": card}), &ctx())
+        .await
+        .unwrap();
+    let Some(BlockKind::Form(pending)) = &call.block else {
+        panic!("{call:?}");
+    };
+    assert_eq!(pending.title, "Expense report #42");
+    let output = call.run.await.unwrap();
+    let text = output.text_content();
+    assert!(text.contains("\"verb\": \"approve\""), "{text}");
+    assert!(text.contains("\"notify\": \"yes\""), "{text}");
+    assert!(text.contains("\"requestId\": 42"), "{text}");
+}

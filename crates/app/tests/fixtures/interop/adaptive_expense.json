@@ -1,0 +1,46 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "fallbackText": "Expense report #42: open it in the expenses app.",
+  "body": [
+    {"type": "TextBlock", "text": "Expense report #42", "style": "heading", "size": "large"},
+    {"type": "TextBlock", "text": "Submitted by **Ada** for the Lisbon trip.", "wrap": true},
+    {"type": "FactSet", "facts": [{"title": "Total", "value": "€ 1,240.50"}, {"title": "Items", "value": "3"}]},
+    {"type": "ColumnSet", "columns": [
+      {"type": "Column", "width": "auto", "items": [
+        {"type": "Image", "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==", "altText": "avatar"}
+      ]},
+      {"type": "Column", "width": "stretch", "items": [
+        {"type": "Container", "style": "emphasis", "items": [{"type": "TextBlock", "text": "Policy: within limits"}]},
+        {"type": "Image", "url": "https://cdn.example.test/receipt.png", "altText": "receipt"}
+      ]}
+    ]},
+    {"type": "Table", "firstRowAsHeader": true, "columns": [{"width": 2}, {"width": 1}], "rows": [
+      {"type": "TableRow", "cells": [{"type": "TableCell", "items": [{"type": "TextBlock", "text": "Item"}]}, {"type": "TableCell", "items": [{"type": "TextBlock", "text": "Amount"}]}]},
+      {"type": "TableRow", "cells": [{"type": "TableCell", "items": [{"type": "TextBlock", "text": "Flight"}]}, {"type": "TableCell", "items": [{"type": "TextBlock", "text": "820.00"}]}]},
+      {"type": "TableRow", "cells": [{"type": "TableCell", "items": [{"type": "TextBlock", "text": "Hotel"}]}, {"type": "TableCell", "items": [{"type": "TextBlock", "text": "420.50"}]}]}
+    ]},
+    {"type": "RichTextBlock", "inlines": ["See the ", {"type": "TextRun", "text": "policy", "weight": "bolder", "selectAction": {"type": "Action.OpenUrl", "url": "https://intranet.example.test/policy"}}, " for limits."]},
+    {"type": "Container", "id": "details", "isVisible": false, "items": [{"type": "TextBlock", "text": "Receipts were scanned on 2026-10-20."}]},
+    {"type": "TextBlock", "id": "secret", "isVisible": false, "text": "never shown"},
+    {"type": "Rating", "value": 4, "fallback": {"type": "TextBlock", "text": "Rated 4 of 5"}},
+    {"type": "Chart.Pie", "fallback": "drop"},
+    {"type": "Carousel", "pages": []},
+    {"type": "Input.Text", "id": "note", "label": "Note to Ada", "maxLength": 200, "isMultiline": true},
+    {"type": "Input.Text", "id": "code", "label": "Cost centre", "regex": "^CC-[0-9]{4}$", "errorMessage": "Use CC-1234", "isRequired": true},
+    {"type": "Input.Number", "id": "approved", "label": "Approved amount", "min": 0, "max": 1240.5, "value": 1240.5},
+    {"type": "Input.Date", "id": "pay_on", "label": "Pay on", "min": "2026-10-01", "max": "2026-12-31"},
+    {"type": "Input.Time", "id": "pay_at", "label": "At"},
+    {"type": "Input.Toggle", "id": "notify", "title": "Notify Ada", "value": "yes", "valueOn": "yes", "valueOff": "no"},
+    {"type": "Input.ChoiceSet", "id": "tags", "label": "Tags", "isMultiSelect": true, "value": "travel,food", "choices": [{"title": "Travel", "value": "travel"}, {"title": "Food", "value": "food"}, {"title": "Other", "value": "other"}]},
+    {"type": "Input.ChoiceSet", "id": "priority", "label": "Priority", "style": "compact", "choices": [{"title": "Normal", "value": "normal"}, {"title": "Urgent", "value": "urgent"}]}
+  ],
+  "actions": [
+    {"type": "Action.Execute", "title": "Approve", "verb": "approve", "style": "positive", "data": {"requestId": 42}},
+    {"type": "Action.Submit", "title": "Reject", "data": {"decision": "reject"}, "associatedInputs": "none"},
+    {"type": "Action.OpenUrl", "title": "Open in the app", "url": "https://expenses.example.test/42"},
+    {"type": "Action.ShowCard", "title": "Ask a question", "card": {"type": "AdaptiveCard", "body": [{"type": "Input.Text", "id": "question", "label": "Question"}], "actions": [{"type": "Action.Submit", "title": "Send question", "data": {"ask": true}}]}},
+    {"type": "Action.ToggleVisibility", "title": "Show details", "targetElements": ["details"]}
+  ]
+}

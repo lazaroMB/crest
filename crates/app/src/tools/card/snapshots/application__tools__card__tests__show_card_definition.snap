@@ -4,7 +4,7 @@ expression: "json!({\n    \"name\": tool.name(), \"description\": tool.descripti
 ---
 {
   "name": "show_card",
-  "description": "Shows a declarative card in the user's timeline with crest's own blocks. `format` is `a2ui` (A2UI v0.9 messages: `createSurface`, `updateComponents` with a component `root`, `updateDataModel`; a list of messages or JSON lines; v0.8 is read too). Components of the basic catalog are drawn (Text, Image from data: URIs, Row, Column, List, Card, Tabs, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput); others show as placeholders. Remote images are not fetched. If the card has buttons with an event, the call waits until the user presses one and returns the A2UI `action` message (context resolved against the data model) and the values by field; otherwise it returns a summary.",
+  "description": "Shows a declarative card in the user's timeline with crest's own blocks. `format` is `a2ui` (A2UI v0.9 messages: `createSurface`, `updateComponents` with a component `root`, `updateDataModel`; a list of messages or JSON lines; v0.8 is read too) or `adaptive_card` (an Adaptive Card object, schema 1.0 to 1.6). Supported A2UI components: Text, Image, Row, Column, List, Card, Tabs, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput. Supported Adaptive Card elements: TextBlock, RichTextBlock, Image, ImageSet, Container, ColumnSet, FactSet, Table, ActionSet, Input.Text/Number/Date/Time/Toggle/ChoiceSet, and actions Action.Submit, Action.Execute, Action.OpenUrl, Action.ShowCard. Others show as placeholders (or their `fallback`). Images only from data: URIs; remote ones become links. If the card has submit buttons, the call waits until the user presses one and returns the card's own response (A2UI `action` message, or `{type, verb, data}` with the inputs merged into `data`) and the values by field; otherwise it returns a summary.",
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -14,7 +14,7 @@ expression: "json!({\n    \"name\": tool.name(), \"description\": tool.descripti
         "description": "The card's format."
       },
       "card": {
-        "description": "The card: a list of A2UI messages (or JSON lines as text)."
+        "description": "The card: a list of A2UI messages (or JSON lines as text), or the\nAdaptive Card object."
       },
       "title": {
         "type": [
@@ -39,6 +39,11 @@ expression: "json!({\n    \"name\": tool.name(), \"description\": tool.descripti
             "type": "string",
             "const": "a2ui",
             "description": "A2UI v0.9 messages (v0.8 read too)."
+          },
+          {
+            "type": "string",
+            "const": "adaptive_card",
+            "description": "An Adaptive Card, schema 1.0 to 1.6."
           }
         ],
         "description": "The card formats crest reads."

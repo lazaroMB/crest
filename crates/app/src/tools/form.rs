@@ -46,7 +46,8 @@ settings, yes/no decisions) call `ask_user` with a form instead of asking in pro
 for the answer and returns it as JSON. If the user cancels, do not ask the same form again: \
 go on without the answers or ask in prose.
 
-When a tool or the user hands you a declarative card (A2UI messages), or you want a richer \
+When a tool or the user hands you a declarative card (A2UI messages or an Adaptive Card), or \
+you want a richer \
 form than `ask_user` offers, call `show_card` with it: crest draws it natively and, when it \
 has buttons, waits for the user and returns the answer.";
 

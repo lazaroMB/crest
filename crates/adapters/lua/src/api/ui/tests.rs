@@ -475,3 +475,23 @@ fn a2ui_streams_are_drawn_read_only() {
     let err = error_of(r#"return app.ui.a2ui("{ nope")"#);
     assert!(err.contains("app.ui.a2ui"), "{err}");
 }
+
+#[test]
+fn adaptive_cards_are_drawn_read_only() {
+    let got = tree(
+        r#"return app.ui.block("card", app.ui.adaptive_card({
+             type = "AdaptiveCard", version = "1.5",
+             body = {
+               { type = "TextBlock", text = "Deploy?", size = "large" },
+               { type = "Input.Toggle", id = "go", title = "Go", value = "true" },
+             },
+             actions = { { type = "Action.Submit", title = "OK" } },
+           }))"#,
+    );
+    let text = application::interop::plain_text(&got);
+    assert!(text.contains("### Deploy?"), "{text}");
+    assert!(text.contains("Go: true"), "{text}");
+    assert!(text.contains("[button: OK]"), "{text}");
+    let err = error_of(r#"return app.ui.adaptive_card({ type = "Nope" })"#);
+    assert!(err.contains("not an Adaptive Card"), "{err}");
+}

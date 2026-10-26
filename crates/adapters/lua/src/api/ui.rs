@@ -38,6 +38,7 @@
 //! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
 //! | `tree{ title, columns, nodes, expand_depth }` | nested rows with typed columns (`text`, `number`, `duration`, `bar`), badges and inline bars |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
+//! | `adaptive_card(card)` | an Adaptive Card (a table or its JSON text) drawn read-only |
 //! | `a2ui(messages)` | an A2UI v0.9 stream (a list of messages, or JSON lines as a string) drawn read-only: inputs show their values, buttons do nothing |
 //!
 //! `app.ui.plate{ format, wells, value_label, title, ... }` (the fields of
@@ -484,6 +485,15 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "a2ui",
         lua.create_function(|lua, payload: Value| {
             to_lua(lua, &interop_node(lua, "a2ui", CardKind::A2ui, payload)?)
+        })?,
+    )?;
+    ui.set(
+        "adaptive_card",
+        lua.create_function(|lua, payload: Value| {
+            to_lua(
+                lua,
+                &interop_node(lua, "adaptive_card", CardKind::AdaptiveCard, payload)?,
+            )
         })?,
     )?;
     ui.set(

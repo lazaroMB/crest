@@ -1,11 +1,13 @@
-//! `show_card`: the model shows a card in another host's format (A2UI)
+//! `show_card`: the model shows a card in another host's format (A2UI or
+//! an Adaptive Card)
 //! with crest's own blocks.
 //!
 //! The card is mapped by [`crate::interop`]. When it has inputs and
 //! buttons it becomes a form (static content above the fields, one button
 //! per action) and the call waits for the user like `ask_user`, through
 //! [`crate::tools::form::ask`]; the model gets the answer in the card's own
-//! response format (A2UI's `action` message) plus the values by field. A
+//! response format (A2UI's `action` message, an Adaptive Card's
+//! `Action.Execute`/`Action.Submit` payload) plus the values by field. A
 //! card without buttons is shown as a block and the model gets a one-line
 //! summary saying what was not drawn. [`crate::tools::form::FORM_TOOL_PROMPT`]
 //! tells the model when to use it. The call only reads: it needs no
@@ -33,12 +35,16 @@ pub const SHOW_CARD: &str = "show_card";
 
 const DESCRIPTION: &str = "Shows a declarative card in the user's timeline with crest's own \
 blocks. `format` is `a2ui` (A2UI v0.9 messages: `createSurface`, `updateComponents` with a \
-component `root`, `updateDataModel`; a list of messages or JSON lines; v0.8 is read too). \
-Components of the basic catalog are drawn (Text, Image from data: URIs, Row, Column, List, \
-Card, Tabs, Divider, Button, TextField, CheckBox, ChoicePicker, Slider, DateTimeInput); others \
-show as placeholders. Remote images are not fetched. If the card has buttons with an event, \
-the call waits until the user presses one and returns the A2UI `action` message (context \
-resolved against the data model) and the values by field; otherwise it returns a summary.";
+component `root`, `updateDataModel`; a list of messages or JSON lines; v0.8 is read too) or \
+`adaptive_card` (an Adaptive Card object, schema 1.0 to 1.6). Supported A2UI components: Text, \
+Image, Row, Column, List, Card, Tabs, Divider, Button, TextField, CheckBox, ChoicePicker, \
+Slider, DateTimeInput. Supported Adaptive Card elements: TextBlock, RichTextBlock, Image, \
+ImageSet, Container, ColumnSet, FactSet, Table, ActionSet, Input.Text/Number/Date/Time/Toggle/\
+ChoiceSet, and actions Action.Submit, Action.Execute, Action.OpenUrl, Action.ShowCard. Others \
+show as placeholders (or their `fallback`). Images only from data: URIs; remote ones become \
+links. If the card has submit buttons, the call waits until the user presses one and returns \
+the card's own response (A2UI `action` message, or `{type, verb, data}` with the inputs merged \
+into `data`) and the values by field; otherwise it returns a summary.";
 
 /// Input of `show_card`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -46,7 +52,8 @@ resolved against the data model) and the values by field; otherwise it returns a
 pub struct ShowCard {
     /// The card's format.
     pub format: CardKind,
-    /// The card: a list of A2UI messages (or JSON lines as text).
+    /// The card: a list of A2UI messages (or JSON lines as text), or the
+    /// Adaptive Card object.
     pub card: Value,
     /// Heading of the block; the card's own or the format's name when
     /// absent.
