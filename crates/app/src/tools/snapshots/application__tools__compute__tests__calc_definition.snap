@@ -1,0 +1,33 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(CalcTool::new(ports.clone()))"
+---
+{
+  "name": "calc",
+  "description": "Evaluates a calc sheet with units using crest's deterministic engine (numbat): lines `name = expression` or bare expressions, top to bottom; later lines use earlier names. Units are checked and converted (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`, `P = 3 kW * 2 h -> kWh`); functions such as sqrt, sin, ln and constants such as pi work. A line with an error (a dimension mismatch, an unknown unit, a name used before it is defined) shows the error and the others still evaluate. Names must not clash with units or constants: `m`, `g`, `h`, `s`, `c` are units, so write `m_car`, `g_0`, `h_1`. The user sees the sheet with each result typeset; you get each named result as a slot to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "lines": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The lines, in order, e.g. `[\"m_car = 1200 kg\", \"v = 100 km/h\",\n\"E = 0.5 * m_car * v^2 -> kJ\"]`. Names must not clash with units or\nconstants (`m`, `g`, `h`, `c` are units); use `m_car`, `g_0`, …\nJuxtaposition binds tighter than `/`: `1/2 m` is `1/(2 m)`."
+      },
+      "significant_digits": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Significant digits of the displayed results (default 6).",
+        "default": 6
+      }
+    },
+    "required": [
+      "lines"
+    ],
+    "description": "Input of `calc`: a calc sheet of lines evaluated top to bottom.\n\nEach line is `name = expression` or a bare expression, in the units\nlanguage of numbat: `v = 100 km/h`, `t = 2 h + 30 min`, `d = v * t ->\nkm`. Later lines use the names of earlier ones; a line that fails (a\ndimension mismatch, an unknown unit) shows its error and the others\nstill evaluate.",
+    "title": "CalcRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

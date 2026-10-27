@@ -1568,7 +1568,9 @@ mod tests {
                     display: None,
                     unit: Some("m/s²".into()),
                     latex: None,
+                    dimension: Some("Acceleration".into()),
                     error: None,
+                    notes: Vec::new(),
                 }],
             })),
         });

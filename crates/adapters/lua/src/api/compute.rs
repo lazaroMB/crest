@@ -1,7 +1,8 @@
-//! `app.compute`: the statistics engine from Lua, the same calls the
-//! `stats_*` tools make. Each returns a computed block (a statistics
-//! card), so a tool or command handler that returns it shows the card,
-//! and the `reproduce.lua` line of every card runs as written.
+//! `app.compute`: the compute engine from Lua, the same calls the
+//! `stats_*`, `calc` and `convert` tools make. Each returns a computed
+//! block (a statistics card, a calc sheet or a conversion card), so a tool
+//! or command handler that returns it shows the card, and the
+//! `reproduce.lua` line of every card runs as written.
 //!
 //! ```lua
 //! return app.compute.test{ data = 'data/cars.csv', y = 'mpg', group = 'am' }
@@ -16,6 +17,8 @@
 //! | `test{ data, test, y, group, y2, paired, mu, table, alternative, ... }` | hypothesis test |
 //! | `regress{ data, y, x, conf_level }` | OLS regression |
 //! | `correlate{ data, variables, method, adjustment, conf_level }` | correlation matrix |
+//! | `calc{ lines, significant_digits }` | calc sheet with units (`lines = { 'v = 100 km/h', … }`) |
+//! | `convert{ value, from, to, uncertainty, significant_digits }` | unit conversion |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -23,6 +26,7 @@
 //! `nil` holes (missing values). Columns shorter than the longest are
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
+//! `calc` and `convert` read no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -201,7 +205,9 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             ));
         }
     };
+    let reads_data = !matches!(kind, "calc" | "convert");
     let data = match args.get::<Value>("data")? {
+        _ if !reads_data => Json::Null,
         Value::String(path) => {
             let path = path.to_str()?.to_owned();
             let loaded = ctx
@@ -221,7 +227,9 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             ));
         }
     };
-    request.insert("data".into(), data);
+    if reads_data {
+        request.insert("data".into(), data);
+    }
     request.insert("kind".into(), Json::String(kind.to_owned()));
     let request: ComputeRequest =
         serde_json::from_value(Json::Object(request)).map_err(|e| error(kind, e))?;
@@ -248,7 +256,14 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
 /// Builds the `app.compute` table of one phase.
 pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
     let compute = lua.create_table()?;
-    for kind in ["describe", "test", "regress", "correlate"] {
+    for kind in [
+        "describe",
+        "test",
+        "regress",
+        "correlate",
+        "calc",
+        "convert",
+    ] {
         let origin = Arc::clone(origin);
         compute.set(
             kind,
@@ -334,7 +349,7 @@ mod tests {
         )
         .unwrap();
         let request = engine.requests()[0].clone();
-        let data = request.data();
+        let data = request.data().unwrap_or_else(|| panic!("no data"));
         assert_eq!(
             data.column("x").map(|c| &c.values),
             Some(&ColumnValues::Numeric(vec![
@@ -353,6 +368,33 @@ mod tests {
                 Some("c".into())
             ]))
         );
+    }
+
+    #[test]
+    fn calc_and_convert_take_their_requests_as_tables() {
+        let engine = Arc::new(FakeCompute::new());
+        let out = run_code(
+            "return app.compute.calc{ lines = { 'v = 100 km/h', 't_1 = 2 h' } }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        assert_eq!(envelope(out).kind, "calc.sheet");
+        let out = run_code(
+            "return app.compute.convert{ value = 5, from = 'in', to = 'cm' }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        assert_eq!(envelope(out).kind, "calc.convert");
+        let requests = engine.requests();
+        let ComputeRequest::Calc(calc) = &requests[0] else {
+            panic!("not a calc request");
+        };
+        assert_eq!(calc.lines, ["v = 100 km/h", "t_1 = 2 h"]);
+        let ComputeRequest::Convert(convert) = &requests[1] else {
+            panic!("not a convert request");
+        };
+        assert_eq!(convert.value, Some(5.0));
+        assert_eq!(convert.to, "cm");
     }
 
     #[test]

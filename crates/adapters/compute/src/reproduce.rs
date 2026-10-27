@@ -13,11 +13,11 @@ use serde_json::Value;
 const MAX_INLINE_CELLS: usize = 2000;
 
 /// `app.compute.<function>{...}` from the request JSON.
-pub fn lua(function: &str, request: &Value, data: &DataSet) -> String {
+pub fn lua(function: &str, request: &Value, data: Option<&DataSet>) -> String {
     let mut request = request.clone();
     if let Value::Object(map) = &mut request {
         map.shift_remove("kind");
-        if let Some(path) = &data.source.path {
+        if let Some(path) = data.and_then(|d| d.source.path.as_ref()) {
             map.insert("data".into(), Value::String(path.clone()));
         } else if let Some(Value::Object(data)) = map.get_mut("data") {
             data.shift_remove("source");
@@ -81,6 +81,11 @@ fn quoted(s: &str, quote: char) -> String {
     }
     out.push(quote);
     out
+}
+
+/// A POSIX shell word: `'…'` with embedded quotes escaped.
+pub fn shell_word(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// A Python string literal.
@@ -208,10 +213,15 @@ mod tests {
         let request = json!({"kind": "describe", "data": {"source": {"name": "inline"},
             "columns": [{"name": "x", "values": [1.0, null]}]}, "by": null, "my var": "it's"});
         assert_eq!(
-            lua("describe", &request, &data),
+            lua("describe", &request, Some(&data)),
             "app.compute.describe{data = {columns = {{name = 'x', values = {1.0, nil}}}}, \
              by = nil, ['my var'] = 'it\\'s'}"
         );
+    }
+
+    #[test]
+    fn shell_words_survive_quotes() {
+        assert_eq!(shell_word("it's 5 ft"), "'it'\\''s 5 ft'");
     }
 
     #[test]

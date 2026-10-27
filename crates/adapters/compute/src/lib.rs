@@ -1,5 +1,5 @@
 //! [`ComputePort`] adapter: `crest-stats`, the deterministic statistics
-//! engine behind the statistics cards.
+//! engine behind the statistics cards, and `crest-calc` for units.
 //!
 //! Descriptives, t-tests, rank tests, contingency tests, OLS and
 //! correlation matrices, written on statrs' distributions and special
@@ -13,7 +13,12 @@
 //!
 //! Reference tests (`tests/reference.rs`) check the engine against NIST
 //! StRD certified values and examples from R's documentation.
+//!
+//! The same adapter runs `crest-calc` (module `calc`): calc sheets and unit
+//! conversions on numbat, with envelopes of kinds `calc.sheet` and
+//! `calc.convert`.
 
+mod calc;
 mod checks;
 mod correlate;
 mod data;
@@ -30,12 +35,12 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use application::ports::compute::{
-    ComputeError, ComputePort, ComputeRequest, ComputeResult, CorrelateRequest, DescribeRequest,
-    RegressRequest, TestRequest,
+    CalcRequest, ComputeError, ComputePort, ComputeRequest, ComputeResult, ConvertRequest,
+    CorrelateRequest, DescribeRequest, RegressRequest, TestRequest,
 };
 use domain::computed::Computed;
 
-pub use envelope::{BACKEND, ENGINE_NAME};
+pub use envelope::{BACKEND, CALC_BACKEND, CALC_ENGINE_NAME, ENGINE_NAME};
 
 /// The time source; injected so tests get fixed timestamps.
 pub type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
@@ -79,6 +84,8 @@ impl StatsEngine {
             ComputeRequest::Test(r) => tests::run(r, id)?,
             ComputeRequest::Regress(r) => ols::run(r, id)?,
             ComputeRequest::Correlate(r) => correlate::run(r, id)?,
+            ComputeRequest::Calc(r) => calc::sheet(r, id)?,
+            ComputeRequest::Convert(r) => calc::convert(r, id)?,
         };
         if computed.reproduce.lua.is_none() {
             let json = serde_json::to_value(request).unwrap_or_default();
@@ -96,6 +103,8 @@ fn function(request: &ComputeRequest) -> &'static str {
         ComputeRequest::Test(_) => "test",
         ComputeRequest::Regress(_) => "regress",
         ComputeRequest::Correlate(_) => "correlate",
+        ComputeRequest::Calc(_) => "calc",
+        ComputeRequest::Convert(_) => "convert",
     }
 }
 
@@ -116,10 +125,18 @@ impl ComputePort for StatsEngine {
         self.execute(&ComputeRequest::Correlate(request.clone()), None)
     }
 
+    fn calc(&self, request: &CalcRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Calc(request.clone()), None)
+    }
+
+    fn convert(&self, request: &ConvertRequest) -> ComputeResult {
+        self.execute(&ComputeRequest::Convert(request.clone()), None)
+    }
+
     fn recompute(&self, envelope: &Computed) -> ComputeResult {
-        if envelope.engine.name != ENGINE_NAME {
+        if envelope.engine.name != ENGINE_NAME && envelope.engine.name != CALC_ENGINE_NAME {
             return Err(ComputeError::NotRecomputable(format!(
-                "envelope {} comes from {}, not {ENGINE_NAME}",
+                "envelope {} comes from {}, not {ENGINE_NAME} or {CALC_ENGINE_NAME}",
                 envelope.id, envelope.engine.name
             )));
         }

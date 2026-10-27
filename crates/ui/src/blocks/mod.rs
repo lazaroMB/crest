@@ -14,6 +14,7 @@ pub mod image;
 pub mod image_view;
 pub mod json;
 pub mod markdown;
+pub mod math;
 pub mod measured;
 pub mod mermaid;
 pub mod model_view;

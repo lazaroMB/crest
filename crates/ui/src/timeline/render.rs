@@ -10,7 +10,6 @@ use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString,
     Styled as _, Window, div,
 };
-use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::TimelineEntry;
@@ -137,9 +136,9 @@ pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) ->
         // numbers typed by the model gets the "not from an engine" chip.
         BlockKind::Text { markdown } => {
             let shown = entry.numbers.resolved.as_ref().unwrap_or(markdown);
+            // TeX math is pulled out before CommonMark parses the text.
             let text =
-                TextView::markdown(element_id("text", id), SharedString::from(shown.clone()))
-                    .into_any_element();
+                crate::blocks::math::markdown(element_id("text", id), shown).into_any_element();
             if entry.numbers.unverified.is_empty() {
                 text
             } else {

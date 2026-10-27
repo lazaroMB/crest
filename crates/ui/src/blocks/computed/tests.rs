@@ -176,17 +176,21 @@ fn other_cards() -> Vec<(Computed, ComputedBody)> {
             display: None,
             unit: Some("m/s²".into()),
             latex: None,
+            dimension: None,
             error: None,
+            notes: Vec::new(),
         }],
     });
     let quantity = ComputedBody::Quantity(QuantityBody {
         from: Quantity {
             value: 1.0,
             unit: "in".into(),
+            uncertainty: None,
         },
         to: Quantity {
             value: 25.4,
             unit: "mm".into(),
+            uncertainty: None,
         },
         factor: 25.4,
         exact: true,
@@ -312,6 +316,118 @@ fn draws_every_card_body(cx: &mut TestAppContext) {
     ] {
         assert!(cx.debug_bounds(selector).is_some(), "{selector}");
     }
+}
+
+fn calc_line(name: &str, expr: &str) -> CalcLine {
+    CalcLine {
+        name: Some(name.into()),
+        expr: expr.into(),
+        value: None,
+        display: None,
+        unit: None,
+        latex: None,
+        dimension: None,
+        error: None,
+        notes: Vec::new(),
+    }
+}
+
+fn calc_cards() -> Vec<(Computed, ComputedBody)> {
+    let typeset = CalcLine {
+        value: Some(462.963),
+        display: Some("462.963 kJ".into()),
+        unit: Some("kJ".into()),
+        latex: Some(
+            "E = 0.5 \\cdot m_{\\mathrm{car}} \\cdot v^{2} = 462.963\\,\\mathrm{kJ}".into(),
+        ),
+        dimension: Some("Energy or Torque".into()),
+        ..calc_line("E", "0.5 * m_car * v^2 -> kJ")
+    };
+    let plain = CalcLine {
+        value: Some(4409.25),
+        display: Some("4409.25 lb".into()),
+        unit: Some("lb".into()),
+        dimension: Some("Mass".into()),
+        notes: vec!["`ton` read as the metric tonne (1000 kg)".into()],
+        ..calc_line("load", "2 ton -> lb")
+    };
+    let failed = CalcLine {
+        error: Some("incompatible dimensions in addition: left hand side is Length, right hand side is Time".into()),
+        ..calc_line("bad", "dist + 2 s")
+    };
+    let mut sheet = Computed::new("ca_sheet", "calc.sheet", "Calc sheet", engine());
+    sheet.warnings.push(ComputedWarning {
+        code: calc::LINE_ERROR.into(),
+        severity: WarningSeverity::Warn,
+        text: "line 3 (`bad`): incompatible dimensions".into(),
+    });
+    let mut converted = Computed::new("ca_conv", "calc.convert", "Unit conversion", engine());
+    converted.values.insert(
+        "result".into(),
+        ComputedValue {
+            unit: Some("cm".into()),
+            ..shown(160.02, "160.02")
+        },
+    );
+    let quantity = ComputedBody::Quantity(QuantityBody {
+        from: Quantity {
+            value: 63.0,
+            unit: "in".into(),
+            uncertainty: None,
+        },
+        to: Quantity {
+            value: 160.02,
+            unit: "cm".into(),
+            uncertainty: None,
+        },
+        factor: 2.54,
+        exact: true,
+        dimension: "Length".into(),
+        chain: vec![
+            domain::computed::ConversionStep {
+                from_unit: "in".into(),
+                to_unit: "m".into(),
+                factor: 0.0254,
+                note: Some("exact".into()),
+            },
+            domain::computed::ConversionStep {
+                from_unit: "m".into(),
+                to_unit: "cm".into(),
+                factor: 100.0,
+                note: Some("exact".into()),
+            },
+        ],
+    });
+    vec![
+        (
+            sheet,
+            ComputedBody::CalcSheet(CalcSheetBody {
+                lines: vec![typeset, plain, failed],
+            }),
+        ),
+        (converted, quantity),
+    ]
+}
+
+#[gpui::test]
+fn the_calc_sheet_typesets_lines_and_keeps_errors_on_them(cx: &mut TestAppContext) {
+    let (cx, view, _, _) = window(cx, calc_cards());
+    view.read_with(cx, |view, _| assert_eq!(view.state().len(), 2));
+    for selector in [
+        "calc-sheet",
+        "calc-line",
+        "calc-math",
+        "calc-error",
+        "calc-note",
+        "quantity-exact",
+        "quantity-chain",
+    ] {
+        assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+    }
+    // The line error is shown on its line, not again among the warnings,
+    // and unit readings are chips, not an assumption checklist.
+    assert!(cx.debug_bounds("computed-assumptions").is_none());
+    assert!(cx.debug_bounds("quantity-rounded").is_none());
 }
 
 #[gpui::test]

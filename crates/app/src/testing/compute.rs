@@ -6,21 +6,24 @@
 //! come from the request's JSON, whose values are the mean and count of
 //! each numeric column (`<column>.mean`, `<column>.n`) plus a fixed
 //! `statistic` and `p_value`, and which stores the request so
-//! [`ComputePort::recompute`] can re-run it.
+//! [`ComputePort::recompute`] can re-run it. A calc sheet gives every line
+//! the value 1 in `m` (keyed by its name, or `line_<n>`); a conversion
+//! multiplies by 2.54 into `to`.
 
 use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
 use domain::computed::{
-    Alternative, Computed, ComputedBody, ComputedValue, CorrelationBody, CorrelationMethod,
-    DescriptiveBody, Diagnostics, Engine, FitStats, Narrative, PAdjust, RegressionBody, TestBody,
-    TestKind, VariableKind, VariableSummary,
+    Alternative, CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedValue, CorrelationBody,
+    CorrelationMethod, DescriptiveBody, Diagnostics, Engine, FitStats, Narrative, PAdjust,
+    Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
 };
 
 use crate::ports::compute::{
-    ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult, CorrelateRequest,
-    DataSet, DescribeRequest, REQUEST_PARAM, RegressRequest, TestRequest,
+    CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
+    ConvertRequest, CorrelateRequest, DataSet, DescribeRequest, REQUEST_PARAM, RegressRequest,
+    TestRequest,
 };
 
 /// Name of the fake engine.
@@ -107,7 +110,7 @@ impl FakeCompute {
                 "stats.describe",
                 "Descriptive statistics",
                 "describe",
-                describe_body(request.data()),
+                describe_body(request.data().unwrap_or(&DataSet::default())),
             ),
             ComputeRequest::Test(_) => (
                 "stats.ttest_welch",
@@ -133,6 +136,13 @@ impl FakeCompute {
                 "correlation_matrix",
                 correlation_body(),
             ),
+            ComputeRequest::Calc(r) => ("calc.sheet", "Calc sheet", "calc_sheet", calc_body(r)),
+            ComputeRequest::Convert(r) => (
+                "calc.convert",
+                "Unit conversion",
+                "convert",
+                convert_body(r),
+            ),
         };
         let engine = Engine {
             name: FAKE_ENGINE.into(),
@@ -141,14 +151,38 @@ impl FakeCompute {
             platform: None,
         };
         let mut computed = Computed::new(id, kind, name, engine);
-        computed.values = mean_and_n(request.data());
-        computed.values.insert("statistic".into(), shown(2.5, 2));
-        computed.values.insert("df".into(), shown(10.0, 0));
-        computed.values.insert("p_value".into(), shown(0.03, 3));
-        let data_json = serde_json::to_vec(&request.data().columns).unwrap_or_default();
-        let mut input = request.data().source.clone();
-        input.hash = Some(format!("fake:{}", hex(&data_json)));
-        computed.inputs.push(input);
+        match (request.data(), &body) {
+            (Some(data), _) => {
+                computed.values = mean_and_n(data);
+                computed.values.insert("statistic".into(), shown(2.5, 2));
+                computed.values.insert("df".into(), shown(10.0, 0));
+                computed.values.insert("p_value".into(), shown(0.03, 3));
+                let data_json = serde_json::to_vec(&data.columns).unwrap_or_default();
+                let mut input = data.source.clone();
+                input.hash = Some(format!("fake:{}", hex(&data_json)));
+                computed.inputs.push(input);
+            }
+            (None, ComputedBody::CalcSheet(sheet)) => {
+                for (i, line) in sheet.lines.iter().enumerate() {
+                    let key = line
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("line_{}", i + 1));
+                    let mut value = shown(1.0, 0);
+                    value.unit = line.unit.clone();
+                    computed.values.insert(key, value);
+                }
+            }
+            (None, ComputedBody::Quantity(quantity)) => {
+                let mut value = shown(quantity.to.value, 2);
+                value.unit = Some(quantity.to.unit.clone());
+                computed.values.insert("result".into(), value);
+                computed
+                    .values
+                    .insert("factor".into(), shown(quantity.factor, 2));
+            }
+            (None, _) => {}
+        }
         computed.narrative = Some(Narrative {
             template: template.into(),
             text_slots: vec!["statistic".into(), "p_value".into()],
@@ -189,6 +223,51 @@ fn describe_body(data: &DataSet) -> ComputedBody {
     ComputedBody::Descriptive(DescriptiveBody {
         by: None,
         variables,
+    })
+}
+
+fn calc_body(request: &CalcRequest) -> ComputedBody {
+    let lines = request
+        .lines
+        .iter()
+        .map(|line| {
+            let (name, expr) = match line.split_once('=') {
+                Some((name, expr)) => (Some(name.trim().to_owned()), expr.trim().to_owned()),
+                None => (None, line.trim().to_owned()),
+            };
+            CalcLine {
+                name,
+                expr,
+                value: Some(1.0),
+                display: Some("1 m".into()),
+                unit: Some("m".into()),
+                latex: None,
+                dimension: Some("Length".into()),
+                error: None,
+                notes: Vec::new(),
+            }
+        })
+        .collect();
+    ComputedBody::CalcSheet(CalcSheetBody { lines })
+}
+
+fn convert_body(request: &ConvertRequest) -> ComputedBody {
+    let value = request.value.unwrap_or(1.0);
+    ComputedBody::Quantity(QuantityBody {
+        from: Quantity {
+            value,
+            unit: request.from.clone(),
+            uncertainty: request.uncertainty,
+        },
+        to: Quantity {
+            value: value * 2.54,
+            unit: request.to.clone(),
+            uncertainty: request.uncertainty.map(|u| u * 2.54),
+        },
+        factor: 2.54,
+        exact: true,
+        dimension: "Length".into(),
+        chain: Vec::new(),
     })
 }
 
@@ -241,6 +320,17 @@ impl ComputePort for FakeCompute {
 
     fn correlate(&self, request: &CorrelateRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Correlate(request.clone()), None)
+    }
+
+    fn calc(&self, request: &CalcRequest) -> ComputeResult {
+        if request.lines.is_empty() {
+            return Err(ComputeError::Invalid("the sheet has no lines".into()));
+        }
+        self.answer(&ComputeRequest::Calc(request.clone()), None)
+    }
+
+    fn convert(&self, request: &ConvertRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Convert(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -619,5 +619,5 @@ fn reproduce(
         request.clone(),
     ))
     .unwrap_or_default();
-    computed.reproduce.lua = Some(crate::reproduce::lua("regress", &request_json, data));
+    computed.reproduce.lua = Some(crate::reproduce::lua("regress", &request_json, Some(data)));
 }

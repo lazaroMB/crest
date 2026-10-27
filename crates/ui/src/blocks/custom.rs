@@ -153,12 +153,11 @@ impl Walk<'_> {
                 SharedString::from(fenced_code(lang.as_deref(), source)),
             )
             .into_any_element(),
-            CustomNode::Markdown { source } => TextView::markdown(
-                element_id("custom-markdown", self.next_id()),
-                SharedString::from(source.clone()),
-            )
-            .on_link_click(open_link)
-            .into_any_element(),
+            CustomNode::Markdown { source } => {
+                super::math::markdown(element_id("custom-markdown", self.next_id()), source)
+                    .on_link_click(open_link)
+                    .into_any_element()
+            }
             CustomNode::Html { source } => TextView::html(
                 element_id("custom-html", self.next_id()),
                 SharedString::from(source.clone()),
