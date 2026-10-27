@@ -33,6 +33,23 @@ pub fn measured(
     Measured {
         height_for: Rc::new(height_for),
         child: Some(child.into_any_element()),
+        child_for: None,
+    }
+}
+
+/// Builds the child of [`measured_with`] for the size it was given.
+pub type ChildFor = dyn FnOnce(Size<Pixels>, &mut Window, &mut App) -> AnyElement;
+
+/// [`measured`] with a child built once its size is known, for content that
+/// takes only part of the row (a picture as wide as its fitted size).
+pub fn measured_with(
+    height_for: impl Fn(Pixels, &mut Window, &mut App) -> Pixels + 'static,
+    child_for: impl FnOnce(Size<Pixels>, &mut Window, &mut App) -> AnyElement + 'static,
+) -> Measured {
+    Measured {
+        height_for: Rc::new(height_for),
+        child: None,
+        child_for: Some(Box::new(child_for)),
     }
 }
 
@@ -40,6 +57,7 @@ pub fn measured(
 pub struct Measured {
     height_for: Rc<HeightFor>,
     child: Option<AnyElement>,
+    child_for: Option<Box<ChildFor>>,
 }
 
 /// The width a measure pass offers, or `None` under a min-content probe.
@@ -104,6 +122,9 @@ impl Element for Measured {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(child_for) = self.child_for.take() {
+            self.child = Some(child_for(bounds.size, window, cx));
+        }
         if let Some(child) = self.child.as_mut() {
             child.layout_as_root(bounds.size.map(AvailableSpace::Definite), window, cx);
             child.prepaint_at(bounds.origin, window, cx);
