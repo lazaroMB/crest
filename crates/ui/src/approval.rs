@@ -166,6 +166,14 @@ pub enum ApprovalEvent {
 /// The dialog the diff blocks' buttons answer: the last one created.
 struct ActiveDialog(WeakEntity<ApprovalView>);
 
+/// Whether the approval dialog is on screen, so other panes leave its keys
+/// alone even when the prompt still holds the focus.
+pub fn dialog_is_open(cx: &App) -> bool {
+    cx.try_global::<ActiveDialog>()
+        .and_then(|active| active.0.upgrade())
+        .is_some_and(|view| view.read(cx).is_open())
+}
+
 impl Global for ActiveDialog {}
 
 /// Answers the open request when it previews a change to `path`: approves
@@ -260,6 +268,11 @@ impl ApprovalView {
     /// Requests waiting behind the current one.
     pub fn queued(&self) -> usize {
         self.queue.len()
+    }
+
+    /// Whether a request is on screen.
+    pub fn is_open(&self) -> bool {
+        self.current.is_some()
     }
 
     /// Whether the user is typing a rejection reason.
@@ -369,40 +382,87 @@ impl ApprovalView {
         }
     }
 
+    /// Opens the reason line and keeps the keyboard on this dialog.
+    ///
+    /// The reason is not a text field: keystrokes land here only while this
+    /// view is focused. The Reject button does not take focus, and neither
+    /// does the line that replaces it, so without this the prompt keeps the
+    /// keys.
+    fn begin_reason(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reason = Some(String::new());
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current.is_none() {
-            return;
+        if self.handle_keystroke(&event.keystroke, window, cx) {
+            cx.stop_propagation();
         }
-        let Some(key) = key_from_keystroke(&event.keystroke) else {
-            return;
+    }
+
+    /// Applies one key while a request is on screen. Returns whether the
+    /// dialog took it. `Ctrl+C` is left to the session, which interrupts.
+    pub fn handle_keystroke(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.current.is_none() {
+            return false;
+        }
+        let Some(key) = key_from_keystroke(keystroke) else {
+            return false;
         };
         if key.mods.ctrl || key.mods.alt || key.mods.cmd {
-            return;
+            return false;
         }
-        match self.reason.as_mut() {
+        let handled = match self.reason.as_mut() {
             Some(reason) => match key.code {
                 KeyCode::Enter => {
                     let reason = self.reason.take();
                     self.reject(reason, window, cx);
+                    true
                 }
-                KeyCode::Esc => self.reason = None,
+                KeyCode::Esc => {
+                    self.reason = None;
+                    true
+                }
                 KeyCode::Backspace => {
                     reason.pop();
+                    true
                 }
-                KeyCode::Char(c) => reason.push(c),
-                _ => return,
+                KeyCode::Char(c) => {
+                    reason.push(c);
+                    true
+                }
+                _ => false,
             },
+            None if crate::keyscroll::scroll_key(&self.preview_scroll, &keystroke.key) => true,
             None => match key.code {
-                KeyCode::Char('y') => self.approve(window, cx),
-                KeyCode::Char('a') => self.approve_always(window, cx),
-                KeyCode::Char('n') => self.reason = Some(String::new()),
-                KeyCode::Esc => self.reject(None, window, cx),
-                _ if crate::keyscroll::scroll_key(&self.preview_scroll, &event.keystroke.key) => {}
-                _ => return,
+                KeyCode::Char('y') => {
+                    self.approve(window, cx);
+                    true
+                }
+                KeyCode::Char('a') => {
+                    self.approve_always(window, cx);
+                    true
+                }
+                KeyCode::Char('n') => {
+                    self.begin_reason(window, cx);
+                    true
+                }
+                KeyCode::Esc => {
+                    self.reject(None, window, cx);
+                    true
+                }
+                _ => false,
             },
+        };
+        if handled {
+            cx.notify();
         }
-        cx.stop_propagation();
-        cx.notify();
+        handled
     }
 
     fn render_preview(preview: &ApprovalPreview, cx: &App) -> AnyElement {
@@ -476,10 +536,7 @@ impl ApprovalView {
                 Button::new("approval-reject")
                     .danger()
                     .label("Reject (n)")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.reason = Some(String::new());
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_reason(window, cx))),
             )
             .into_any_element()
     }
@@ -733,6 +790,29 @@ mod tests {
             answered(answer, cx),
             Ok(ApprovalResponse::Deny {
                 reason: Some("use x".into()),
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn a_reason_can_be_typed_after_the_prompt_had_focus(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let answer = ask(&port, command_request(1), cx);
+        cx.update(|window, cx| {
+            let prompt = cx.focus_handle();
+            window.focus(&prompt, cx);
+        });
+        view.update_in(cx, |view, window, cx| view.begin_reason(window, cx));
+        cx.simulate_keystrokes("u s e escape");
+        view.read_with(cx, |view, _| {
+            assert!(view.reason().is_none(), "escape leaves the reason line");
+            assert!(view.is_open(), "the dialog stays open");
+        });
+        cx.simulate_keystrokes("n n o enter");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::Deny {
+                reason: Some("no".into()),
             })
         );
     }
