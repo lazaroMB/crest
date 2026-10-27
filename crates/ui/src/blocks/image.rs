@@ -1,7 +1,13 @@
 //! Renderer of the `image` block kind: the picture, from inline base64 or
 //! a file, with its source underneath. An image that cannot be decoded or
 //! loaded shows a placeholder with the error instead.
+//!
+//! The picture's size comes from the image header, read when the block is
+//! first drawn, so its row in the timeline is as tall on the first frame
+//! as once GPUI has decoded the pixels: a decode finishing later never
+//! grows the row under the blocks drawn after it.
 
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,11 +15,12 @@ use base64::Engine as _;
 use domain::block::{BlockKind, ImageData, SourceRef};
 use gpui::{
     AnyElement, App, ElementId, Hsla, Image, ImageFormat, ImageSource, InteractiveElement as _,
-    IntoElement as _, ParentElement as _, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledImage as _, Window, div, img, px,
+    IntoElement as _, ObjectFit, ParentElement as _, Pixels, SharedString, Size,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, Window, div, img, px, size,
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
+use super::measured::measured_with;
 use super::sources::events::{BlockEvent, emit};
 use super::sources::{action, activate, entry_label};
 use crate::timeline::TimelineEntry;
@@ -48,6 +55,29 @@ pub fn image_source(media_type: &str, data: &ImageData) -> Result<ImageSource, I
     }
 }
 
+/// Width and height in pixels, read from the header alone; `None` when
+/// it cannot be read (the picture then sizes itself once decoded).
+fn dimensions(source: &ImageSource) -> Option<(u32, u32)> {
+    let (width, height) = match source {
+        ImageSource::Image(image) => image::ImageReader::new(Cursor::new(image.bytes()))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()?,
+        ImageSource::Resource(gpui::Resource::Path(path)) => image::image_dimensions(path).ok()?,
+        _ => return None,
+    };
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+/// The size an image of `natural` pixels is drawn at in a column `width`
+/// wide: never enlarged, scaled down to the width and to [`MAX_HEIGHT`].
+fn fitted((w, h): (u32, u32), width: Pixels) -> Size<Pixels> {
+    let (w, h) = (w as f32, h as f32);
+    let scale = 1f32.min(width.as_f32() / w).min(MAX_HEIGHT / h).max(0.);
+    size(px(w * scale), px(h * scale))
+}
+
 /// Short description of where the bytes come from, for the error view.
 fn origin(data: &ImageData) -> String {
     match data {
@@ -67,9 +97,9 @@ fn error_view(message: String, danger: Hsla, border: Hsla) -> AnyElement {
         .into_any_element()
 }
 
-/// The decoded source of one block, kept across frames so inline data is
-/// decoded once rather than on every repaint.
-struct Decoded(Result<ImageSource, ImageError>);
+/// The decoded source of one block and its size in pixels, kept across
+/// frames so inline data is decoded once rather than on every repaint.
+struct Decoded(Result<(ImageSource, Option<(u32, u32)>), ImageError>);
 
 fn source_line(entry: &TimelineEntry, source: &SourceRef, cx: &App) -> AnyElement {
     let theme = cx.theme();
@@ -111,38 +141,59 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     };
     let (mime, data) = (media_type.clone(), data_or_path.clone());
     let decoded = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Decoded(image_source(&mime, &data))
+        Decoded(image_source(&mime, &data).map(|source| {
+            let natural = dimensions(&source);
+            (source, natural)
+        }))
     });
     let theme = cx.theme();
     let (danger, border) = (theme.danger, theme.border);
     let picture = match &decoded.read(cx).0 {
-        Ok(image) => {
+        Ok((image, natural)) => {
             let failed = format!("cannot load {}", origin(data_or_path));
             let inspect = BlockEvent::InspectImage {
                 block: entry.block.id,
                 media_type: media_type.clone(),
                 data: data_or_path.clone(),
             };
-            // Kept at its aspect ratio within the column and MAX_HEIGHT; a
-            // click opens it in a modal to zoom in.
-            div()
-                .id(ElementId::Name(SharedString::from(format!(
-                    "image-{}",
-                    entry.block.id
-                ))))
-                .debug_selector(|| "image-picture".to_owned())
-                .cursor_pointer()
-                .child(
-                    img(image.clone())
-                        .max_w_full()
-                        .max_h(px(MAX_HEIGHT))
-                        .with_fallback(move || error_view(failed.clone(), danger, border)),
+            let id = ElementId::Name(SharedString::from(format!("image-{}", entry.block.id)));
+            let image = image.clone();
+            // A click opens it in a modal to zoom in. Clipped to its box so
+            // it never draws over the blocks below.
+            let frame = move |picture: gpui::Img| {
+                div()
+                    .id(id)
+                    .debug_selector(|| "image-picture".to_owned())
+                    .cursor_pointer()
+                    .overflow_hidden()
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        emit(inspect.clone(), cx);
+                    })
+                    .child(
+                        picture.with_fallback(move || error_view(failed.clone(), danger, border)),
+                    )
+            };
+            match *natural {
+                // Fitted to the column from the header's size, before and
+                // after the pixels are decoded.
+                Some(natural) => measured_with(
+                    move |width, _, _| fitted(natural, width).height,
+                    move |given, _, _| {
+                        let fit = fitted(natural, given.width);
+                        frame(img(image).size_full().object_fit(ObjectFit::Contain))
+                            .w(fit.width)
+                            .h(fit.height)
+                            .into_any_element()
+                    },
                 )
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    emit(inspect.clone(), cx);
-                })
-                .into_any_element()
+                .into_any_element(),
+                // Unknown size: kept at its aspect ratio within the column
+                // and MAX_HEIGHT once decoded.
+                None => frame(img(image).max_w_full().max_h(px(MAX_HEIGHT)))
+                    .max_w_full()
+                    .into_any_element(),
+            }
         }
         Err(err) => error_view(err.to_string(), danger, border),
     };
@@ -198,6 +249,115 @@ mod tests {
             image_source("image/png", &inline("not base64!")),
             Err(ImageError::Base64(_))
         ));
+    }
+
+    /// A `width`×`height` png, base64-encoded.
+    fn png(width: u32, height: u32) -> ImageData {
+        let picture = image::RgbImage::from_pixel(width, height, image::Rgb([20, 120, 200]));
+        let mut bytes = Vec::new();
+        picture
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .unwrap();
+        inline(&base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    #[test]
+    fn pictures_fit_the_column_and_the_height_cap() {
+        let fit = |natural, width: f32| fitted(natural, px(width));
+        // Small ones keep their size.
+        assert_eq!(fit((100, 50), 600.), size(px(100.), px(50.)));
+        // Wide ones scale down to the column.
+        assert_eq!(fit((1200, 300), 600.), size(px(600.), px(150.)));
+        // Tall ones scale down to MAX_HEIGHT.
+        assert_eq!(fit((400, 1440), 600.), size(px(100.), px(MAX_HEIGHT)));
+        // Both: the tighter limit wins.
+        assert_eq!(fit((2000, 1000), 500.), size(px(500.), px(250.)));
+        assert_eq!(fit((2000, 1000), 0.), size(px(0.), px(0.)));
+    }
+
+    #[test]
+    fn the_header_gives_the_size_without_decoding() {
+        let source = image_source("image/png", &png(30, 20)).unwrap();
+        assert_eq!(dimensions(&source), Some((30, 20)));
+        let missing = image_source(
+            "image/png",
+            &ImageData::Path {
+                path: "/nonexistent/shot.png".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(dimensions(&missing), None);
+    }
+
+    /// Regression test for #5: the picture's row is as tall before GPUI has
+    /// decoded it as after, and the picture stays inside its row while the
+    /// blocks after it stream in.
+    #[gpui::test]
+    fn the_picture_keeps_its_row_while_later_blocks_stream(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let text = |markdown: &str| {
+            Block::new(BlockKind::Text {
+                markdown: markdown.into(),
+            })
+        };
+        let picture = Block::new(BlockKind::Image {
+            media_type: "image/png".into(),
+            data_or_path: png(800, 600),
+            source: None,
+        });
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("> look at this"), picture].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(
+                gpui::point(px(0.), px(0.)),
+                gpui::size(px(800.), px(600.)),
+                |_, _| div().size_full().child(view.clone()),
+            );
+        };
+        // First frame, before the decode has run.
+        draw(cx);
+        let before = cx
+            .debug_bounds("image-picture")
+            .unwrap_or_else(|| panic!("picture not drawn"));
+        assert_eq!(before.size.height, px(MAX_HEIGHT));
+        assert_eq!(before.size.width, px(MAX_HEIGHT * 800. / 600.));
+        cx.run_until_parked();
+        let reply = text("thinking");
+        let reply_id = reply.id;
+        view.update(cx, |view, cx| {
+            view.apply(&DomainEvent::BlockAdded { block: reply }, cx);
+        });
+        for chunk in 0..20 {
+            view.update(cx, |view, cx| {
+                view.apply(
+                    &DomainEvent::TextDelta {
+                        block_id: reply_id,
+                        text: format!("\n\nline {chunk} of the reply"),
+                    },
+                    cx,
+                );
+            });
+            draw(cx);
+            cx.run_until_parked();
+            let Some(picture) = cx.debug_bounds("image-picture") else {
+                // Scrolled out of view under tail-follow.
+                continue;
+            };
+            assert_eq!(picture.size, before.size, "the picture kept its size");
+            let row = cx.debug_bounds("block-1").unwrap();
+            assert!(
+                picture.top() >= row.top() && picture.bottom() <= row.bottom(),
+                "picture {picture:?} inside its row {row:?}"
+            );
+            if let Some(next) = cx.debug_bounds("block-2") {
+                assert!(picture.bottom() <= next.top(), "picture above the reply");
+            }
+        }
     }
 
     #[gpui::test]
