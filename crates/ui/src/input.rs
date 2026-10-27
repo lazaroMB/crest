@@ -624,6 +624,11 @@ impl InputView {
     }
 
     fn intercept(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // An open approval dialog owns the keyboard, including the reason
+        // line. Those keys must not land in the prompt behind it.
+        if crate::approval::dialog_is_open(cx) {
+            return;
+        }
         if !self.owns_focus(window, cx) {
             return;
         }

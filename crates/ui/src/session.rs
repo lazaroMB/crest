@@ -772,6 +772,20 @@ impl Session {
     }
 
     fn outside_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // The dialog may be up while the prompt still has focus (Reject does
+        // not move it). Take the keys here, before the prompt sees them.
+        if self.approval.read(cx).is_open() {
+            let handled = self.approval.update(cx, |dialog, cx| {
+                dialog.handle_keystroke(&event.keystroke, window, cx)
+            });
+            if !handled
+                && key_from_keystroke(&event.keystroke).is_some_and(|key| Self::is_ctrl_c(&key))
+            {
+                self.interrupt(cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.input.read(cx).owns_focus(window, cx) {
             return;
         }

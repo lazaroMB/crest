@@ -57,6 +57,15 @@ pub fn status_label(status: ToolStatus) -> &'static str {
     }
 }
 
+/// The text recorded when a call was denied, shown on the collapsed row.
+/// Empty output is left out.
+fn denial_note(status: ToolStatus, output: Option<&str>) -> Option<&str> {
+    if status != ToolStatus::Denied {
+        return None;
+    }
+    output.map(str::trim).filter(|text| !text.is_empty())
+}
+
 /// One-line summary of a tool call: `name · key arguments · status`. The
 /// arguments part is left out when the summary is empty.
 pub fn tool_call_line(name: &str, summary: &str, status: ToolStatus) -> String {
@@ -208,6 +217,18 @@ fn render_tool_call(
                 .child(status_label(status)),
         );
     if !expanded {
+        if let Some(note) = denial_note(status, output) {
+            line = line
+                .child(div().text_color(theme.muted_foreground).child("·"))
+                .child(
+                    div()
+                        .text_color(status_color(status, cx))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(note.to_owned())),
+                );
+        }
         return line.into_any_element();
     }
     let input = serde_json::to_string_pretty(input).unwrap_or_default();
@@ -251,6 +272,17 @@ fn render_error(message: &str, hint: Option<&str>, cx: &App) -> AnyElement {
 mod tests {
     use super::*;
     use domain::block::Block;
+
+    #[test]
+    fn a_denial_shows_its_recorded_reason() {
+        assert_eq!(
+            denial_note(ToolStatus::Denied, Some("denied by user: no")),
+            Some("denied by user: no")
+        );
+        assert_eq!(denial_note(ToolStatus::Denied, Some("  ")), None);
+        assert_eq!(denial_note(ToolStatus::Succeeded, Some("ok")), None);
+        assert_eq!(denial_note(ToolStatus::Denied, None), None);
+    }
 
     #[test]
     fn tool_line_shows_name_args_and_status() {

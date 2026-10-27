@@ -16,7 +16,9 @@
 #
 # Windows runs cargo directly: `make ci` and its doctor, architecture and
 # install checks are bash scripts, already covered by the Unix jobs. rg and
-# fzf come from Chocolatey (preinstalled on the image); git is there too.
+# fzf come from Chocolatey; git is already on the image. Chocolatey's bin
+# directory is written to GITHUB_PATH, because a later step does not inherit
+# the PATH change from `choco install`.
 
 name: CI
 
@@ -88,7 +90,28 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install rg and fzf
-        run: choco install ripgrep fzf --no-progress --yes
+        shell: pwsh
+        run: |
+          choco install ripgrep fzf --no-progress --yes
+          $bins = @(
+            "$env:ProgramData\chocolatey\bin",
+            $(if ($env:ChocolateyInstall) { Join-Path $env:ChocolateyInstall 'bin' })
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          foreach ($dir in $bins) {
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
+            $env:Path = "$dir;$env:Path"
+          }
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue) -or -not (Get-Command fzf -ErrorAction SilentlyContinue)) {
+            winget install --id BurntSushi.ripgrep.MSVC -e --accept-source-agreements --accept-package-agreements
+            winget install --id junegunn.fzf -e --accept-source-agreements --accept-package-agreements
+            $links = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
+            if (Test-Path $links) {
+              Add-Content -Path $env:GITHUB_PATH -Value $links
+              $env:Path = "$links;$env:Path"
+            }
+          }
+          rg --version
+          fzf --version
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
