@@ -3298,6 +3298,40 @@ expression: "schemars::schema_for!(Block)"
           ]
         },
         {
+          "description": "A calendar date, `YYYY-MM-DD`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "date"
+            },
+            "default": {
+              "description": "Initial date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "min": {
+              "description": "Earliest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max": {
+              "description": "Latest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "A checkbox.",
           "type": "object",
           "properties": {

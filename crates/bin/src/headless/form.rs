@@ -64,6 +64,7 @@ fn parse(kind: &FieldKind, line: &str) -> Result<Value, String> {
     let text = line.trim();
     let value = match kind {
         FieldKind::String { .. } | FieldKind::Multiline { .. } => Value::String(line.to_owned()),
+        FieldKind::Date { .. } => Value::String(text.to_owned()),
         FieldKind::Number { .. } => text
             .parse::<f64>()
             .ok()
@@ -103,9 +104,9 @@ fn parse(kind: &FieldKind, line: &str) -> Result<Value, String> {
 /// The default of `kind` as a value, if it has one.
 fn default_value(kind: &FieldKind) -> Option<Value> {
     match kind {
-        FieldKind::String { default, .. } | FieldKind::Multiline { default, .. } => {
-            default.clone().map(Value::String)
-        }
+        FieldKind::String { default, .. }
+        | FieldKind::Multiline { default, .. }
+        | FieldKind::Date { default, .. } => default.clone().map(Value::String),
         FieldKind::Number { default, .. } => default
             .and_then(serde_json::Number::from_f64)
             .map(Value::Number),
@@ -206,6 +207,7 @@ impl StdinForm {
             FieldKind::MultiEnum { .. } => "numbers or values, separated by commas",
             FieldKind::Number { .. } => "number",
             FieldKind::Integer { .. } => "whole number",
+            FieldKind::Date { .. } => "date YYYY-MM-DD",
             FieldKind::String { .. } => "text",
         };
         let default = default_text(&field.kind)
@@ -316,7 +318,8 @@ mod tests {
                  "options": [{"value": "welch", "label": "Welch t"}, {"value": "student"}]},
                 {"name": "plots", "type": "multi_enum",
                  "options": [{"value": "qq"}, {"value": "hist"}]},
-                {"name": "notes", "type": "multiline"}
+                {"name": "notes", "type": "multiline"},
+                {"name": "due", "type": "date", "min": "2024-01-01"}
             ]
         }))
         .unwrap();
@@ -338,11 +341,13 @@ mod tests {
 
     #[tokio::test]
     async fn asks_each_field_and_explains_bad_values() {
-        let (form, buf) = stdin_form("\nrun 1\n12\n\nmaybe\ny\n2\nqq, 2,hist\nfirst\nsecond\n.\n");
+        let (form, buf) = stdin_form(
+            "\nrun 1\n12\n\nmaybe\ny\n2\nqq, 2,hist\nfirst\nsecond\n.\n2023-12-31\n2024-03-05\n",
+        );
         let response = form.ask(request()).await;
         let expected: BTreeMap<String, Value> = serde_json::from_value(json!({
             "label": "run 1", "n": 2, "paired": true, "test": "student",
-            "plots": ["qq", "hist"], "notes": "first\nsecond"
+            "plots": ["qq", "hist"], "notes": "first\nsecond", "due": "2024-03-05"
         }))
         .unwrap();
         assert_eq!(response, FormResponse::Submitted { answer: expected });
@@ -357,6 +362,8 @@ mod tests {
         assert!(text.contains("Answer yes or no"), "{text}");
         assert!(text.contains("1) Welch t (welch)"), "{text}");
         assert!(text.contains("default 2"), "{text}");
+        assert!(text.contains("(date YYYY-MM-DD)"), "{text}");
+        assert!(text.contains("Pick a date from 2024-01-01"), "{text}");
     }
 
     #[tokio::test]

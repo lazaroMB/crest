@@ -56,8 +56,9 @@ with bounds, yes/no, short or long text) instead of asking in prose. `schema` is
 object: `properties` are the fields in display order and `required` lists the mandatory ones. \
 Each property has `type` string, number, integer, boolean or array, plus optional `title` (the \
 label), `description` and `default`. Strings take `minLength`/`maxLength` (whole numbers) and \
-`format: \"multiline\"` for long text (`email`, `uri` and `date-time` are shown as text); \
-numbers and integers take `minimum`/`maximum`; one choice is a string with `enum` (labels in \
+`format: \"multiline\"` for long text; `format: \"date\"` shows a date picker and returns \
+`YYYY-MM-DD`, bounded by `formatMinimum`/`formatMaximum` (`email`, `uri` and `date-time` are \
+shown as text); numbers and integers take `minimum`/`maximum`; one choice is a string with `enum` (labels in \
 `enumNames`) or `oneOf: [{const, title}]`; several choices are `{type: \"array\", items: \
 {type: \"string\", enum: [...]}}` with `minItems`/`maxItems` (whole numbers). Annotations \
 such as `examples`, `pattern` or `readOnly` are accepted but not enforced; nested objects, \

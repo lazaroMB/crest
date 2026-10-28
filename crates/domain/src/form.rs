@@ -1,9 +1,9 @@
 //! A form the model asks the user to fill (`ask_user`).
 //!
 //! The fields are a subset of JSON Schema, close to MCP elicitation's
-//! `requestedSchema`: text (one line or several), number, integer, boolean,
-//! one choice and several choices, each with a label, a description, a
-//! default and bounds. The block keeps its state: pending while the tool
+//! `requestedSchema`: text (one line or several), number, integer, date,
+//! boolean, one choice and several choices, each with a label, a
+//! description, a default and bounds. The block keeps its state: pending while the tool
 //! waits, then the submitted answer or a cancellation.
 
 use std::collections::{BTreeMap, HashSet};
@@ -120,6 +120,18 @@ pub enum FieldKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<i64>,
     },
+    /// A calendar date, `YYYY-MM-DD`.
+    Date {
+        /// Initial date.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        /// Earliest accepted date.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<String>,
+        /// Latest accepted date.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<String>,
+    },
     /// A checkbox.
     Boolean {
         /// Initial state.
@@ -165,6 +177,34 @@ fn invalid(reason: String) -> BlockError {
         kind: "form",
         reason,
     }
+}
+
+/// Whether `s` is a calendar date written `YYYY-MM-DD` (proleptic
+/// Gregorian: `2024-02-29` is a date, `2023-02-29` is not). Dates written
+/// so compare as text, which is what the bounds rely on.
+#[must_use]
+pub fn is_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 10 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
+        return false;
+    }
+    let digits = |range: std::ops::Range<usize>| -> Option<u32> {
+        s.get(range)
+            .filter(|part| part.bytes().all(|c| c.is_ascii_digit()))
+            .and_then(|part| part.parse().ok())
+    };
+    let (Some(year), Some(month), Some(day)) = (digits(0..4), digits(5..7), digits(8..10)) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
 }
 
 fn ordered<T: PartialOrd + Copy>(min: Option<T>, value: Option<T>, max: Option<T>) -> bool {
@@ -259,6 +299,18 @@ impl FormField {
                     && ordered(*min, *default, *max)
             }
             FieldKind::Integer { default, min, max } => ordered(*min, *default, *max),
+            FieldKind::Date { default, min, max } => {
+                if let Some(bad) = [default, min, max]
+                    .into_iter()
+                    .flatten()
+                    .find(|d| !is_iso_date(d))
+                {
+                    return Err(invalid(format!(
+                        "field {name:?} has date {bad:?}, which is not YYYY-MM-DD"
+                    )));
+                }
+                ordered(min.as_deref(), default.as_deref(), max.as_deref())
+            }
             FieldKind::Boolean { .. } => true,
             FieldKind::Enum { options, default } => {
                 check_options(name, options)?;
@@ -346,6 +398,12 @@ impl FieldKind {
                 Some(b) => format!("Enter a whole number {}", of(b)),
                 None => "Enter a whole number".to_owned(),
             },
+            Self::Date { min, max, .. } => match (min, max) {
+                (Some(min), Some(max)) => format!("Pick a date between {min} and {max}"),
+                (Some(min), None) => format!("Pick a date from {min}"),
+                (None, Some(max)) => format!("Pick a date up to {max}"),
+                (None, None) => "Pick a date (YYYY-MM-DD)".to_owned(),
+            },
             Self::Boolean { .. } => "Answer yes or no".to_owned(),
             Self::Enum { .. } => "Pick one of the options".to_owned(),
             Self::MultiEnum {
@@ -380,6 +438,9 @@ impl FieldKind {
                 .is_some_and(|v| v.is_finite() && ordered(*min, Some(v), *max)),
             (Self::Integer { min, max, .. }, Value::Number(n)) => {
                 n.as_i64().is_some_and(|v| ordered(*min, Some(v), *max))
+            }
+            (Self::Date { min, max, .. }, Value::String(s)) => {
+                is_iso_date(s) && ordered(min.as_deref(), Some(s.as_str()), max.as_deref())
             }
             (Self::Boolean { .. }, Value::Bool(_)) => true,
             (Self::Enum { options, .. }, Value::String(s)) => options.iter().any(|o| &o.value == s),
@@ -421,10 +482,33 @@ mod tests {
                 {"name": "test", "type": "enum", "default": "welch",
                  "options": [{"value": "welch", "label": "Welch t"}, {"value": "student"}]},
                 {"name": "plots", "type": "multi_enum", "max_items": 2,
-                 "options": [{"value": "qq"}, {"value": "hist"}, {"value": "box"}]}
+                 "options": [{"value": "qq"}, {"value": "hist"}, {"value": "box"}]},
+                {"name": "due", "type": "date", "min": "2024-01-01", "max": "2024-12-31"}
             ]
         }))
         .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn iso_dates_are_real_calendar_days() {
+        for good in ["2024-02-29", "2000-02-29", "1999-12-31", "2026-04-30"] {
+            assert!(is_iso_date(good), "{good}");
+        }
+        for bad in [
+            "2023-02-29",
+            "1900-02-29",
+            "2024-04-31",
+            "2024-13-01",
+            "2024-00-10",
+            "2024-1-5",
+            "24-01-05",
+            "2024/01/05",
+            "2024-01-05T00:00",
+            "yesterday",
+            "",
+        ] {
+            assert!(!is_iso_date(bad), "{bad}");
+        }
     }
 
     #[test]
@@ -436,6 +520,7 @@ mod tests {
         let value = serde_json::to_value(&form).unwrap();
         assert_eq!(value["fields"][0]["type"], "string");
         assert_eq!(value["fields"][0]["required"], true);
+        assert_eq!(value["fields"][7]["type"], "date");
         let back: FormSpec = serde_json::from_value(value).unwrap();
         assert_eq!(back, form);
     }
@@ -458,6 +543,20 @@ mod tests {
             default: None,
         };
         assert!(no_options.validate().is_err());
+        let date = |default: &str, min: &str, max: &str| {
+            let mut form = form();
+            form.fields[7].kind = FieldKind::Date {
+                default: Some(default.into()),
+                min: Some(min.into()),
+                max: Some(max.into()),
+            };
+            form.validate()
+        };
+        assert_eq!(date("2024-06-01", "2024-01-01", "2024-12-31"), Ok(()));
+        assert!(date("2025-01-01", "2024-01-01", "2024-12-31").is_err());
+        assert!(date("2024-06-01", "2024-12-31", "2024-01-01").is_err());
+        let err = date("yesterday", "2024-01-01", "2024-12-31").unwrap_err();
+        assert!(err.to_string().contains("YYYY-MM-DD"), "{err}");
     }
 
     #[test]
@@ -467,7 +566,8 @@ mod tests {
             serde_json::from_value(v).unwrap_or_else(|e| panic!("{e}"))
         };
         let good = answer(json!({"label": "a", "alpha": 0.1, "n": 3, "paired": true,
-                                 "test": "student", "plots": ["qq", "box"]}));
+                                 "test": "student", "plots": ["qq", "box"],
+                                 "due": "2024-02-29"}));
         assert_eq!(form.check_answer(&good), Ok(()));
         for bad in [
             json!({"alpha": 0.1}),
@@ -477,6 +577,10 @@ mod tests {
             json!({"label": "a", "test": "other"}),
             json!({"label": "a", "plots": ["qq", "hist", "box"]}),
             json!({"label": "a", "extra": 1}),
+            json!({"label": "a", "due": "2023-02-29"}),
+            json!({"label": "a", "due": "2024-1-5"}),
+            json!({"label": "a", "due": "2025-01-01"}),
+            json!({"label": "a", "due": 20240101}),
         ] {
             assert!(form.check_answer(&answer(bad.clone())).is_err(), "{bad}");
         }
@@ -496,7 +600,20 @@ mod tests {
                 "Answer yes or no",
                 "Pick one of the options",
                 "Pick at most 2 options",
+                "Pick a date between 2024-01-01 and 2024-12-31",
             ]
         );
+        let open = FieldKind::Date {
+            default: None,
+            min: None,
+            max: None,
+        };
+        assert_eq!(open.hint(), "Pick a date (YYYY-MM-DD)");
+        let from = FieldKind::Date {
+            default: None,
+            min: Some("2024-01-01".into()),
+            max: None,
+        };
+        assert_eq!(from.hint(), "Pick a date from 2024-01-01");
     }
 }

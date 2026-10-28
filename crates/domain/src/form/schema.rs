@@ -5,9 +5,11 @@
 //! one of:
 //!
 //! - `{"type": "string"}`, with `minLength` / `maxLength`; with
-//!   `"format": "multiline"` (or `"x-multiline": true`) it is a text area.
-//!   The formats `email`, `uri`, `date` and `date-time` are accepted and
-//!   shown as plain text;
+//!   `"format": "multiline"` (or `"x-multiline": true`) it is a text area;
+//!   with `"format": "date"` a date picker, bounded by `formatMinimum` /
+//!   `formatMaximum` (or `minimum` / `maximum` given as dates). The
+//!   formats `email`, `uri` and `date-time` are accepted and shown as
+//!   plain text;
 //! - `{"type": "number"}` or `{"type": "integer"}`, with `minimum` /
 //!   `maximum`;
 //! - `{"type": "boolean"}`;
@@ -88,6 +90,8 @@ const PROPERTY_KEYS: &[&str] = &[
     "exclusiveMaximum",
     "minLength",
     "maxLength",
+    "formatMinimum",
+    "formatMaximum",
     "items",
     "minItems",
     "maxItems",
@@ -117,7 +121,7 @@ fn ignored(key: &str) -> bool {
 }
 
 /// String formats shown as one line of plain text.
-const PLAIN_FORMATS: &[&str] = &["email", "uri", "date", "date-time"];
+const PLAIN_FORMATS: &[&str] = &["email", "uri", "date-time"];
 
 /// The fields of the object schema `schema`, in the order of its
 /// `properties`.
@@ -391,12 +395,13 @@ fn string(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaErro
         (_, Some(Value::Bool(false)) | None) => match object.get("format") {
             None | Some(Value::Null) => false,
             Some(Value::String(format)) if format == "multiline" => true,
+            Some(Value::String(format)) if format == "date" => false,
             Some(Value::String(format)) if PLAIN_FORMATS.contains(&format.as_str()) => false,
             Some(other) => {
                 return Err(error(
                     at,
                     format!(
-                        "format {other} is not supported (use multiline, email, uri, date or \
+                        "format {other} is not supported (use multiline, date, email, uri or \
                          date-time)"
                     ),
                 ));
@@ -413,6 +418,16 @@ fn string(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaErro
         return Ok(FieldKind::Multiline {
             default,
             max_length: count(at, object, "maxLength")?,
+        });
+    }
+    if object.get("format").and_then(Value::as_str) == Some("date") {
+        // ajv's `formatMinimum`, or `minimum` written as a date; anything
+        // else there is ignored like any misplaced key.
+        let date = |key: &str| object.get(key).and_then(Value::as_str).map(str::to_owned);
+        return Ok(FieldKind::Date {
+            default,
+            min: date("formatMinimum").or_else(|| date("minimum")),
+            max: date("formatMaximum").or_else(|| date("maximum")),
         });
     }
     Ok(FieldKind::String {
@@ -802,6 +817,36 @@ mod tests {
         }))
         .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(fields.len(), 1);
+    }
+
+    #[test]
+    fn date_formats_become_date_fields_with_their_bounds() {
+        assert_eq!(
+            one(
+                json!({"type": "string", "format": "date", "formatMinimum": "2024-01-01",
+                       "default": "2024-06-01"})
+            ),
+            FieldKind::Date {
+                default: Some("2024-06-01".into()),
+                min: Some("2024-01-01".into()),
+                max: None
+            }
+        );
+        assert_eq!(
+            one(
+                json!({"type": "string", "format": "date", "minimum": "2024-01-01",
+                       "maximum": "2024-12-31"})
+            ),
+            FieldKind::Date {
+                default: None,
+                min: Some("2024-01-01".into()),
+                max: Some("2024-12-31".into())
+            }
+        );
+        assert!(matches!(
+            one(json!({"type": "string", "format": "date-time"})),
+            FieldKind::String { .. }
+        ));
     }
 
     #[test]

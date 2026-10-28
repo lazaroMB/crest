@@ -217,6 +217,9 @@ impl FormView {
                 window,
                 cx,
             ),
+            FieldKind::Date { default, .. } => {
+                line(default.clone().unwrap_or_default(), window, cx)
+            }
             FieldKind::Multiline { default, .. } => {
                 let text = default.clone().unwrap_or_default();
                 FieldInput::Area(cx.new(|cx| {
