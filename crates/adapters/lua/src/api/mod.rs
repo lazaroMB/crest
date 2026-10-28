@@ -2,14 +2,18 @@
 //! `app.tools.register` ([`tools`]), `app.on` ([`hooks`]), the block
 //! constructors of `app.ui` ([`ui`], with the CSV reader in [`csv`]), the
 //! modal windows of `app.modal` ([`modal`]), the MCP servers of `app.mcp`
-//! ([`mcp`]), `app.keymap.set` / `app.commands.register` ([`keymap`]) and
-//! the statistics engine of `app.compute` ([`compute`]).
+//! ([`mcp`]), `app.keymap.set` / `app.commands.register` ([`keymap`]),
+//! the statistics engine of `app.compute` ([`compute`]), the file-format
+//! blocks of `app.formats` ([`formats`]) and the forms of `app.ask`
+//! ([`ask`]).
 //!
 //! The declarative rest of the `app` table (options, models) lives in the
 //! config loader.
 
+pub(crate) mod ask;
 pub(crate) mod compute;
 pub(crate) mod csv;
+pub(crate) mod formats;
 pub(crate) mod hooks;
 pub(crate) mod keymap;
 pub(crate) mod mcp;

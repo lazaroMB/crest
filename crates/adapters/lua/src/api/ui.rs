@@ -38,11 +38,16 @@
 //! | `filter_list{ title, columns, items, facets, follow }` | records with a text or `/regex/` filter and chips |
 //! | `tree{ title, columns, nodes, expand_depth }` | nested rows with typed columns (`text`, `number`, `duration`, `bar`), badges and inline bars |
 //! | `timeline{ title, unit, rows, range }` | rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`) |
+//!
+//! `app.ui.plate{ format, wells, value_label, title, ... }` (the fields of
+//! `show_plate`) is not a node but a whole block, already wrapped like
+//! `app.ui.block`: return it from a handler to show the plate map.
 
 use std::sync::Arc;
 
 use application::ports::plugin::PluginOutput;
 use domain::block::{BlockKind, CustomNode};
+use domain::science::PlateSpec;
 use mlua::{Lua, Table, Value};
 use serde_json::{Value as Json, json};
 
@@ -310,6 +315,19 @@ fn csv_node(text: &str, opts: Option<Table>) -> mlua::Result<CustomNode> {
     Ok(CustomNode::Table(spec))
 }
 
+/// `app.ui.plate{...}`: a plate map block, wrapped like `app.ui.block`.
+fn plate_block(lua: &Lua, def: Table) -> mlua::Result<Value> {
+    let mut json = convert::to_json(lua, Value::Table(def))?;
+    if let Some(wells) = json.get_mut("wells")
+        && wells.as_object().is_some_and(serde_json::Map::is_empty)
+    {
+        *wells = json!([]);
+    }
+    let spec: PlateSpec = serde_json::from_value(json).map_err(|e| error("plate", e))?;
+    spec.validate().map_err(|e| error("plate", e))?;
+    super::formats::block_value(lua, &BlockKind::Plate(spec))
+}
+
 /// Builds the `app.ui` table of one phase; blocks are attributed to the
 /// phase's plugin.
 pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
@@ -424,6 +442,10 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         lua.create_function(|lua, (text, opts): (String, Option<Table>)| {
             to_lua(lua, &csv_node(&text, opts)?)
         })?,
+    )?;
+    ui.set(
+        "plate",
+        lua.create_function(|lua, def: Table| plate_block(lua, def))?,
     )?;
     let plugin = origin.plugin.clone();
     ui.set(

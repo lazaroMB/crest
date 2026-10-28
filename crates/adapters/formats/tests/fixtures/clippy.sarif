@@ -34,6 +34,22 @@
                 "region": { "startLine": 7, "endLine": 7, "snippet": { "text": "let x = f().unwrap();" } }
               }
             }
+          ],
+          "fixes": [
+            {
+              "description": { "text": "use `?`" },
+              "artifactChanges": [
+                {
+                  "artifactLocation": { "uri": "src/main.rs", "uriBaseId": "SRCROOT" },
+                  "replacements": [
+                    {
+                      "deletedRegion": { "startLine": 7, "startColumn": 16, "endLine": 7, "endColumn": 25 },
+                      "insertedContent": { "text": "?" }
+                    }
+                  ]
+                }
+              ]
+            }
           ]
         },
         {

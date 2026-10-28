@@ -4,14 +4,14 @@ expression: "definition(ShowTestReportTool::new(ports.clone()))"
 ---
 {
   "name": "show_test_report",
-  "description": "Shows a JUnit XML test report of the workspace as a test report in the user's timeline: totals by outcome, failures first with their message and stack trace, durations and links to the test files. Most runners write one (cargo nextest `--profile ci`, pytest `--junitxml`, Maven Surefire, Jest/Vitest junit reporters, gotestsum `--junitfile`). Returns the totals and the failing tests with their locations: do not repeat the report in your reply.",
+  "description": "Shows a test report of the workspace (JUnit XML, or libtest / nextest JSON lines) as a test report in the user's timeline: totals by outcome, failures first with their message and stack trace, durations and links to the test files. Most runners write JUnit (cargo nextest `--profile ci`, pytest `--junitxml`, Maven Surefire, Jest/Vitest junit reporters, gotestsum `--junitfile`); for cargo, redirect the JSON event stream to a file. Returns the totals and the failing tests with their locations: do not repeat the report in your reply.",
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "path": {
         "type": "string",
-        "description": "A JUnit XML report of the workspace, e.g.\n`target/nextest/default/junit.xml` or `reports/pytest.xml`."
+        "description": "A test report of the workspace: JUnit XML, e.g.\n`target/nextest/default/junit.xml` or `reports/pytest.xml`, or the\nJSON lines of `cargo test -- -Z unstable-options --format json` /\n`cargo nextest run --message-format libtest-json` saved to a file."
       },
       "title": {
         "type": [

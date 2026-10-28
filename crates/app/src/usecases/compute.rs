@@ -29,6 +29,10 @@ pub const INPUT_CHANGED: &str = "input_changed";
 /// given, so a recompute reads the file the same way.
 pub const DELIMITER_PARAM: &str = "delimiter";
 
+/// Code of the warning `stats_test` adds from a session's third test on
+/// (see `tools::compute::TestTally`); a recompute keeps it.
+pub const SESSION_TESTS_WARNING: &str = "multiple_comparisons";
+
 /// Runs a job somewhere it may block (a blocking thread pool).
 pub type Offload = Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
 
@@ -157,6 +161,17 @@ pub async fn recompute(
             computed.status = ComputedStatus::Warning;
         }
     }
+    // The session-wide multiple-testing warning is the tool's, not the
+    // engine's: it stays with the test.
+    for kept in envelope
+        .warnings
+        .iter()
+        .filter(|w| w.code == SESSION_TESTS_WARNING)
+    {
+        if computed.warnings.iter().all(|w| w.code != kept.code) {
+            computed.warnings.push(kept.clone());
+        }
+    }
     if let Some(delimiter) = envelope.method.params.get(DELIMITER_PARAM) {
         computed
             .method
@@ -238,6 +253,31 @@ mod tests {
             .find(|w| w.code == INPUT_CHANGED)
             .unwrap();
         assert!(warning.text.contains("fake:"), "{}", warning.text);
+    }
+
+    #[tokio::test]
+    async fn recompute_keeps_the_session_tests_warning() {
+        let engine = Arc::new(FakeCompute::new());
+        let request = crate::ports::compute::DescribeRequest {
+            data: DataSet::default(),
+            variables: Vec::new(),
+            by: None,
+        };
+        let (mut envelope, _) = engine.describe(&request).unwrap();
+        envelope.warnings.push(ComputedWarning {
+            code: SESSION_TESTS_WARNING.into(),
+            severity: WarningSeverity::Warn,
+            text: "this is hypothesis test 3 of this session".into(),
+        });
+        let (again, _) = recompute(engine, None, &inline_offload(), &envelope, "user")
+            .await
+            .unwrap();
+        let kept: Vec<_> = again
+            .warnings
+            .iter()
+            .filter(|w| w.code == SESSION_TESTS_WARNING)
+            .collect();
+        assert_eq!(kept.len(), 1);
     }
 
     #[test]

@@ -80,6 +80,21 @@ expression: definition(ShowPlotTool)
         },
         "description": "Numeric (x, y) points drawn as `scatter` or a `line`, e.g. measured\ndata next to a model curve.",
         "default": []
+      },
+      "x_scale": {
+        "$ref": "#/$defs/AxisScale",
+        "description": "`log` draws an axis in decades (only positive values show; others\nare skipped with a note), for data spanning orders of magnitude.",
+        "default": "linear"
+      },
+      "y_scale": {
+        "$ref": "#/$defs/AxisScale",
+        "description": "`log` for a logarithmic y axis, as for `x_scale`.",
+        "default": "linear"
+      },
+      "aspect": {
+        "$ref": "#/$defs/PlotAspect",
+        "description": "`equal` keeps one unit as long on both axes, so circles and angles\nlook right (geometry, phase portraits).",
+        "default": "auto"
       }
     },
     "description": "Input of `show_plot`.",
@@ -258,6 +273,36 @@ expression: definition(ShowPlotTool)
           }
         ],
         "description": "How an [`XySeries`] is drawn."
+      },
+      "AxisScale": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "linear",
+            "description": "Equal steps for equal differences."
+          },
+          {
+            "type": "string",
+            "const": "log",
+            "description": "Equal steps for equal ratios (base 10); only positive values show."
+          }
+        ],
+        "description": "How an axis maps values to positions."
+      },
+      "PlotAspect": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "auto",
+            "description": "Height follows the width."
+          },
+          {
+            "type": "string",
+            "const": "equal",
+            "description": "One unit (axis unit, so a decade on a log axis) is as long on both\naxes: circles stay round."
+          }
+        ],
+        "description": "The shape of a plot area."
       }
     }
   }

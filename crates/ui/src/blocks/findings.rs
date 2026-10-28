@@ -10,6 +10,9 @@
 //! - Each finding: severity, line (a link to the file at that line), rule
 //!   id, message, the source snippet in the monospace font and a `docs`
 //!   link to the rule's help page (http and https only).
+//! - A suggested fix: its description and the diff the tool made from the
+//!   SARIF replacements ([`super::diff::render_unified`]), or the edits in
+//!   words when the tool could not read the file.
 //!
 //! The view is an entity per block ([`super::block_state`]). At most
 //! [`MAX_ROWS`] findings are drawn at once.
@@ -394,8 +397,70 @@ impl FindingsView {
                     .child(SharedString::from(snippet.trim_end().to_owned())),
             );
         }
+        if let Some(fix) = fix_section(finding, ix, cx) {
+            row = row.child(fix);
+        }
         row.into_any_element()
     }
+}
+
+/// The suggested fix of `finding`: a label (its description and how many
+/// alternatives there are), then the diff, or the first fix's edits in
+/// words.
+fn fix_section(finding: &Finding, ix: usize, cx: &App) -> Option<AnyElement> {
+    let first = finding.fixes.first();
+    if finding.fix.is_none() && first.is_none() {
+        return None;
+    }
+    let theme = cx.theme();
+    let mut label = "fix".to_owned();
+    if let Some(description) = first.and_then(|f| f.description.as_deref()) {
+        label.push_str(": ");
+        label.push_str(description);
+    }
+    if finding.fixes.len() > 1 {
+        label.push_str(&format!(
+            " ({} alternatives, first shown)",
+            finding.fixes.len()
+        ));
+    }
+    let body = match &finding.fix {
+        Some(diff) => div()
+            .w_full()
+            .overflow_x_hidden()
+            .text_xs()
+            .child(super::diff::render_unified(diff, cx))
+            .into_any_element(),
+        None => v_flex()
+            .font_family(theme.mono_font_family.clone())
+            .text_xs()
+            .whitespace_normal()
+            .children(
+                first
+                    .into_iter()
+                    .flat_map(|f| &f.edits)
+                    .map(|edit| div().child(SharedString::from(edit.describe()))),
+            )
+            .into_any_element(),
+    };
+    Some(
+        v_flex()
+            .debug_selector(move || format!("findings-fix-{ix}"))
+            .gap_0p5()
+            .p_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .whitespace_normal()
+                    .child(SharedString::from(label)),
+            )
+            .child(body)
+            .into_any_element(),
+    )
 }
 
 impl Render for FindingsView {
@@ -502,6 +567,7 @@ mod tests {
             snippet: Some("let x = f().unwrap();".into()),
             help_uri: Some("https://rust-lang.github.io/rust-clippy/#unwrap_used".into()),
             fix: None,
+            fixes: Vec::new(),
         }
     }
 
@@ -598,5 +664,45 @@ mod tests {
         draw(cx);
         assert!(cx.debug_bounds("findings-row-2").is_none());
         assert!(cx.debug_bounds("findings-row-3").is_some());
+    }
+
+    #[gpui::test]
+    fn fixes_show_as_a_diff_or_as_edits(cx: &mut TestAppContext) {
+        use domain::report::{FindingFix, FixEdit};
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let fix = FindingFix {
+            description: Some("use `?`".into()),
+            edits: vec![FixEdit {
+                path: "src/a.rs".into(),
+                start_line: Some(2),
+                inserted: "?".into(),
+                ..FixEdit::default()
+            }],
+        };
+        let mut with_diff = finding(Some("src/a.rs"), 2, FindingSeverity::Warning);
+        with_diff.fixes = vec![fix.clone(), fix.clone()];
+        with_diff.fix = Some("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2 +2 @@\n-x\n+?\n".into());
+        let mut edits_only = finding(Some("src/b.rs"), 2, FindingSeverity::Warning);
+        edits_only.fixes = vec![fix];
+        let spec = FindingsSpec {
+            tool: None,
+            findings: vec![
+                with_diff,
+                edits_only,
+                finding(None, 1, FindingSeverity::Note),
+            ],
+        };
+        let block = Block::new(BlockKind::Findings(spec));
+        view.update(cx, |view, cx| {
+            view.apply_all([DomainEvent::BlockAdded { block }], cx);
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(900.)), |_, _| {
+            div().size_full().child(view.clone())
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("findings-fix-0").is_some());
+        assert!(cx.debug_bounds("findings-fix-1").is_some());
+        assert!(cx.debug_bounds("findings-fix-2").is_none());
     }
 }

@@ -9,13 +9,15 @@
 //! rule's message string with `{n}` arguments filled in), the first
 //! physical location (with `uriBaseId` resolved through
 //! `originalUriBaseIds` and `file://` URIs turned into paths), the region
-//! snippet and the rule's help URI. Fixes are not converted: SARIF
-//! describes them as byte replacements, not a diff.
+//! snippet, the rule's help URI and the result's `fixes` as
+//! [`FindingFix`] edits (replacements of a region, resolved to paths like
+//! the locations). Turning the edits into a diff needs the files, so the
+//! tool does it.
 
 use std::collections::BTreeMap;
 
 use domain::block::SourceRef;
-use domain::report::{Finding, FindingSeverity, FindingsSpec};
+use domain::report::{Finding, FindingFix, FindingSeverity, FindingsSpec, FixEdit};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -93,6 +95,35 @@ struct SarifResult {
     message: Option<Message>,
     #[serde(default)]
     locations: Vec<Location>,
+    #[serde(default)]
+    fixes: Vec<Fix>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Fix {
+    #[serde(default)]
+    description: Option<Message>,
+    #[serde(default)]
+    artifact_changes: Vec<ArtifactChange>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactChange {
+    #[serde(default)]
+    artifact_location: Option<ArtifactLocation>,
+    #[serde(default)]
+    replacements: Vec<Replacement>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Replacement {
+    #[serde(default)]
+    deleted_region: Option<Region>,
+    #[serde(default)]
+    inserted_content: Option<Snippet>,
 }
 
 #[derive(Deserialize)]
@@ -149,6 +180,18 @@ struct Region {
     start_line: Option<u32>,
     #[serde(default)]
     end_line: Option<u32>,
+    #[serde(default)]
+    start_column: Option<u32>,
+    #[serde(default)]
+    end_column: Option<u32>,
+    #[serde(default)]
+    char_offset: Option<u64>,
+    #[serde(default)]
+    char_length: Option<u64>,
+    #[serde(default)]
+    byte_offset: Option<u64>,
+    #[serde(default)]
+    byte_length: Option<u64>,
     #[serde(default)]
     snippet: Option<Snippet>,
 }
@@ -269,7 +312,54 @@ fn finding(result: &SarifResult, rules: &[&Rule], run: &Run) -> Finding {
         snippet,
         help_uri: rule.and_then(|r| r.help_uri.clone()),
         fix: None,
+        fixes: result
+            .fixes
+            .iter()
+            .filter_map(|f| fix(f, &run.original_uri_base_ids))
+            .collect(),
     }
+}
+
+/// A SARIF fix as edits; `None` when it changes no file we can name.
+fn fix(fix: &Fix, bases: &BTreeMap<String, ArtifactLocation>) -> Option<FindingFix> {
+    let mut edits = Vec::new();
+    for change in &fix.artifact_changes {
+        let Some(path) = change
+            .artifact_location
+            .as_ref()
+            .and_then(|a| resolve(a, bases))
+        else {
+            continue;
+        };
+        for replacement in &change.replacements {
+            let Some(region) = &replacement.deleted_region else {
+                continue;
+            };
+            edits.push(FixEdit {
+                path: path.clone(),
+                start_line: region.start_line,
+                start_column: region.start_column,
+                end_line: region.end_line,
+                end_column: region.end_column,
+                char_offset: region.char_offset,
+                char_length: region.char_length,
+                byte_offset: region.byte_offset,
+                byte_length: region.byte_length,
+                inserted: replacement
+                    .inserted_content
+                    .as_ref()
+                    .and_then(|c| c.text.clone())
+                    .unwrap_or_default(),
+            });
+        }
+    }
+    (!edits.is_empty()).then(|| FindingFix {
+        description: fix
+            .description
+            .as_ref()
+            .and_then(|m| m.text.clone().or_else(|| m.markdown.clone())),
+        edits,
+    })
 }
 
 /// The message text: its own, else the rule's string `id`, with `{n}`

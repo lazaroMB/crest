@@ -280,8 +280,11 @@ impl Render for ImageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (danger, border, radius) = (theme.danger, theme.border, theme.radius);
-        let svg = super::svg::is_svg(self.media_type.as_deref().unwrap_or_default(), &self.data)
-            .then(|| super::svg::use_svg(&self.data, self.zoom.unwrap_or(1.0), window, cx));
+        let media_type = self.media_type.as_deref().unwrap_or_default();
+        let tint = super::svg::wants_tint(media_type).then(|| super::svg::Tint::from_theme(cx));
+        let svg = super::svg::is_svg(media_type, &self.data).then(|| {
+            super::svg::use_svg_tinted(&self.data, self.zoom.unwrap_or(1.0), tint, window, cx)
+        });
         let is_svg = svg.is_some();
         let (source, natural) = match (svg, &self.decoded) {
             // An SVG rasterized for the zoom level, drawn at its natural

@@ -2,9 +2,9 @@
 //! depiction and a validation strip of values computed from the SMILES.
 //!
 //! - The depiction is chematic's SVG (black bonds and carbons on white,
-//!   CPK heteroatom labels), rasterized off the UI thread
-//!   ([`super::svg`]) and drawn on a light rounded card, so it reads the
-//!   same in a dark theme.
+//!   CPK heteroatom labels), tinted to the theme (bonds in the
+//!   foreground color, no background, CPK colors kept) and rasterized off
+//!   the UI thread ([`super::svg`]), on a bordered card.
 //! - The strip: the formula with subscripts, the molecular weight in
 //!   g/mol, the net charge and the canonical SMILES in the monospace font.
 //! - When the model stated a formula, a chip says whether it matches the
@@ -18,7 +18,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, FontWeight, Hsla, ImageSource, InteractiveElement as _, IntoElement as _,
     ObjectFit, ParentElement as _, SharedString, Styled as _, StyledImage as _, Window, div, img,
-    px, rgb,
+    px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -120,9 +120,10 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         }))
     });
     let data = depiction.read(cx).0.clone();
-    let state = data
-        .as_ref()
-        .map(|data| super::svg::use_svg(data, 1.0, window, cx));
+    let state = data.as_ref().map(|data| {
+        let tint = super::svg::Tint::from_theme(cx);
+        super::svg::use_svg_tinted(data, 1.0, Some(tint), window, cx)
+    });
     let theme = cx.theme();
     let mono = theme.mono_font_family.clone();
     let mut card = v_flex().gap_2().debug_selector(|| "molecule".to_owned());
@@ -165,17 +166,15 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
             .into_any_element(),
         Some(SvgState::Loading) | None => div()
             .text_sm()
-            .text_color(rgb(0x0066_6666))
+            .text_color(theme.muted_foreground)
             .child("drawing…")
             .into_any_element(),
     };
-    // A light card whatever the theme: the depiction is drawn for white.
     card = card.child(
         h_flex().child(
             div()
                 .p_2()
                 .rounded_lg()
-                .bg(rgb(0x00ff_ffff))
                 .border_1()
                 .border_color(theme.border)
                 .child(picture),

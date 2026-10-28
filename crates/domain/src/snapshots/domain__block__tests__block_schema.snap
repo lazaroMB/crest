@@ -1475,6 +1475,36 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "AxisScale": {
+      "description": "How an axis maps values to positions.",
+      "oneOf": [
+        {
+          "description": "Equal steps for equal differences.",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "Equal steps for equal ratios (base 10); only positive values show.",
+          "type": "string",
+          "const": "log"
+        }
+      ]
+    },
+    "PlotAspect": {
+      "description": "The shape of a plot area.",
+      "oneOf": [
+        {
+          "description": "Height follows the width.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "One unit (axis unit, so a decade on a log axis) is as long on both\naxes: circles stay round.",
+          "type": "string",
+          "const": "equal"
+        }
+      ]
+    },
     "PlotSpec": {
       "description": "A plot of functions and series.",
       "type": "object",
@@ -1545,6 +1575,18 @@ expression: "schemars::schema_for!(Block)"
             "$ref": "#/$defs/XySeries"
           },
           "default": []
+        },
+        "x_scale": {
+          "description": "Scale of the x axis.",
+          "$ref": "#/$defs/AxisScale"
+        },
+        "y_scale": {
+          "description": "Scale of the y axis.",
+          "$ref": "#/$defs/AxisScale"
+        },
+        "aspect": {
+          "description": "Shape of the plot area.",
+          "$ref": "#/$defs/PlotAspect"
         }
       }
     },
@@ -4735,11 +4777,18 @@ expression: "schemars::schema_for!(Block)"
           ]
         },
         "fix": {
-          "description": "Suggested fix as a unified diff.",
+          "description": "Suggested fix as a unified diff, made from [`Finding::fixes`]\nagainst the files.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "fixes": {
+          "description": "Suggested fixes as the log describes them (SARIF `fixes`): edits\nof byte or text ranges. Alternatives; the first is the preferred.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FindingFix"
+          }
         }
       },
       "required": [
@@ -4770,6 +4819,119 @@ expression: "schemars::schema_for!(Block)"
           "type": "string",
           "const": "none"
         }
+      ]
+    },
+    "FindingFix": {
+      "description": "A suggested fix: edits of one or more files.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "What it does.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edits": {
+          "description": "The edits, in log order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FixEdit"
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ]
+    },
+    "FixEdit": {
+      "description": "Replaces a range of a file with `inserted` (SARIF `replacement`). The\nrange is given by lines and columns (1-based, the end column\nexclusive; columns count characters), by character offset and length,\nor by byte offset and length.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The file, as the log names it (made workspace-relative by the tool).",
+          "type": "string"
+        },
+        "start_line": {
+          "description": "First line of the range.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start_column": {
+          "description": "First column; 1 when absent.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end_line": {
+          "description": "Last line; `start_line` when absent.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end_column": {
+          "description": "Column after the range; the end of `end_line` when absent.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "char_offset": {
+          "description": "Characters before the range, when given by offset.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "char_length": {
+          "description": "Characters in the range (0 when absent).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "byte_offset": {
+          "description": "Bytes before the range, when given by byte offset.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "byte_length": {
+          "description": "Bytes in the range (0 when absent).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "inserted": {
+          "description": "The new text.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "path"
       ]
     },
     "FindingsSpec": {
@@ -5046,6 +5208,26 @@ expression: "schemars::schema_for!(Block)"
         "well"
       ]
     },
+    "PlateScale": {
+      "description": "The colour scale of a plate map.",
+      "oneOf": [
+        {
+          "description": "Faint at the minimum to solid at the maximum.",
+          "type": "string",
+          "const": "sequential"
+        },
+        {
+          "description": "Two hues away from a centre (fold changes, z-scores, % of control).",
+          "type": "string",
+          "const": "diverging"
+        },
+        {
+          "description": "Sequential over `log10` of the values (concentrations, counts);\nwells at or below 0 are not coloured.",
+          "type": "string",
+          "const": "log"
+        }
+      ]
+    },
     "PlateSpec": {
       "description": "A microplate map: a value and a label per well, drawn as a heatmap.",
       "type": "object",
@@ -5077,6 +5259,18 @@ expression: "schemars::schema_for!(Block)"
           "items": {
             "$ref": "#/$defs/Well"
           }
+        },
+        "scale": {
+          "description": "How values map to colours.",
+          "$ref": "#/$defs/PlateScale"
+        },
+        "center": {
+          "description": "Centre of a diverging scale; 0 when the values straddle 0, else\ntheir median.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [

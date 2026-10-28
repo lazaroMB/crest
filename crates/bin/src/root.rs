@@ -34,6 +34,7 @@ use application::ports::approval::ApprovalPort;
 use application::ports::checkpoint::TurnCheckpointPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::form::FormPort;
+use application::ports::formats::FormatsPort;
 use application::ports::fs::FileSystemPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
@@ -643,21 +644,29 @@ pub async fn build_app(
     register_form_tool(&mut tools, Arc::clone(&frontend.form)).context("tool registration")?;
     let compute = compute_ports(Arc::clone(&fs));
     register_compute_tools(&mut tools, &compute).context("tool registration")?;
+    let formats: Arc<dyn FormatsPort> = Arc::new(Formats::new());
     register_format_tools(
         &mut tools,
         &FormatToolPorts {
-            formats: Arc::new(Formats::new()),
+            formats: Arc::clone(&formats),
             fs: Arc::clone(&compute.fs),
             offload: Arc::clone(&compute.offload),
         },
     )
     .context("tool registration")?;
-    if let Some(host) = &plugins
-        && let Err(err) = host
+    if let Some(host) = &plugins {
+        if let Err(err) = host
             .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
             .await
-    {
-        warnings.push(format!("app.compute unavailable: {err}"));
+        {
+            warnings.push(format!("app.compute unavailable: {err}"));
+        }
+        if let Err(err) = host.provide_formats(formats, Arc::clone(&compute.fs)).await {
+            warnings.push(format!("app.formats unavailable: {err}"));
+        }
+        if let Err(err) = host.provide_forms(Arc::clone(&frontend.form)).await {
+            warnings.push(format!("app.ask unavailable: {err}"));
+        }
     }
     if let Some(web) = &web {
         web.register(&mut tools).context("tool registration")?;

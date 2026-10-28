@@ -272,12 +272,12 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Image | [Pasted images](#pasted-images), research workflow, `show_wavedrom` | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. SVG is rasterized off the UI thread at the window's scale (sharper when zoomed). |
 | Computed | `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate`, `calc`, `convert`, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations). |
 | Form | `ask_user` | Typed questions the turn waits on; see [Forms](#forms-ask_user). |
-| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on numeric axes, a slider per parameter; hovering shows a crosshair with the values. |
+| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on linear or log axes, a slider per parameter; hovering shows a crosshair with the values and a dot per layer. |
 | Test report | `show_test_report` | Totals by outcome, failures first; a click on a chip filters, on a case shows its trace, on its location opens the file. |
-| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page. |
-| Dataset | `show_dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
-| Molecule | `show_molecule` | 2D structure on a light card and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
-| Plate | `show_plate` | A 96- or 384-well heatmap with a legend; each well has a tooltip with its name, label and value. |
+| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page, a suggested fix shows as a diff. |
+| Dataset | `show_dataset`, `app.formats.dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
+| Molecule | `show_molecule`, `app.formats.molecule` | 2D structure tinted to the theme and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
+| Plate | `show_plate`, `app.ui.plate` | A 96- or 384-well heatmap with a sequential, diverging or log scale and a legend; each well has a tooltip with its name, label and value. |
 | Error | API, tool or config failures | Message and suggested action. |
 
 In the table, `Enter` means `Ctrl+G o` from the prompt or `o`/`Enter` with the timeline focused, and `t` means `Ctrl+G t` from the prompt or `t` with the timeline focused. `t` only has an effect on Chart, Markdown and Mermaid. `Ctrl+G y` (or `y` with the timeline focused) copies the content of the selected block.
@@ -291,7 +291,7 @@ The model is told never to compute numbers in its head: it calls an engine, and 
 | Tool | What the engine does |
 | --- | --- |
 | `stats_describe` | n, missing, mean, SD, median, quartiles, min/max, skew and kurtosis per variable (and per group with `by`); counts and percentages for categorical columns. |
-| `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). |
+| `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). From the third test of a session every card carries a `multiple_comparisons` warning with the count, suggesting Holm or a pre-registered plan. |
 | `stats_regress` | OLS with coefficients, SE, t, p, CI, standardized β and VIF; R², adjusted R², F, AIC/BIC; Durbin-Watson, Jarque-Bera, Breusch-Pagan, the largest Cook's distance and the condition number as diagnostics. |
 | `stats_correlate` | Pearson, Spearman or Kendall matrix with Holm (default), BH or Bonferroni adjustment. |
 | `calc` | A sheet of named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) evaluated in order by numbat; each line shows its value, unit and dimension, and a unit error appears on its line. |
@@ -320,13 +320,13 @@ When the model needs structured answers it calls `ask_user` with a JSON Schema o
 
 ### Plots, reports, data and lab blocks
 
-- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. Axes are linear.
-- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`). Passed tests are folded into one row.
-- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. Suggested fixes are not shown.
-- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block (white background).
+- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. `x_scale` / `y_scale` take `log` for an axis in decades (values at or below 0 are skipped with a note) and `aspect = "equal"` keeps one unit as long on both axes.
+- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`) or a saved libtest / nextest JSON event stream (`cargo nextest run --message-format libtest-json`). Passed tests are folded into one row.
+- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. A result's first suggested fix is shown as a unified diff when the tool can read the file it edits; otherwise its edits are listed.
+- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block tinted to the theme.
 - **`show_dataset`**: CSV, TSV, JSON lines or Parquet. Text files are read up to 32 MiB (beyond that the profile covers the first rows and says `sampled`), Parquet files up to 256 MiB; Arrow IPC is not supported. The model is told to look at a file this way before running statistics on it.
 - **`show_molecule`**: a structure from SMILES with values computed from it, never from the model. With `claimed_formula` a chip shows whether the model's formula matches; a SMILES that does not parse shows the error (and the model gets it too).
-- **`show_plate`**: a 96- or 384-well plate map; labels are drawn inside the wells of a 96-well plate.
+- **`show_plate`**: a 96- or 384-well plate map. `scale` is `sequential` (default), `diverging` around `center` (fold changes, z-scores; 0 when the values straddle it, else their median) or `log` (concentrations, counts; wells at or below 0 are not coloured). Labels are drawn inside the wells, smaller on a 384-well plate.
 
 ### Plugin modals
 
@@ -527,11 +527,11 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `calc` | `lines` (`name = expr`, in order), `significant_digits` (6) | read |
 | `convert` | `value?`, `from`, `to`, `uncertainty?`, `significant_digits` (6) | read |
 | `ask_user` | `title`, `description?`, `schema` (a JSON Schema object), `submit_label?`: waits for the answer | read |
-| `show_test_report`, `show_findings` | `path` of a JUnit XML / SARIF file (32 MiB at most); `title?` for the report | read |
+| `show_test_report`, `show_findings` | `path` of a JUnit XML or libtest/nextest JSON file / a SARIF file (32 MiB at most); `title?` for the report | read |
 | `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
 | `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |
 | `show_molecule` | `smiles`, `name?`, `claimed_formula?` | read |
-| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?` | read |
+| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?`, `scale?` (`sequential`, `diverging`, `log`), `center?` | read |
 | `web_search` | `query`, `max_results?` (1–10; `app.opt.web.max_results`, 8, by default): title, URL and snippet of each result | network, no approval |
 | `web_fetch` | `url` (http or https): the page as text, with its final URL and title | network, no approval |
 | `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls, with the web tools when they are on) that returns a summary | read |
