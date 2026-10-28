@@ -17,11 +17,16 @@ cask "crest" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :big_sur"
   depends_on formula: ["ripgrep", "fzf"]
+  depends_on :macos
 
   app "crest-#{version}-#{arch}-apple-darwin/crest.app"
   binary "#{appdir}/crest.app/Contents/MacOS/crest"
+
+  zap trash: [
+    "~/.config/crest",
+    "~/.local/share/crest",
+  ]
 
   # Homebrew does not write in your home: the commented init.lua and the
   # example color themes of the tarball stay in the Caskroom.
@@ -33,9 +38,4 @@ cask "crest" do
       cp -n #{staged_path}/crest-#{version}-#{arch}-apple-darwin/config/init.lua ~/.config/crest/
       cp -n #{staged_path}/crest-#{version}-#{arch}-apple-darwin/config/themes/*.lua ~/.config/crest/themes/
   EOS
-
-  zap trash: [
-    "~/.config/crest",
-    "~/.local/share/crest",
-  ]
 end
