@@ -18,10 +18,19 @@
 //!   `minItems` / `maxItems`.
 //!
 //! Every property may have a `title` (the label), a `description` and a
-//! `default`. Anything else (`$ref`, `anyOf`, nested objects, number
-//! enums, exclusive bounds, patterns) is rejected with a [`SchemaError`]
-//! naming the property and what is not supported, so the model can
-//! rewrite the call.
+//! `default`.
+//!
+//! The converter is lenient where a form can be: a round trip to the model
+//! costs more than a key it cannot enforce. Counts and bounds written as
+//! whole floats (`1.0`) are whole numbers; `exclusiveMinimum` /
+//! `exclusiveMaximum` become the next whole number for integers and an
+//! inclusive bound for numbers; `"type": ["string", "null"]` is the
+//! non-null type; annotation keys ([`IGNORED_KEYS`], any `x-*`) and
+//! constraint keys on a field type that does not use them (`minLength` on
+//! an integer) are ignored. What a form cannot show (`$ref`, `anyOf`,
+//! `allOf`, `const`, nested objects, number enums, free lists, unknown
+//! formats) is rejected with a [`SchemaError`] naming the property and
+//! what is not supported, so the model can rewrite the call.
 
 use std::fmt;
 
@@ -75,6 +84,8 @@ const PROPERTY_KEYS: &[&str] = &[
     "x-multiline",
     "minimum",
     "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
     "minLength",
     "maxLength",
     "items",
@@ -82,6 +93,28 @@ const PROPERTY_KEYS: &[&str] = &[
     "maxItems",
     "uniqueItems",
 ];
+
+/// Keys a property may carry that the form neither shows nor enforces:
+/// annotations, and constraints a form cannot check. Ignored, not
+/// rejected.
+const IGNORED_KEYS: &[&str] = &[
+    "examples",
+    "$comment",
+    "$id",
+    "readOnly",
+    "writeOnly",
+    "deprecated",
+    "nullable",
+    "pattern",
+    "multipleOf",
+    "contentMediaType",
+    "contentEncoding",
+];
+
+/// Whether `key` is dropped silently wherever it appears.
+fn ignored(key: &str) -> bool {
+    IGNORED_KEYS.contains(&key) || (key.starts_with("x-") && key != "x-multiline")
+}
 
 /// String formats shown as one line of plain text.
 const PLAIN_FORMATS: &[&str] = &["email", "uri", "date", "date-time"];
@@ -141,7 +174,14 @@ pub fn fields_from_schema(schema: &Value) -> Result<Vec<FormField>, SchemaError>
 }
 
 fn check_keys(at: &str, object: &Map<String, Value>, allowed: &[&str]) -> Result<(), SchemaError> {
-    match object.keys().find(|key| !allowed.contains(&key.as_str())) {
+    match object
+        .keys()
+        .find(|key| !allowed.contains(&key.as_str()) && !ignored(key))
+    {
+        Some(key) if key == "const" => Err(error(
+            at,
+            "`const` is not supported; use `enum` with one value",
+        )),
         Some(key) => Err(error(
             at,
             format!(
@@ -178,25 +218,9 @@ fn field(at: &str, name: &str, property: &Value, required: bool) -> Result<FormF
     })
 }
 
-/// Rejects the keys of `object` that do not apply to a field of `kind`.
-fn only(
-    at: &str,
-    object: &Map<String, Value>,
-    kind: &str,
-    keys: &[&str],
-) -> Result<(), SchemaError> {
-    const COMMON: &[&str] = &["type", "title", "description", "default"];
-    match object
-        .keys()
-        .find(|key| !COMMON.contains(&key.as_str()) && !keys.contains(&key.as_str()))
-    {
-        Some(key) => Err(error(
-            at,
-            format!("`{key}` does not apply to a {kind} field"),
-        )),
-        None => Ok(()),
-    }
-}
+/// What `type` must be.
+const TYPE_HINT: &str = "`type` must be one string (string, number, integer, boolean or array), \
+                         or that string with \"null\"";
 
 fn kind(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaError> {
     let choice = object.contains_key("enum") || object.contains_key("oneOf");
@@ -204,16 +228,21 @@ fn kind(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaError>
         None if choice => "string",
         None => return Err(error(at, "needs a `type`")),
         Some(Value::String(kind)) => kind.as_str(),
-        Some(_) => {
-            return Err(error(
-                at,
-                "`type` must be one string (string, number, integer, boolean or array)",
-            ));
+        // `["string", "null"]`: an optional string.
+        Some(Value::Array(types)) if types.iter().all(Value::is_string) => {
+            let mut named = types
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|t| *t != "null");
+            match (named.next(), named.next()) {
+                (Some(one), None) => one,
+                _ => return Err(error(at, TYPE_HINT)),
+            }
         }
+        Some(_) => return Err(error(at, TYPE_HINT)),
     };
     match declared {
         "string" if choice => {
-            only(at, object, "choice", &["enum", "enumNames", "oneOf"])?;
             let options = options(at, object)?;
             let default = match object.get("default") {
                 None | Some(Value::Null) => None,
@@ -224,40 +253,47 @@ fn kind(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaError>
         }
         "string" => string(at, object),
         "number" | "integer" => {
-            only(at, object, declared, &["minimum", "maximum"])?;
+            // `exclusiveMinimum: true` (draft 4) only qualifies `minimum`.
+            let numeric = |key: &str| match object.get(key) {
+                None | Some(Value::Null | Value::Bool(_)) => None,
+                Some(value) => Some(value),
+            };
             let bound = |key: &str| -> Result<Option<f64>, SchemaError> {
-                match object.get(key) {
-                    None | Some(Value::Null) => Ok(None),
+                match numeric(key) {
+                    None => Ok(None),
                     Some(Value::Number(n)) => Ok(n.as_f64()),
                     Some(_) => Err(error(at, format!("`{key}` must be a number"))),
                 }
             };
             if declared == "number" {
+                // An exclusive bound is kept inclusive: a form cannot show
+                // "more than 0" better than "at least 0".
                 return Ok(FieldKind::Number {
                     default: bound("default")?,
-                    min: bound("minimum")?,
-                    max: bound("maximum")?,
+                    min: bound("minimum")?.or(bound("exclusiveMinimum")?),
+                    max: bound("maximum")?.or(bound("exclusiveMaximum")?),
                 });
             }
             let whole = |key: &str| -> Result<Option<i64>, SchemaError> {
-                match object.get(key) {
-                    None | Some(Value::Null) => Ok(None),
-                    Some(Value::Number(n)) => n
-                        .as_i64()
-                        .or_else(|| n.as_f64().filter(|v| v.fract() == 0.0).map(f64_to_i64))
+                match numeric(key) {
+                    None => Ok(None),
+                    Some(Value::Number(n)) => whole_number(n)
                         .map(Some)
                         .ok_or_else(|| error(at, format!("`{key}` must be a whole number"))),
                     Some(_) => Err(error(at, format!("`{key}` must be a whole number"))),
                 }
             };
+            // The next whole number inside an exclusive bound.
+            let exclusive = |key: &str, step: i64| -> Result<Option<i64>, SchemaError> {
+                Ok(whole(key)?.map(|n| n.saturating_add(step)))
+            };
             Ok(FieldKind::Integer {
                 default: whole("default")?,
-                min: whole("minimum")?,
-                max: whole("maximum")?,
+                min: whole("minimum")?.or(exclusive("exclusiveMinimum", 1)?),
+                max: whole("maximum")?.or(exclusive("exclusiveMaximum", -1)?),
             })
         }
         "boolean" => {
-            only(at, object, "boolean", &[])?;
             let default = match object.get("default") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(b)) => Some(*b),
@@ -266,12 +302,6 @@ fn kind(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaError>
             Ok(FieldKind::Boolean { default })
         }
         "array" => {
-            only(
-                at,
-                object,
-                "array",
-                &["items", "minItems", "maxItems", "uniqueItems"],
-            )?;
             let items = object
                 .get("items")
                 .and_then(Value::as_object)
@@ -335,14 +365,23 @@ fn f64_to_i64(v: f64) -> i64 {
     v as i64
 }
 
+/// `n` as a whole number: an integer, or a float without a fraction
+/// (models often write `1.0`).
+fn whole_number(n: &serde_json::Number) -> Option<i64> {
+    n.as_i64()
+        .or_else(|| n.as_f64().filter(|v| v.fract() == 0.0).map(f64_to_i64))
+}
+
+/// A length or an item count: a whole number ≥ 0.
 fn count(at: &str, object: &Map<String, Value>, key: &str) -> Result<Option<u32>, SchemaError> {
+    let bad = || error(at, format!("`{key}` must be a whole number ≥ 0 (1 or 1.0)"));
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
+        Some(Value::Number(n)) => whole_number(n)
             .and_then(|n| u32::try_from(n).ok())
             .map(Some)
-            .ok_or_else(|| error(at, format!("`{key}` must be a whole number ≥ 0"))),
+            .ok_or_else(bad),
+        Some(_) => Err(bad()),
     }
 }
 
@@ -371,23 +410,11 @@ fn string(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaErro
         Some(_) => return Err(error(at, "`default` must be a string")),
     };
     if multiline {
-        only(
-            at,
-            object,
-            "multiline",
-            &["format", "x-multiline", "maxLength"],
-        )?;
         return Ok(FieldKind::Multiline {
             default,
             max_length: count(at, object, "maxLength")?,
         });
     }
-    only(
-        at,
-        object,
-        "string",
-        &["format", "x-multiline", "minLength", "maxLength"],
-    )?;
     Ok(FieldKind::String {
         default,
         min_length: count(at, object, "minLength")?,
@@ -619,7 +646,7 @@ mod tests {
                 "\"null\"",
             ),
             (
-                json!({"properties": {"a": {"type": ["string", "null"]}}}),
+                json!({"properties": {"a": {"type": ["string", "number"]}}}),
                 "properties.a",
                 "one string",
             ),
@@ -629,9 +656,14 @@ mod tests {
                 "not a string",
             ),
             (
-                json!({"properties": {"a": {"type": "number", "minLength": 2}}}),
+                json!({"properties": {"a": {"const": "x"}}}),
                 "properties.a",
-                "`minLength` does not apply",
+                "`enum` with one value",
+            ),
+            (
+                json!({"properties": {"a": {"allOf": [{"type": "string"}]}}}),
+                "properties.a",
+                "`allOf`",
             ),
             (
                 json!({"properties": {"a": {"type": "integer", "default": 1.5}}}),
@@ -639,14 +671,24 @@ mod tests {
                 "whole number",
             ),
             (
+                json!({"properties": {"a": {"type": "integer", "exclusiveMinimum": 0.5}}}),
+                "properties.a",
+                "whole number",
+            ),
+            (
+                json!({"properties": {"a": {"type": "string", "minLength": 1.5}}}),
+                "properties.a",
+                "1 or 1.0",
+            ),
+            (
+                json!({"properties": {"a": {"type": "string", "minLength": -1}}}),
+                "properties.a",
+                "1 or 1.0",
+            ),
+            (
                 json!({"properties": {"a": {"type": "string", "format": "uuid"}}}),
                 "properties.a",
                 "format",
-            ),
-            (
-                json!({"properties": {"a": {"type": "string", "format": "multiline", "minLength": 1}}}),
-                "properties.a",
-                "`minLength` does not apply to a multiline",
             ),
             (
                 json!({"properties": {"a": {"type": "array", "items": {"type": "string"}}}}),
@@ -674,5 +716,120 @@ mod tests {
             assert_eq!(err.at, at, "{schema}: {err}");
             assert!(err.to_string().contains(needle), "{schema}: {err}");
         }
+    }
+
+    fn one(property: Value) -> FieldKind {
+        convert(json!({"properties": {"a": property}}))
+            .unwrap_or_else(|e| panic!("{e}"))
+            .remove(0)
+            .kind
+    }
+
+    #[test]
+    fn whole_floats_are_counts() {
+        assert_eq!(
+            one(json!({"type": "string", "minLength": 1.0, "maxLength": 20.0})),
+            FieldKind::String {
+                default: None,
+                min_length: Some(1),
+                max_length: Some(20)
+            }
+        );
+        assert_eq!(
+            one(json!({"type": "array", "items": {"enum": ["a", "b"]},
+                       "minItems": 0.0, "maxItems": 2.0})),
+            FieldKind::MultiEnum {
+                options: vec![
+                    FormOption {
+                        value: "a".into(),
+                        label: None
+                    },
+                    FormOption {
+                        value: "b".into(),
+                        label: None
+                    }
+                ],
+                default: Vec::new(),
+                min_items: Some(0),
+                max_items: Some(2)
+            }
+        );
+    }
+
+    #[test]
+    fn nullable_type_arrays_take_the_non_null_type() {
+        assert!(matches!(
+            one(json!({"type": ["string", "null"]})),
+            FieldKind::String { .. }
+        ));
+        assert!(matches!(
+            one(json!({"type": ["null", "integer"], "minimum": 1})),
+            FieldKind::Integer { min: Some(1), .. }
+        ));
+    }
+
+    #[test]
+    fn annotation_and_misplaced_keys_are_ignored() {
+        assert_eq!(
+            one(
+                json!({"type": "integer", "minLength": 1, "pattern": "^a", "examples": [1],
+                       "readOnly": false, "x-order": 2, "$comment": "c", "minimum": 1.0})
+            ),
+            FieldKind::Integer {
+                default: None,
+                min: Some(1),
+                max: None
+            }
+        );
+        assert_eq!(
+            one(
+                json!({"type": "string", "minimum": 0, "format": "multiline", "minLength": 1,
+                       "maxLength": 9})
+            ),
+            FieldKind::Multiline {
+                default: None,
+                max_length: Some(9)
+            }
+        );
+        assert!(matches!(
+            one(json!({"type": "boolean", "minimum": 0, "nullable": true})),
+            FieldKind::Boolean { default: None }
+        ));
+        // Annotations at the top and in `items` too.
+        let fields = convert(json!({
+            "$comment": "c", "examples": [{}],
+            "properties": {"a": {"type": "array", "items": {"enum": ["x"], "examples": ["x"]}}}
+        }))
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(fields.len(), 1);
+    }
+
+    #[test]
+    fn exclusive_bounds_are_coerced() {
+        assert_eq!(
+            one(json!({"type": "integer", "exclusiveMinimum": 0, "exclusiveMaximum": 10.0})),
+            FieldKind::Integer {
+                default: None,
+                min: Some(1),
+                max: Some(9)
+            }
+        );
+        // `minimum` wins over `exclusiveMinimum`; a draft-4 flag is ignored.
+        assert_eq!(
+            one(json!({"type": "integer", "minimum": 5, "exclusiveMinimum": true})),
+            FieldKind::Integer {
+                default: None,
+                min: Some(5),
+                max: None
+            }
+        );
+        assert_eq!(
+            one(json!({"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1.5})),
+            FieldKind::Number {
+                default: None,
+                min: Some(0.0),
+                max: Some(1.5)
+            }
+        );
     }
 }
