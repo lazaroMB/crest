@@ -15,15 +15,17 @@ use std::sync::Arc;
 
 use application::ports::events::NoticeLevel;
 use application::ports::projects::{ProjectBrowserPort, RecentWorkspace};
+use futures::FutureExt as _;
 use futures::future::BoxFuture;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Window, actions, div,
 };
-use gpui_component::ActiveTheme as _;
+use gpui_component::{ActiveTheme as _, h_flex};
 
 use crate::app::{RootView, set_theme, window_title};
+use crate::chats::{ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -39,6 +41,33 @@ pub trait ProjectOpener: Send + Sync {
 
     /// Lists directories for the picker.
     fn browser(&self) -> Arc<dyn ProjectBrowserPort>;
+
+    /// [`Self::open`] for a chosen session. The default opens `dir` and
+    /// ignores `which`.
+    fn open_as(
+        &self,
+        dir: PathBuf,
+        _which: SessionOpen,
+    ) -> BoxFuture<'static, Result<SessionParts, String>> {
+        self.open(dir)
+    }
+
+    /// Projects and their chats, newest first. The default is an empty list.
+    fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
+        futures::future::ready(Vec::new()).boxed()
+    }
+
+    /// Stores `title` on the chat `id`. The default fails.
+    fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
+        let _ = (id, title);
+        futures::future::ready(Err("this window cannot rename chats".into())).boxed()
+    }
+
+    /// Removes the chat `id`. The default fails.
+    fn delete_chat(&self, id: String) -> BoxFuture<'static, Result<(), String>> {
+        let _ = id;
+        futures::future::ready(Err("this window cannot delete chats".into())).boxed()
+    }
 }
 
 /// What the window shows.
@@ -48,7 +77,9 @@ enum Content {
     Session {
         root: Entity<RootView>,
         session: Entity<Session>,
+        chats: Entity<ChatsPanel>,
         dir: PathBuf,
+        session_id: Option<String>,
     },
 }
 
@@ -178,18 +209,19 @@ impl Workbench {
 
     /// Opens the project at `dir`; on failure the picker comes back.
     pub fn open(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_with_notice(dir, None, window, cx);
+        self.open_with_notice(dir, SessionOpen::Latest, None, window, cx);
     }
 
     /// [`Self::open`], showing `notice` in the new session.
     fn open_with_notice(
         &mut self,
         dir: PathBuf,
+        which: SessionOpen,
         notice: Option<(NoticeLevel, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let opening = self.opener.open(dir.clone());
+        let opening = self.opener.open_as(dir.clone(), which);
         self.content = Content::Opening(dir.clone());
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
@@ -220,23 +252,236 @@ impl Workbench {
     ) {
         window.set_window_title(&window_title(&parts.workspace_label));
         set_theme(&parts.theme, cx);
+        let session_id = parts.session_id.clone();
+        let dir = parts.workspace_dir.clone().unwrap_or(dir);
         let (root, session) = crate::session::open(parts, window, cx);
         session.update(cx, |session, cx| session.focus_input(window, cx));
+        let current_root = dir.display().to_string();
+        let chats = cx.new(|cx| ChatsPanel::new(current_root, session_id.clone(), cx));
+        let catalog = self.opener.catalog();
+        let weak = chats.downgrade();
+        cx.spawn(async move |_, cx| {
+            let projects = catalog.await;
+            weak.update(cx, |panel, cx| panel.set_projects(projects, cx))
+                .ok();
+        })
+        .detach();
         cx.subscribe_in(
             &session,
             window,
             |this, _, event: &SessionEvent, window, cx| {
                 let SessionEvent::Reopen { notice } = event;
-                let Content::Session { dir, .. } = &this.content else {
-                    return;
+                let (dir, which) = {
+                    let Content::Session {
+                        dir, session_id, ..
+                    } = &this.content
+                    else {
+                        return;
+                    };
+                    let which = match session_id {
+                        Some(id) => SessionOpen::Id(id.clone()),
+                        None => SessionOpen::Latest,
+                    };
+                    (dir.clone(), which)
                 };
                 // Dropping the session drops its controller and what it started.
-                this.open_with_notice(dir.clone(), notice.clone(), window, cx);
+                this.open_with_notice(dir, which, notice.clone(), window, cx);
             },
         )
         .detach();
-        self.content = Content::Session { root, session, dir };
+        cx.subscribe_in(&chats, window, |this, _, event: &ChatsEvent, window, cx| {
+            let (dir, open_id) = {
+                let Content::Session {
+                    dir, session_id, ..
+                } = &this.content
+                else {
+                    return;
+                };
+                (dir.clone(), session_id.clone())
+            };
+            match event.clone() {
+                ChatsEvent::New => this.switch_chat(dir, SessionOpen::New, window, cx),
+                ChatsEvent::Open { root, id } => {
+                    if open_id.as_deref() == Some(id.as_str()) {
+                        return;
+                    }
+                    this.switch_chat(PathBuf::from(root), SessionOpen::Id(id), window, cx);
+                }
+                ChatsEvent::Rename { id, title } => this.rename_chat(id, title, window, cx),
+                ChatsEvent::Delete { root, id } => this.delete_chat(root, id, window, cx),
+            }
+        })
+        .detach();
+        self.content = Content::Session {
+            root,
+            session,
+            chats,
+            dir,
+            session_id,
+        };
         cx.notify();
+    }
+
+    /// Opens `which` in `dir`, unless a turn or a command is still running.
+    fn switch_chat(
+        &mut self,
+        dir: PathBuf,
+        which: SessionOpen,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session().cloned() else {
+            self.open_with_notice(dir, which, None, window, cx);
+            return;
+        };
+        if session.read(cx).is_busy() {
+            let message = if session.read(cx).is_running() {
+                "a turn is running; Ctrl+C to interrupt it before switching chats"
+            } else {
+                "a command is running; switch chats once it stops"
+            };
+            session.update(cx, |session, cx| {
+                session.show_notice(NoticeLevel::Warning, message.into(), cx);
+            });
+            return;
+        }
+        self.open_with_notice(dir, which, None, window, cx);
+    }
+
+    /// Saves `title` on the chat `id` and refreshes the list.
+    fn rename_chat(
+        &mut self,
+        id: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.session().cloned() else {
+            return;
+        };
+        let current = self.open_id().as_deref() == Some(id.as_str());
+        let opener = Arc::clone(&self.opener);
+        let primary = current.then(|| session.read(cx).retitle(title.clone()));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = if let Some(primary) = primary {
+                match primary.await {
+                    Ok(()) => Ok(()),
+                    Err(_) => opener.rename_chat(id, title).await,
+                }
+            } else {
+                opener.rename_chat(id, title).await
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.finish_rename(result, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_rename(
+        &mut self,
+        result: Result<(), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(err) = &result
+            && let Some(session) = self.session().cloned()
+        {
+            session.update(cx, |session, cx| {
+                session.show_notice(
+                    NoticeLevel::Warning,
+                    format!("could not rename the chat: {err}"),
+                    cx,
+                );
+            });
+        }
+        self.reload_chats(cx);
+        if result.is_ok()
+            && let Some(session) = self.session().cloned()
+        {
+            session.update(cx, |session, cx| session.focus_input(window, cx));
+        }
+    }
+
+    /// Removes the chat `id`. The open one is left for another chat of
+    /// `root`, or a new chat when it was the last.
+    fn delete_chat(
+        &mut self,
+        root: String,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.open_id().as_deref() == Some(id.as_str());
+        if current
+            && let Some(session) = self.session().cloned()
+            && session.read(cx).is_busy()
+        {
+            session.update(cx, |session, cx| {
+                let message = if session.is_running() {
+                    "a turn is running; Ctrl+C to interrupt it before deleting this chat"
+                } else {
+                    "a command is running; delete this chat once it stops"
+                };
+                session.show_notice(NoticeLevel::Warning, message.into(), cx);
+            });
+            return;
+        }
+        let next = self
+            .chats()
+            .and_then(|panel| panel.read(cx).next_chat(&root, &id));
+        let delete = self.opener.delete_chat(id);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = delete.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(()) if current => {
+                    let which = next.map_or(SessionOpen::New, SessionOpen::Id);
+                    this.switch_chat(PathBuf::from(root), which, window, cx);
+                }
+                Ok(()) => this.reload_chats(cx),
+                Err(err) => {
+                    if let Some(session) = this.session().cloned() {
+                        session.update(cx, |session, cx| {
+                            session.show_notice(
+                                NoticeLevel::Warning,
+                                format!("could not delete the chat: {err}"),
+                                cx,
+                            );
+                        });
+                    }
+                    this.reload_chats(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn reload_chats(&mut self, cx: &mut Context<Self>) {
+        let Some(chats) = self.chats().cloned() else {
+            return;
+        };
+        let catalog = self.opener.catalog();
+        cx.spawn(async move |_, cx| {
+            let projects = catalog.await;
+            chats.update(cx, |panel, cx| panel.set_projects(projects, cx));
+        })
+        .detach();
+    }
+
+    fn chats(&self) -> Option<&Entity<ChatsPanel>> {
+        match &self.content {
+            Content::Session { chats, .. } => Some(chats),
+            _ => None,
+        }
+    }
+
+    fn open_id(&self) -> Option<String> {
+        match &self.content {
+            Content::Session { session_id, .. } => session_id.clone(),
+            _ => None,
+        }
     }
 
     /// `/project`: back to the picker, at the parent of the open project.
@@ -260,7 +505,11 @@ impl Render for Workbench {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.content {
             Content::Picker(picker) => picker.clone().into_any_element(),
-            Content::Session { root, .. } => root.clone().into_any_element(),
+            Content::Session { root, chats, .. } => h_flex()
+                .size_full()
+                .child(chats.clone())
+                .child(div().flex_1().h_full().min_w_0().child(root.clone()))
+                .into_any_element(),
             Content::Opening(dir) => div()
                 .size_full()
                 .flex()
@@ -289,7 +538,6 @@ mod tests {
     use application::testing::projects::InMemoryDirs;
     use domain::permission::PermissionMode;
 
-    use futures::FutureExt as _;
     use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;

@@ -69,6 +69,7 @@ fn config(workspace: &Path, resume: bool) -> Config {
         trust_mcp: Vec::new(),
         trust_plugins: Vec::new(),
         resume,
+        session_id: None,
     }
 }
 

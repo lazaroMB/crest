@@ -89,6 +89,7 @@ fn open_with<'a>(
         trust_mcp: Vec::new(),
         trust_plugins: Vec::new(),
         resume: false,
+        session_id: None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

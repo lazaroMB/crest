@@ -110,6 +110,7 @@ async fn snapshot() -> HelpSnapshot {
         trust_mcp: Vec::new(),
         trust_plugins: Vec::new(),
         resume: false,
+        session_id: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

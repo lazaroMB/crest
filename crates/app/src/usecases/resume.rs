@@ -5,6 +5,7 @@
 //! rules granted during it, which go back into the shared permission
 //! policy.
 
+use domain::conversation::SessionId;
 use domain::permission::PermissionRule;
 
 use crate::ports::store::{SessionStorePort, StoreError, StoredSession};
@@ -20,6 +21,36 @@ pub async fn resume_latest(
     workspace_root: &str,
 ) -> Result<Option<StoredSession>, StoreError> {
     store.latest_for_workspace(workspace_root).await
+}
+
+/// The stored session `id`, when it belongs to `workspace_root`.
+///
+/// # Errors
+///
+/// [`StoreError::NotFound`] when the id is missing or belongs to another
+/// workspace, or the store's own error.
+pub async fn resume_by_id(
+    store: &dyn SessionStorePort,
+    id: SessionId,
+    workspace_root: &str,
+) -> Result<StoredSession, StoreError> {
+    let stored = store.load(id).await?;
+    if !same_workspace(&stored.session.workspace_root, workspace_root) {
+        return Err(StoreError::NotFound(id));
+    }
+    Ok(stored)
+}
+
+/// The two roots name the same directory. Slashes are ignored; on Windows
+/// the comparison is case-insensitive.
+fn same_workspace(left: &str, right: &str) -> bool {
+    let normalize = |root: &str| root.replace('\\', "/").trim_end_matches('/').to_owned();
+    let (left, right) = (normalize(left), normalize(right));
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(&right)
+    } else {
+        left == right
+    }
 }
 
 /// Adds the `rules` of a resumed session to `permissions`, after the rules
@@ -63,6 +94,22 @@ mod tests {
         }
         let resumed = resume_latest(&store, "/ws").await.unwrap();
         assert_eq!(resumed, Some(new));
+    }
+
+    #[tokio::test]
+    async fn a_chosen_session_loads_only_in_its_workspace() {
+        let store = InMemorySessionStore::new();
+        let session = stored(r"C:\ws", 10);
+        let id = session.session.id;
+        store.save(&session).await.unwrap();
+        assert_eq!(
+            resume_by_id(&store, id, "C:/ws").await.unwrap().session.id,
+            id
+        );
+        assert_eq!(
+            resume_by_id(&store, id, "/otro").await,
+            Err(StoreError::NotFound(id))
+        );
     }
 
     #[tokio::test]

@@ -33,6 +33,12 @@ macro_rules! uuid_id {
             pub fn as_uuid(&self) -> Uuid {
                 self.0
             }
+
+            /// Parses an id printed by [`Display`].
+            #[must_use]
+            pub fn parse(text: &str) -> Option<Self> {
+                Uuid::parse_str(text.trim()).ok().map(Self)
+            }
         }
 
         impl Default for $name {

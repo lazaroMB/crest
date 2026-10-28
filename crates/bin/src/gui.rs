@@ -56,7 +56,7 @@ use application::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest, GrepResult,
     ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
-use application::ports::store::SessionStorePort as _;
+use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
 use application::usecases::run_turn::{SharedPermissions, UserInput};
@@ -64,7 +64,7 @@ use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulat
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
-use domain::conversation::{ImageAttachment, StopReason};
+use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
 use domain::permission::PermissionMode;
@@ -75,6 +75,7 @@ use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
+use ui::chats::{ChatEntry, ProjectChats, SessionOpen, chat_label, project_name};
 use ui::help::HelpSnapshot;
 use ui::session::{
     ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
@@ -1200,6 +1201,21 @@ impl SessionController for UiController {
         task.map(|_| ()).boxed()
     }
 
+    fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
+        let app = Arc::clone(&self.app);
+        self.handle
+            .spawn(async move {
+                {
+                    let mut guard = app.lock().await;
+                    guard.session.title = Some(title);
+                }
+                let guard = app.lock().await;
+                guard.save().await.map_err(|err| err.to_string())
+            })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
     fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
         let Some(host) = self.plugins.clone() else {
             return futures::future::ready(Reply::Notice(
@@ -1617,6 +1633,7 @@ pub fn session_parts(
             let history = app.timeline_blocks();
             let prompt_history = app.prompt_history().clone();
             let needs_model = app.model_policy().needs_selection();
+            let session_id = app.session.id.to_string();
             let controller = Arc::new(
                 UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
             );
@@ -1634,6 +1651,7 @@ pub fn session_parts(
             parts.history = history;
             parts.prompt_history = prompt_history;
             parts.theme = theme;
+            parts.session_id = Some(session_id);
             (parts, workspace)
         }
         Err(err) => {
@@ -1786,6 +1804,14 @@ impl Launcher {
         }
     }
 
+    /// The session database, when its path is known.
+    fn session_db(&self) -> Option<PathBuf> {
+        self.overrides
+            .db_path
+            .clone()
+            .or_else(adapter_store::path::default_db_path)
+    }
+
     /// The same launcher listing directories with `browser` (tests).
     #[must_use]
     pub fn with_browser(mut self, browser: Arc<dyn ProjectBrowserPort>) -> Self {
@@ -1796,12 +1822,101 @@ impl Launcher {
 
 impl ProjectOpener for Launcher {
     fn open(&self, dir: PathBuf) -> BoxFuture<'static, Result<SessionParts, String>> {
-        let config = Config::for_workspace(&self.args, dir);
+        self.open_as(dir, SessionOpen::Latest)
+    }
+
+    fn open_as(
+        &self,
+        dir: PathBuf,
+        which: SessionOpen,
+    ) -> BoxFuture<'static, Result<SessionParts, String>> {
+        let mut config = Config::for_workspace(&self.args, dir);
+        match which {
+            SessionOpen::Latest => {}
+            SessionOpen::New => config.resume = false,
+            SessionOpen::Id(id) => {
+                config.resume = false;
+                config.session_id = Some(id);
+            }
+        }
         let (overrides, handle) = (self.overrides.clone(), self.handle.clone());
         // `session_parts` blocks on the runtime: off its worker threads.
         self.handle
             .spawn_blocking(move || {
                 session_parts(&config, overrides, &handle).map_err(|err| format!("{err:#}"))
+            })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
+        let path = self
+            .overrides
+            .db_path
+            .clone()
+            .or_else(adapter_store::path::default_db_path);
+        self.handle
+            .spawn(async move {
+                let Some(path) = path.filter(|path| path.exists()) else {
+                    return Vec::new();
+                };
+                let Ok(store) = adapter_store::SqliteSessionStore::open(&path) else {
+                    return Vec::new();
+                };
+                let Ok(workspaces) = store.recent_workspaces(RECENT_PROJECTS).await else {
+                    return Vec::new();
+                };
+                let mut projects = Vec::with_capacity(workspaces.len());
+                for workspace in workspaces {
+                    let Ok(sessions) = store.list(&workspace.root).await else {
+                        continue;
+                    };
+                    projects.push(ProjectChats {
+                        name: project_name(&workspace.root),
+                        root: workspace.root,
+                        chats: sessions
+                            .into_iter()
+                            .map(|session| ChatEntry {
+                                id: session.id.to_string(),
+                                title: chat_label(session.title.as_deref()),
+                            })
+                            .collect(),
+                    });
+                }
+                projects
+            })
+            .map(Result::unwrap_or_default)
+            .boxed()
+    }
+
+    fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
+        let path = self.session_db();
+        self.handle
+            .spawn(async move {
+                let store = open_session_store(path)?;
+                let Some(id) = SessionId::parse(&id) else {
+                    return Err("that chat is not saved yet".into());
+                };
+                let mut stored = store.load(id).await.map_err(|err| err.to_string())?;
+                stored.session.title = Some(title);
+                store.save(&stored).await.map_err(|err| err.to_string())
+            })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn delete_chat(&self, id: String) -> BoxFuture<'static, Result<(), String>> {
+        let path = self.session_db();
+        self.handle
+            .spawn(async move {
+                let store = open_session_store(path)?;
+                let Some(id) = SessionId::parse(&id) else {
+                    return Ok(());
+                };
+                match store.delete(id).await {
+                    Ok(()) | Err(StoreError::NotFound(_)) => Ok(()),
+                    Err(err) => Err(err.to_string()),
+                }
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()
@@ -1837,6 +1952,14 @@ impl ProjectOpener for Launcher {
 
 /// Most recent projects the picker lists.
 const RECENT_PROJECTS: usize = 20;
+
+/// The session store at `path`, when the file exists.
+fn open_session_store(path: Option<PathBuf>) -> Result<adapter_store::SqliteSessionStore, String> {
+    let Some(path) = path.filter(|path| path.exists()) else {
+        return Err("there is no session database".into());
+    };
+    adapter_store::SqliteSessionStore::open(&path).map_err(|err| err.to_string())
+}
 
 #[async_trait]
 impl<T: ProjectBrowserPort + ?Sized + 'static> ProjectBrowserPort for TokioPort<T> {
