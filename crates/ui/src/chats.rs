@@ -7,7 +7,6 @@
 //! other side panel.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, Global,
@@ -536,14 +535,15 @@ fn label(text: &str) -> impl IntoElement {
         .child(SharedString::from(text.to_owned()))
 }
 
-/// The directory name of `root`.
+/// The directory name of `root`. Both slash styles count, so a Windows
+/// path keeps its last folder on macOS too.
 #[must_use]
 pub fn project_name(root: &str) -> String {
-    Path::new(root)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| root.to_owned())
+    root.replace('\\', "/")
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(root)
+        .to_owned()
 }
 
 /// The name to store, trimmed. Empty input is cancelled. Longer names
