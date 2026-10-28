@@ -341,7 +341,7 @@ Carried over to phase 2 (gaps left by phase 1):
 | --- | --- | --- |
 | Timeline canvas, filterable list, node-link graph, extended tree | GPUI components exposed as `CustomNode` variants | 3–4 weeks |
 | Python/R subprocess bridge | fixed runner, `emit(envelope)`, env hashing | 1–2 weeks |
-| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks |
+| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks. Done except GLM and derivation: `stats_distribution`, `stats_contingency`, `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast` (augurs MSTL + AutoETS), `solve_lp` (microlp, duals from the dual program), `solve_equations`, `monte_carlo`, `cash_flow` (rust_decimal), `decision_matrix`; seeded ChaCha20 for resampling. |
 | Trace waterfall, flame graph, log viewer, SQL plan, HAR, IaC plan, DOT/ER, benchmark | widgets + parsers, sniffers | 3–4 weeks |
 | Waveform, netlist, beam/frame, Bode, K-map, tolerance, material, BOM, STEP via truck, clip/measure, DXF, IFC schedule | wellen, truck, dxf, ifc-lite-core spikes first | 3–4 weeks |
 | Sequence, plasmid, reaction, SAR grid, spectrum, ball-and-stick, GHS card, map + CRS card, Gantt, decision matrix, HDF5/NetCDF, network graph, training curves | gb-io, chematic, mzdata, georust, hdf5-pure | 3–4 weeks |
