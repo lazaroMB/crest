@@ -73,6 +73,8 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
 | `app.compute.*` | `table → block` | Inside a tool handler (or a callback); see [below](#appcompute-engine-computed-cards). |
+| `app.formats.dataset{ path, rows }`, `app.formats.molecule{ smiles, name, claimed_formula }` | `table → block` | Inside a tool handler (or a callback); see [below](#appformats-file-format-blocks). |
+| `app.ask{ title, description, schema, order, submit_label }` | `table → answer?, why?, reply?` | Inside a tool or command handler; see [below](#appask-forms). |
 | `app.modal.open(def)`, `app.modal.update(id, node)`, `app.modal.close(id)` | see [below](#appmodal-modal-windows) | Anywhere: handlers, commands, keymaps, hooks. |
 | `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
 | `app.http.request(opts)`, `app.http.get(url, opts)`, `app.http.post(url, opts)` | → response table | Inside handlers and callbacks, with a `network:` capability. |
@@ -222,11 +224,12 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | `app.ui.html(src)` | basic HTML | Headings, paragraphs, lists, tables, links, emphasis and code. No CSS layout, no scripts, no forms: it is not a browser. |
 | `app.ui.json(value [, { expand = n }])` | collapsible JSON tree | `value` is any Lua value. The first `n` levels start open (default 1). Click a row to open or close it. |
 | `app.ui.mermaid(src)` | Mermaid diagram | Pan and zoom like the Mermaid block. |
-| `app.ui.plot{ title, x_range, y_range, x_label, y_label, functions, params, series }` | function plot | The fields of the `show_plot` tool. `functions` is a list of `{ kind = "explicit" \| "parametric" \| "implicit", expr, y_expr, t_range, label }` (`expr = "a*sin(x)"`), `params` of `{ name, min, max, step, value }` (one slider each), `series` of `{ name, x, y, style = "scatter" \| "line" }`, ranges `{ min, max }`. Omit a list you do not use: an empty table `{}` is read as an object and fails. |
+| `app.ui.plot{ title, x_range, y_range, x_label, y_label, x_scale, y_scale, aspect, functions, params, series }` | function plot | The fields of the `show_plot` tool (`x_scale` / `y_scale` are `"linear"` or `"log"`, `aspect` `"auto"` or `"equal"`). `functions` is a list of `{ kind = "explicit" \| "parametric" \| "implicit", expr, y_expr, t_range, label }` (`expr = "a*sin(x)"`), `params` of `{ name, min, max, step, value }` (one slider each), `series` of `{ name, x, y, style = "scatter" \| "line" }`, ranges `{ min, max }`. Omit a list you do not use: an empty table `{}` is read as an object and fails. |
 | `app.ui.link(text, url)` or `app.ui.link(url)` | link | Opens the URL in your browser. Only `http`, `https` and `mailto` are accepted. |
 | `app.ui.diff(unified)` | colored diff | A unified diff (`@@`, `+`, `-` lines). |
 | `app.ui.csv(text [, { header = true, delimiter = "," }])` | table | Parses CSV (quotes, `""`, quoted newlines, `\r\n`) into a table node. Numbers become numbers (so they sort as such), empty cells nulls; short rows are padded. `header = false` names the columns `column 1`, `column 2`... Use `delimiter = "\t"` for TSV. |
 | `app.ui.block(name, node)` | the `Custom` block | Validates the whole tree and wraps it as the plugin's block. It must be **returned** from the handler. |
+| `app.ui.plate{ format, wells, value_label, title, scale, center }` | the `Plate` block | The fields of the `show_plate` tool. Not a node: a whole block, already wrapped like `app.ui.block`, to be **returned** from the handler. |
 
 An invalid argument (a table row of a different width, a series of a different length...) raises a Lua error prefixed with `app.ui.<function>:`, and the tool fails with that message. If you nest deeper than the window draws, the excess is cut off with a marker.
 
@@ -257,6 +260,40 @@ app.tools.register({
 ```
 
 The envelope is in `result["$crest_block"].envelope` (its `values`, `method`, `warnings`...), so a handler can read a number before returning the card. The card records `plugin:<name>` as its agent. A request the engine rejects (an unknown column, a path outside the workspace) raises a Lua error prefixed with `app.compute.<function>:`; the calls block the VM while the engine runs.
+
+### `app.formats`: file-format blocks
+
+`app.formats.dataset{ path, rows }` and `app.formats.molecule{ smiles, name, claimed_formula }` build the blocks of the `show_dataset` and `show_molecule` tools (see [usage.md](usage.md#plots-reports-data-and-lab-blocks)). Each returns a block wrapped like `app.ui.block`, so a handler that returns it shows it; the block is in `result["$crest_block"]` (e.g. the molecule's `formula`). `path` is read through the same guard as the model's `read_file`, `rows` defaults to 20 (at most 200). A file that cannot be read or parsed, or a SMILES that does not parse, raises a Lua error with the reason. The calls block the VM while they read and parse.
+
+```lua
+app.tools.register{
+  name = 'peek',
+  description = 'Preview a data file',
+  parameters = { type = 'object', properties = { path = { type = 'string' } }, required = { 'path' } },
+  handler = function(args) return app.formats.dataset{ path = args.path, rows = 10 } end,
+}
+```
+
+### `app.ask`: forms
+
+`app.ask{ title, description, schema, order, submit_label }` shows the same form as the `ask_user` tool, in place in the timeline, and waits for the answer. The fields are those of `ask_user` plus `order`, the property names in display order (Lua tables have no order, so without it the fields are sorted by name); `schema` may also be a JSON string, which keeps its order. It returns the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer: the headless mode has no forms). A prompt sent while the form waits answers it in prose: `nil`, `"the user answered in the chat instead"` and the words as a third value. An answer that does not fit the fields is asked again with the reason, up to three times.
+
+```lua
+local answer, why, reply = app.ask{
+  title = 'Deploy',
+  schema = {
+    properties = {
+      env = { type = 'string', enum = { 'staging', 'prod' } },
+      dry_run = { type = 'boolean', default = true },
+    },
+    required = { 'env' },
+  },
+  order = { 'env', 'dry_run' },
+}
+if not answer then return 'cancelled: ' .. why .. (reply and (' (' .. reply .. ')') or '') end
+```
+
+Like the other blocking calls it holds the VM thread while it waits, so use it in tools and commands, not in hooks. The block belongs to the run, like plugin modals: it is not saved with the session.
 
 ### `app.modal`: modal windows
 

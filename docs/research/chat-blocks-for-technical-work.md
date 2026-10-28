@@ -329,11 +329,11 @@ Costs follow the modal note: S = a few days, M = 1–3 weeks, L = more than 3 we
 
 Carried over to phase 2 (gaps left by phase 1):
 
-- Statistics: no session-wide multiple-testing rule (only within one correlation matrix); no Lua API for forms, datasets, molecules or plates.
-- Plots: linear axes only, no equal-aspect option, a fixed 160×120 grid for implicit curves (thin features can be missed); hover dots are not coloured per layer.
-- Formats: no nextest/libtest JSON reader; SARIF `fixes` are not shown; WaveDrom covers part of WaveJSON and draws on white with approximate text widths; Arrow IPC unsupported; CSV row count unknown beyond 32 MiB; Parquet nested columns shown as text, INT96 timestamps as `int96`.
-- Rendering: the molecule SVG and the WaveDrom diagram are not theme-tinted (light card) and molecules have no stereo wedges; the plate scale is sequential only (no diverging or log scale) and labels fit only in 96-well cells; the SVG raster cache never evicts.
-- Interaction: copy-as only on the selected block; in a form the Submit click moves focus to the timeline, and a form whose request was withdrawn stays pending in the store.
+- Statistics: the session-wide multiple-testing warning counts tests, not the hypotheses within each; it does not adjust p-values across tests.
+- Plots: a fixed 160×120 grid for implicit curves (thin features can be missed).
+- Formats: WaveDrom covers part of WaveJSON and draws with approximate text widths; Arrow IPC unsupported; CSV row count unknown beyond 32 MiB; Parquet nested columns shown as text, INT96 timestamps as `int96`; only the first SARIF fix of a result becomes a diff (up to 200 per log), and a fix whose file cannot be read or whose edits do not apply is listed as edits instead.
+- Rendering: molecules have no stereo wedges; the SVG tint only recolours black strokes, text and white fills (coloured atoms keep their colours).
+- Interaction: copy-as only on the selected block.
 
 ### Phase 2: shared widgets and domain viewers (about 12–16 weeks)
 
