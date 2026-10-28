@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 use application::ports::form::{FormRequest, FormResponse};
 use chrono::NaiveDate;
 use domain::block::{BlockId, BlockKind};
-use domain::form::{FieldKind, FormField, FormOption, FormSpec, FormState};
+use domain::form::{DateSpan, FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable as _,
     FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
@@ -277,6 +277,14 @@ impl FormView {
                     state
                 }))
             }
+            FieldKind::DateRange { default, .. } => line(
+                default
+                    .as_ref()
+                    .map(|span| format!("{}..{}", span.start, span.end))
+                    .unwrap_or_default(),
+                window,
+                cx,
+            ),
             FieldKind::Multiline { default, .. } => {
                 let text = default.clone().unwrap_or_default();
                 FieldInput::Area(cx.new(|cx| {
@@ -750,6 +758,15 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
                 return Ok(None);
             }
             Value::from(text.parse::<i64>().map_err(|_| field.kind.hint())?)
+        }
+        (FieldInput::Line(state), FieldKind::DateRange { .. }) => {
+            let text = state.read(cx).value().trim().to_owned();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            DateSpan::parse(&text)
+                .map(|span| span.to_value())
+                .ok_or_else(|| field.kind.hint())?
         }
         (FieldInput::Line(state), _) => {
             let text = state.read(cx).value().to_string();

@@ -6,10 +6,11 @@
 //!
 //! - `{"type": "string"}`, with `minLength` / `maxLength`; with
 //!   `"format": "multiline"` (or `"x-multiline": true`) it is a text area;
-//!   with `"format": "date"` a date picker, bounded by `formatMinimum` /
-//!   `formatMaximum` (or `minimum` / `maximum` given as dates). The
-//!   formats `email`, `uri` and `date-time` are accepted and shown as
-//!   plain text;
+//!   with `"format": "date"` a date picker and with `"format":
+//!   "date-range"` a range picker (answered as `{"start", "end"}`), both
+//!   bounded by `formatMinimum` / `formatMaximum` (or `minimum` /
+//!   `maximum` given as dates). The formats `email`, `uri` and
+//!   `date-time` are accepted and shown as plain text;
 //! - `{"type": "number"}` or `{"type": "integer"}`, with `minimum` /
 //!   `maximum`;
 //! - `{"type": "boolean"}`;
@@ -38,7 +39,7 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
-use super::{FieldKind, FormField, FormOption};
+use super::{DateSpan, FieldKind, FormField, FormOption};
 
 /// Why a schema cannot be shown as a form.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -395,20 +396,36 @@ fn string(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaErro
         (_, Some(Value::Bool(false)) | None) => match object.get("format") {
             None | Some(Value::Null) => false,
             Some(Value::String(format)) if format == "multiline" => true,
-            Some(Value::String(format)) if format == "date" => false,
+            Some(Value::String(format)) if format == "date" || format == "date-range" => false,
             Some(Value::String(format)) if PLAIN_FORMATS.contains(&format.as_str()) => false,
             Some(other) => {
                 return Err(error(
                     at,
                     format!(
-                        "format {other} is not supported (use multiline, date, email, uri or \
-                         date-time)"
+                        "format {other} is not supported (use multiline, date, date-range, \
+                         email, uri or date-time)"
                     ),
                 ));
             }
         },
         (_, Some(_)) => return Err(error(at, "`x-multiline` must be true or false")),
     };
+    // ajv's `formatMinimum`, or `minimum` written as a date; anything else
+    // there is ignored like any misplaced key.
+    let date = |key: &str| object.get(key).and_then(Value::as_str).map(str::to_owned);
+    if object.get("format").and_then(Value::as_str) == Some("date-range") {
+        let default = match object.get("default") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(DateSpan::from_value(value).ok_or_else(|| {
+                error(at, "`default` of a date-range must be {\"start\", \"end\"}")
+            })?),
+        };
+        return Ok(FieldKind::DateRange {
+            default,
+            min: date("formatMinimum").or_else(|| date("minimum")),
+            max: date("formatMaximum").or_else(|| date("maximum")),
+        });
+    }
     let default = match object.get("default") {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
@@ -421,9 +438,6 @@ fn string(at: &str, object: &Map<String, Value>) -> Result<FieldKind, SchemaErro
         });
     }
     if object.get("format").and_then(Value::as_str) == Some("date") {
-        // ajv's `formatMinimum`, or `minimum` written as a date; anything
-        // else there is ignored like any misplaced key.
-        let date = |key: &str| object.get(key).and_then(Value::as_str).map(str::to_owned);
         return Ok(FieldKind::Date {
             default,
             min: date("formatMinimum").or_else(|| date("minimum")),
@@ -848,6 +862,26 @@ mod tests {
             one(json!({"type": "string", "format": "date-time"})),
             FieldKind::String { .. }
         ));
+        assert_eq!(
+            one(
+                json!({"type": "string", "format": "date-range", "formatMinimum": "2026-01-01",
+                       "default": {"start": "2026-05-10", "end": "2026-05-14"}})
+            ),
+            FieldKind::DateRange {
+                default: Some(DateSpan {
+                    start: "2026-05-10".into(),
+                    end: "2026-05-14".into()
+                }),
+                min: Some("2026-01-01".into()),
+                max: None
+            }
+        );
+        let err = convert(
+            json!({"properties": {"a": {"type": "string", "format": "date-range",
+                                                     "default": "mañana"}}}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("start"), "{err}");
     }
 
     #[test]

@@ -49,7 +49,9 @@ pub const FORM_TOOL_PROMPT: &str = "\
 
 When you need structured input from the user (choices among options, several values, \
 settings, yes/no decisions) call `ask_user` with a form instead of asking in prose. It waits \
-for the answer and returns it as JSON. The user may answer in the chat instead of filling the \
+for the answer and returns it as JSON. Ask for dates with `format: \"date\"` (one day) or \
+`format: \"date-range\"` (a period), never as free text or as options. List in `required` \
+every field you cannot go on without. The user may answer in the chat instead of filling the \
 form: you then get their words, take them as the answer. If the user cancels, do not ask the \
 same form again: go on without the answers or ask in prose.";
 
@@ -59,9 +61,11 @@ with bounds, yes/no, short or long text) instead of asking in prose. `schema` is
 object: `properties` are the fields in display order and `required` lists the mandatory ones. \
 Each property has `type` string, number, integer, boolean or array, plus optional `title` (the \
 label), `description` and `default`. Strings take `minLength`/`maxLength` (whole numbers) and \
-`format: \"multiline\"` for long text; `format: \"date\"` shows a date picker and returns \
-`YYYY-MM-DD`, bounded by `formatMinimum`/`formatMaximum` (`email`, `uri` and `date-time` are \
-shown as text); numbers and integers take `minimum`/`maximum`; one choice is a string with `enum` (labels in \
+`format: \"multiline\"` for long text. Dates are never free text: `format: \"date\"` shows a \
+date picker and returns `YYYY-MM-DD`, `format: \"date-range\"` shows a range picker and \
+returns `{\"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\"}`, both bounded by \
+`formatMinimum`/`formatMaximum` (`email`, `uri` and `date-time` are shown as text); numbers and \
+integers take `minimum`/`maximum`; one choice is a string with `enum` (labels in \
 `enumNames`) or `oneOf: [{const, title}]`; several choices are `{type: \"array\", items: \
 {type: \"string\", enum: [...]}}` with `minItems`/`maxItems` (whole numbers). Annotations \
 such as `examples`, `pattern` or `readOnly` are accepted but not enforced; nested objects, \
