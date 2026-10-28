@@ -5,7 +5,8 @@
 //! available. Any zoom level (the `+`/`−` buttons, ctrl/cmd + wheel, or
 //! with the viewport focused `+`, `-`, `1` for 1:1 and `0` for fit) draws
 //! it scaled from its natural size inside a viewport that clips it; drag
-//! pans. The natural size comes from GPUI's image cache once decoded.
+//! pans. The natural size comes from GPUI's image cache once decoded, or
+//! for SVG from the document itself ([`super::svg`]).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -20,6 +21,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::image::{ImageError, image_source};
+use super::svg::SvgState;
 
 /// Zoom step of the keys, the buttons and one wheel notch.
 const ZOOM_STEP: f32 = 1.25;
@@ -278,15 +280,34 @@ impl Render for ImageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (danger, border, radius) = (theme.danger, theme.border, theme.radius);
-        let source = match &self.decoded {
-            Ok(source) => source.clone(),
-            Err(err) => {
+        let svg = super::svg::is_svg(self.media_type.as_deref().unwrap_or_default(), &self.data)
+            .then(|| super::svg::use_svg(&self.data, self.zoom.unwrap_or(1.0), window, cx));
+        let is_svg = svg.is_some();
+        let (source, natural) = match (svg, &self.decoded) {
+            // An SVG rasterized for the zoom level, drawn at its natural
+            // (logical) size times the zoom.
+            (Some(SvgState::Ready(raster)), _) => {
+                (ImageSource::Render(raster.image.clone()), Some(raster.size))
+            }
+            (Some(SvgState::Loading), _) => {
+                return v_flex()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("rendering SVG…")
+                    .into_any_element();
+            }
+            (Some(SvgState::Failed(err)), _) => {
+                return v_flex()
+                    .child(error_view(err, danger, border))
+                    .into_any_element();
+            }
+            (None, Ok(source)) => (source.clone(), self.natural_size(window, cx)),
+            (None, Err(err)) => {
                 return v_flex()
                     .child(error_view(err.to_string(), danger, border))
                     .into_any_element();
             }
         };
-        let natural = self.natural_size(window, cx);
         let fallback = self.fallback(danger, border);
         let body = match (self.zoom, natural) {
             (Some(zoom), Some((w, h))) => {
@@ -349,7 +370,16 @@ impl Render for ImageView {
                                     fit_scale.set(f32::from(shown.size.width) / natural);
                                 }
                             })
-                            .child(img(source).max_w_full().with_fallback(fallback)),
+                            .child(match natural.filter(|_| is_svg) {
+                                // An SVG bitmap has more pixels than its
+                                // size; draw it at the natural size.
+                                Some((w, h)) => img(source)
+                                    .w(px(w))
+                                    .max_w_full()
+                                    .aspect_ratio(w / h)
+                                    .with_fallback(fallback),
+                                None => img(source).max_w_full().with_fallback(fallback),
+                            }),
                     )
                     .into_any_element()
             }
@@ -451,5 +481,47 @@ mod tests {
             )
         });
         view.read_with(cx, |view, _| assert_eq!(view.zoom(), Some(1.0)));
+    }
+
+    #[gpui::test]
+    fn svg_nodes_are_rasterized(cx: &mut TestAppContext) {
+        use base64::Engine as _;
+
+        use crate::blocks::svg::{SQUARE, cached};
+
+        cx.update(gpui_component::init);
+        let data = ImageData::Base64 {
+            data: base64::engine::general_purpose::STANDARD.encode(SQUARE),
+        };
+        let id = BlockId::new();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let view = image_view(
+                id,
+                &data,
+                Some("image/svg+xml"),
+                None,
+                ImageFit::Contain,
+                window,
+                cx,
+            );
+            Wrapper(view)
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |_, window, cx| {
+            window.refresh();
+            let state = cached(&data, 1.0, window, cx);
+            assert!(
+                matches!(state, Some(SvgState::Ready(ref r)) if r.size == (40.0, 20.0)),
+                "{state:?}"
+            );
+        });
+    }
+
+    struct Wrapper(gpui::Entity<ImageView>);
+
+    impl Render for Wrapper {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
     }
 }

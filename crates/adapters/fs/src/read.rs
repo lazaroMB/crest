@@ -70,6 +70,32 @@ pub(crate) async fn read_bytes(
         .map_err(|e| io_error(&path, &real, &e))
 }
 
+/// Reads at most the first `max` bytes of `path`, with its full size.
+pub(crate) async fn read_head(
+    guard: &WorkspaceGuard,
+    path: &WorkspacePath,
+    max: u64,
+) -> Result<(Vec<u8>, u64), FsError> {
+    use tokio::io::AsyncReadExt as _;
+
+    let (path, real) = guard.resolve_readable(path.as_str()).await?;
+    let meta = tokio::fs::metadata(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    if meta.is_dir() {
+        return Err(FsError::IsDirectory { path });
+    }
+    let file = tokio::fs::File::open(&real)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    let mut bytes = Vec::with_capacity(usize::try_from(max.min(meta.len())).unwrap_or(0));
+    file.take(max)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| io_error(&path, &real, &e))?;
+    Ok((bytes, meta.len()))
+}
+
 /// Streams the lines of `real` that `request` selects, with the same
 /// result as [`FileContent::from_text`] on the whole (text) file.
 async fn read_range(
@@ -251,6 +277,22 @@ mod tests {
         assert_eq!(content.lines, ["2", "3"]);
         assert_eq!((content.start_line, content.total_lines), (2, 5));
         assert!(content.truncated);
+    }
+
+    #[tokio::test]
+    async fn reads_the_head_of_a_file_with_its_size() {
+        let f = fixture();
+        std::fs::write(f.ws.join("big.csv"), "a,b\n1,2\n3,4\n").unwrap();
+        assert_eq!(
+            read_head(&f.guard, &p("big.csv"), 6).await,
+            Ok((b"a,b\n1,".to_vec(), 12))
+        );
+        assert_eq!(
+            read_head(&f.guard, &p("big.csv"), 100)
+                .await
+                .map(|(b, _)| b.len()),
+            Ok(12)
+        );
     }
 
     #[tokio::test]

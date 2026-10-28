@@ -1,6 +1,7 @@
 //! Renderer of the `image` block kind: the picture, from inline base64 or
 //! a file, with its source underneath. An image that cannot be decoded or
-//! loaded shows a placeholder with the error instead.
+//! loaded shows a placeholder with the error instead. SVG is rasterized
+//! off the UI thread at the window's scale ([`super::svg`]).
 //!
 //! The picture's size comes from the image header, read when the block is
 //! first drawn, so its row in the timeline is as tall on the first frame
@@ -23,6 +24,7 @@ use gpui_component::{ActiveTheme as _, v_flex};
 use super::measured::measured_with;
 use super::sources::events::{BlockEvent, emit};
 use super::sources::{action, activate, entry_label};
+use super::svg::SvgState;
 use crate::timeline::TimelineEntry;
 
 /// Tallest an image is drawn, in pixels; wider ones scale down to fit.
@@ -86,14 +88,14 @@ fn origin(data: &ImageData) -> String {
     }
 }
 
-fn error_view(message: String, danger: Hsla, border: Hsla) -> AnyElement {
+fn error_view(message: impl Into<SharedString>, danger: Hsla, border: Hsla) -> AnyElement {
     div()
         .p_2()
         .border_1()
         .border_color(border)
         .rounded_md()
         .text_color(danger)
-        .child(SharedString::from(message))
+        .child(message.into())
         .into_any_element()
 }
 
@@ -129,6 +131,23 @@ fn source_line(entry: &TimelineEntry, source: &SourceRef, cx: &App) -> AnyElemen
         .into_any_element()
 }
 
+/// The picture, which a click opens in a modal to zoom in.
+fn clickable(entry: &TimelineEntry, picture: AnyElement, inspect: BlockEvent) -> AnyElement {
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "image-{}",
+            entry.block.id
+        ))))
+        .debug_selector(|| "image-picture".to_owned())
+        .cursor_pointer()
+        .child(picture)
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            emit(inspect.clone(), cx);
+        })
+        .into_any_element()
+}
+
 /// Draws the block held by `entry`.
 pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Image {
@@ -148,14 +167,39 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     });
     let theme = cx.theme();
     let (danger, border) = (theme.danger, theme.border);
-    let picture = match &decoded.read(cx).0 {
-        Ok((image, natural)) => {
+    let svg = super::svg::is_svg(media_type, data_or_path)
+        .then(|| super::svg::use_svg(data_or_path, 1.0, window, cx));
+    let inspect = BlockEvent::InspectImage {
+        block: entry.block.id,
+        media_type: media_type.clone(),
+        data: data_or_path.clone(),
+    };
+    let picture = match (svg, &decoded.read(cx).0) {
+        (Some(SvgState::Ready(raster)), _) => {
+            // Its natural size, scaled down to MAX_HEIGHT; the column
+            // width shrinks it further, keeping the aspect ratio.
+            let (w, h) = raster.size;
+            let scale = (MAX_HEIGHT / h).min(1.0);
+            clickable(
+                entry,
+                img(ImageSource::Render(raster.image.clone()))
+                    .debug_selector(|| "svg-picture".to_owned())
+                    .w(px(w * scale))
+                    .max_w_full()
+                    .aspect_ratio(w / h)
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+                inspect,
+            )
+        }
+        (Some(SvgState::Loading), _) => div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("rendering SVG…")
+            .into_any_element(),
+        (Some(SvgState::Failed(err)), _) => error_view(err, danger, border),
+        (None, Ok((image, natural))) => {
             let failed = format!("cannot load {}", origin(data_or_path));
-            let inspect = BlockEvent::InspectImage {
-                block: entry.block.id,
-                media_type: media_type.clone(),
-                data: data_or_path.clone(),
-            };
             let id = ElementId::Name(SharedString::from(format!("image-{}", entry.block.id)));
             let image = image.clone();
             // A click opens it in a modal to zoom in. Clipped to its box so
@@ -195,7 +239,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
                     .into_any_element(),
             }
         }
-        Err(err) => error_view(err.to_string(), danger, border),
+        (None, Err(err)) => error_view(err.to_string(), danger, border),
     };
     let mut block = v_flex().gap_1().child(picture);
     if let Some(source) = source {
@@ -422,5 +466,42 @@ mod tests {
             events.borrow().last(),
             Some(BlockEvent::InspectImage { media_type, .. }) if media_type == "image/png"
         ));
+    }
+
+    #[gpui::test]
+    fn svg_is_rasterized_off_thread_at_its_natural_size(cx: &mut TestAppContext) {
+        use crate::blocks::svg::{SQUARE, SvgState, cached};
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let data = inline(&base64::engine::general_purpose::STANDARD.encode(SQUARE));
+        let block = Block::new(BlockKind::Image {
+            media_type: "image/svg+xml".into(),
+            data_or_path: data.clone(),
+            source: None,
+        });
+        view.update(cx, |view, cx| {
+            view.apply_all([DomainEvent::BlockAdded { block }], cx);
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(
+                gpui::point(px(0.), px(0.)),
+                gpui::size(px(800.), px(600.)),
+                |_, _| div().size_full().child(view.clone()),
+            );
+        };
+        draw(cx);
+        cx.run_until_parked();
+        draw(cx);
+        let state = cx.update(|window, cx| cached(&data, 1.0, window, cx));
+        let Some(SvgState::Ready(raster)) = state else {
+            panic!("SVG not rasterized: {state:?}");
+        };
+        assert_eq!(raster.size, (40.0, 20.0));
+        let picture = cx
+            .debug_bounds("svg-picture")
+            .unwrap_or_else(|| panic!("picture not drawn"));
+        assert_eq!(picture.size.width, px(40.));
+        assert_eq!(picture.size.height, px(20.));
     }
 }

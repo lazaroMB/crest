@@ -1,0 +1,34 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: "definition(ShowDatasetTool::new(ports.clone()))"
+---
+{
+  "name": "show_dataset",
+  "description": "Shows a data file of the workspace (CSV, TSV, JSON lines or Parquet) in the user's timeline: its shape, one row per column with the type, missing share, distinct count, range and a distribution sparkline, then the first rows. Use it to look at a dataset before analysing it. Returns the shape and the column types with their missing shares, never the rows.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A data file of the workspace: `.csv`, `.tsv`, `.jsonl`/`.ndjson`\n(one JSON object per line) or `.parquet`."
+      },
+      "rows": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0,
+        "description": "Rows in the preview table (default 20, at most 200).",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_dataset`.",
+    "title": "ShowDataset",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

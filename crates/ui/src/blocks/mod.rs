@@ -6,10 +6,14 @@
 //! because some keep GPUI state per block (a table's `TableView`, a
 //! diagram's pan and zoom) that is created and updated while drawing.
 
+pub mod ansi;
 pub mod chart;
 pub mod computed;
+pub mod copy;
 pub mod custom;
+pub mod dataset;
 pub mod diff;
+pub mod findings;
 pub mod form;
 pub mod image;
 pub mod image_view;
@@ -19,11 +23,15 @@ pub mod math;
 pub mod measured;
 pub mod mermaid;
 pub mod model_view;
+pub mod molecule;
+pub mod plate;
 pub mod plot;
 pub mod shell;
 pub mod sources;
 pub mod stage;
+pub mod svg;
 pub mod table;
+pub mod test_report;
 pub mod thinking;
 
 use std::any::TypeId;
@@ -54,14 +62,14 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Table(_) => table::render(entry, window, cx),
         BlockKind::Thinking { .. } => thinking::render(entry, window, cx),
         BlockKind::Computed { .. } => computed::render(entry, window, cx),
-        // Phase 1 chat blocks; each gets its own renderer in a later piece.
+        // Phase 1 chat blocks.
         BlockKind::Form(_) => form::render(entry, window, cx),
         BlockKind::Plot(_) => plot::render(entry, window, cx),
-        BlockKind::TestReport(_)
-        | BlockKind::Findings(_)
-        | BlockKind::Dataset(_)
-        | BlockKind::Molecule(_)
-        | BlockKind::Plate(_) => placeholder(entry, cx),
+        BlockKind::TestReport(_) => test_report::render(entry, window, cx),
+        BlockKind::Findings(_) => findings::render(entry, window, cx),
+        BlockKind::Dataset(_) => dataset::render(entry, window, cx),
+        BlockKind::Molecule(_) => molecule::render(entry, window, cx),
+        BlockKind::Plate(_) => plate::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

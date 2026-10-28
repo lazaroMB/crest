@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.AppTest" time="1,234.5" tests="2" errors="0" skipped="0" failures="1">
+  <properties>
+    <property name="java.version" value="21"/>
+  </properties>
+  <testcase name="works" classname="com.example.AppTest" time="0.01"/>
+  <testcase name="breaks" classname="com.example.AppTest" time="0.2">
+    <failure type="org.opentest4j.AssertionFailedError"><![CDATA[expected: <1> but was: <2>
+	at com.example.AppTest.breaks(AppTest.java:20)]]></failure>
+    <system-err><![CDATA[warning: deprecated]]></system-err>
+  </testcase>
+</testsuite>

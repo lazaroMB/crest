@@ -1,0 +1,40 @@
+---
+source: crates/app/src/tools/formats.rs
+expression: "definition(ShowMoleculeTool::new(ports.clone()))"
+---
+{
+  "name": "show_molecule",
+  "description": "Draws a molecule from SMILES in the user's timeline with its molecular formula, molecular weight, net charge and canonical SMILES, all computed from the structure. Pass `claimed_formula` when you state a formula so the block checks it. Returns the computed values (cite these, not values from memory) or the parse error to fix.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "smiles": {
+        "type": "string",
+        "description": "The structure as SMILES, e.g. `CC(=O)Oc1ccccc1C(=O)O` (aspirin)."
+      },
+      "name": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Name shown with the drawing, e.g. `aspirin`.",
+        "default": null
+      },
+      "claimed_formula": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The molecular formula you believe it has, e.g. `C9H8O4`; it is\nchecked against the formula computed from the SMILES.",
+        "default": null
+      }
+    },
+    "required": [
+      "smiles"
+    ],
+    "description": "Input of `show_molecule`.",
+    "title": "ShowMolecule",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

@@ -20,7 +20,7 @@ use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
     InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
     MouseUpEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Task, WeakEntity, Window, div, list, px,
+    Styled as _, Task, WeakEntity, Window, div, list, prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
@@ -290,9 +290,12 @@ impl TimelineView {
         select: impl FnOnce(&mut TimelineState) -> Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        let before = self.state.selected();
         let Some(ix) = select(&mut self.state) else {
             return;
         };
+        // The selected block grows a copy-as row.
+        self.remeasure_selection(before, Some(ix));
         self.reveal(ix);
         cx.notify();
     }
@@ -307,14 +310,27 @@ impl TimelineView {
         }
     }
 
+    /// Remeasures the blocks that lost and gained the selection.
+    fn remeasure_selection(&self, before: Option<usize>, after: Option<usize>) {
+        if before == after {
+            return;
+        }
+        for ix in [before, after].into_iter().flatten() {
+            if ix < self.state.len() {
+                self.list.remeasure_items(ix..ix + 1);
+            }
+        }
+    }
+
     /// A click on a row selects it and expands or collapses it, unless the
     /// click ended a text selection: then the row keeps its state.
     fn click(&mut self, ix: usize, text_selected: bool, cx: &mut Context<Self>) {
-        if self.state.select(ix).is_some()
-            && !text_selected
-            && let Some(ix) = self.state.toggle_selected()
-        {
-            self.list.remeasure_items(ix..ix + 1);
+        let before = self.state.selected();
+        if self.state.select(ix).is_some() {
+            self.remeasure_selection(before, Some(ix));
+            if !text_selected && let Some(ix) = self.state.toggle_selected() {
+                self.list.remeasure_items(ix..ix + 1);
+            }
         }
         cx.notify();
     }
@@ -381,6 +397,12 @@ impl TimelineView {
             .border_l_2()
             .debug_selector(move || format!("block-{ix}"))
             .child(content)
+            .when_some(
+                selected
+                    .then(|| crate::blocks::copy::row(entry, cx))
+                    .flatten(),
+                |block, row| block.child(row),
+            )
             .children(footer);
         let block = if selected {
             block

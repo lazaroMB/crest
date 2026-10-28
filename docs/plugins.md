@@ -72,6 +72,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.cmd(name)` | `string → nil` | Inside a keymap or command callback. |
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
+| `app.compute.*` | `table → block` | Inside a tool handler (or a callback); see [below](#appcompute-engine-computed-cards). |
 | `app.modal.open(def)`, `app.modal.update(id, node)`, `app.modal.close(id)` | see [below](#appmodal-modal-windows) | Anywhere: handlers, commands, keymaps, hooks. |
 | `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
 | `app.http.request(opts)`, `app.http.get(url, opts)`, `app.http.post(url, opts)` | → response table | Inside handlers and callbacks, with a `network:` capability. |
@@ -221,12 +222,41 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | `app.ui.html(src)` | basic HTML | Headings, paragraphs, lists, tables, links, emphasis and code. No CSS layout, no scripts, no forms: it is not a browser. |
 | `app.ui.json(value [, { expand = n }])` | collapsible JSON tree | `value` is any Lua value. The first `n` levels start open (default 1). Click a row to open or close it. |
 | `app.ui.mermaid(src)` | Mermaid diagram | Pan and zoom like the Mermaid block. |
+| `app.ui.plot{ title, x_range, y_range, x_label, y_label, functions, params, series }` | function plot | The fields of the `show_plot` tool. `functions` is a list of `{ kind = "explicit" \| "parametric" \| "implicit", expr, y_expr, t_range, label }` (`expr = "a*sin(x)"`), `params` of `{ name, min, max, step, value }` (one slider each), `series` of `{ name, x, y, style = "scatter" \| "line" }`, ranges `{ min, max }`. Omit a list you do not use: an empty table `{}` is read as an object and fails. |
 | `app.ui.link(text, url)` or `app.ui.link(url)` | link | Opens the URL in your browser. Only `http`, `https` and `mailto` are accepted. |
 | `app.ui.diff(unified)` | colored diff | A unified diff (`@@`, `+`, `-` lines). |
 | `app.ui.csv(text [, { header = true, delimiter = "," }])` | table | Parses CSV (quotes, `""`, quoted newlines, `\r\n`) into a table node. Numbers become numbers (so they sort as such), empty cells nulls; short rows are padded. `header = false` names the columns `column 1`, `column 2`... Use `delimiter = "\t"` for TSV. |
 | `app.ui.block(name, node)` | the `Custom` block | Validates the whole tree and wraps it as the plugin's block. It must be **returned** from the handler. |
 
 An invalid argument (a table row of a different width, a series of a different length...) raises a Lua error prefixed with `app.ui.<function>:`, and the tool fails with that message. If you nest deeper than the window draws, the excess is cut off with a marker.
+
+### `app.compute`: engine-computed cards
+
+The same engine the `stats_*`, `calc` and `convert` tools use ([usage.md](usage.md#statistics-and-calculations)). Each function takes the tool's request as a table and returns the **block** (a statistics card, a calc sheet or a conversion card): return it from a tool or command handler to show the card. The `reproduce.lua` line of every card is such a call, so it runs as written.
+
+| Function | Request |
+| --- | --- |
+| `app.compute.describe{ data, variables, by }` | Descriptive statistics of `variables` (all numeric columns when absent), per level of `by`. |
+| `app.compute.test{ data, test, y, group, y2, paired, levels, mu, table, alternative, conf_level, correct, exact }` | A hypothesis test. `test` is `"auto"` (default), `"welch_t"`, `"student_t"`, `"paired_t"`, `"one_sample_t"`, `"mann_whitney"`, `"wilcoxon"`, `"chi_square"` or `"fisher"`; `alternative` is `"two_sided"` (default), `"less"` or `"greater"`; `table` gives counts directly (χ², Fisher) instead of `data`. |
+| `app.compute.regress{ data, y, x, conf_level }` | OLS of `y` on the list `x`. |
+| `app.compute.correlate{ data, variables, method, adjustment, conf_level }` | Correlation matrix; `method` is `"pearson"`, `"spearman"` or `"kendall"`, `adjustment` `"holm"` (default), `"bh"`, `"bonferroni"` or `"none"`. |
+| `app.compute.calc{ lines, significant_digits }` | A calc sheet: `lines = { "v = 100 km/h", "t = 90 min", "d = v * t -> km" }`. Reads no data. |
+| `app.compute.convert{ value, from, to, uncertainty, significant_digits }` | A unit conversion (`from = "mi/h", to = "km/h"`; without `value`, `from` may be a whole quantity such as `"5 ft + 3 in"`). Reads no data. |
+
+`data` is either a CSV/TSV **path** of the workspace, read through the same guard as the model's `read_file` (`delimiter = "\t"` picks the separator; by default a tab for `.tsv` and a comma otherwise), or an **inline** table `{ columns = { { name = "x", values = { 1.5, nil, 3 }, unit = "mm" }, ... } }`. Values are numbers or strings, and `nil` holes are missing values; a column shorter than the longest is padded with missing values, so a trailing `nil` is not lost.
+
+```lua
+app.tools.register({
+  name = "mpg_by_gear",
+  description = "Compares mpg between automatic and manual cars.",
+  effect = "read",
+  handler = function()
+    return app.compute.test{ data = "data/cars.csv", y = "mpg", group = "am" }
+  end,
+})
+```
+
+The envelope is in `result["$crest_block"].envelope` (its `values`, `method`, `warnings`...), so a handler can read a number before returning the card. The card records `plugin:<name>` as its agent. A request the engine rejects (an unknown column, a path outside the workspace) raises a Lua error prefixed with `app.compute.<function>:`; the calls block the VM while the engine runs.
 
 ### `app.modal`: modal windows
 

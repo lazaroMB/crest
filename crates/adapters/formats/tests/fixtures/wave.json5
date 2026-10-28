@@ -1,0 +1,7 @@
+{ signal: [
+  // A clock, a bus with labels and a wire.
+  { name: 'clk',  wave: 'p.....|...' },
+  { name: 'data', wave: 'x.345x|=.x', data: ['head', 'body', 'tail', 'data'] },
+  { name: 'req',  wave: '0.1..0|1.0' },
+  { name: 'ack',  wave: '1.....|01.', },
+]}

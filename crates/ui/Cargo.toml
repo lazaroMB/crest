@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+anstyle-parse.workspace = true
 application.workspace = true
 async-trait.workspace = true
 base64.workspace = true
@@ -40,10 +41,13 @@ ratex-layout.workspace = true
 ratex-parser.workspace = true
 ratex-render.workspace = true
 ratex-types.workspace = true
+# SVG images: parsed and rasterized off the UI thread (blocks/svg.rs).
+resvg.workspace = true
 rusty-mermaid.workspace = true
 rusty-mermaid-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+usvg.workspace = true
 uuid.workspace = true
 wgpu.workspace = true
 

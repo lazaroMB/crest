@@ -16,6 +16,7 @@ members = [
     "crates/adapters/telemetry",
     "crates/adapters/export",
     "crates/adapters/compute",
+    "crates/adapters/formats",
     "crates/platform",
     "crates/ui",
     "crates/bin",
@@ -45,6 +46,7 @@ adapter-mcp = { path = "crates/adapters/mcp" }
 adapter-telemetry = { path = "crates/adapters/telemetry" }
 adapter-export = { path = "crates/adapters/export" }
 adapter-compute = { path = "crates/adapters/compute" }
+adapter-formats = { path = "crates/adapters/formats" }
 ui = { path = "crates/ui" }
 platform = { path = "crates/platform" }
 
@@ -100,6 +102,21 @@ statrs = { version = "0.19.1", default-features = false }
 blake3 = "1.8.7"
 numbat = { version = "=1.24.0", default-features = false }
 
+# Report formats (adapter-formats). JUnit is read with quick-xml directly:
+# quick-junit 0.8.0's deserializer is experimental and needs a
+# <testsuites> root. WaveDrom without its default features: no embedded
+# Helvetica (text widths come from its ASCII table) and no json5/pest
+# (adapter-formats relaxes JSON5-style input itself).
+quick-xml = "=0.41.0"
+wavedrom = { version = "=0.1.0", default-features = false, features = ["serde_json"] }
+# Dataset previews: Parquet through its record API (no arrow) with the
+# codecs pandas/pyarrow and polars write by default (snappy, zstd, gzip,
+# lz4); no async, no object store, no encryption.
+bytes = "1.12.1"
+parquet = { version = "=60.0.0", default-features = false, features = ["snap", "zstd", "flate2-zlib-rs", "lz4"] }
+# 2D molecules: SMILES parsing, formula/mass and SVG depiction (pure Rust).
+chematic = { version = "=1.2.1", default-features = false, features = ["smiles", "depict", "chem"] }
+
 # UI (GPUI is pre-1.0: exact versions, bump only between phases).
 # gpui-component 0.7.3 on crates.io pins GPUI's published snapshot
 # `gpui-pre =0.3.9` (zed@93d7456); the platform backend is a separate crate
@@ -133,6 +150,11 @@ ratex-parser = "=0.1.15"
 ratex-layout = "=0.1.15"
 ratex-render = { version = "=0.1.15", features = ["embed-fonts"] }
 ratex-types = "=0.1.15"
+# ANSI escapes in shell output (SGR colors; the rest is dropped).
+anstyle-parse = "=1.0.0"
+# SVG images rasterized off the UI thread (the versions gpui-pre uses).
+resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+usvg = { version = "=0.46.0", default-features = false }
 # Frames of GPUI's RenderImage (the version gpui-pre uses).
 image = { version = "0.25.10", default-features = false }
 
