@@ -167,6 +167,42 @@ fn fill_and_submit_with_inline_errors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_click_on_the_form_keeps_the_focus_in_it(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let _answer = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let card = form_view.read_with(cx, |form, _| form.focus_handle.clone());
+
+    // A click on an input: the input takes the focus on mouse down and
+    // the timeline row behind it must not take it back on mouse up.
+    click(cx, "form-input-0");
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, cx| owns_focus(window, cx)),
+        "the form keeps the focus after a click on an input"
+    );
+    cx.simulate_input("a");
+    form_view.read_with(cx, |form, cx| {
+        let typed = form.read(cx).ok().and_then(|a| a.get("label").cloned());
+        assert_eq!(typed, Some(json!("a")), "the key reached the input");
+    });
+
+    // The focus elsewhere, then a click on the card (its title): the
+    // first input takes it.
+    cx.update(|window, cx| {
+        let other = cx.focus_handle();
+        window.focus(&other, cx);
+    });
+    assert!(!cx.update(|window, cx| card.contains_focused(window, cx)));
+    click(cx, "form-card");
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, cx| card.contains_focused(window, cx)),
+        "a click on the card focuses the form"
+    );
+}
+
+#[gpui::test]
 fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
     let (cx, view, block) = window(cx);
     let answer = ask(cx, &view, &block);

@@ -14,6 +14,10 @@
 //! the block submitted. A submitted form shows its answers read-only, a
 //! cancelled one says so.
 //!
+//! A click on the card while it waits keeps the focus in the form (the
+//! timeline row behind it would take it otherwise, and the next key would
+//! land in the prompt).
+//!
 //! Keys while a field has the focus: `Tab` / `Shift+Tab` move between the
 //! inputs, `Enter` in a one-line field submits, `Esc` cancels; `Space`
 //! toggles a checkbox or picks a radio button.
@@ -25,8 +29,9 @@ use domain::block::{BlockId, BlockKind};
 use domain::form::{FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable as _,
-    FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window, div,
+    FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window,
+    div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
@@ -529,7 +534,11 @@ impl FormView {
                     .child(SharedString::from(description.clone())),
             );
         }
-        column = column.child(input);
+        column = column.child(
+            div()
+                .debug_selector(move || format!("form-input-{index}"))
+                .child(input),
+        );
         if let Some(problem) = self.errors.get(&field.name) {
             column = column.child(
                 div()
@@ -685,6 +694,17 @@ impl Render for FormView {
             .track_focus(&self.focus_handle)
             .tab_group()
             .on_key_down(cx.listener(Self::on_key))
+            // A click anywhere on a waiting card (a label, the padding)
+            // brings the focus into the form; a click on an input has
+            // already focused it.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if this.waiting.is_some() && !this.focus_handle.contains_focused(window, cx) {
+                        this.focus_first(window, cx);
+                    }
+                }),
+            )
             .gap_3()
             .p_3()
             .rounded_md()
