@@ -1,0 +1,264 @@
+---
+source: crates/app/src/tools/components.rs
+expression: definition(ShowPlotTool)
+---
+{
+  "name": "show_plot",
+  "description": "Plots mathematical functions and numeric (x, y) data on numeric axes in the user's timeline. Functions can be explicit y = f(x), parametric (x(t), y(t)) or implicit f(x, y) = 0; parameters become sliders the user drags to see how the curves change, without another call. Use it to explain a formula, compare models or show a fit next to its data. Returns only a short confirmation: do not repeat the data in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Plot title, shown above it.",
+        "default": null
+      },
+      "x_range": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PlotRange"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Visible x range; give it for functions. Without one the plot fits\nthe series, or shows `-10..10`.",
+        "default": null
+      },
+      "y_range": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PlotRange"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Visible y range; fitted to the curves (ignoring spikes near\nasymptotes) when absent.",
+        "default": null
+      },
+      "x_label": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Label of the x axis.",
+        "default": null
+      },
+      "y_label": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Label of the y axis.",
+        "default": null
+      },
+      "functions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PlotFunction"
+        },
+        "description": "Functions in calculator notation: `explicit` is `f(x)` (variable\n`x`), `parametric` is `expr` = x(t) and `y_expr` = y(t) over\n`t_range`, `implicit` draws the curve where `f(x, y) = 0`. Operators\n`+ - * / ^`, functions sin cos tan asin acos atan atan2 sinh cosh tanh\nexp ln log (natural) log10 sqrt abs floor ceil min max pow, constants\npi and e, and the parameter names.",
+        "default": []
+      },
+      "params": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PlotParam"
+        },
+        "description": "Parameters the expressions use, each shown as a slider the user can\ndrag to re-plot.",
+        "default": []
+      },
+      "series": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/XySeries"
+        },
+        "description": "Numeric (x, y) points drawn as `scatter` or a `line`, e.g. measured\ndata next to a model curve.",
+        "default": []
+      }
+    },
+    "description": "Input of `show_plot`.",
+    "title": "ShowPlot",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "PlotRange": {
+        "type": "object",
+        "properties": {
+          "min": {
+            "type": "number",
+            "format": "double",
+            "description": "Lower end."
+          },
+          "max": {
+            "type": "number",
+            "format": "double",
+            "description": "Upper end, greater than `min`."
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ],
+        "description": "A closed interval of an axis or of `t`."
+      },
+      "PlotFunction": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/FunctionKind",
+            "description": "How `expr` is read."
+          },
+          "expr": {
+            "type": "string",
+            "description": "`f(x)` for explicit, `x(t)` for parametric, `f(x, y)` (drawn where\nit is 0) for implicit."
+          },
+          "y_expr": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`y(t)`, for parametric functions only."
+          },
+          "t_range": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlotRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Range of `t`, for parametric functions; `0..1` when absent."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Legend label; the expression when absent."
+          }
+        },
+        "required": [
+          "kind",
+          "expr"
+        ],
+        "description": "A function to draw."
+      },
+      "FunctionKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "explicit",
+            "description": "`y = f(x)`."
+          },
+          {
+            "type": "string",
+            "const": "parametric",
+            "description": "`(x(t), y(t))`."
+          },
+          {
+            "type": "string",
+            "const": "implicit",
+            "description": "`f(x, y) = 0`."
+          }
+        ],
+        "description": "How a [`PlotFunction`] is defined."
+      },
+      "PlotParam": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Variable name used in the expressions."
+          },
+          "min": {
+            "type": "number",
+            "format": "double",
+            "description": "Slider minimum."
+          },
+          "max": {
+            "type": "number",
+            "format": "double",
+            "description": "Slider maximum."
+          },
+          "step": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Slider step; continuous when absent."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "Current value."
+          }
+        },
+        "required": [
+          "name",
+          "min",
+          "max",
+          "value"
+        ],
+        "description": "A parameter with a slider."
+      },
+      "XySeries": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Legend name."
+          },
+          "x": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "x coordinates."
+          },
+          "y": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "y coordinates, one per x."
+          },
+          "style": {
+            "$ref": "#/$defs/SeriesStyle",
+            "description": "Points or a line.",
+            "default": "scatter"
+          }
+        },
+        "required": [
+          "name",
+          "x",
+          "y"
+        ],
+        "description": "A numeric series."
+      },
+      "SeriesStyle": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "scatter",
+            "description": "Points."
+          },
+          {
+            "type": "string",
+            "const": "line",
+            "description": "A line through the points in order."
+          }
+        ],
+        "description": "How an [`XySeries`] is drawn."
+      }
+    }
+  }
+}

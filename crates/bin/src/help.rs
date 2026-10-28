@@ -177,8 +177,10 @@ fn builtin_effect(name: &str) -> &'static str {
         "run_command" => "depends on input",
         "edit_file" | "write_file" | "simulate_solution" => "write",
         "list_files" | "find_file" | "grep" | "tree" | "read_file" | "task" | "show_chart"
-        | "show_table" | "show_mermaid" | "show_markdown" | "stats_describe" | "stats_test"
-        | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user" => "read",
+        | "show_plot" | "show_table" | "show_mermaid" | "show_markdown" | "stats_describe"
+        | "stats_test" | "stats_regress" | "stats_correlate" | "calc" | "convert" | "ask_user" => {
+            "read"
+        }
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

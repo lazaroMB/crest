@@ -205,6 +205,28 @@ fn draws_every_rich_node_and_links_open_the_browser(cx: &mut TestAppContext) {
     assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
 }
 
+#[gpui::test]
+fn plot_nodes_keep_their_slider_state(cx: &mut TestAppContext) {
+    let plot = CustomNode::Plot(
+        serde_json::from_value(serde_json::json!({
+            "x_range": {"min": -3, "max": 3},
+            "functions": [{"kind": "explicit", "expr": "a x^2"}],
+            "params": [{"name": "a", "min": -1, "max": 1, "value": 0.5}]
+        }))
+        .unwrap_or_else(|e| panic!("{e}")),
+    );
+    let block = custom(CustomNode::Col {
+        children: vec![text("parabola"), plot],
+    });
+    let id = block.id;
+    draw(cx, vec![block]);
+    // The plot is the first stateful node of the tree.
+    let node = super::node_id(id, 0);
+    assert!(cx.update(|cx| {
+        crate::blocks::existing_block_state::<crate::blocks::plot::PlotView>(node, cx).is_some()
+    }));
+}
+
 /// Bounds of the two charts of a `Row` drawn in a window `width` wide.
 fn row_of_two_charts(
     cx: &mut TestAppContext,

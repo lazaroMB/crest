@@ -486,7 +486,7 @@ impl ComputedCard {
         match &self.body {
             ComputedBody::Test(body) => test::render(&id, &self.envelope, body, cx),
             ComputedBody::Descriptive(body) => descriptive::render(&id, body, cx),
-            ComputedBody::Regression(body) => regression::render(&id, body, cx),
+            ComputedBody::Regression(body) => regression::render(&id, body, window, cx),
             ComputedBody::Correlation(body) => correlation::render(&id, body, cx),
             ComputedBody::CalcSheet(body) => calc::calc_sheet(body, window, cx),
             ComputedBody::Quantity(body) => calc::quantity(
