@@ -73,6 +73,7 @@ async fn app(fx: &Fixture, llm: &Arc<ScriptedLlm>) -> App {
         trust_mcp: Vec::new(),
         trust_plugins: Vec::new(),
         resume: false,
+        session_id: None,
     };
     let overrides = Overrides {
         llm: Some(llm.clone()),

@@ -124,6 +124,7 @@ async fn fixture(
         trust_mcp: trust_mcp.iter().map(|s| (*s).to_owned()).collect(),
         trust_plugins: Vec::new(),
         resume: false,
+        session_id: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

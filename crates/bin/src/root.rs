@@ -53,11 +53,11 @@ use application::tools::task::{TaskPorts, TaskTool};
 use application::tools::web::WEB_TOOLS_PROMPT;
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
-use application::usecases::resume::{restore_permission_rules, resume_latest};
+use application::usecases::resume::{restore_permission_rules, resume_by_id, resume_latest};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
-use domain::conversation::Session;
+use domain::conversation::{Session, SessionId};
 use domain::model::{Account, BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
@@ -89,6 +89,9 @@ pub struct Config {
     /// Resume the latest session of the workspace: the window does unless
     /// `--new`, headless only with `--continue`.
     pub resume: bool,
+    /// A stored session to open instead of the latest one. `None` follows
+    /// [`Self::resume`].
+    pub session_id: Option<String>,
 }
 
 impl Config {
@@ -121,6 +124,7 @@ impl Config {
             } else {
                 !args.new
             },
+            session_id: None,
         }
     }
 }
@@ -351,11 +355,14 @@ impl App {
     /// "allow always" rules granted so far.
     #[must_use]
     pub fn stored_session(&self) -> StoredSession {
+        let prompt_history = self.prompt_history().clone();
+        let mut session = self.session.clone();
+        session.title = session_title(session.title.as_deref(), &prompt_history);
         StoredSession {
-            session: self.session.clone(),
+            session,
             timeline: self.timeline_blocks(),
             permission_rules: lock_permissions(self.service.permissions()).rules.clone(),
-            prompt_history: self.prompt_history().clone(),
+            prompt_history,
         }
     }
 
@@ -653,20 +660,34 @@ pub async fn build_app(
     let mut session = Session::new(root.as_path().display().to_string(), now_ms());
     let mut resumed_notice = None;
     let mut prompt_history = Vec::new();
-    if config.resume
-        && let Some(store) = &store
-    {
-        match resume_latest(store.as_ref(), &session.workspace_root).await {
+    if let Some(store) = &store {
+        let chosen = config.session_id.as_deref().and_then(SessionId::parse);
+        let loaded = if let Some(id) = chosen {
+            match resume_by_id(store.as_ref(), id, &session.workspace_root).await {
+                Ok(stored) => Ok(Some(stored)),
+                Err(err) => {
+                    warnings.push(format!("could not open the chosen session: {err}"));
+                    Ok(None)
+                }
+            }
+        } else if config.resume {
+            resume_latest(store.as_ref(), &session.workspace_root).await
+        } else {
+            Ok(None)
+        };
+        match loaded {
             Ok(Some(stored)) => {
                 restore_permission_rules(&permissions, &stored.permission_rules);
                 let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
                 for block in stored.timeline {
                     state.apply(&DomainEvent::BlockAdded { block });
                 }
-                resumed_notice = Some(format!(
-                    "previous session resumed ({} turns); `crest --new` starts a new one",
-                    stored.session.turns.len()
-                ));
+                if chosen.is_none() {
+                    resumed_notice = Some(format!(
+                        "previous session resumed ({} turns); `crest --new` starts a new one",
+                        stored.session.turns.len()
+                    ));
+                }
                 session = stored.session;
                 prompt_history = stored.prompt_history;
             }
@@ -1044,6 +1065,24 @@ const WINDOWS_NOTE: &str = "- `run_command` starts programs directly, without a 
      (`dir`, `echo`) are not programs. Prefer crest's file tools; run builtins and \
      pipelines with `powershell -NoProfile -Command \"...\"`.\n";
 
+/// The name shown for a chat: the one it already has, or the first
+/// non-empty prompt, trimmed to 60 characters.
+fn session_title(existing: Option<&str>, prompts: &[String]) -> Option<String> {
+    if let Some(title) = existing.map(str::trim).filter(|title| !title.is_empty()) {
+        return Some(title.to_owned());
+    }
+    let line = prompts
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())?;
+    const MAX: usize = 60;
+    let mut title: String = line.chars().take(MAX).collect();
+    if line.chars().nth(MAX).is_some() {
+        title.push('…');
+    }
+    Some(title)
+}
+
 /// Wall clock in Unix epoch milliseconds.
 #[must_use]
 pub fn now_ms() -> u64 {
@@ -1070,6 +1109,22 @@ mod tests {
     }
 
     #[test]
+    fn a_session_takes_its_title_from_the_first_prompt() {
+        assert_eq!(session_title(None, &[]), None);
+        assert_eq!(
+            session_title(Some("  "), &["  ".into(), "hola".into()]).as_deref(),
+            Some("hola")
+        );
+        assert_eq!(
+            session_title(Some("kept"), &["other".into()]).as_deref(),
+            Some("kept")
+        );
+        let title = session_title(None, &["a".repeat(80)]).unwrap();
+        assert_eq!(title.chars().count(), 61);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
     fn config_defaults_to_the_current_directory_and_ask() {
         use clap::Parser;
         let args = Args::parse_from(["crest"]);
@@ -1080,6 +1135,7 @@ mod tests {
         assert!(config.trust_mcp.is_empty());
         assert!(config.trust_plugins.is_empty());
         assert!(config.resume, "the window resumes by default");
+        assert!(config.session_id.is_none());
         let headless = Config::from_args(&Args::parse_from(["crest", "--headless", "x"])).unwrap();
         assert!(!headless.resume);
     }

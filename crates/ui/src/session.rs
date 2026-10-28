@@ -272,6 +272,13 @@ pub trait SessionController: Send + Sync {
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
 
+    /// Stores `title` on the open chat and saves the session, so the next
+    /// save keeps the name. The default fails: this session has no store.
+    fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
+        let _ = title;
+        futures::future::ready(Err("this session cannot rename its chat".into())).boxed()
+    }
+
     /// Runs the Lua function `id` of a mapping with `args`.
     fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
         let _ = (id, args);
@@ -406,6 +413,8 @@ pub struct SessionParts {
     /// No model is selected for the default provider: the `/model` popup
     /// opens at once.
     pub needs_model: bool,
+    /// Id of the open session, so the chats panel can mark it.
+    pub session_id: Option<String>,
 }
 
 impl SessionParts {
@@ -433,6 +442,7 @@ impl SessionParts {
             theme: crate::theme::default_theme(),
             needs_login: false,
             needs_model: false,
+            session_id: None,
         }
     }
 }
@@ -542,6 +552,7 @@ impl Session {
             theme,
             needs_login,
             needs_model,
+            session_id: _,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -789,6 +800,11 @@ impl Session {
         if self.input.read(cx).owns_focus(window, cx) {
             return;
         }
+        // The chat rename field is a text input outside the prompt. Its
+        // keys stay there; a printable key must not fall into the prompt.
+        if crate::chats::rename_has_focus(window, cx) {
+            return;
+        }
         let Some(key) = key_from_keystroke(&event.keystroke) else {
             return;
         };
@@ -1021,6 +1037,11 @@ impl Session {
     /// Whether a turn or a `/` command is running; prompts are queued.
     pub fn is_busy(&self) -> bool {
         self.running.is_some() || !self.commands.is_empty()
+    }
+
+    /// Renames the open chat and saves it.
+    pub fn retitle(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
+        self.controller.set_chat_title(title)
     }
 
     /// Prompts waiting for the session to be free.
