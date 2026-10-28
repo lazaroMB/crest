@@ -97,28 +97,19 @@ pub fn owns_focus(window: &Window, cx: &App) -> bool {
     })
 }
 
-/// The form waiting for an answer, if any.
-fn waiting(cx: &App) -> Option<Entity<FormView>> {
-    cx.try_global::<Forms>()?
-        .0
-        .iter()
-        .filter_map(WeakEntity::upgrade)
-        .find(|view| view.read(cx).waiting.is_some())
-}
-
-/// Whether a form waits for an answer.
-pub fn is_waiting(cx: &App) -> bool {
-    waiting(cx).is_some()
-}
-
-/// Answers the waiting form with `text`, typed in the chat instead of its
-/// fields. Returns whether a form was waiting.
-pub fn reply_to_waiting(text: &str, window: &mut Window, cx: &mut App) -> bool {
-    let Some(form) = waiting(cx) else {
-        return false;
-    };
-    form.update(cx, |form, cx| form.reply(text.to_owned(), window, cx));
-    true
+/// The forms waiting for an answer, with the id of their block. Several
+/// sessions may be alive (one shown, the others parked): the caller keeps
+/// the ones whose block is in its timeline.
+pub fn waiting_forms(cx: &App) -> Vec<(BlockId, Entity<FormView>)> {
+    cx.try_global::<Forms>().map_or_else(Vec::new, |forms| {
+        forms
+            .0
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .filter(|view| view.read(cx).waiting.is_some())
+            .map(|view| (view.read(cx).id, view))
+            .collect()
+    })
 }
 
 /// The form of one block.
@@ -336,8 +327,15 @@ impl FormView {
         }
     }
 
-    /// Starts answering `pending` and takes the focus.
-    fn attach(&mut self, mut pending: PendingForm, window: &mut Window, cx: &mut Context<Self>) {
+    /// Starts answering `pending`; takes the focus when `focus` (the form
+    /// is on screen).
+    fn attach(
+        &mut self,
+        mut pending: PendingForm,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if pending.is_cancelled() {
             return;
         }
@@ -363,11 +361,22 @@ impl FormView {
             _cancel: cancel,
         });
         self.sent = false;
+        if focus {
+            self.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Puts the focus in the first input, remembering where it was so an
+    /// answer gives it back. Nothing while the form does not wait.
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting.is_none() {
+            return;
+        }
         if self.restore_focus.is_none() {
             self.restore_focus = window.focused(cx);
         }
         self.focus_first(window, cx);
-        cx.notify();
     }
 
     /// Focuses the first input. The card is a tab group, so the next tab
@@ -876,11 +885,12 @@ fn view(id: BlockId, spec: &FormSpec, window: &mut Window, cx: &mut App) -> Enti
     })
 }
 
-/// Hands `pending` to the form of its block, which takes the focus.
-pub fn attach(pending: PendingForm, window: &mut Window, cx: &mut App) {
+/// Hands `pending` to the form of its block, which takes the focus when
+/// `focus` (its session is the one shown).
+pub fn attach(pending: PendingForm, focus: bool, window: &mut Window, cx: &mut App) {
     let request = pending.request();
     let form = view(request.block_id, &request.spec, window, cx);
-    form.update(cx, |form, cx| form.attach(pending, window, cx));
+    form.update(cx, |form, cx| form.attach(pending, focus, window, cx));
 }
 
 /// The view of block `id`, if it was drawn or attached.

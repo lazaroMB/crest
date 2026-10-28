@@ -459,6 +459,14 @@ pub enum SessionEvent {
         /// What to tell once the new session shows.
         notice: Option<(NoticeLevel, String)>,
     },
+    /// The session got busy or idle, or started or stopped waiting on the
+    /// user (an approval, a form). Sent on each change.
+    Activity {
+        /// A turn or a `/` command runs.
+        busy: bool,
+        /// The turn waits for an approval or a form.
+        waiting: bool,
+    },
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -482,6 +490,11 @@ pub struct Session {
     /// `/clear` was asked during a turn: the turn was interrupted and the
     /// session resets once it has ended.
     pending_clear: bool,
+    /// Whether the session is on screen. Parked (its chat left while a
+    /// turn ran) it keeps running but takes no keys and no focus.
+    shown: bool,
+    /// The last [`SessionEvent::Activity`] sent, to send only changes.
+    last_activity: Option<(bool, bool)>,
     queue: VecDeque<Queued>,
     model_override: Option<String>,
     /// The catalogs' models, listed once per session for the popup.
@@ -641,17 +654,23 @@ impl Session {
         subscriptions.push(cx.subscribe_in(
             &block_events,
             window,
-            |this, _, event: &BlockEvent, window, cx| match event {
-                BlockEvent::OpenFile { path, line } => {
-                    this.insert_reference(&file_reference(path, *line), window, cx);
+            |this, _, event: &BlockEvent, window, cx| {
+                // The blocks on screen belong to the shown session.
+                if !this.shown {
+                    return;
                 }
-                BlockEvent::InspectImage {
-                    block,
-                    media_type,
-                    data,
-                } => this.inspect_image(*block, media_type, data, window, cx),
-                BlockEvent::Recompute { block } => this.recompute(*block, cx),
-                BlockEvent::OpenUrl { .. } => {}
+                match event {
+                    BlockEvent::OpenFile { path, line } => {
+                        this.insert_reference(&file_reference(path, *line), window, cx);
+                    }
+                    BlockEvent::InspectImage {
+                        block,
+                        media_type,
+                        data,
+                    } => this.inspect_image(*block, media_type, data, window, cx),
+                    BlockEvent::Recompute { block } => this.recompute(*block, cx),
+                    BlockEvent::OpenUrl { .. } => {}
+                }
             },
         ));
 
@@ -672,6 +691,8 @@ impl Session {
             commands: Vec::new(),
             turn: None,
             pending_clear: false,
+            shown: true,
+            last_activity: None,
             queue: VecDeque::new(),
             model_override: None,
             catalog_models: None,
@@ -680,7 +701,7 @@ impl Session {
             git: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
-            _forms: forms.map(|forms| crate::form::listen(forms, window, cx)),
+            _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
             _subscriptions: subscriptions,
         };
         if let Some(message) = watch_error {
@@ -753,6 +774,58 @@ impl Session {
         })
     }
 
+    /// Attaches every `ask_user` request to its `Form` block. The form takes
+    /// the focus only while the session is shown; a parked one gets it when
+    /// the session comes back ([`Self::set_shown`]).
+    fn listen_forms(
+        mut inbox: crate::form::FormInbox,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(pending) = inbox.next().await {
+                let attached = this.update_in(cx, |this, window, cx| {
+                    crate::blocks::form::attach(pending, this.shown, window, cx);
+                    this.sync_activity(cx);
+                });
+                if attached.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Whether the session is on screen.
+    pub fn is_shown(&self) -> bool {
+        self.shown
+    }
+
+    /// Tells the session whether it is on screen. Shown again, it takes
+    /// the focus back: the approval dialog if one is open, else the form
+    /// waiting for an answer, else the prompt.
+    pub fn set_shown(&mut self, shown: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.shown = shown;
+        self.approval
+            .update(cx, |dialog, cx| dialog.set_shown(shown, window, cx));
+        if shown && !self.approval.read(cx).is_open() {
+            match self.waiting_form(cx) {
+                Some(form) => form.update(cx, |form, cx| form.focus(window, cx)),
+                None => self.focus_input(window, cx),
+            }
+        }
+        self.sync_activity(cx);
+        cx.notify();
+    }
+
+    /// The form of this session waiting for an answer, if any.
+    pub fn waiting_form(&self, cx: &App) -> Option<Entity<crate::blocks::form::FormView>> {
+        let state = self.timeline.read(cx).state();
+        crate::blocks::form::waiting_forms(cx)
+            .into_iter()
+            .find(|(id, _)| state.position(*id).is_some())
+            .map(|(_, form)| form)
+    }
+
     /// The single consumer of the controller's events.
     fn consume(mut events: UnboundedReceiver<DomainEvent>, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
@@ -794,6 +867,10 @@ impl Session {
     }
 
     fn outside_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // A parked session has no keyboard.
+        if !self.shown {
+            return;
+        }
         // The dialog may be up while the prompt still has focus (Reject does
         // not move it). Take the keys here, before the prompt sees them.
         if self.approval.read(cx).is_open() {
@@ -1187,6 +1264,14 @@ impl Session {
             activity.set_queue(queue, cx);
         });
         self.input.update(cx, |input, _| input.set_queued(queued));
+        // The window shows busy chats in the sidebar and drops a parked
+        // session once it is idle.
+        let busy = self.is_busy();
+        let waiting = busy && (self.approval.read(cx).is_open() || self.waiting_form(cx).is_some());
+        if self.last_activity != Some((busy, waiting)) {
+            self.last_activity = Some((busy, waiting));
+            cx.emit(SessionEvent::Activity { busy, waiting });
+        }
     }
 
     /// `Up` in an empty prompt: the last queued prompt goes back to the
@@ -1592,17 +1677,18 @@ impl Session {
     ) {
         match event {
             // A form waiting for an answer takes the prompt as its answer.
-            InputEvent::Submit(prompt) => {
-                if !crate::blocks::form::reply_to_waiting(prompt, window, cx) {
-                    self.submit(prompt.clone(), cx);
+            InputEvent::Submit(prompt) => match self.waiting_form(cx) {
+                Some(form) => {
+                    form.update(cx, |form, cx| form.reply(prompt.clone(), window, cx));
                 }
-            }
+                None => self.submit(prompt.clone(), cx),
+            },
             InputEvent::SubmitImages {
                 text,
                 images,
                 mode: ImageMode::Model,
             } => {
-                if crate::blocks::form::is_waiting(cx) {
+                if self.waiting_form(cx).is_some() {
                     let message = "a form is waiting for an answer; the images go to the next turn";
                     self.notice(NoticeLevel::Info, message.to_owned(), cx);
                 }
@@ -2504,9 +2590,7 @@ mod tests {
         };
         let (h, cx) = harness_full(script, Vec::new(), register, cx);
         send("hola", cx);
-        wait_until(&h, cx, "the form", |_, cx| {
-            crate::blocks::form::is_waiting(cx)
-        });
+        wait_until(&h, cx, "the form", |s, cx| s.waiting_form(cx).is_some());
         h.session.read_with(cx, |s, _| assert!(s.is_running()));
 
         // Back to the prompt, and the answer is typed there.

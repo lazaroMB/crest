@@ -6,7 +6,7 @@
 //! A right click renames or deletes the chat. The file tree stays the
 //! other side panel.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, Global,
@@ -114,10 +114,14 @@ pub fn rename_has_focus(window: &Window, cx: &App) -> bool {
 
 /// The sidebar of projects and chats.
 pub struct ChatsPanel {
+    /// The catalog as given; `projects` adds the open chat to it.
+    catalog: Vec<ProjectChats>,
     projects: Vec<ProjectChats>,
     expanded: HashSet<String>,
     current_root: String,
     current_id: Option<String>,
+    /// Chats with a turn running, by id: whether they wait on the user.
+    activity: HashMap<String, bool>,
     action: Option<ChatAction>,
     rename_input: Option<Entity<InputState>>,
     _keys: Subscription,
@@ -138,14 +142,35 @@ impl ChatsPanel {
                 .ok();
         });
         Self {
+            catalog: Vec::new(),
             projects,
             expanded,
             current_root,
             current_id,
+            activity: HashMap::new(),
             action: None,
             rename_input: None,
             _keys: keys,
         }
+    }
+
+    /// Marks the chat `id` of `root` as the open one.
+    pub fn set_current(&mut self, root: String, id: Option<String>, cx: &mut Context<Self>) {
+        self.current_root = root;
+        self.current_id = id;
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// Shows on the row of the chat `id` that a turn runs (`busy`) and
+    /// whether it waits on the user (`waiting`: an approval or a form).
+    pub fn set_activity(&mut self, id: &str, busy: bool, waiting: bool, cx: &mut Context<Self>) {
+        if busy {
+            self.activity.insert(id.to_owned(), waiting);
+        } else {
+            self.activity.remove(id);
+        }
+        cx.notify();
     }
 
     /// Another chat of `root` to open after deleting `id`, if one remains.
@@ -161,7 +186,17 @@ impl ChatsPanel {
     /// Replaces the list. The open project stays expanded, and the open
     /// chat stays visible even before it has been saved.
     pub fn set_projects(&mut self, projects: Vec<ProjectChats>, cx: &mut Context<Self>) {
-        let projects = catalog_rows(projects, &self.current_root, self.current_id.as_deref());
+        self.catalog = projects;
+        self.rebuild();
+        cx.notify();
+    }
+
+    fn rebuild(&mut self) {
+        let projects = catalog_rows(
+            self.catalog.clone(),
+            &self.current_root,
+            self.current_id.as_deref(),
+        );
         if let Some(project) = projects
             .iter()
             .find(|project| same_workspace(&project.root, &self.current_root))
@@ -169,7 +204,6 @@ impl ChatsPanel {
             self.expanded.insert(project.root.clone());
         }
         self.projects = projects;
-        cx.notify();
     }
 
     fn toggle(&mut self, root: &str, cx: &mut Context<Self>) {
@@ -326,6 +360,12 @@ impl ChatsPanel {
         if expanded {
             for (row, chat) in project.chats.iter().enumerate() {
                 let selected = self.current_id.as_deref() == Some(chat.id.as_str());
+                // A turn running out of sight: waiting on the user, or busy.
+                let badge = match self.activity.get(&chat.id) {
+                    Some(true) => Some("⏳"),
+                    Some(false) => Some("●"),
+                    None => None,
+                };
                 let (root, id, title) = (project.root.clone(), chat.id.clone(), chat.title.clone());
                 let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
                 let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
@@ -360,7 +400,14 @@ impl ChatsPanel {
                             id: id.clone(),
                         });
                     }))
-                    .child(label(&chat.title));
+                    .child(label(&chat.title))
+                    .children(badge.map(|badge| {
+                        div()
+                            .debug_selector(|| "chats-activity".to_owned())
+                            .text_xs()
+                            .text_color(muted)
+                            .child(badge)
+                    }));
                 if selected {
                     item = item.bg(active).rounded_sm();
                 }

@@ -71,7 +71,7 @@ fn ask(
         spec: spec(),
         error: None,
     });
-    cx.update(|window, cx| attach(pending, window, cx));
+    cx.update(|window, cx| attach(pending, true, window, cx));
     draw(cx, view);
     cx.run_until_parked();
     answer
