@@ -3,7 +3,8 @@
 //! The block is drawn by a [`FormView`] kept per block
 //! ([`super::block_state`]), so what the user typed survives scrolling. It
 //! shows one input per field: a text field (one line or a text area), a
-//! text field for numbers checked as they are submitted, a checkbox for a
+//! text field for numbers checked as they are submitted, a date picker
+//! (its calendar greys out the days outside the bounds), a checkbox for a
 //! boolean, radio buttons for one choice and checkboxes for several. Labels
 //! mark the required fields with `*` and descriptions sit under them.
 //!
@@ -20,11 +21,14 @@
 //!
 //! Keys while a field has the focus: `Tab` / `Shift+Tab` move between the
 //! inputs, `Enter` in a one-line field submits, `Esc` cancels; `Space`
-//! toggles a checkbox or picks a radio button.
+//! toggles a checkbox or picks a radio button. On a date picker `Enter`
+//! opens or closes its calendar instead (the picker's own binding runs
+//! first) and `Esc` closes an open calendar before it cancels the form.
 
 use std::collections::BTreeMap;
 
 use application::ports::form::{FormRequest, FormResponse};
+use chrono::NaiveDate;
 use domain::block::{BlockId, BlockKind};
 use domain::form::{FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
@@ -34,7 +38,9 @@ use gpui::{
     div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::calendar::Matcher;
 use gpui_component::checkbox::Checkbox;
+use gpui_component::date_picker::{DatePicker, DatePickerEvent, DatePickerState};
 use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_component::radio::Radio;
 use gpui_component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
@@ -49,6 +55,8 @@ enum FieldInput {
     Line(Entity<InputState>),
     /// Several lines of text.
     Area(Entity<TextareaState>),
+    /// A calendar date.
+    Date(Entity<DatePickerState>),
     /// A checkbox.
     Toggle(bool),
     /// The index of the chosen option.
@@ -61,6 +69,14 @@ enum FieldInput {
 struct Waiting {
     pending: PendingForm,
     _cancel: Task<()>,
+}
+
+/// How a date reads and is written: `YYYY-MM-DD`.
+const ISO_DATE: &str = "%Y-%m-%d";
+
+/// The day `text` names, when it is an ISO date.
+fn iso_date(text: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(text, ISO_DATE).ok()
 }
 
 /// The forms drawn so far, for [`owns_focus`].
@@ -170,6 +186,15 @@ impl FormView {
                             },
                         ));
                     }
+                    FieldInput::Date(state) => {
+                        // The only event is a change (a pick or a clear).
+                        subscriptions.push(cx.subscribe(
+                            state,
+                            move |this: &mut Self, _, _: &DatePickerEvent, cx| {
+                                this.clear_error(&name, cx);
+                            },
+                        ));
+                    }
                     _ => {}
                 }
                 input
@@ -217,8 +242,24 @@ impl FormView {
                 window,
                 cx,
             ),
-            FieldKind::Date { default, .. } => {
-                line(default.clone().unwrap_or_default(), window, cx)
+            FieldKind::Date { default, min, max } => {
+                let (min, max) = (
+                    min.as_deref().and_then(iso_date),
+                    max.as_deref().and_then(iso_date),
+                );
+                let default = default.as_deref().and_then(iso_date);
+                FieldInput::Date(cx.new(|cx| {
+                    let mut state = DatePickerState::new(window, cx).date_format(ISO_DATE);
+                    if min.is_some() || max.is_some() {
+                        // `interval` greys out the days before `min` and
+                        // after `max` (`range` would grey out the inside).
+                        state = state.disabled_matcher(Matcher::interval(min, max));
+                    }
+                    if let Some(day) = default {
+                        state.set_date(day, window, cx);
+                    }
+                    state
+                }))
             }
             FieldKind::Multiline { default, .. } => {
                 let text = default.clone().unwrap_or_default();
@@ -377,6 +418,7 @@ impl FormView {
         let handle = match first {
             Some((_, FieldInput::Line(state))) => state.focus_handle(cx),
             Some((_, FieldInput::Area(state))) => state.focus_handle(cx),
+            Some((_, FieldInput::Date(state))) => state.focus_handle(cx),
             _ => return,
         };
         window.focus(&handle, cx);
@@ -448,6 +490,11 @@ impl FormView {
             (FieldInput::Area(state), _) => {
                 Textarea::new(state).disabled(disabled).into_any_element()
             }
+            (FieldInput::Date(state), _) => DatePicker::new(state)
+                .disabled(disabled)
+                .cleanable(true)
+                .placeholder("YYYY-MM-DD")
+                .into_any_element(),
             (FieldInput::Toggle(checked), _) => div()
                 .debug_selector(move || format!("form-option-{index}-0"))
                 .child(
@@ -658,6 +705,10 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
             }
             Value::String(text)
         }
+        (FieldInput::Date(state), _) => match state.read(cx).date().start() {
+            Some(day) => Value::String(day.format(ISO_DATE).to_string()),
+            None => return Ok(None),
+        },
         (FieldInput::Toggle(checked), _) => Value::Bool(*checked),
         (FieldInput::Choice(selected), FieldKind::Enum { options, .. }) => {
             match selected.and_then(|i| options.get(i)) {

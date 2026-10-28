@@ -108,6 +108,9 @@ gpui-component = "=0.7.3"
 # gpui-component's editing engine; the prompt projects its own editor style
 # (no thin caret) through it. Same version gpui-component resolves.
 gpui-base = "=0.7.3"
+# Dates of the form block's date picker (gpui-component already resolves
+# chrono 0.4; no new crate in the tree).
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
 # File watching for the workspace tree panel (9.x is still a release candidate).
 notify = "8.2.0"

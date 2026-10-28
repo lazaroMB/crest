@@ -1,5 +1,6 @@
 use application::ports::events::DomainEvent;
 use application::ports::form::FormRequestId;
+use chrono::NaiveDate;
 use domain::block::Block;
 use domain::conversation::ToolUseId;
 use futures::FutureExt as _;
@@ -22,7 +23,8 @@ fn spec() -> FormSpec {
              "options": [{"value": "welch", "label": "Welch t"}, {"value": "student"}]},
             {"name": "plots", "type": "multi_enum",
              "options": [{"value": "qq"}, {"value": "hist"}]},
-            {"name": "notes", "type": "multiline"}
+            {"name": "notes", "type": "multiline"},
+            {"name": "due", "type": "date", "min": "2024-01-01", "max": "2024-12-31"}
         ]
     }))
     .unwrap_or_else(|e| panic!("{e}"))
@@ -237,6 +239,48 @@ fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
     });
     draw(cx, &view);
     assert!(cx.debug_bounds("form-cancelled").is_some());
+}
+
+#[gpui::test]
+fn a_date_is_picked_and_submitted_as_iso(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let picker = form_view.read_with(cx, |form, _| match &form.inputs[6] {
+        FieldInput::Date(state) => state.clone(),
+        _ => panic!("no date picker"),
+    });
+    let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d}"));
+
+    // The focus is in the label; the date is before the bound.
+    draw(cx, &view);
+    cx.simulate_input("run");
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date(day(2023, 12, 31), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    form_view.read_with(cx, |form, _| {
+        assert_eq!(
+            form.errors().get("due").map(String::as_str),
+            Some("Pick a date between 2024-01-01 and 2024-12-31")
+        );
+    });
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+
+    // A day inside the bounds goes out as an ISO date.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date(day(2024, 3, 5), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(answer.get("due"), Some(&json!("2024-03-05")));
+    assert_eq!(answer.get("label"), Some(&json!("run")));
 }
 
 #[gpui::test]
