@@ -186,7 +186,11 @@ impl LoginView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.open || self.busy {
+        // Only the dialog with the focus takes keys: another session's
+        // dialog may be open out of sight (parked).
+        let focused = self.focus_handle.contains_focused(window, cx)
+            || self.input.read(cx).focus_handle(cx).is_focused(window);
+        if !self.open || self.busy || !focused {
             return;
         }
         match event.keystroke.key.as_str() {

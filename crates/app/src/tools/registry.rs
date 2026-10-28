@@ -12,7 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use domain::block::BlockKind;
+use domain::block::{BlockId, BlockKind};
 use domain::conversation::{SessionId, ToolResultContent, ToolUseId, TurnId};
 use domain::permission::ToolEffect;
 use futures::future::BoxFuture;
@@ -147,9 +147,16 @@ pub struct PreparedCall {
     pub preview: Option<ApprovalPreview>,
     /// Extra block to add to the timeline before running (e.g. a `Diff`).
     pub block: Option<BlockKind>,
+    /// Id the extra block gets, when the call must know it (a `Form`
+    /// answered in its block); a fresh one otherwise.
+    pub block_id: Option<BlockId>,
     /// Performs the call. Not polled until the call is approved; dropping
     /// it cancels the call.
     pub run: ToolRun,
+    /// What the model gets, and how the extra block ends, when the turn is
+    /// interrupted while the call runs (a form the user was filling).
+    /// `None`: a plain cancellation, the block untouched.
+    pub on_interrupt: Option<ToolOutput>,
 }
 
 impl PreparedCall {
@@ -160,8 +167,18 @@ impl PreparedCall {
             subject: subject.into(),
             preview: None,
             block: None,
+            block_id: None,
             run,
+            on_interrupt: None,
         }
+    }
+
+    /// Returns the same call with what an interruption while it runs
+    /// reports (see [`PreparedCall::on_interrupt`]).
+    #[must_use]
+    pub fn with_interrupt_output(mut self, output: ToolOutput) -> Self {
+        self.on_interrupt = Some(output);
+        self
     }
 
     /// Returns the same call with an approval preview.
@@ -177,6 +194,14 @@ impl PreparedCall {
         self.block = Some(block);
         self
     }
+
+    /// Returns the same call with an extra timeline block of id `id`.
+    #[must_use]
+    pub fn with_block_as(mut self, id: BlockId, block: BlockKind) -> Self {
+        self.block = Some(block);
+        self.block_id = Some(id);
+        self
+    }
 }
 
 impl fmt::Debug for PreparedCall {
@@ -185,6 +210,8 @@ impl fmt::Debug for PreparedCall {
             .field("subject", &self.subject)
             .field("preview", &self.preview)
             .field("block", &self.block)
+            .field("block_id", &self.block_id)
+            .field("on_interrupt", &self.on_interrupt)
             .finish_non_exhaustive()
     }
 }

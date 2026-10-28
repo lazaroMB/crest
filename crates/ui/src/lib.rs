@@ -7,6 +7,7 @@ pub mod blocks;
 pub mod brand;
 pub mod chats;
 pub mod commands;
+pub mod form;
 pub mod help;
 pub mod input;
 pub mod keyscroll;

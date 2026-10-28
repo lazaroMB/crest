@@ -6,7 +6,7 @@ use application::usecases::cancel::CancelToken;
 use application::usecases::run_turn::TurnError;
 use domain::conversation::StopReason;
 
-use super::{HeadlessSink, StdinApproval, Terminal};
+use super::{HeadlessSink, StdinApproval, StdinForm, Terminal};
 use crate::args::Args;
 use crate::root::{App, Config, Frontend, Overrides, build_app};
 
@@ -36,11 +36,14 @@ impl Exit {
     }
 }
 
-/// The terminal front end: events and approvals over `terminal`.
+/// The terminal front end: events, approvals and forms over `terminal`.
+/// Forms read through the approval's input; without a terminal on stdin
+/// they are cancelled.
 #[must_use]
 pub fn frontend(terminal: &Terminal, approval: StdinApproval) -> Frontend {
     Frontend {
         events: Arc::new(HeadlessSink::new(terminal.clone())),
+        form: Arc::new(StdinForm::stdin(terminal.clone(), approval.clone())),
         approval: Arc::new(approval),
     }
 }
@@ -48,6 +51,14 @@ pub fn frontend(terminal: &Terminal, approval: StdinApproval) -> Frontend {
 /// Runs one turn answering `prompt` and saves the session, including the
 /// "allow always" rules granted during it.
 pub async fn run_turn(app: &mut App, prompt: &str, cancel: CancelToken) -> Exit {
+    // A form left waiting by an earlier run cannot be asked here: the
+    // history must still be sendable.
+    if app
+        .session
+        .close_pending_tool_uses(application::usecases::run_turn::RESTART_INTERRUPTED)
+    {
+        app.warn("a form left unanswered by an earlier run was closed");
+    }
     let opts = app.turn_options.clone().with_cancel(cancel);
     let result = app.service.run_turn(&mut app.session, prompt, opts).await;
     if let Err(err) = app.save().await {

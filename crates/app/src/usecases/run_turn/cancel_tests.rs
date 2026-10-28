@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use domain::block::ToolStatus;
-use domain::conversation::{ContentPart, Role, Session, StopReason};
+use domain::conversation::{ContentPart, Message, Role, Session, StopReason, ToolUseId, Turn};
 use domain::permission::{PermissionMode, ToolEffect};
 use futures::FutureExt;
 use schemars::JsonSchema;
@@ -222,6 +222,192 @@ async fn cancelling_a_running_tool_drops_it_and_answers_every_tool_use() {
         ]
     );
     assert_eq!(h.session.turns[0].messages.last().unwrap().role, Role::User);
+    assert_resendable(&h.session);
+}
+
+#[tokio::test]
+async fn cancelling_while_a_form_waits_closes_it_and_tells_the_model_not_to_re_ask() {
+    use crate::testing::form::ScriptedForm;
+    use crate::tools::form::AskUserTool;
+    use domain::block::BlockKind;
+    use domain::form::FormState;
+
+    let form = Arc::new(ScriptedForm::hanging());
+    let port = Arc::clone(&form);
+    let mut h = Harness::with(
+        vec![ScriptedResponse::tool_use(
+            "toolu_1",
+            "ask_user",
+            json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "boolean"}}}}),
+        )],
+        PermissionMode::Ask,
+        move |tools| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        },
+    );
+    let outcome = run_and_cancel(&mut h, || form.requests().len() == 1).await;
+
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    assert_eq!(statuses(&h), [ToolStatus::Running, ToolStatus::Cancelled]);
+    let id = form.requests()[0].block_id;
+    let forms: Vec<_> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                match block.kind {
+                    BlockKind::Form(spec) => Some((block.id, spec.state)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [(id, FormState::Pending), (id, FormState::Cancelled)]
+    );
+    let results = h.tool_results();
+    assert_eq!(results.len(), 1);
+    assert!(results[0].1, "{results:?}");
+    assert!(
+        results[0].0.starts_with("cancelled by user")
+            && results[0].0.contains("Do not ask the same form again"),
+        "{results:?}"
+    );
+    assert_resendable(&h.session);
+}
+
+#[tokio::test]
+async fn a_turn_cut_while_a_form_waited_is_resumed_in_its_blocks() {
+    use crate::ports::form::FormResponse;
+    use crate::testing::checkpoint::RecordingCheckpoint;
+    use crate::testing::form::ScriptedForm;
+    use crate::tools::form::AskUserTool;
+    use domain::block::{BlockId, BlockKind};
+    use domain::form::FormState;
+
+    let ask = json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "boolean"}}}});
+    // The process ends while the form waits: the turn so far was saved.
+    let form = Arc::new(ScriptedForm::hanging());
+    let checkpoint = Arc::new(RecordingCheckpoint::default());
+    let (port, saved) = (Arc::clone(&form), Arc::clone(&checkpoint));
+    let mut h = Harness::with(
+        vec![ScriptedResponse::tool_use("toolu_1", "ask_user", ask)],
+        PermissionMode::Ask,
+        move |tools| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        },
+    )
+    .configure(|service| service.with_checkpoint(saved));
+    run_and_cancel(&mut h, || form.requests().len() == 1).await;
+    assert_eq!(checkpoint.count(), 1);
+    let stored = checkpoint.last().expect("the waiting turn was saved");
+    assert_eq!(stored.turns.len(), 1);
+    assert_eq!(stored.turns[0].stop_reason, None);
+    assert_eq!(stored.pending_tool_uses().len(), 1);
+    let form_block = form.requests()[0].block_id;
+    assert_eq!(form_block, BlockId::for_tool_use("toolu_1", "form"));
+
+    // A new process: the form is asked again in the same block, answered,
+    // and the turn goes on with the model.
+    let form2 = Arc::new(ScriptedForm::new([FormResponse::Submitted {
+        answer: [("ok".to_owned(), json!(true))].into(),
+    }]));
+    let port = Arc::clone(&form2);
+    let mut h2 = Harness::with(
+        vec![ScriptedResponse::text("Bien.")],
+        PermissionMode::Ask,
+        move |tools| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        },
+    );
+    h2.session = stored;
+    let outcome = h2
+        .service
+        .resume_pending_tools(&mut h2.session, TurnOptions::default())
+        .await
+        .unwrap()
+        .expect("something was pending");
+    assert_eq!(outcome.stop_reason, StopReason::EndTurn);
+    assert_eq!(form2.requests()[0].block_id, form_block);
+    let forms: Vec<_> = h2
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                match block.kind {
+                    BlockKind::Form(spec) => Some((block.id, spec.state)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [
+            (form_block, FormState::Pending),
+            (form_block, FormState::Submitted)
+        ]
+    );
+    assert_eq!(statuses(&h2), [ToolStatus::Running, ToolStatus::Succeeded]);
+    let tool_call = BlockId::for_tool_use("toolu_1", "tool_call");
+    assert!(
+        h2.sink.events().iter().any(|event| matches!(
+            event,
+            DomainEvent::ToolStatusChanged { block_id, status: ToolStatus::Running, .. }
+                if *block_id == tool_call
+        )),
+        "the status lands on the ToolCall block of the first run"
+    );
+    assert_eq!(h2.session.turns.len(), 1);
+    assert_eq!(h2.session.turns[0].stop_reason, Some(StopReason::EndTurn));
+    let results = h2.tool_results();
+    assert!(
+        !results[0].1 && results[0].0.contains("\"ok\": true"),
+        "{results:?}"
+    );
+    assert_eq!(h2.llm.remaining(), 0, "the model answered");
+    assert_resendable(&h2.session);
+    // Nothing pending any more.
+    let again = h2
+        .service
+        .resume_pending_tools(&mut h2.session, TurnOptions::default())
+        .await
+        .unwrap();
+    assert!(again.is_none());
+}
+
+#[tokio::test]
+async fn other_tools_left_pending_by_a_restart_are_not_run_again() {
+    let mut h = Harness::new(vec![ScriptedResponse::text("sigo")]);
+    let mut turn = Turn::new(Message::user_text("hola"));
+    turn.messages.push(Message::new(
+        Role::Assistant,
+        vec![ContentPart::ToolUse {
+            id: ToolUseId::new("toolu_9"),
+            name: "echo".into(),
+            input: json!({"text": "x"}),
+        }],
+    ));
+    h.session.push_turn(turn, 1);
+    let outcome = h
+        .service
+        .resume_pending_tools(&mut h.session, TurnOptions::default())
+        .await
+        .unwrap()
+        .expect("something was pending");
+    assert_eq!(outcome.stop_reason, StopReason::EndTurn);
+    assert_eq!(statuses(&h), [ToolStatus::Cancelled]);
+    let results = h.tool_results();
+    assert!(
+        results[0].1 && results[0].0.contains("restart"),
+        "{results:?}"
+    );
+    assert_eq!(h.session.turns.len(), 1);
     assert_resendable(&h.session);
 }
 
