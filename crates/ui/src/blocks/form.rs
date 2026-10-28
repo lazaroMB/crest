@@ -309,16 +309,30 @@ impl FormView {
     }
 
     /// Takes the latest version of the block.
-    fn sync(&mut self, spec: &FormSpec, cx: &mut Context<Self>) {
+    fn sync(&mut self, spec: &FormSpec, window: &mut Window, cx: &mut Context<Self>) {
         if &self.spec != spec {
             // The fields never change; only the state and the answer.
             self.spec.state = spec.state;
             self.spec.answer.clone_from(&spec.answer);
+            self.spec.reply.clone_from(&spec.reply);
             if spec.state != FormState::Pending {
                 self.sent = false;
-                self.waiting = None;
+                if self.waiting.take().is_some() {
+                    self.release_focus(window, cx);
+                }
             }
             cx.notify();
+        }
+    }
+
+    /// Gives the focus back to where it was before the form took it, when
+    /// the form still has it (the request ended without an answer).
+    fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.restore_focus.take();
+        if let Some(handle) = handle
+            && self.focus_handle.contains_focused(window, cx)
+        {
+            window.focus(&handle, cx);
         }
     }
 
@@ -331,13 +345,14 @@ impl FormView {
         let cancellation = pending.cancellation();
         let cancel = cx.spawn_in(window, async move |this, cx| {
             cancellation.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this
                     .waiting
                     .as_ref()
                     .is_some_and(|w| w.pending.is_cancelled())
                 {
                     this.waiting = None;
+                    this.release_focus(window, cx);
                     cx.notify();
                 }
             })
@@ -879,7 +894,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     let form = view(entry.block.id, spec, window, cx);
-    form.update(cx, |form, cx| form.sync(spec, cx));
+    form.update(cx, |form, cx| form.sync(spec, window, cx));
     form.into_any_element()
 }
 

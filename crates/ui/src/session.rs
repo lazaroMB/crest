@@ -479,6 +479,9 @@ pub struct Session {
     /// Names of the `/` commands waiting for the controller's reply.
     commands: Vec<String>,
     turn: Option<Task<()>>,
+    /// `/clear` was asked during a turn: the turn was interrupted and the
+    /// session resets once it has ended.
+    pending_clear: bool,
     queue: VecDeque<Queued>,
     model_override: Option<String>,
     /// The catalogs' models, listed once per session for the popup.
@@ -668,6 +671,7 @@ impl Session {
             running: None,
             commands: Vec::new(),
             turn: None,
+            pending_clear: false,
             queue: VecDeque::new(),
             model_override: None,
             catalog_models: None,
@@ -1201,6 +1205,9 @@ impl Session {
     fn turn_ended(&mut self, end: TurnEnd, cx: &mut Context<Self>) {
         self.running = None;
         self.turn = None;
+        if std::mem::take(&mut self.pending_clear) {
+            self.reset(cx);
+        }
         match end {
             TurnEnd::Finished(StopReason::Interrupted) => {
                 self.notice(NoticeLevel::Info, "turn interrupted", cx);
@@ -1460,30 +1467,40 @@ impl Session {
         window.dispatch_action(Box::new(crate::workbench::SwitchProject), cx);
     }
 
+    /// `/clear`: a new, empty session. During a turn (a form waiting, a
+    /// long answer) the turn is interrupted first and the reset follows
+    /// once it has ended and saved; the prompt keeps the focus meanwhile.
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.running.is_some() {
-            self.notice(
-                NoticeLevel::Warning,
-                "a turn is running; Ctrl+C to interrupt it before /clear",
-                cx,
-            );
-            return;
-        }
         if let Some(command) = self.commands.last() {
             let message = format!("/{command} is running; /clear once it stops");
             self.notice(NoticeLevel::Warning, message, cx);
             return;
         }
+        if self.running.is_some() {
+            self.pending_clear = true;
+            self.interrupt(cx);
+            self.notice(
+                NoticeLevel::Info,
+                "interrupting the turn; clearing when it stops",
+                cx,
+            );
+            return;
+        }
+        self.reset(cx);
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    /// Replaces the timeline, the prompt history and the controller's
+    /// session with empty ones.
+    fn reset(&mut self, cx: &mut Context<Self>) {
         let reset = self.controller.new_session();
         let timeline = cx.new(TimelineView::new);
         self.timeline = timeline.clone();
         self.root
             .update(cx, |root, cx| root.set_timeline(timeline, cx))
             .ok();
-        self.input.update(cx, |input, cx| {
-            input.set_history(Vec::new());
-            input.focus(window, cx);
-        });
+        self.input
+            .update(cx, |input, _| input.set_history(Vec::new()));
         cx.spawn(async move |_, _| reset.await).detach();
         cx.notify();
     }
@@ -2707,6 +2724,47 @@ mod tests {
             assert_eq!(s.model_override(), Some("opus"));
         });
         assert!(blocks(&h, cx).is_empty(), "/clear empties the timeline");
+    }
+
+    #[gpui::test]
+    fn clear_during_a_turn_interrupts_it_and_resets_once_it_ends(cx: &mut TestAppContext) {
+        let script = vec![
+            ScriptedResponse::text("hola mundo cruel").hang_after(4),
+            ScriptedResponse::text("nuevo"),
+        ];
+        let (h, cx) = harness(script, cx);
+        send("saluda", cx);
+        wait_until(&h, cx, "the partial answer", |s, cx| {
+            s.timeline()
+                .read(cx)
+                .state()
+                .entries()
+                .iter()
+                .filter_map(|e| text_of(&e.block.kind))
+                .any(|text| text.starts_with("hola"))
+        });
+
+        send("/clear", cx);
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+        cx.run_until_parked();
+        assert_eq!(finished(&h), [StopReason::Interrupted]);
+        assert!(blocks(&h, cx).is_empty(), "the timeline was cleared");
+        let session = h.session.clone();
+        assert!(
+            cx.update(|window, cx| session.read(cx).input().read(cx).owns_focus(window, cx)),
+            "the prompt keeps the focus"
+        );
+
+        // The session starts over: the model sees only the new prompt.
+        send("otra", cx);
+        wait_until(&h, cx, "the new turn", |s, _| !s.is_running());
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).collect::<Vec<_>>(),
+            ["> otra\n", "nuevo"]
+        );
+        let last = h.llm.last_request().expect("a request");
+        assert_eq!(last.messages.len(), 1, "{last:?}");
     }
 
     #[gpui::test]
