@@ -3461,6 +3461,11 @@ expression: "schemars::schema_for!(Block)"
           "const": "submitted"
         },
         {
+          "description": "Answered in the chat instead; `reply` holds the words.",
+          "type": "string",
+          "const": "replied"
+        },
+        {
           "description": "Dismissed without answering.",
           "type": "string",
           "const": "cancelled"
@@ -3508,6 +3513,13 @@ expression: "schemars::schema_for!(Block)"
             "null"
           ],
           "additionalProperties": true
+        },
+        "reply": {
+          "description": "What the user wrote in the chat instead of filling the form, once\nreplied.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

@@ -3,8 +3,9 @@
 //! The fields are a subset of JSON Schema, close to MCP elicitation's
 //! `requestedSchema`: text (one line or several), number, integer, date,
 //! boolean, one choice and several choices, each with a label, a
-//! description, a default and bounds. The block keeps its state: pending while the tool
-//! waits, then the submitted answer or a cancellation.
+//! description, a default and bounds. The block keeps its state: pending
+//! while the tool waits, then the submitted answer, the words the user
+//! typed in the chat instead, or a cancellation.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -37,6 +38,10 @@ pub struct FormSpec {
     /// The submitted values by field name, once submitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<BTreeMap<String, Value>>,
+    /// What the user wrote in the chat instead of filling the form, once
+    /// replied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<String>,
 }
 
 /// Lifecycle of a form.
@@ -48,6 +53,8 @@ pub enum FormState {
     Pending,
     /// Submitted; `answer` holds the values.
     Submitted,
+    /// Answered in the chat instead; `reply` holds the words.
+    Replied,
     /// Dismissed without answering.
     Cancelled,
 }
@@ -523,6 +530,13 @@ mod tests {
         assert_eq!(value["fields"][7]["type"], "date");
         let back: FormSpec = serde_json::from_value(value).unwrap();
         assert_eq!(back, form);
+        let mut replied = form;
+        replied.state = FormState::Replied;
+        replied.reply = Some("mejor en Python".into());
+        let value = serde_json::to_value(&replied).unwrap();
+        assert_eq!(value["state"], "replied");
+        assert_eq!(value["reply"], "mejor en Python");
+        assert_eq!(serde_json::from_value::<FormSpec>(value).unwrap(), replied);
     }
 
     #[test]

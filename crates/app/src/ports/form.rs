@@ -3,7 +3,8 @@
 //! The tool adds a `Form` block to the timeline, then awaits
 //! [`FormPort::ask`] with the same block id, so the UI answers in that
 //! block; the headless mode asks each field on stdin. The answer comes
-//! back as values by field name, or as a cancellation.
+//! back as values by field name, as the user's words when they answered
+//! in the chat instead of the form, or as a cancellation.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -50,6 +51,11 @@ pub enum FormResponse {
     Submitted {
         /// The values.
         answer: BTreeMap<String, Value>,
+    },
+    /// The user typed an answer in the chat instead of filling the form.
+    Replied {
+        /// What they wrote.
+        text: String,
     },
     /// The user dismissed the form, or nobody can answer it.
     Cancelled {
@@ -113,6 +119,15 @@ mod tests {
         let back: FormResponse =
             serde_json::from_str(&serde_json::to_string(&cancelled).unwrap()).unwrap();
         assert_eq!(back, cancelled);
+        let replied = FormResponse::Replied {
+            text: "mejor en Python".into(),
+        };
+        let json = serde_json::to_value(&replied).unwrap();
+        assert_eq!(json["outcome"], "replied");
+        assert_eq!(
+            serde_json::from_value::<FormResponse>(json).unwrap(),
+            replied
+        );
     }
 
     #[tokio::test]

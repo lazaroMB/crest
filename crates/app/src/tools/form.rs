@@ -8,7 +8,9 @@
 //! answer is checked against the fields ([`FormSpec::check_answer`]); an
 //! invalid one is asked again with the reason, up to [`MAX_ATTEMPTS`]
 //! times. The block then shows the answer read-only and the model gets
-//! the values as JSON. A cancelled form is marked so in the block and
+//! the values as JSON. A user who types in the chat instead of filling the
+//! form closes it too: the block shows their words and the model gets
+//! them as the answer. A cancelled form is marked so in the block and
 //! answers the model with an error saying the user declined, so the turn
 //! goes on; a turn interrupted while the form waits ends the same way
 //! ([`PreparedCall::on_interrupt`]). The call only reads: it needs no
@@ -47,8 +49,9 @@ pub const FORM_TOOL_PROMPT: &str = "\
 
 When you need structured input from the user (choices among options, several values, \
 settings, yes/no decisions) call `ask_user` with a form instead of asking in prose. It waits \
-for the answer and returns it as JSON. If the user cancels, do not ask the same form again: \
-go on without the answers or ask in prose.";
+for the answer and returns it as JSON. The user may answer in the chat instead of filling the \
+form: you then get their words, take them as the answer. If the user cancels, do not ask the \
+same form again: go on without the answers or ask in prose.";
 
 const DESCRIPTION: &str = "Shows the user a form in the timeline and waits until they submit \
 or cancel it. Use it when you need structured answers (pick one or several options, numbers \
@@ -63,7 +66,8 @@ shown as text); numbers and integers take `minimum`/`maximum`; one choice is a s
 {type: \"string\", enum: [...]}}` with `minItems`/`maxItems` (whole numbers). Annotations \
 such as `examples`, `pattern` or `readOnly` are accepted but not enforced; nested objects, \
 `$ref`, `anyOf`, `allOf` and `const` are rejected. Returns the submitted values by field name \
-(empty optional fields are absent), or an error when the user cancels.";
+(empty optional fields are absent), the user's words when they answer in the chat instead, or \
+an error when the user cancels.";
 
 /// Input of `ask_user`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -131,6 +135,7 @@ pub fn form_spec(input: AskUser) -> Result<FormSpec, ToolError> {
         submit_label: input.submit_label.filter(|l| !l.trim().is_empty()),
         state: FormState::Pending,
         answer: None,
+        reply: None,
     };
     spec.validate().map_err(|err| invalid(err.to_string()))?;
     Ok(spec)
@@ -195,6 +200,15 @@ impl TypedTool for AskUserTool {
                         }
                         Err(err) => error = Some(err.to_string()),
                     },
+                    FormResponse::Replied { text } => {
+                        let mut done = spec;
+                        done.state = FormState::Replied;
+                        done.reply = Some(text.clone());
+                        let text = format!(
+                            "The user did not fill the form and answered in the chat instead:\n{text}"
+                        );
+                        return Ok(ToolOutput::text(text).with_block_update(BlockKind::Form(done)));
+                    }
                     FormResponse::Cancelled { reason } => {
                         let mut done = spec;
                         done.state = FormState::Cancelled;
@@ -358,6 +372,23 @@ mod tests {
         assert!(output.is_error);
         assert_eq!(port.requests().len(), MAX_ATTEMPTS);
         assert_eq!(form(&output).state, FormState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_reply_in_the_chat_is_the_answer() {
+        let port = Arc::new(ScriptedForm::new([FormResponse::Replied {
+            text: "mejor en Python".into(),
+        }]));
+        let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
+        let output = call.run.await.unwrap();
+        assert!(!output.is_error);
+        let text = output.text_content();
+        assert!(text.contains("answered in the chat"), "{text}");
+        assert!(text.ends_with("mejor en Python"), "{text}");
+        let done = form(&output);
+        assert_eq!(done.state, FormState::Replied);
+        assert_eq!(done.reply.as_deref(), Some("mejor en Python"));
+        assert_eq!(done.answer, None);
     }
 
     #[tokio::test]

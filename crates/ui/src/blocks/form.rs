@@ -12,8 +12,9 @@
 //! request arrives through [`crate::form::UiForm`] and [`attach`] hands it
 //! to the view, which takes the focus. Submit checks every field and shows
 //! the problems inline; a valid answer goes back to the tool, which marks
-//! the block submitted. A submitted form shows its answers read-only, a
-//! cancelled one says so.
+//! the block submitted. A prompt sent while a form waits answers it in
+//! prose instead ([`reply_to_waiting`]). A submitted form shows its
+//! answers read-only, a replied one the words, a cancelled one says so.
 //!
 //! A click on the card while it waits keeps the focus in the form (the
 //! timeline row behind it would take it otherwise, and the next key would
@@ -94,6 +95,30 @@ pub fn owns_focus(window: &Window, cx: &App) -> bool {
             view.waiting.is_some() && view.focus_handle.contains_focused(window, cx)
         })
     })
+}
+
+/// The form waiting for an answer, if any.
+fn waiting(cx: &App) -> Option<Entity<FormView>> {
+    cx.try_global::<Forms>()?
+        .0
+        .iter()
+        .filter_map(WeakEntity::upgrade)
+        .find(|view| view.read(cx).waiting.is_some())
+}
+
+/// Whether a form waits for an answer.
+pub fn is_waiting(cx: &App) -> bool {
+    waiting(cx).is_some()
+}
+
+/// Answers the waiting form with `text`, typed in the chat instead of its
+/// fields. Returns whether a form was waiting.
+pub fn reply_to_waiting(text: &str, window: &mut Window, cx: &mut App) -> bool {
+    let Some(form) = waiting(cx) else {
+        return false;
+    };
+    form.update(cx, |form, cx| form.reply(text.to_owned(), window, cx));
+    true
 }
 
 /// The form of one block.
@@ -422,6 +447,17 @@ impl FormView {
             _ => return,
         };
         window.focus(&handle, cx);
+    }
+
+    /// Answers with `text`, written in the chat instead of the fields.
+    pub fn reply(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting.is_some() {
+            self.errors.clear();
+            self.error = None;
+            self.respond(FormResponse::Replied { text }, window, cx);
+            self.sent = true;
+            cx.notify();
+        }
     }
 
     /// Dismisses the form without answering.
@@ -780,6 +816,19 @@ impl Render for FormView {
         }
         match self.spec.state {
             FormState::Submitted => return card.child(self.render_summary(cx)).into_any_element(),
+            FormState::Replied => {
+                let reply = self.spec.reply.clone().unwrap_or_default();
+                return card
+                    .child(
+                        div()
+                            .debug_selector(|| "form-replied".to_owned())
+                            .text_sm()
+                            .text_color(muted)
+                            .child("Answered in the chat:"),
+                    )
+                    .child(div().text_sm().child(SharedString::from(reply)))
+                    .into_any_element();
+            }
             FormState::Cancelled => {
                 return card
                     .child(

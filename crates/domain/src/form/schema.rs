@@ -615,6 +615,7 @@ mod tests {
             submit_label: None,
             state: Default::default(),
             answer: None,
+            reply: None,
         };
         assert_eq!(spec.validate(), Ok(()));
     }

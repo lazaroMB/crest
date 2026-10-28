@@ -819,6 +819,18 @@ impl Session {
             let m = key.mods;
             if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
                 self.interrupt(cx);
+                return;
+            }
+            // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
+            // to the prompt) still goes through the keymap, so the user can
+            // leave the form and answer in the chat without the mouse.
+            if (m.ctrl || m.alt || m.cmd)
+                && crate::blocks::form::owns_focus(window, cx)
+                && self
+                    .input
+                    .update(cx, |input, cx| input.feed_key(key, window, cx))
+            {
+                cx.stop_propagation();
             }
             return;
         }
@@ -1562,12 +1574,23 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InputEvent::Submit(prompt) => self.submit(prompt.clone(), cx),
+            // A form waiting for an answer takes the prompt as its answer.
+            InputEvent::Submit(prompt) => {
+                if !crate::blocks::form::reply_to_waiting(prompt, window, cx) {
+                    self.submit(prompt.clone(), cx);
+                }
+            }
             InputEvent::SubmitImages {
                 text,
                 images,
                 mode: ImageMode::Model,
-            } => self.submit_with(text.clone(), None, images.clone(), cx),
+            } => {
+                if crate::blocks::form::is_waiting(cx) {
+                    let message = "a form is waiting for an answer; the images go to the next turn";
+                    self.notice(NoticeLevel::Info, message.to_owned(), cx);
+                }
+                self.submit_with(text.clone(), None, images.clone(), cx);
+            }
             InputEvent::SubmitImages {
                 text,
                 images,
@@ -1841,6 +1864,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use application::ports::events::EventSink;
+    use application::ports::form::FormPort;
     use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use application::testing::llm::{ScriptedLlm, ScriptedResponse};
     use application::testing::system::{RecordingSink, RecordingTelemetry};
@@ -2045,6 +2069,17 @@ mod tests {
         history: Vec<Block>,
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_full(script, history, |_, _| {}, cx)
+    }
+
+    /// A harness whose agent also has the tools `register` adds; the
+    /// `FormPort` given answers in the session's form blocks.
+    fn harness_full(
+        script: Vec<ScriptedResponse>,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs =
@@ -2052,8 +2087,10 @@ mod tests {
         let (sink, events) = RecordingSink::with_channel();
         let sink = Arc::new(sink);
         let (approval, approvals) = UiApproval::channel();
+        let (form, forms) = crate::form::UiForm::channel();
         let llm = Arc::new(ScriptedLlm::new(script));
         let mut tools = ToolRegistry::new();
+        register(&mut tools, Arc::new(form));
         register_file_tools(
             &mut tools,
             FileToolPorts {
@@ -2084,6 +2121,7 @@ mod tests {
             logins: Arc::clone(&logins),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        parts.forms = Some(forms);
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
         let slot = Rc::new(RefCell::new(None));
@@ -2428,6 +2466,62 @@ mod tests {
             let activity = s.activity().read(cx).state();
             assert!(!activity.is_working() && activity.queue().is_empty());
         });
+    }
+
+    #[gpui::test]
+    fn a_prompt_sent_while_a_form_waits_answers_it_in_prose(cx: &mut TestAppContext) {
+        use application::tools::form::AskUserTool;
+        use domain::form::FormState;
+
+        let script = vec![
+            ScriptedResponse::tool_use(
+                "toolu_1",
+                "ask_user",
+                json!({"title": "Which?", "schema": {"properties": {
+                    "lang": {"type": "string", "enum": ["rust", "lua"]}}}}),
+            ),
+            ScriptedResponse::text("vale"),
+        ];
+        let register = |tools: &mut ToolRegistry, port: Arc<dyn FormPort>| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        };
+        let (h, cx) = harness_full(script, Vec::new(), register, cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the form", |_, cx| {
+            crate::blocks::form::is_waiting(cx)
+        });
+        h.session.read_with(cx, |s, _| assert!(s.is_running()));
+
+        // Back to the prompt, and the answer is typed there.
+        h.session
+            .update_in(cx, |s, window, cx| s.focus_input(window, cx));
+        send("mejor en python", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 0));
+        assert_eq!(
+            h.llm.remaining(),
+            0,
+            "the tool returned and the model answered"
+        );
+        let replied: Vec<Option<String>> = h
+            .sink
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DomainEvent::BlockUpdated { block } => match block.kind {
+                    BlockKind::Form(spec) if spec.state == FormState::Replied => Some(spec.reply),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(replied, [Some("mejor en python".to_owned())]);
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).next_back(),
+            Some("vale"),
+            "{kinds:?}"
+        );
     }
 
     #[gpui::test]
