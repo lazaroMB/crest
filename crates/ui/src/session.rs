@@ -967,7 +967,7 @@ impl Session {
     }
 
     /// Whether a picker, the approval dialog, a modal, the key dialog or a
-    /// waiting form has the focus. Keys typed there never reach the
+    /// waiting form (or a widget's text input) has the focus. Keys typed there never reach the
     /// prompt (the API key must not land in it).
     fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
         self.login.read(cx).is_open()
@@ -975,6 +975,7 @@ impl Session {
             || self.approval.focus_handle(cx).contains_focused(window, cx)
             || self.modal.read(cx).is_open()
             || crate::blocks::form::owns_focus(window, cx)
+            || crate::widgets::owns_focus(window, cx)
     }
 
     /// Gives the focus back to the prompt.

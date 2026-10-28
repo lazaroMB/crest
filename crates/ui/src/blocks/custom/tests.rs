@@ -279,3 +279,106 @@ fn row_children_stack_when_narrow(cx: &mut TestAppContext) {
     assert!(b.origin.y >= a.origin.y + a.size.height, "{a:?} {b:?}");
     assert!(a.size.width > px(400.), "{a:?}");
 }
+
+/// A tree with one node of each shared widget.
+fn widget_tree() -> CustomNode {
+    let timeline = serde_json::json!({
+        "type": "timeline",
+        "title": "trace",
+        "rows": [
+            { "id": "a", "label": "GET /", "spans": [{ "start": 0, "end": 100, "label": "GET /" }] },
+            { "id": "b", "label": "db", "depth": 1,
+              "spans": [{ "start": 10, "end": 60, "status": "error" }] }
+        ]
+    });
+    let list = serde_json::json!({
+        "type": "filter_list",
+        "items": [
+            { "level": "error", "text": "boom", "fields": { "k": 1 } },
+            { "level": "info", "text": "fine" }
+        ]
+    });
+    let graph = serde_json::json!({
+        "type": "graph",
+        "nodes": [{ "id": "a" }, { "id": "b" }],
+        "edges": [{ "from": "a", "to": "b" }]
+    });
+    let tree = serde_json::json!({
+        "type": "tree",
+        "columns": [{ "name": "ms", "kind": "bar" }],
+        "nodes": [{ "label": "root", "values": { "ms": 2 },
+                    "children": [{ "label": "leaf", "values": { "ms": 1 } }] }]
+    });
+    CustomNode::Col {
+        children: [timeline, list, graph, tree]
+            .into_iter()
+            .map(|node| serde_json::from_value(node).unwrap_or_else(|e| panic!("{e}")))
+            .collect(),
+    }
+}
+
+#[gpui::test]
+fn widget_nodes_draw_and_a_click_in_them_keeps_the_row_open(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let block = custom(widget_tree());
+    let id = block.id;
+    view.update(cx, |view, cx| {
+        view.apply(&DomainEvent::BlockAdded { block }, cx);
+    });
+    let draw = |cx: &mut gpui::VisualTestContext| {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(900.), px(1600.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        cx.run_until_parked();
+    };
+    draw(cx);
+    let canvas = cx
+        .debug_bounds("timeline-canvas")
+        .unwrap_or_else(|| panic!("timeline not drawn"));
+    cx.simulate_click(canvas.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert!(
+        view.read_with(cx, |v, _| v.state().entries()[0].expanded),
+        "a click in the widget does not collapse the block"
+    );
+    let timeline = cx.update(|_, cx| {
+        crate::blocks::existing_block_state::<crate::widgets::timeline::TimelineView>(
+            super::node_id(id, 0),
+            cx,
+        )
+    });
+    assert!(
+        timeline.is_some(),
+        "the timeline is the first stateful node"
+    );
+    // Keys typed in the list's filter stay there: Enter does not
+    // collapse the block.
+    let input = cx
+        .debug_bounds("filter-list-input")
+        .unwrap_or_else(|| panic!("list not drawn"));
+    cx.simulate_click(input.center(), gpui::Modifiers::none());
+    cx.simulate_input("boom");
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(view.read_with(cx, |v, _| v.state().entries()[0].expanded));
+    let list = cx.update(|_, cx| {
+        crate::blocks::existing_block_state::<crate::widgets::list::ListView>(
+            super::node_id(id, 1),
+            cx,
+        )
+    });
+    let visible = list.map(|list| list.read_with(cx, |l, _| l.visible().to_vec()));
+    assert_eq!(visible, Some(vec![0]));
+
+    let formats = crate::blocks::copy::custom(&widget_tree());
+    assert_eq!(formats[0].key, "spans");
+    assert_eq!(formats[1].key, "lines");
+    assert_eq!(formats[2].key, "dot");
+    assert!(formats[2].text.contains("\"a\" -> \"b\""));
+    assert_eq!(formats[3].key, "tree");
+    assert_eq!(formats[3].text, "name\tms\nroot\t2\n  leaf\t1\n");
+    assert!(formats[0].text.starts_with("row,label,start,end"));
+}

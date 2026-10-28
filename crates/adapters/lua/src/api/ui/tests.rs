@@ -151,6 +151,122 @@ fn plots_take_the_show_plot_fields() {
 }
 
 #[test]
+fn timelines_take_rows_of_spans() {
+    let got = tree(
+        r#"return app.ui.block("t", app.ui.timeline({
+             title = "Request",
+             unit = "ms",
+             rows = {
+               { id = "root", label = "GET /", spans = { { start = 0, stop = 120, status = "ok" } } },
+               { id = "db", label = "SELECT", depth = 1,
+                 spans = { { start = 10, ["end"] = 80, attrs = { rows = 3 } } }, markers = {} },
+               { id = "empty", label = "idle", spans = {} },
+             },
+           }))"#,
+    );
+    let CustomNode::Timeline(spec) = got else {
+        panic!("not a timeline: {got:?}");
+    };
+    assert_eq!(spec.rows.len(), 3);
+    assert_eq!(spec.rows[1].depth, 1);
+    assert_eq!(spec.rows[1].spans[0].attrs["rows"], 3);
+    assert!(spec.rows[2].spans.is_empty());
+    let reversed = error_of(
+        r#"return app.ui.timeline({ rows = { { id = "a", label = "a", spans = { { start = 5, stop = 1 } } } } })"#,
+    );
+    assert!(
+        reversed.contains("app.ui.timeline") && reversed.contains("ends before"),
+        "{reversed}"
+    );
+}
+
+#[test]
+fn graphs_take_nodes_edges_and_groups() {
+    let got = tree(
+        r#"return app.ui.block("g", app.ui.graph({
+             layout = "force", seed = 3, directed = false,
+             nodes = {
+               { id = "a", label = "A", group = "g", kind = "svc", attrs = { port = 80 } },
+               { id = "b" },
+             },
+             edges = { { from = "a", to = "b", label = "calls", weight = 2 } },
+             groups = { { id = "g", label = "Group" } },
+           }))"#,
+    );
+    let CustomNode::Graph(spec) = got else {
+        panic!("not a graph: {got:?}");
+    };
+    assert_eq!(spec.nodes.len(), 2);
+    assert_eq!(spec.layout.name(), "force");
+    assert_eq!(spec.seed, Some(3));
+    assert!(!spec.directed);
+    assert_eq!(spec.edges[0].weight, Some(2.0));
+    assert_eq!(spec.group_label("g"), "Group");
+    let empty = tree(r#"return app.ui.block("e", app.ui.graph({ nodes = {}, edges = {} }))"#);
+    assert!(matches!(empty, CustomNode::Graph(spec) if spec.nodes.is_empty()));
+    let unknown = error_of(
+        r#"return app.ui.graph({ nodes = { { id = "a" } }, edges = { { from = "a", to = "z" } } })"#,
+    );
+    assert!(
+        unknown.contains("app.ui.graph") && unknown.contains("unknown node"),
+        "{unknown}"
+    );
+}
+
+#[test]
+fn trees_take_columns_and_nested_nodes() {
+    let got = tree(
+        r#"return app.ui.block("t", app.ui.tree({
+             columns = { { name = "time", kind = "duration" }, { name = "share", kind = "bar", unit = "%" } },
+             nodes = {
+               { label = "Hash Join", values = { time = 12, share = 100 }, children = {
+                   { label = "Seq Scan", badge = "hot", tone = "error", values = { time = 9, share = 75 } },
+                   { label = "Index Scan", values = {}, children = {} },
+               } },
+             },
+           }))"#,
+    );
+    let CustomNode::Tree(spec) = got else {
+        panic!("not a tree: {got:?}");
+    };
+    assert_eq!(spec.columns.len(), 2);
+    assert_eq!(spec.nodes[0].children.len(), 2);
+    assert_eq!(spec.nodes[0].children[0].badge.as_deref(), Some("hot"));
+    assert!(spec.nodes[0].children[1].children.is_empty());
+    let bad = error_of(
+        r#"return app.ui.tree({ columns = { { name = "n", kind = "number" } }, nodes = { { label = "x", values = { n = "many" } } } })"#,
+    );
+    assert!(
+        bad.contains("app.ui.tree") && bad.contains("needs a number"),
+        "{bad}"
+    );
+}
+
+#[test]
+fn filter_lists_take_items_and_facets() {
+    let got = tree(
+        r#"return app.ui.block("l", app.ui.filter_list({
+             facets = { "service" },
+             items = {
+               { level = "error", ts = "12:00", text = "boom", fields = { service = "db" } },
+               { text = "ok", fields = {} },
+             },
+           }))"#,
+    );
+    let CustomNode::FilterList(spec) = got else {
+        panic!("not a filter list: {got:?}");
+    };
+    assert_eq!(spec.items.len(), 2);
+    assert_eq!(spec.items[0].field_text("service").as_deref(), Some("db"));
+    assert!(spec.columns.is_empty());
+    let twice = error_of(r#"return app.ui.filter_list({ items = {}, facets = { "a", "a" } })"#);
+    assert!(
+        twice.contains("app.ui.filter_list") && twice.contains("appears twice"),
+        "{twice}"
+    );
+}
+
+#[test]
 fn invalid_trees_raise_errors() {
     let short_row =
         error_of(r#"return app.ui.table({ columns = { "a", "b" }, rows = { { 1 } } })"#);

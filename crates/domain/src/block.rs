@@ -712,6 +712,19 @@ pub enum CustomNode {
     /// A function plot with parameter sliders, as the `plot` block draws
     /// it.
     Plot(Box<crate::plot::PlotSpec>),
+    /// Rows of spans on a time axis, with zoom, pan and a tooltip
+    /// (traces, Gantt charts, waveforms).
+    Timeline(Box<crate::widget::timeline::TimelineSpec>),
+    /// Records (log lines, requests) with a text or regex filter, level
+    /// and field chips, follow mode and rows that open to their fields.
+    FilterList(Box<crate::widget::list::ListSpec>),
+    /// Nodes joined by edges, laid out in layers, by forces or on a grid,
+    /// with pan, zoom and a click to focus a node's neighbourhood (DOT,
+    /// ER diagrams, netlists, networks).
+    Graph(Box<crate::widget::graph::GraphSpec>),
+    /// Nested rows with typed columns (text, numbers, durations, inline
+    /// bars) and badges, collapsible (query plans, Terraform plans).
+    Tree(Box<crate::widget::tree::TreeSpec>),
 }
 
 fn default_expand_depth() -> u32 {
@@ -774,6 +787,10 @@ impl CustomNode {
             }
             Self::Model3d(spec) => Ok(spec.mesh.validate()?),
             Self::Plot(spec) => spec.validate(),
+            Self::Timeline(spec) => spec.validate(),
+            Self::FilterList(spec) => spec.validate(),
+            Self::Graph(spec) => spec.validate(),
+            Self::Tree(spec) => spec.validate(),
             Self::Text { .. }
             | Self::Code { .. }
             | Self::Markdown { .. }
