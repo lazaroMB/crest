@@ -51,6 +51,14 @@ pub fn frontend(terminal: &Terminal, approval: StdinApproval) -> Frontend {
 /// Runs one turn answering `prompt` and saves the session, including the
 /// "allow always" rules granted during it.
 pub async fn run_turn(app: &mut App, prompt: &str, cancel: CancelToken) -> Exit {
+    // A form left waiting by an earlier run cannot be asked here: the
+    // history must still be sendable.
+    if app
+        .session
+        .close_pending_tool_uses(application::usecases::run_turn::RESTART_INTERRUPTED)
+    {
+        app.warn("a form left unanswered by an earlier run was closed");
+    }
     let opts = app.turn_options.clone().with_cancel(cancel);
     let result = app.service.run_turn(&mut app.session, prompt, opts).await;
     if let Err(err) = app.save().await {

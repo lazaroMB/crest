@@ -30,6 +30,7 @@ use application::flows::research::graph::ResearchWorkspace;
 use application::flows::research::session::ResearchSession;
 use application::llm_retry::RetryingLlm;
 use application::ports::approval::ApprovalPort;
+use application::ports::checkpoint::TurnCheckpointPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::form::FormPort;
 use application::ports::fs::FileSystemPort;
@@ -55,7 +56,9 @@ use application::tools::task::{TaskPorts, TaskTool};
 use application::tools::web::WEB_TOOLS_PROMPT;
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
-use application::usecases::resume::{restore_permission_rules, resume_by_id, resume_latest};
+use application::usecases::resume::{
+    restore_permission_rules, resume_by_id, resume_latest, settle_orphan_forms,
+};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
@@ -187,6 +190,47 @@ impl std::fmt::Display for MissingApiKey {
 }
 
 impl std::error::Error for MissingApiKey {}
+
+/// Saves the turn in progress when a tool waits on the user (a form), so a
+/// restart finds the question and asks it again. The session is written
+/// as the end of the turn would write it, with that turn unfinished.
+struct Checkpoint {
+    store: Arc<dyn SessionStorePort>,
+    timeline: Arc<Mutex<TimelineState>>,
+    permissions: SharedPermissions,
+    prompt_history: SharedPromptHistory,
+}
+
+#[async_trait::async_trait]
+impl TurnCheckpointPort for Checkpoint {
+    async fn checkpoint(&self, session: &Session, turn: &domain::conversation::Turn) {
+        let prompt_history = self
+            .prompt_history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let mut session = session.clone();
+        session.title = session_title(session.title.as_deref(), &prompt_history);
+        session.turns.push(turn.clone());
+        let timeline = self
+            .timeline
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entries()
+            .iter()
+            .map(|entry| entry.block.clone())
+            .collect();
+        let stored = StoredSession {
+            session,
+            timeline,
+            permission_rules: lock_permissions(&self.permissions).rules.clone(),
+            prompt_history,
+        };
+        if let Err(err) = self.store.save(&stored).await {
+            eprintln!("warning: could not save the turn in progress: {err}");
+        }
+    }
+}
 
 /// Records the timeline of the session while forwarding every event.
 struct TimelineSink {
@@ -681,7 +725,12 @@ pub async fn build_app(
             Ok(None)
         };
         match loaded {
-            Ok(Some(stored)) => {
+            Ok(Some(mut stored)) => {
+                // Forms of calls that are over close; one whose call still
+                // waits is asked again once the session opens.
+                if settle_orphan_forms(&mut stored) > 0 {
+                    warnings.push("a form left unanswered by an earlier run was closed".into());
+                }
                 restore_permission_rules(&permissions, &stored.permission_rules);
                 let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
                 for block in stored.timeline {
@@ -788,10 +837,19 @@ pub async fn build_app(
         prompt.push_str("\n\n");
         prompt.push_str(WEB_TOOLS_PROMPT);
     }
-    let mut service = AgentService::new(deps, tools, policy, permissions)
+    let prompt_history = Arc::new(Mutex::new(prompt_history));
+    let mut service = AgentService::new(deps, tools, policy, Arc::clone(&permissions))
         .with_system_prompt(prompt)
         .with_compaction(CompactionPolicy::default())
         .with_decider(decider.clone());
+    if let Some(store) = &store {
+        service = service.with_checkpoint(Arc::new(Checkpoint {
+            store: Arc::clone(store),
+            timeline: Arc::clone(&timeline),
+            permissions: Arc::clone(&permissions),
+            prompt_history: Arc::clone(&prompt_history),
+        }));
+    }
     let plugins = plugins.map(|host| host as Arc<dyn PluginHostPort>);
     if let Some(host) = &plugins {
         service = service.with_plugin_host(Arc::clone(host));
@@ -864,7 +922,7 @@ pub async fn build_app(
         models,
         events,
         timeline,
-        prompt_history: Arc::new(Mutex::new(prompt_history)),
+        prompt_history,
         store,
         implement,
         flow_storage,

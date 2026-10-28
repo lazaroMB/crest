@@ -58,7 +58,9 @@ serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "time"] }
 tracing = "0.1.44"
-uuid = { version = "1.28.0", features = ["v4", "serde"] }
+# v5: the block of a tool call derives its id from the call's id, so a call
+# asked again after a restart lands in the blocks it already has.
+uuid = { version = "1.28.0", features = ["v4", "v5", "serde"] }
 
 # Adapter crates (wave 2). Workers may adjust features of the line they use.
 base64 = "0.23.1"

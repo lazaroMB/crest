@@ -272,6 +272,14 @@ pub trait SessionController: Send + Sync {
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
 
+    /// Continues the turn a restart cut while `ask_user` waited: asks the
+    /// form again and goes on once it is answered. The default does
+    /// nothing.
+    fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        let _ = cancel;
+        futures::future::ready(TurnEnd::Finished(StopReason::EndTurn)).boxed()
+    }
+
     /// Stores `title` on the open chat and saves the session, so the next
     /// save keeps the name. The default fails: this session has no store.
     fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
@@ -418,6 +426,10 @@ pub struct SessionParts {
     pub needs_model: bool,
     /// Id of the open session, so the chats panel can mark it.
     pub session_id: Option<String>,
+    /// The saved session ends in an `ask_user` call nobody answered (the
+    /// process ended while the form waited): the session asks it again as
+    /// soon as it opens ([`SessionController::resume_pending`]).
+    pub resume_pending: bool,
 }
 
 impl SessionParts {
@@ -447,6 +459,7 @@ impl SessionParts {
             needs_login: false,
             needs_model: false,
             session_id: None,
+            resume_pending: false,
         }
     }
 }
@@ -575,6 +588,7 @@ impl Session {
             needs_login,
             needs_model,
             session_id: _,
+            resume_pending,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -709,6 +723,9 @@ impl Session {
         }
         this.load_commands(window, cx);
         this.refresh_git(cx);
+        if resume_pending {
+            this.resume(cx);
+        }
         if needs_login {
             this.login
                 .update(cx, |login, cx| login.show(Account::Anthropic, window, cx));
@@ -1235,6 +1252,28 @@ impl Session {
             let end = turn.await;
             this.update(cx, |this, cx| this.turn_ended(end, cx)).ok();
         }));
+        self.sync_activity(cx);
+        cx.notify();
+    }
+
+    /// Continues the turn a restart cut while a form waited: the controller
+    /// asks the form again (in the block the timeline already shows) and
+    /// goes on with the model once it is answered. Runs like a turn:
+    /// Ctrl+C interrupts it and prompts sent meanwhile answer the form or
+    /// wait in the queue.
+    fn resume(&mut self, cx: &mut Context<Self>) {
+        let cancel = CancelToken::new();
+        self.running = Some(cancel.clone());
+        let turn = self.controller.resume_pending(cancel);
+        self.turn = Some(cx.spawn(async move |this, cx| {
+            let end = turn.await;
+            this.update(cx, |this, cx| this.turn_ended(end, cx)).ok();
+        }));
+        self.notice(
+            NoticeLevel::Info,
+            "a form was left unanswered when crest closed; it is asked again",
+            cx,
+        );
         self.sync_activity(cx);
         cx.notify();
     }
@@ -2074,6 +2113,26 @@ mod tests {
             .boxed()
         }
 
+        fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+            let (tx, rx) = oneshot::channel();
+            let service = Arc::clone(&self.service);
+            let conversation = Arc::clone(&self.conversation);
+            std::thread::spawn(move || {
+                let end = futures::executor::block_on(async move {
+                    let opts = TurnOptions::new(ModelRole::Main).with_cancel(cancel);
+                    let mut conversation = conversation.lock().await;
+                    match service.resume_pending_tools(&mut conversation, opts).await {
+                        Ok(Some(outcome)) => TurnEnd::Finished(outcome.stop_reason),
+                        Ok(None) => TurnEnd::Finished(StopReason::EndTurn),
+                        Err(err) => TurnEnd::Failed(err.to_string()),
+                    }
+                });
+                tx.send(end).ok();
+            });
+            rx.map(|end| end.unwrap_or(TurnEnd::Failed("turn lost".into())))
+                .boxed()
+        }
+
         /// Adds the images as blocks, as the binary does.
         fn post_images(
             &self,
@@ -2183,6 +2242,18 @@ mod tests {
         register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_resuming(script, Conversation::new("/ws", 0), history, register, cx)
+    }
+
+    /// [`harness_full`] over a saved `conversation`; a turn it leaves
+    /// pending is resumed as the session opens.
+    fn harness_resuming(
+        script: Vec<ScriptedResponse>,
+        conversation: Conversation,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs =
@@ -2217,14 +2288,16 @@ mod tests {
             Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask))),
         );
         let logins = Arc::new(Mutex::new(Vec::new()));
+        let resume_pending = !conversation.pending_tool_uses().is_empty();
         let controller = Arc::new(AgentController {
             service: Arc::new(service),
-            conversation: Arc::new(futures::lock::Mutex::new(Conversation::new("/ws", 0))),
+            conversation: Arc::new(futures::lock::Mutex::new(conversation)),
             events: sink.clone(),
             logins: Arc::clone(&logins),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
         parts.forms = Some(forms);
+        parts.resume_pending = resume_pending;
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
         let slot = Rc::new(RefCell::new(None));
@@ -2623,6 +2696,93 @@ mod tests {
             Some("vale"),
             "{kinds:?}"
         );
+    }
+
+    #[gpui::test]
+    fn a_form_left_waiting_by_a_restart_is_asked_again_on_open(cx: &mut TestAppContext) {
+        use application::tools::form::AskUserTool;
+        use domain::block::BlockId;
+        use domain::conversation::{Message, Role, ToolUseId, Turn};
+        use domain::form::{FormSpec, FormState};
+
+        // The saved session: a turn cut while `ask_user` waited, and the
+        // blocks the timeline showed then.
+        let input = json!({"title": "Which?", "schema": {"properties": {
+            "lang": {"type": "string", "enum": ["rust", "lua"]}}}});
+        let mut conversation = Conversation::new("/ws", 0);
+        let mut turn = Turn::new(Message::user_text("hola"));
+        turn.messages.push(Message::new(
+            Role::Assistant,
+            vec![ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "ask_user".into(),
+                input: input.clone(),
+            }],
+        ));
+        conversation.push_turn(turn, 1);
+        let spec: FormSpec = serde_json::from_value(json!({
+            "title": "Which?",
+            "fields": [{"name": "lang", "type": "enum",
+                        "options": [{"value": "rust"}, {"value": "lua"}]}]
+        }))
+        .unwrap();
+        let history = vec![
+            prompt_block("hola"),
+            Block {
+                id: BlockId::for_tool_use("toolu_1", "tool_call"),
+                kind: BlockKind::ToolCall {
+                    tool_use_id: "toolu_1".into(),
+                    name: "ask_user".into(),
+                    summary: "Which?".into(),
+                    input,
+                    status: ToolStatus::Running,
+                    output: None,
+                },
+            },
+            Block {
+                id: BlockId::for_tool_use("toolu_1", "form"),
+                kind: BlockKind::Form(spec),
+            },
+        ];
+        let register = |tools: &mut ToolRegistry, port: Arc<dyn FormPort>| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        };
+        let (h, cx) = harness_resuming(
+            vec![ScriptedResponse::text("vale")],
+            conversation,
+            history,
+            register,
+            cx,
+        );
+
+        // Opened: the turn resumes and the form waits again, in its block.
+        wait_until(&h, cx, "the form", |s, cx| s.waiting_form(cx).is_some());
+        h.session.read_with(cx, |s, _| assert!(s.is_running()));
+        let forms = blocks(&h, cx)
+            .iter()
+            .filter(|kind| matches!(kind, BlockKind::Form(_)))
+            .count();
+        assert_eq!(forms, 1, "the same block, not a second form");
+
+        // Answered in the chat: the model goes on.
+        h.session
+            .update_in(cx, |s, window, cx| s.focus_input(window, cx));
+        send("rust", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let kinds = blocks(&h, cx);
+        assert!(
+            kinds.iter().any(|kind| matches!(
+                kind,
+                BlockKind::Form(spec) if spec.state == FormState::Replied
+            )),
+            "{kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter_map(text_of).next_back(),
+            Some("vale"),
+            "{kinds:?}"
+        );
+        assert_eq!(finished(&h), [StopReason::EndTurn]);
     }
 
     #[gpui::test]

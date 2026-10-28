@@ -33,6 +33,15 @@ impl BlockId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    /// The id of the block that shows the tool use `tool_use_id` as `role`
+    /// (`"tool_call"`, `"form"`): the same on every run, so a call asked
+    /// again after a restart lands in the blocks it already has.
+    #[must_use]
+    pub fn for_tool_use(tool_use_id: &str, role: &str) -> Self {
+        let name = format!("crest:{role}:{tool_use_id}");
+        Self(Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes()))
+    }
 }
 
 impl Default for BlockId {

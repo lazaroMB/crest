@@ -159,7 +159,9 @@ impl TypedTool for AskUserTool {
 
     async fn prepare(&self, input: AskUser, ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
         let spec = form_spec(input)?;
-        let block_id = BlockId::new();
+        // Derived from the call: asked again after a restart, the form
+        // lands in the block the timeline already shows.
+        let block_id = BlockId::for_tool_use(ctx.tool_use_id.as_str(), "form");
         let port = Arc::clone(&self.port);
         let next_id = Arc::clone(&self.next_id);
         let tool_use_id = ctx.tool_use_id.clone();
