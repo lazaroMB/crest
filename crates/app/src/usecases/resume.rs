@@ -5,7 +5,9 @@
 //! rules granted during it, which go back into the shared permission
 //! policy.
 
+use domain::block::{BlockId, BlockKind};
 use domain::conversation::SessionId;
+use domain::form::FormState;
 use domain::permission::PermissionRule;
 
 use crate::ports::store::{SessionStorePort, StoreError, StoredSession};
@@ -51,6 +53,32 @@ fn same_workspace(left: &str, right: &str) -> bool {
     } else {
         left == right
     }
+}
+
+/// Closes the `Form` blocks of `stored` still pending although their
+/// `ask_user` call is over (the turn was interrupted before the block was
+/// updated, or an old version saved it so). A form whose call is pending
+/// (saved while it waited; see
+/// [`crate::usecases::run_turn::AgentService::resume_pending_tools`]) is
+/// left as it is. Returns how many were closed.
+pub fn settle_orphan_forms(stored: &mut StoredSession) -> usize {
+    let waiting: Vec<BlockId> = stored
+        .session
+        .pending_tool_uses()
+        .iter()
+        .map(|pending| BlockId::for_tool_use(pending.id.as_str(), "form"))
+        .collect();
+    let mut closed = 0;
+    for block in &mut stored.timeline {
+        if let BlockKind::Form(spec) = &mut block.kind
+            && spec.state == FormState::Pending
+            && !waiting.contains(&block.id)
+        {
+            spec.state = FormState::Cancelled;
+            closed += 1;
+        }
+    }
+    closed
 }
 
 /// Adds the `rules` of a resumed session to `permissions`, after the rules
@@ -119,6 +147,58 @@ mod tests {
         assert_eq!(
             resume_latest(&store, "/ws").await,
             Err(StoreError::Backend("locked".into()))
+        );
+    }
+
+    #[test]
+    fn pending_forms_of_finished_calls_are_closed_on_load() {
+        use domain::block::Block;
+        use domain::conversation::{ContentPart, Message, Role, ToolUseId, Turn};
+        use domain::form::FormSpec;
+        use serde_json::json;
+
+        let form = |state: &str| -> FormSpec {
+            serde_json::from_value(json!({"title": "t", "fields": [], "state": state})).unwrap()
+        };
+        let mut stored = stored("/ws", 1);
+        // A turn cut while `toolu_1` waited: its form stays pending.
+        let mut turn = Turn::new(Message::user_text("hola"));
+        turn.messages.push(Message::new(
+            Role::Assistant,
+            vec![ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "ask_user".into(),
+                input: json!({}),
+            }],
+        ));
+        stored.session.push_turn(turn, 2);
+        stored.timeline = vec![
+            Block {
+                id: BlockId::for_tool_use("toolu_0", "form"),
+                kind: BlockKind::Form(form("pending")),
+            },
+            Block {
+                id: BlockId::for_tool_use("toolu_1", "form"),
+                kind: BlockKind::Form(form("pending")),
+            },
+            Block::new(BlockKind::Form(form("submitted"))),
+        ];
+        assert_eq!(settle_orphan_forms(&mut stored), 1);
+        let states: Vec<_> = stored
+            .timeline
+            .iter()
+            .map(|block| match &block.kind {
+                BlockKind::Form(spec) => spec.state,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            states,
+            [
+                FormState::Cancelled,
+                FormState::Pending,
+                FormState::Submitted
+            ]
         );
     }
 

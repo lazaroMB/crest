@@ -76,6 +76,7 @@ use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
 use ui::chats::{ChatEntry, ProjectChats, SessionOpen, chat_label, project_name};
+use ui::form::UiForm;
 use ui::help::HelpSnapshot;
 use ui::session::{
     ModelChoice, Reply, SessionController, SessionParts, TurnEnd, TurnRequest, prompt_block,
@@ -819,6 +820,24 @@ pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<St
     }
 }
 
+/// Continues the turn a restart cut while `ask_user` waited (see
+/// [`AgentService::resume_pending_tools`]) and saves the session.
+pub async fn resume_pending(app: &mut App, cancel: CancelToken) -> TurnEnd {
+    let opts = app.turn_options.clone().with_cancel(cancel);
+    let result = app
+        .service
+        .resume_pending_tools(&mut app.session, opts)
+        .await;
+    if let Err(err) = app.save().await {
+        app.warn(format!("could not save the session: {err}"));
+    }
+    match result {
+        Ok(Some(outcome)) => TurnEnd::Finished(outcome.stop_reason),
+        Ok(None) => TurnEnd::Finished(domain::conversation::StopReason::EndTurn),
+        Err(err) => TurnEnd::Failed(err.to_string()),
+    }
+}
+
 impl UiController {
     /// Returns the same controller storing `/login` keys in `keys`.
     #[must_use]
@@ -1146,6 +1165,19 @@ impl SessionController for UiController {
         let router = self.router();
         self.handle.spawn(async move {
             tx.send(router.line(request).await).ok();
+        });
+        rx.map(|end| {
+            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
+        })
+        .boxed()
+    }
+
+    fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        let (tx, rx) = oneshot::channel();
+        let app = Arc::clone(&self.app);
+        self.handle.spawn(async move {
+            let end = resume_pending(&mut *app.lock().await, cancel).await;
+            tx.send(end).ok();
         });
         rx.map(|end| {
             end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
@@ -1593,9 +1625,11 @@ pub fn session_parts(
 ) -> anyhow::Result<SessionParts> {
     let (sink, events) = ChannelSink::channel();
     let (approval, approvals) = UiApproval::channel();
+    let (form, forms) = UiForm::channel();
     let frontend = Frontend {
         events: Arc::new(sink.clone()),
         approval: Arc::new(approval),
+        form: Arc::new(form),
     };
     let api_keys: Arc<dyn ApiKeyPort> = overrides
         .api_keys
@@ -1634,6 +1668,7 @@ pub fn session_parts(
             let prompt_history = app.prompt_history().clone();
             let needs_model = app.model_policy().needs_selection();
             let session_id = app.session.id.to_string();
+            let resume_pending = !app.session.pending_tool_uses().is_empty();
             let controller = Arc::new(
                 UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
             );
@@ -1652,6 +1687,7 @@ pub fn session_parts(
             parts.prompt_history = prompt_history;
             parts.theme = theme;
             parts.session_id = Some(session_id);
+            parts.resume_pending = resume_pending;
             (parts, workspace)
         }
         Err(err) => {
@@ -1696,6 +1732,7 @@ pub fn session_parts(
             (parts, workspace)
         }
     };
+    parts.forms = Some(forms);
     parts.workspace_label = workspace_label(&workspace);
     parts.workspace_dir = Some(workspace);
     Ok(parts)

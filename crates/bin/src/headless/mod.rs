@@ -3,6 +3,7 @@
 //! without UI.
 
 pub mod approval;
+pub mod form;
 pub mod implement;
 pub mod interrupt;
 pub mod research;
@@ -12,6 +13,7 @@ pub mod sink;
 pub mod terminal;
 
 pub use approval::StdinApproval;
+pub use form::StdinForm;
 pub use run::{Exit, run, run_turn};
 pub use sink::HeadlessSink;
 pub use terminal::Terminal;

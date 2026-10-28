@@ -227,6 +227,9 @@ pub struct ApprovalView {
     preview_scroll: ScrollHandle,
     restore_focus: Option<FocusHandle>,
     next_key: u64,
+    /// Whether its session is on screen. A parked session's dialog keeps
+    /// its queue but never takes the focus.
+    shown: bool,
     _inbox: Task<()>,
 }
 
@@ -256,8 +259,24 @@ impl ApprovalView {
             preview_scroll: ScrollHandle::new(),
             restore_focus: None,
             next_key: 0,
+            shown: true,
             _inbox: task,
         }
+    }
+
+    /// Tells the dialog whether its session is on screen. Shown again, it
+    /// becomes the one [`answer_diff`] answers and takes the focus back if
+    /// a request is open.
+    pub fn set_shown(&mut self, shown: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.shown = shown;
+        if shown {
+            let this = cx.entity().downgrade();
+            cx.set_global(ActiveDialog(this));
+            if self.current.is_some() {
+                window.focus(&self.focus_handle, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// The request on screen, if any.
@@ -300,7 +319,7 @@ impl ApprovalView {
         if self.current.is_some() {
             self.queue.push_back(shown);
         } else {
-            self.restore_focus = window.focused(cx);
+            self.restore_focus = self.shown.then(|| window.focused(cx)).flatten();
             self.show(shown, window, cx);
         }
         cx.notify();
@@ -309,7 +328,9 @@ impl ApprovalView {
     fn show(&mut self, shown: Shown, window: &mut Window, cx: &mut Context<Self>) {
         self.current = Some(shown);
         self.reason = None;
-        window.focus(&self.focus_handle, cx);
+        if self.shown {
+            window.focus(&self.focus_handle, cx);
+        }
     }
 
     /// Shows the next queued request, or closes and gives focus back.

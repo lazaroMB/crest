@@ -116,6 +116,9 @@ async fn a_plugin_tool_opens_a_modal_with_checked_images() {
     let frontend = Frontend {
         events: Arc::clone(&sink) as Arc<dyn EventSink>,
         approval: Arc::new(ScriptedApproval::new()),
+        form: Arc::new(application::ports::form::NoForms(
+            "no UI in this test".into(),
+        )),
     };
     let mut app = build_app(&config(ws.clone()), frontend, overrides)
         .await

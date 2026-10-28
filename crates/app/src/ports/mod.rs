@@ -1,10 +1,12 @@
 //! Port traits: the only way use cases talk to the outside world.
 
 pub mod approval;
+pub mod checkpoint;
 pub mod compute;
 pub mod credentials;
 pub mod decision;
 pub mod events;
+pub mod form;
 pub mod fs;
 pub mod llm;
 pub mod mcp;

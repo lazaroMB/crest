@@ -1,8 +1,10 @@
 //! In-memory fakes of every port, for tests without network, `rg` or UI.
 
+pub mod checkpoint;
 pub mod compute;
 pub mod credentials;
 pub mod decision;
+pub mod form;
 pub mod fs;
 pub mod llm;
 pub mod projects;
