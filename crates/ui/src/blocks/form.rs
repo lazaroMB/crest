@@ -3,10 +3,13 @@
 //! The block is drawn by a [`FormView`] kept per block
 //! ([`super::block_state`]), so what the user typed survives scrolling. It
 //! shows one input per field: a text field (one line or a text area), a
-//! text field for numbers checked as they are submitted, a date picker
-//! (its calendar greys out the days outside the bounds), a checkbox for a
-//! boolean, radio buttons for one choice and checkboxes for several. Labels
-//! mark the required fields with `*` and descriptions sit under them.
+//! text field for numbers checked as they are submitted, a date picker or
+//! a date range picker (their calendars grey out the days outside the
+//! bounds), a checkbox for a boolean, radio buttons for one choice and
+//! checkboxes for several. Labels mark the required fields with `*`, a
+//! legend under the title says so, and descriptions sit under the labels.
+//! While a required field is empty the submit button is disabled and the
+//! footer names the fields that are missing.
 //!
 //! The form only takes answers while the `ask_user` call waits on it: the
 //! request arrives through [`crate::form::UiForm`] and [`attach`] hands it
@@ -58,6 +61,8 @@ enum FieldInput {
     Area(Entity<TextareaState>),
     /// A calendar date.
     Date(Entity<DatePickerState>),
+    /// A period between two dates.
+    DateRange(Entity<DatePickerState>),
     /// A checkbox.
     Toggle(bool),
     /// The index of the chosen option.
@@ -155,6 +160,11 @@ fn answer_text(field: &FormField, value: Option<&Value>) -> String {
             _ => s.clone(),
         },
         (_, Value::Bool(b)) => if *b { "Yes" } else { "No" }.to_owned(),
+        (FieldKind::DateRange { .. }, value @ Value::Object(_)) => DateSpan::from_value(value)
+            .map_or_else(
+                || value.to_string(),
+                |span| format!("{} → {}", span.start, span.end),
+            ),
         (FieldKind::MultiEnum { options, .. }, Value::Array(items)) => {
             let picked: Vec<String> = items
                 .iter()
@@ -187,7 +197,11 @@ impl FormView {
                             window,
                             move |this: &mut Self, _, event: &InputEvent, window, cx| match event {
                                 InputEvent::PressEnter { .. } => this.submit(window, cx),
-                                InputEvent::Change => this.clear_error(&name, cx),
+                                InputEvent::Change => {
+                                    // The footer follows what is filled.
+                                    this.clear_error(&name, cx);
+                                    cx.notify();
+                                }
                                 _ => {}
                             },
                         ));
@@ -198,16 +212,18 @@ impl FormView {
                             move |this: &mut Self, _, event: &InputEvent, cx| {
                                 if let InputEvent::Change = event {
                                     this.clear_error(&name, cx);
+                                    cx.notify();
                                 }
                             },
                         ));
                     }
-                    FieldInput::Date(state) => {
+                    FieldInput::Date(state) | FieldInput::DateRange(state) => {
                         // The only event is a change (a pick or a clear).
                         subscriptions.push(cx.subscribe(
                             state,
                             move |this: &mut Self, _, _: &DatePickerEvent, cx| {
                                 this.clear_error(&name, cx);
+                                cx.notify();
                             },
                         ));
                     }
@@ -277,14 +293,25 @@ impl FormView {
                     state
                 }))
             }
-            FieldKind::DateRange { default, .. } => line(
-                default
+            FieldKind::DateRange { default, min, max } => {
+                let (min, max) = (
+                    min.as_deref().and_then(iso_date),
+                    max.as_deref().and_then(iso_date),
+                );
+                let default = default
                     .as_ref()
-                    .map(|span| format!("{}..{}", span.start, span.end))
-                    .unwrap_or_default(),
-                window,
-                cx,
-            ),
+                    .and_then(|span| Some((iso_date(&span.start)?, iso_date(&span.end)?)));
+                FieldInput::DateRange(cx.new(|cx| {
+                    let mut state = DatePickerState::range(window, cx).date_format(ISO_DATE);
+                    if min.is_some() || max.is_some() {
+                        state = state.disabled_matcher(Matcher::interval(min, max));
+                    }
+                    if let Some(span) = default {
+                        state.set_date(span, window, cx);
+                    }
+                    state
+                }))
+            }
             FieldKind::Multiline { default, .. } => {
                 let text = default.clone().unwrap_or_default();
                 FieldInput::Area(cx.new(|cx| {
@@ -475,7 +502,9 @@ impl FormView {
         let handle = match first {
             Some((_, FieldInput::Line(state))) => state.focus_handle(cx),
             Some((_, FieldInput::Area(state))) => state.focus_handle(cx),
-            Some((_, FieldInput::Date(state))) => state.focus_handle(cx),
+            Some((_, FieldInput::Date(state) | FieldInput::DateRange(state))) => {
+                state.focus_handle(cx)
+            }
             _ => return,
         };
         window.focus(&handle, cx);
@@ -562,6 +591,12 @@ impl FormView {
                 .disabled(disabled)
                 .cleanable(true)
                 .placeholder("YYYY-MM-DD")
+                .into_any_element(),
+            (FieldInput::DateRange(state), _) => DatePicker::new(state)
+                .number_of_months(2)
+                .disabled(disabled)
+                .cleanable(true)
+                .placeholder("YYYY-MM-DD → YYYY-MM-DD")
                 .into_any_element(),
             (FieldInput::Toggle(checked), _) => div()
                 .debug_selector(move || format!("form-option-{index}-0"))
@@ -692,15 +727,41 @@ impl FormView {
             .into_any_element()
     }
 
+    /// The labels of the required fields still empty.
+    fn missing_required(&self, cx: &App) -> Vec<String> {
+        self.spec
+            .fields
+            .iter()
+            .zip(&self.inputs)
+            .filter(|(field, input)| {
+                field.required && matches!(read_field(field, input, cx), Ok(None))
+            })
+            .map(|(field, _)| label_of(field).to_owned())
+            .collect()
+    }
+
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let disabled = self.waiting.is_none();
-        let note = if self.sent {
-            Some("Sent…")
-        } else if disabled {
-            Some("Not waiting for an answer")
+        let missing = if disabled || self.sent {
+            Vec::new()
         } else {
-            None
+            self.missing_required(cx)
+        };
+        let (note, color) = if self.sent {
+            (Some("Sent…".to_owned()), theme.muted_foreground)
+        } else if disabled {
+            (
+                Some("Not waiting for an answer".to_owned()),
+                theme.muted_foreground,
+            )
+        } else if missing.is_empty() {
+            (None, theme.muted_foreground)
+        } else {
+            (
+                Some(format!("Required: {}", missing.join(", "))),
+                theme.danger,
+            )
         };
         let submit = self
             .spec
@@ -712,11 +773,17 @@ impl FormView {
             .items_center()
             .justify_end()
             .children(note.map(|note| {
+                let selector = if missing.is_empty() {
+                    "form-note"
+                } else {
+                    "form-missing"
+                };
                 div()
+                    .debug_selector(move || selector.to_owned())
                     .flex_1()
                     .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(note)
+                    .text_color(color)
+                    .child(SharedString::from(note))
             }))
             .child(
                 Button::new(self.element_id("cancel", 0))
@@ -730,7 +797,7 @@ impl FormView {
                     .debug_selector(|| "form-submit".to_owned())
                     .primary()
                     .label(SharedString::from(submit))
-                    .disabled(disabled)
+                    .disabled(disabled || !missing.is_empty())
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             )
             .into_any_element()
@@ -759,15 +826,6 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
             }
             Value::from(text.parse::<i64>().map_err(|_| field.kind.hint())?)
         }
-        (FieldInput::Line(state), FieldKind::DateRange { .. }) => {
-            let text = state.read(cx).value().trim().to_owned();
-            if text.is_empty() {
-                return Ok(None);
-            }
-            DateSpan::parse(&text)
-                .map(|span| span.to_value())
-                .ok_or_else(|| field.kind.hint())?
-        }
         (FieldInput::Line(state), _) => {
             let text = state.read(cx).value().to_string();
             if text.trim().is_empty() {
@@ -786,6 +844,18 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
             Some(day) => Value::String(day.format(ISO_DATE).to_string()),
             None => return Ok(None),
         },
+        (FieldInput::DateRange(state), _) => {
+            let date = state.read(cx).date();
+            match (date.start(), date.end()) {
+                (Some(start), Some(end)) => DateSpan {
+                    start: start.format(ISO_DATE).to_string(),
+                    end: end.format(ISO_DATE).to_string(),
+                }
+                .to_value(),
+                (None, None) => return Ok(None),
+                _ => return Err("Pick both the start and the end".to_owned()),
+            }
+        }
         (FieldInput::Toggle(checked), _) => Value::Bool(*checked),
         (FieldInput::Choice(selected), FieldKind::Enum { options, .. }) => {
             match selected.and_then(|i| options.get(i)) {
@@ -882,6 +952,15 @@ impl Render for FormView {
                     .into_any_element();
             }
             FormState::Pending => {}
+        }
+        if self.spec.fields.iter().any(|field| field.required) {
+            card = card.child(
+                div()
+                    .debug_selector(|| "form-required-legend".to_owned())
+                    .text_xs()
+                    .text_color(muted)
+                    .child("* required"),
+            );
         }
         if let Some(error) = &self.error {
             card = card.child(div().text_sm().text_color(danger).child(SharedString::from(

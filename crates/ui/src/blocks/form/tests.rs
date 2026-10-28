@@ -24,7 +24,8 @@ fn spec() -> FormSpec {
             {"name": "plots", "type": "multi_enum",
              "options": [{"value": "qq"}, {"value": "hist"}]},
             {"name": "notes", "type": "multiline"},
-            {"name": "due", "type": "date", "min": "2024-01-01", "max": "2024-12-31"}
+            {"name": "due", "type": "date", "min": "2024-01-01", "max": "2024-12-31"},
+            {"name": "stay", "type": "date_range", "min": "2026-01-01", "max": "2026-12-31"}
         ]
     }))
     .unwrap_or_else(|e| panic!("{e}"))
@@ -239,6 +240,79 @@ fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
     });
     draw(cx, &view);
     assert!(cx.debug_bounds("form-cancelled").is_some());
+}
+
+#[gpui::test]
+fn required_fields_are_listed_and_block_submit(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    assert!(cx.debug_bounds("form-required-legend").is_some());
+    let missing = cx.debug_bounds("form-missing");
+    assert!(
+        missing.is_some(),
+        "the footer names the empty required field"
+    );
+    // The button is disabled: a click does nothing.
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+    form(cx, &block).read_with(cx, |form, cx| {
+        assert_eq!(form.missing_required(cx), ["Label"]);
+    });
+
+    // Filled in, the note goes and the button submits.
+    cx.simulate_input("run");
+    draw(cx, &view);
+    assert!(cx.debug_bounds("form-missing").is_none());
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(answer.get("label"), Some(&json!("run")));
+}
+
+#[gpui::test]
+fn a_date_range_is_picked_and_submitted_as_start_and_end(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let picker = form_view.read_with(cx, |form, _| match &form.inputs[7] {
+        FieldInput::DateRange(state) => state.clone(),
+        _ => panic!("no range picker"),
+    });
+    let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d}"));
+
+    draw(cx, &view);
+    cx.simulate_input("run");
+    // A period starting before the bound.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date((day(2025, 12, 30), day(2026, 1, 2)), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    form_view.read_with(cx, |form, _| {
+        assert_eq!(
+            form.errors().get("stay").map(String::as_str),
+            Some("Pick a start and an end date between 2026-01-01 and 2026-12-31")
+        );
+    });
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date((day(2026, 5, 10), day(2026, 5, 14)), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(
+        answer.get("stay"),
+        Some(&json!({"start": "2026-05-10", "end": "2026-05-14"}))
+    );
 }
 
 #[gpui::test]
