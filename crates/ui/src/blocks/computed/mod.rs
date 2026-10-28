@@ -9,8 +9,9 @@
 //! 2. the assumption checklist, open when a check fails (a calc sheet
 //!    shows its unit readings as chips on their lines instead);
 //! 3. the results, drawn per body ([`test`], [`descriptive`],
-//!    [`regression`], [`correlation`], and [`calc`] for the calc sheet and
-//!    the quantity card), numbers right-aligned in the monospace font;
+//!    [`regression`], [`correlation`], [`calc`] for the calc sheet and
+//!    the quantity card, and the phase-2 cards: [`distribution`], [`contingency`], [`power`], [`ab_test`], [`bootstrap`], [`forecast`], [`optimization`], [`equations`], [`simulation`], [`cash_flow`], [`decision_matrix`]),
+//!    numbers right-aligned in the monospace font;
 //! 4. the plain-language sentence and
 //! 5. the APA line (italic symbols) with a copy button, both filled from
 //!    the envelope by [`narrative`];
@@ -28,11 +29,22 @@
 //! The card is an entity kept per block ([`super::block_state`]), so its
 //! toggles survive scrolling.
 
+pub mod ab_test;
+pub mod bootstrap;
 pub mod calc;
+pub mod cash_flow;
+pub mod contingency;
 pub mod correlation;
+pub mod decision_matrix;
 pub mod descriptive;
+pub mod distribution;
+pub mod equations;
+pub mod forecast;
 pub mod grid;
+pub mod optimization;
+pub mod power;
 pub mod regression;
+pub mod simulation;
 pub mod test;
 
 use domain::block::{BlockId, BlockKind};
@@ -489,6 +501,23 @@ impl ComputedCard {
             ComputedBody::Regression(body) => regression::render(&id, body, window, cx),
             ComputedBody::Correlation(body) => correlation::render(&id, body, cx),
             ComputedBody::CalcSheet(body) => calc::calc_sheet(body, window, cx),
+            ComputedBody::Distribution(body) => distribution::render(&id, body, window, cx),
+            ComputedBody::Contingency(body) => contingency::render(&id, body, cx),
+            ComputedBody::Power(body) => power::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::AbTest(body) => ab_test::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::Forecast(body) => forecast::render(&id, &self.envelope, body, window, cx),
+            ComputedBody::Optimization(body) => optimization::render(&id, body, window, cx),
+            ComputedBody::Equations(body) => equations::render(&id, body, window, cx),
+            ComputedBody::CashFlow(body) => {
+                cash_flow::render(&id, &self.envelope, body, window, cx)
+            }
+            ComputedBody::DecisionMatrix(body) => decision_matrix::render(&id, body, cx),
+            ComputedBody::Simulation(body) => {
+                simulation::render(&id, &self.envelope, body, window, cx)
+            }
+            ComputedBody::Bootstrap(body) => {
+                bootstrap::render(&id, &self.envelope, body, window, cx)
+            }
             ComputedBody::Quantity(body) => calc::quantity(
                 body,
                 self.envelope
@@ -631,10 +660,10 @@ impl ComputedCard {
         // line has its own button next to it.
         let formats = super::copy::computed(&self.envelope, &self.body);
         for format in formats.into_iter().filter(|f| f.key != "apa") {
-            let tooltip = if format.key == "json" {
-                "Copy the envelope"
-            } else {
-                "Copy the reproduce command"
+            let tooltip = match format.key {
+                "json" => "Copy the envelope".to_owned(),
+                "lua" | "python" | "r" | "shell" => "Copy the reproduce command".to_owned(),
+                _ => format!("Copy the {}", format.label),
             };
             let text = format.text;
             row = row.child(

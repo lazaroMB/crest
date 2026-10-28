@@ -1,0 +1,120 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsAbTestTool::new(ports))"
+---
+{
+  "name": "stats_ab_test",
+  "description": "Analyses an A/B test from its counts with crest's deterministic engine: each arm's conversion rate with a Wilson interval, the absolute lift (Newcombe interval) and relative lift, the two-proportion z-test (Fisher's exact test for small counts), P(B > A) under uniform priors, the minimum detectable lift, a sample-ratio-mismatch check against `expected_split`, and a warning when the results were looked at several times (`looks`). The user sees the card; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "control": {
+        "$ref": "#/$defs/ArmCounts",
+        "description": "The control arm (A)."
+      },
+      "treatment": {
+        "$ref": "#/$defs/ArmCounts",
+        "description": "The treatment arm (B)."
+      },
+      "expected_split": {
+        "type": "number",
+        "format": "double",
+        "description": "The share of visitors the design sends to the treatment (default\n0.5), for the sample-ratio check.",
+        "default": 0.5
+      },
+      "conf_level": {
+        "type": "number",
+        "format": "double",
+        "description": "Level of the intervals (default 0.95); α = 1 − level.",
+        "default": 0.95
+      },
+      "alternative": {
+        "$ref": "#/$defs/Alternative",
+        "description": "Direction of the alternative (`greater`: B converts better).",
+        "default": "two_sided"
+      },
+      "looks": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "How many times the results have been looked at with a view to\nstopping, this look included (default 1).",
+        "default": 1
+      },
+      "planned_visitors": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Visitors per arm the test was planned for, if any."
+      },
+      "minimum_lift": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "The smallest absolute lift that matters (e.g. 0.01 for one\npercentage point): the card adds the power to detect it."
+      }
+    },
+    "required": [
+      "control",
+      "treatment"
+    ],
+    "description": "Input of `ab_test`: two conversion rates compared. The engine tests the\ndifference (z-test, or Fisher's exact test for small counts), gives the\nabsolute and relative lift with intervals, P(B > A) under uniform\npriors, the minimum detectable effect, and checks the visitor split\n(sample-ratio mismatch) and repeated looks.",
+    "title": "AbTestRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "ArmCounts": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Arm name (default `A` for control, `B` for treatment)."
+          },
+          "visitors": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Units exposed (visitors, users, sessions)."
+          },
+          "conversions": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Units that converted."
+          }
+        },
+        "required": [
+          "visitors",
+          "conversions"
+        ],
+        "description": "One arm of an A/B test as counted."
+      },
+      "Alternative": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "two_sided",
+            "description": "Different in either direction."
+          },
+          {
+            "type": "string",
+            "const": "less",
+            "description": "First less than second."
+          },
+          {
+            "type": "string",
+            "const": "greater",
+            "description": "First greater than second."
+          }
+        ],
+        "description": "Alternative hypothesis."
+      }
+    }
+  }
+}

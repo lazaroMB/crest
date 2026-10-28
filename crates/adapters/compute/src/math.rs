@@ -36,6 +36,35 @@ pub fn beta_reg(a: f64, b: f64, x: f64) -> f64 {
     checked_beta_reg(a, b, x).unwrap_or(f64::NAN)
 }
 
+/// Shapes above which statrs' `inv_beta_reg` is not used (it does not
+/// return for shapes near 10⁷).
+const INV_BETA_DIRECT_MAX: f64 = 1e6;
+
+/// The inverse of the regularized incomplete beta: `x` with
+/// `I_x(a, b) = p`. statrs' inverse for moderate shapes; bisection on
+/// [`beta_reg`] beyond [`INV_BETA_DIRECT_MAX`].
+pub fn inv_beta(a: f64, b: f64, p: f64) -> f64 {
+    if !(0.0..=1.0).contains(&p) || a.is_nan() || b.is_nan() || a <= 0.0 || b <= 0.0 {
+        return f64::NAN;
+    }
+    if a.max(b) <= INV_BETA_DIRECT_MAX {
+        return inv_beta_reg(a, b, p);
+    }
+    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if beta_reg(a, b, mid) < p {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+        if hi - lo <= f64::EPSILON * mid {
+            break;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
 /// P(T > t) for Student's t with `df` degrees of freedom.
 pub fn pt_upper(t: f64, df: f64) -> f64 {
     if df.is_nan() || df <= 0.0 || t.is_nan() {
@@ -71,7 +100,7 @@ pub fn qt(p: f64, df: f64) -> f64 {
         return 0.0;
     }
     let lower = p.min(1.0 - p);
-    let y = inv_beta_reg(df / 2.0, 0.5, 2.0 * lower);
+    let y = inv_beta(df / 2.0, 0.5, 2.0 * lower);
     let mut t = -((df * (1.0 - y) / y).sqrt());
     for _ in 0..8 {
         let step = (pt(t, df) - lower) / dt(t, df);
@@ -213,6 +242,76 @@ pub fn pnt_inverse_delta(t: f64, df: f64, target: f64) -> Option<f64> {
     Some(0.5 * (lo + hi))
 }
 
+/// The upper `alpha` quantile of Fisher's F: `f` with `P(F > f) = alpha`.
+pub fn qf_upper(alpha: f64, d1: f64, d2: f64) -> f64 {
+    if !(alpha > 0.0 && alpha < 1.0) || d1 <= 0.0 || d2 <= 0.0 {
+        return f64::NAN;
+    }
+    let y = inv_beta(d2 / 2.0, d1 / 2.0, alpha);
+    d2 * (1.0 - y) / (d1 * y)
+}
+
+/// The noncentral beta CDF `P(X ≤ x)` with shapes `a`, `b` and
+/// noncentrality `ncp`: the Poisson mixture of incomplete betas summed
+/// from below its mode (AS 226 with R's `pnbeta` start), error 1e-12.
+pub fn pnbeta(x: f64, a: f64, b: f64, ncp: f64) -> f64 {
+    const ERRMAX: f64 = 1e-12;
+    const ITRMAX: f64 = 10_000.0;
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+    let c = ncp / 2.0;
+    let x0 = (c - 7.0 * c.sqrt()).max(0.0).floor();
+    let a0 = a + x0;
+    let lbeta = ln_gamma(a0) + ln_gamma(b) - ln_gamma(a0 + b);
+    let mut temp = beta_reg(a0, b, x);
+    let mut gx = (a0 * x.ln() + b * (-x).ln_1p() - lbeta - a0.ln()).exp();
+    let mut q = if a0 > a {
+        (-c + x0 * c.ln() - ln_gamma(x0 + 1.0)).exp()
+    } else {
+        (-c).exp()
+    };
+    let mut sumq = 1.0 - q;
+    let mut ans = q * temp;
+    let mut j = x0;
+    loop {
+        j += 1.0;
+        temp -= gx;
+        gx *= x * (a + b + j - 1.0) / (a + j);
+        q *= c / j;
+        sumq -= q;
+        ans += temp * q;
+        let errbd = (temp - gx) * sumq;
+        if errbd <= ERRMAX || j >= ITRMAX + x0 {
+            break;
+        }
+    }
+    ans.clamp(0.0, 1.0)
+}
+
+/// `P(F > f)` for the noncentral F with `d1`, `d2` degrees of freedom and
+/// noncentrality `ncp`.
+pub fn pnf_upper(f: f64, d1: f64, d2: f64, ncp: f64) -> f64 {
+    if f <= 0.0 {
+        return 1.0;
+    }
+    let x = d1 * f / (d1 * f + d2);
+    1.0 - pnbeta(x, d1 / 2.0, d2 / 2.0, ncp)
+}
+
+/// `P(T ≤ t)` for the noncentral t, through [`pnt`] where it converges
+/// and the normal approximation of Abramowitz and Stegun 26.7.10 beyond
+/// (|δ| > 37.62, where the power is 0 or 1 to many digits).
+pub fn pnt_or_normal(t: f64, df: f64, delta: f64) -> f64 {
+    pnt(t, df, delta).unwrap_or_else(|| {
+        let z = (t * (1.0 - 1.0 / (4.0 * df)) - delta) / (1.0 + t * t / (2.0 * df)).sqrt();
+        pnorm(z)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +328,34 @@ mod tests {
         assert!(close(pt(2.0, 5.0), 0.949_030_260_585_070_7, 1e-10));
         assert!(close(pchisq_upper(3.841_458_820_694_124, 1.0), 0.05, 1e-9));
         assert!(close(pf_upper(1.0, 3.0, 3.0), 0.5, 1e-12));
+    }
+
+    #[test]
+    fn huge_shapes_do_not_hang() {
+        let q = qt(0.975, 2e7);
+        assert!(close(q, 1.959_964_1, 1e-6), "{q}");
+        let y = inv_beta(1e7, 0.5, 0.05);
+        assert!(close(beta_reg(1e7, 0.5, y), 0.05, 1e-9));
+        assert!(qf_upper(0.05, 3.0, 4e7).is_finite());
+    }
+
+    #[test]
+    fn noncentral_f_reduces_to_central_and_quantiles_invert() {
+        let f = qf_upper(0.05, 3.0, 76.0);
+        assert!(close(pf_upper(f, 3.0, 76.0), 0.05, 1e-10));
+        assert!(close(pnf_upper(f, 3.0, 76.0, 0.0), 0.05, 1e-9));
+        // pf(2, 3, 20, ncp = 5, lower.tail = FALSE), scipy.stats.ncf.sf.
+        assert!(close(
+            pnf_upper(2.0, 3.0, 20.0, 5.0),
+            0.596_869_914_965,
+            1e-9
+        ));
+        // pt(1.5, 10, ncp = 1), scipy.stats.nct.cdf.
+        assert!(close(
+            pnt_or_normal(1.5, 10.0, 1.0),
+            0.669_516_848_215,
+            1e-9
+        ));
     }
 
     #[test]

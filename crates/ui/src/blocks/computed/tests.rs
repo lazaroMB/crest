@@ -497,3 +497,97 @@ fn assumptions_open_when_one_fails_and_toggle(cx: &mut TestAppContext) {
     click(cx, "computed-assumptions");
     card.read_with(cx, |card, _| assert_eq!(card.assumptions, Some(false)));
 }
+
+/// One card per phase-2 body, with the selectors of the plots it draws.
+fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
+    let card = |kind: &str, method: &str| Computed::new("st_p2", kind, method, engine());
+    vec![
+        (
+            card("stats.distribution", "Distribution of mpg"),
+            ComputedBody::Distribution(super::distribution::tests::body()),
+            &["histogram", "box", "qq", "ecdf"],
+        ),
+        (
+            card("stats.contingency_chisq", "Pearson's χ² test"),
+            ComputedBody::Contingency(super::contingency::tests::body()),
+            &[],
+        ),
+        (
+            card("stats.power", "Power analysis: two-sample t-test"),
+            ComputedBody::Power(super::power::tests::body()),
+            &["curve"],
+        ),
+        (
+            card("stats.ab_test", "A/B test: two-proportion z-test"),
+            ComputedBody::AbTest(super::ab_test::tests::body()),
+            &["rates"],
+        ),
+        (
+            {
+                let mut c = card("stats.bootstrap", "Bootstrap of the mean");
+                c.seed = Some(1);
+                c.rng = Some("chacha20".into());
+                c
+            },
+            ComputedBody::Bootstrap(super::bootstrap::tests::body()),
+            &["replicates"],
+        ),
+        (
+            card(
+                "stats.forecast",
+                "Forecast: MSTL (periods 2) + AutoETS trend",
+            ),
+            ComputedBody::Forecast(super::forecast::tests::body()),
+            &["forecast", "trend", "seasonal-2", "remainder"],
+        ),
+        (
+            card("solve.lp", "Linear program"),
+            ComputedBody::Optimization(super::optimization::tests::body()),
+            &["region"],
+        ),
+        (
+            card(
+                "solve.equations",
+                "Equation solver: sign-change scan with bisection",
+            ),
+            ComputedBody::Equations(super::equations::tests::body()),
+            &["curve"],
+        ),
+        (
+            {
+                let mut c = card("solve.monte_carlo", "Monte Carlo simulation");
+                c.seed = Some(7);
+                c
+            },
+            ComputedBody::Simulation(super::simulation::tests::body()),
+            &["histogram", "tornado", "convergence"],
+        ),
+        (
+            card("solve.cash_flow", "Cash-flow analysis"),
+            ComputedBody::CashFlow(super::cash_flow::tests::body()),
+            &["npv"],
+        ),
+        (
+            card("solve.decision_matrix", "Decision matrix"),
+            ComputedBody::DecisionMatrix(super::decision_matrix::tests::body()),
+            &[],
+        ),
+    ]
+}
+
+#[gpui::test]
+fn draws_the_phase_two_cards_with_their_plots(cx: &mut TestAppContext) {
+    // One window per card: the timeline follows its end, so a long one
+    // would not draw the first cards.
+    for (envelope, body, names) in phase_two_cards() {
+        let (cx, _view, blocks, _) = window(cx, vec![(envelope, body)]);
+        assert!(cx.debug_bounds("computed-card").is_some());
+        for name in names {
+            let selector = format!("plot-canvas-computed-body-{}-{name}", blocks[0].id);
+            assert!(
+                cx.debug_bounds(selector.clone().leak()).is_some(),
+                "{selector}"
+            );
+        }
+    }
+}

@@ -1,0 +1,205 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsBootstrapTool::new(ports))"
+---
+{
+  "name": "stats_bootstrap",
+  "description": "Bootstraps one statistic with crest's deterministic engine: B resamples (default 2000) from a seeded generator, with percentile, BCa, basic and normal intervals, the bootstrap SE and bias, and the Monte Carlo error of the endpoints; the same seed gives the same numbers. Statistics: mean, median, sd, trimmed_mean, mean_difference and median_difference (with a two-level `group`), correlation (with `y2`). The user sees the replicate histogram and the intervals; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "y": {
+        "type": "string",
+        "description": "The numeric column."
+      },
+      "statistic": {
+        "$ref": "#/$defs/BootStatistic",
+        "description": "The statistic (default mean).",
+        "default": "mean"
+      },
+      "group": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Grouping column with two levels, for `mean_difference` and\n`median_difference` (each group is resampled on its own)."
+      },
+      "y2": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Second numeric column, for `correlation`."
+      },
+      "levels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Order of the two groups (first − second); sorted levels when empty."
+      },
+      "trim": {
+        "type": "number",
+        "format": "double",
+        "description": "Share trimmed from each end for `trimmed_mean` (default 0.1).",
+        "default": 0.1
+      },
+      "resamples": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Number of resamples B (default 2000, at most 100000).",
+        "default": 2000
+      },
+      "seed": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Seed of the generator.",
+        "default": 20261025
+      },
+      "conf_level": {
+        "type": "number",
+        "format": "double",
+        "description": "Level of the intervals (default 0.95).",
+        "default": 0.95
+      }
+    },
+    "required": [
+      "data",
+      "y"
+    ],
+    "description": "Input of `bootstrap`: the resampling distribution of one statistic,\nwith percentile, BCa, basic and normal intervals and their Monte Carlo\nerror. The resamples come from a seeded generator, so the same seed\ngives the same numbers.",
+    "title": "BootstrapRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "BootStatistic": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "mean",
+            "description": "Mean of `y`."
+          },
+          {
+            "type": "string",
+            "const": "median",
+            "description": "Median of `y`."
+          },
+          {
+            "type": "string",
+            "const": "sd",
+            "description": "Standard deviation of `y`."
+          },
+          {
+            "type": "string",
+            "const": "trimmed_mean",
+            "description": "Mean of `y` without the lowest and highest `trim` share."
+          },
+          {
+            "type": "string",
+            "const": "mean_difference",
+            "description": "Mean of the first group minus the mean of the second."
+          },
+          {
+            "type": "string",
+            "const": "median_difference",
+            "description": "Median of the first group minus the median of the second."
+          },
+          {
+            "type": "string",
+            "const": "correlation",
+            "description": "Pearson correlation of `y` and `y2` (pairs resampled)."
+          }
+        ],
+        "description": "The statistic a bootstrap resamples."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      }
+    }
+  }
+}

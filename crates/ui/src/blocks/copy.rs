@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -173,11 +173,198 @@ pub fn computed(envelope: &Computed, body: &ComputedBody) -> Vec<CopyFormat> {
             formats.push(CopyFormat::new(key, label, line.clone()));
         }
     }
+    formats.extend(computed_body(body));
     formats.push(CopyFormat::new(
         "json",
         "JSON",
         serde_json::to_string_pretty(envelope).unwrap_or_default(),
     ));
+    formats
+}
+
+/// The tables of a phase-2 card body as CSV, e.g. the histogram bins of a
+/// distribution.
+#[must_use]
+pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
+    let mut formats = Vec::new();
+    if let ComputedBody::Distribution(d) = body {
+        let mut csv = String::from("group,lo,hi,count\n");
+        for group in &d.groups {
+            let name = csv_field(group.name.as_deref().unwrap_or(&d.variable));
+            let h = &group.histogram;
+            for (i, count) in h.counts.iter().enumerate() {
+                csv.push_str(&format!(
+                    "{name},{},{},{count}\n",
+                    h.edges[i],
+                    h.edges[i + 1]
+                ));
+            }
+        }
+        formats.push(CopyFormat::new("bins", "bins CSV", csv));
+    }
+    if let ComputedBody::Contingency(t) = body {
+        let mut csv =
+            String::from("row,column,observed,expected,row_percent,column_percent,std_residual\n");
+        for (i, row) in t.row_levels.iter().enumerate() {
+            for (j, col) in t.column_levels.iter().enumerate() {
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{},{}\n",
+                    csv_field(row),
+                    csv_field(col),
+                    t.observed[i][j],
+                    t.expected[i][j],
+                    t.row_percent[i][j],
+                    t.column_percent[i][j],
+                    t.std_residuals[i][j]
+                ));
+            }
+        }
+        formats.push(CopyFormat::new("cells", "cells CSV", csv));
+    }
+    if let ComputedBody::Power(p) = body {
+        let mut csv = String::from("n,power\n");
+        for (n, power) in p.curve.x.iter().zip(&p.curve.y) {
+            csv.push_str(&format!("{n},{power}\n"));
+        }
+        formats.push(CopyFormat::new("curve", "power curve CSV", csv));
+    }
+    if let ComputedBody::AbTest(t) = body {
+        let mut csv = String::from("arm,visitors,conversions,rate,rate_lo,rate_hi\n");
+        for arm in &t.arms {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                csv_field(&arm.name),
+                arm.visitors,
+                arm.conversions,
+                arm.rate,
+                arm.rate_lo,
+                arm.rate_hi
+            ));
+        }
+        formats.push(CopyFormat::new("arms", "arms CSV", csv));
+    }
+    if let ComputedBody::Bootstrap(b) = body {
+        let mut csv = String::from("method,lo,hi,lo_mcse,hi_mcse\n");
+        let opt = |m: Option<f64>| m.map(|m| m.to_string()).unwrap_or_default();
+        for i in &b.intervals {
+            csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                i.method.label(),
+                i.lo,
+                i.hi,
+                opt(i.lo_mcse),
+                opt(i.hi_mcse)
+            ));
+        }
+        formats.push(CopyFormat::new("intervals", "intervals CSV", csv));
+    }
+    if let ComputedBody::Forecast(f) = body {
+        let mut csv = String::from("t,forecast,lo80,hi80,lo95,hi95\n");
+        let n = f.values.len();
+        for (i, point) in f.forecast.iter().enumerate() {
+            let at = |v: &[f64]| v.get(i).map(ToString::to_string).unwrap_or_default();
+            csv.push_str(&format!(
+                "{},{point},{},{},{},{}\n",
+                n + i,
+                at(&f.lo80),
+                at(&f.hi80),
+                at(&f.lo95),
+                at(&f.hi95)
+            ));
+        }
+        formats.push(CopyFormat::new("forecast", "forecast CSV", csv));
+    }
+    if let ComputedBody::Optimization(o) = body {
+        let opt = |x: Option<f64>| x.map(|x| x.to_string()).unwrap_or_default();
+        let mut csv = String::from("kind,name,value,slack_or_lower,dual_or_reduced_cost\n");
+        for v in &o.variables {
+            csv.push_str(&format!(
+                "variable,{},{},{},{}\n",
+                csv_field(&v.name),
+                opt(v.value),
+                opt(v.lower),
+                opt(v.reduced_cost)
+            ));
+        }
+        for k in &o.constraints {
+            csv.push_str(&format!(
+                "constraint,{},{},{},{}\n",
+                csv_field(&k.name),
+                opt(k.activity),
+                opt(k.slack),
+                opt(k.dual)
+            ));
+        }
+        formats.push(CopyFormat::new("solution", "solution CSV", csv));
+    }
+    if let ComputedBody::Equations(e) = body {
+        let mut csv = String::from("equation,lhs,rhs,residual\n");
+        for p in &e.plug_back {
+            csv.push_str(&format!(
+                "{},{},{},{}\n",
+                csv_field(&p.equation),
+                p.lhs,
+                p.rhs,
+                p.residual
+            ));
+        }
+        formats.push(CopyFormat::new("plug_back", "plug-back CSV", csv));
+    }
+    if let ComputedBody::Simulation(m) = body {
+        let mut csv =
+            String::from("input,distribution,p10,p50,p90,output_at_p10,output_at_p90,swing\n");
+        for i in &m.inputs {
+            let bar = m.tornado.iter().find(|b| b.input == i.name);
+            let opt = |f: fn(&domain::computed::TornadoBar) -> f64| {
+                bar.map(|b| f(b).to_string()).unwrap_or_default()
+            };
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{}\n",
+                csv_field(&i.name),
+                csv_field(&i.distribution),
+                i.p10,
+                i.p50,
+                i.p90,
+                opt(|b| b.at_p10),
+                opt(|b| b.at_p90),
+                opt(|b| b.swing)
+            ));
+        }
+        formats.push(CopyFormat::new("tornado", "tornado CSV", csv));
+    }
+    if let ComputedBody::CashFlow(f) = body {
+        let mut csv = String::from(
+            "period,cash_flow,discount_factor,present_value,cumulative,cumulative_pv\n",
+        );
+        for r in &f.rows {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                r.period,
+                r.cash_flow,
+                r.discount_factor,
+                r.present_value,
+                r.cumulative,
+                r.cumulative_pv
+            ));
+        }
+        formats.push(CopyFormat::new("periods", "periods CSV", csv));
+    }
+    if let ComputedBody::DecisionMatrix(d) = body {
+        let mut csv = String::from("option");
+        for c in &d.criteria {
+            csv.push(',');
+            csv.push_str(&csv_field(&c.name));
+        }
+        csv.push_str(",total,rank\n");
+        for o in &d.options {
+            csv.push_str(&csv_field(&o.name));
+            for x in &o.normalized {
+                csv.push_str(&format!(",{x}"));
+            }
+            csv.push_str(&format!(",{},{}\n", o.total, o.rank));
+        }
+        formats.push(CopyFormat::new("matrix", "matrix CSV", csv));
+    }
     formats
 }
 
@@ -383,6 +570,47 @@ mod tests {
         let formats = formats(&BlockKind::Chart(chart));
         assert_eq!(formats[0].key, "csv");
         assert_eq!(formats[0].text, ",bytes\nrs,1200\nmd,300\n");
+    }
+
+    #[test]
+    fn card_bodies_copy_their_tables_as_csv() {
+        let keys = |body: ComputedBody| {
+            computed_body(&body)
+                .into_iter()
+                .map(|f| (f.key, f.text))
+                .collect::<Vec<_>>()
+        };
+        let bins = keys(ComputedBody::Distribution(
+            super::super::computed::distribution::tests::body(),
+        ));
+        assert_eq!(bins[0].0, "bins");
+        assert!(
+            bins[0].1.starts_with("group,lo,hi,count\n0,0,1,3\n"),
+            "{}",
+            bins[0].1
+        );
+        let lp = keys(ComputedBody::Optimization(
+            super::super::computed::optimization::tests::body(),
+        ));
+        assert!(
+            lp[0].1.contains("constraint,plant2,12,0,1.5"),
+            "{}",
+            lp[0].1
+        );
+        let matrix = keys(ComputedBody::DecisionMatrix(
+            super::super::computed::decision_matrix::tests::body(),
+        ));
+        assert!(
+            matrix[0]
+                .1
+                .starts_with("option,price,quality,total,rank\nA,1,0,0.6,1"),
+            "{}",
+            matrix[0].1
+        );
+        let flows = keys(ComputedBody::CashFlow(
+            super::super::computed::cash_flow::tests::body(),
+        ));
+        assert_eq!(flows[0].1.lines().count(), 4);
     }
 
     #[test]

@@ -17,11 +17,17 @@
 //! Engines are CPU-bound and synchronous: async callers run them on a
 //! blocking thread.
 
+mod solve;
+mod stats;
+
 use domain::computed::{
     Alternative, Computed, ComputedBody, CorrelationMethod, InputRef, PAdjust, TestKind,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub use self::solve::*;
+pub use self::stats::*;
 
 /// Key of `method.params` that holds the serialized [`ComputeRequest`].
 pub const REQUEST_PARAM: &str = "request";
@@ -212,11 +218,11 @@ impl TestChoice {
     }
 }
 
-fn default_conf_level() -> f64 {
+pub(crate) fn default_conf_level() -> f64 {
     0.95
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 
@@ -399,6 +405,28 @@ pub enum ComputeRequest {
     Calc(CalcRequest),
     /// [`ComputePort::convert`].
     Convert(ConvertRequest),
+    /// [`ComputePort::distribution`].
+    Distribution(DistributionRequest),
+    /// [`ComputePort::contingency`].
+    Contingency(ContingencyRequest),
+    /// [`ComputePort::power`].
+    Power(PowerRequest),
+    /// [`ComputePort::ab_test`].
+    AbTest(AbTestRequest),
+    /// [`ComputePort::bootstrap`].
+    Bootstrap(BootstrapRequest),
+    /// [`ComputePort::forecast`].
+    Forecast(ForecastRequest),
+    /// [`ComputePort::optimize`].
+    Optimize(OptimizeRequest),
+    /// [`ComputePort::solve`].
+    Solve(SolveRequest),
+    /// [`ComputePort::simulate`].
+    Simulate(SimulateRequest),
+    /// [`ComputePort::cash_flow`].
+    CashFlow(CashFlowRequest),
+    /// [`ComputePort::decide`].
+    Decide(DecideRequest),
 }
 
 impl ComputeRequest {
@@ -415,8 +443,8 @@ impl ComputeRequest {
             .map_err(|e| ComputeError::NotRecomputable(format!("stored request: {e}")))
     }
 
-    /// The data the request reads; `None` for calc sheets and
-    /// conversions, which read none.
+    /// The data the request reads; `None` for calc sheets, conversions
+    /// and the other requests that read none.
     #[must_use]
     pub fn data(&self) -> Option<&DataSet> {
         match self {
@@ -424,7 +452,19 @@ impl ComputeRequest {
             Self::Test(r) => Some(&r.data),
             Self::Regress(r) => Some(&r.data),
             Self::Correlate(r) => Some(&r.data),
-            Self::Calc(_) | Self::Convert(_) => None,
+            Self::Distribution(r) => Some(&r.data),
+            Self::Contingency(r) => Some(&r.data),
+            Self::Bootstrap(r) => Some(&r.data),
+            Self::Forecast(r) => Some(&r.data),
+            Self::Calc(_)
+            | Self::Convert(_)
+            | Self::Power(_)
+            | Self::AbTest(_)
+            | Self::Optimize(_)
+            | Self::Solve(_)
+            | Self::Simulate(_)
+            | Self::CashFlow(_)
+            | Self::Decide(_) => None,
         }
     }
 
@@ -436,7 +476,19 @@ impl ComputeRequest {
             Self::Test(r) => Some(&mut r.data),
             Self::Regress(r) => Some(&mut r.data),
             Self::Correlate(r) => Some(&mut r.data),
-            Self::Calc(_) | Self::Convert(_) => None,
+            Self::Distribution(r) => Some(&mut r.data),
+            Self::Contingency(r) => Some(&mut r.data),
+            Self::Bootstrap(r) => Some(&mut r.data),
+            Self::Forecast(r) => Some(&mut r.data),
+            Self::Calc(_)
+            | Self::Convert(_)
+            | Self::Power(_)
+            | Self::AbTest(_)
+            | Self::Optimize(_)
+            | Self::Solve(_)
+            | Self::Simulate(_)
+            | Self::CashFlow(_)
+            | Self::Decide(_) => None,
         }
     }
 }
@@ -489,6 +541,105 @@ pub trait ComputePort: Send + Sync {
     /// mismatch.
     fn convert(&self, request: &ConvertRequest) -> ComputeResult;
 
+    /// Histogram, kernel density, box/violin, normal QQ and ECDF of one
+    /// variable, per group.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an unknown or non-numeric column or
+    /// bad bin and bandwidth settings.
+    fn distribution(&self, request: &DistributionRequest) -> ComputeResult;
+
+    /// A contingency table with expected counts, percentages, standardised
+    /// residuals and χ² or Fisher's test.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] when neither columns nor a table are
+    /// given, or they are malformed.
+    fn contingency(&self, request: &ContingencyRequest) -> ComputeResult;
+
+    /// Power or sample size of a t-test, ANOVA or proportion test (the
+    /// missing one of n, effect, power and α).
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] when not exactly one quantity is missing
+    /// or a value is out of range.
+    fn power(&self, request: &PowerRequest) -> ComputeResult;
+
+    /// An A/B test of two conversion rates: lift with intervals, z or
+    /// Fisher, sample-ratio mismatch and peeking checks.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for conversions above visitors or bad
+    /// levels.
+    fn ab_test(&self, request: &AbTestRequest) -> ComputeResult;
+
+    /// A seeded bootstrap of one statistic with percentile, BCa, basic and
+    /// normal intervals and their Monte Carlo error.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for unknown columns, a statistic without
+    /// its second column or groups, or a bad number of resamples.
+    fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult;
+
+    /// A time-series decomposition and forecast with intervals and a
+    /// hold-out check.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an unknown column, a bad period or
+    /// horizon.
+    fn forecast(&self, request: &ForecastRequest) -> ComputeResult;
+
+    /// A linear or mixed-integer program: solution, slacks, binding
+    /// constraints, duals and reduced costs.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an expression that does not parse or
+    /// is not linear, or an unknown variable.
+    fn optimize(&self, request: &OptimizeRequest) -> ComputeResult;
+
+    /// An equation or small system solved numerically, with residuals and
+    /// the plug-back check.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an equation that does not parse, or
+    /// unknowns that do not match the equations.
+    fn solve(&self, request: &SolveRequest) -> ComputeResult;
+
+    /// A seeded Monte Carlo simulation of a model of uncertain inputs, with
+    /// its tornado; without a model, a Fermi estimate.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for a bad distribution or a model that
+    /// does not parse.
+    fn simulate(&self, request: &SimulateRequest) -> ComputeResult;
+
+    /// NPV, IRR(s), MIRR and payback of a cash flow, in decimal
+    /// arithmetic.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for fewer than two flows or a rate at or
+    /// below −100%.
+    fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult;
+
+    /// A weighted decision matrix: normalised scores, totals, ranks and
+    /// how far each weight can move before first place changes.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for missing scores, negative weights or
+    /// fewer than two options.
+    fn decide(&self, request: &DecideRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -512,6 +663,17 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Correlate(r) => self.correlate(r),
             ComputeRequest::Calc(r) => self.calc(r),
             ComputeRequest::Convert(r) => self.convert(r),
+            ComputeRequest::Distribution(r) => self.distribution(r),
+            ComputeRequest::Contingency(r) => self.contingency(r),
+            ComputeRequest::Power(r) => self.power(r),
+            ComputeRequest::AbTest(r) => self.ab_test(r),
+            ComputeRequest::Bootstrap(r) => self.bootstrap(r),
+            ComputeRequest::Forecast(r) => self.forecast(r),
+            ComputeRequest::Optimize(r) => self.optimize(r),
+            ComputeRequest::Solve(r) => self.solve(r),
+            ComputeRequest::Simulate(r) => self.simulate(r),
+            ComputeRequest::CashFlow(r) => self.cash_flow(r),
+            ComputeRequest::Decide(r) => self.decide(r),
         }
     }
 }

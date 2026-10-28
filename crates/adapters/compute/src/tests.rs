@@ -642,7 +642,7 @@ fn choose(request: &TestRequest, shape: &Shape) -> Result<Choice, ComputeError> 
 
 /// Expected counts under independence and the total; `None` when a row or
 /// column is empty or the table is malformed.
-fn expected(observed: &[Vec<f64>]) -> Option<(Vec<Vec<f64>>, f64)> {
+pub fn expected(observed: &[Vec<f64>]) -> Option<(Vec<Vec<f64>>, f64)> {
     let cols = observed.first()?.len();
     if observed.len() < 2
         || cols < 2
@@ -1236,7 +1236,7 @@ fn contingency(
 
 /// Sample odds ratio with Woolf's logit interval; Haldane's +0.5 when a
 /// cell is zero.
-fn odds_ratio(a: f64, b: f64, c: f64, d: f64, level: f64) -> (f64, f64, f64, &'static str) {
+pub fn odds_ratio(a: f64, b: f64, c: f64, d: f64, level: f64) -> (f64, f64, f64, &'static str) {
     let (a, b, c, d, method) = if a * b * c * d == 0.0 {
         (a + 0.5, b + 0.5, c + 0.5, d + 0.5, "woolf_logit_haldane")
     } else {

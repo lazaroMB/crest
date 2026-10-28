@@ -14,17 +14,9 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, PoisonError};
 
-use domain::computed::{
-    Alternative, CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedValue, CorrelationBody,
-    CorrelationMethod, DescriptiveBody, Diagnostics, Engine, FitStats, Narrative, PAdjust,
-    Quantity, QuantityBody, RegressionBody, TestBody, TestKind, VariableKind, VariableSummary,
-};
+use domain::computed::*;
 
-use crate::ports::compute::{
-    CalcRequest, ColumnValues, ComputeError, ComputePort, ComputeRequest, ComputeResult,
-    ConvertRequest, CorrelateRequest, DataSet, DescribeRequest, REQUEST_PARAM, RegressRequest,
-    TestRequest,
-};
+use crate::ports::compute::*;
 
 /// Name of the fake engine.
 pub const FAKE_ENGINE: &str = "fake";
@@ -143,6 +135,219 @@ impl FakeCompute {
                 "convert",
                 convert_body(r),
             ),
+            ComputeRequest::Contingency(_) => (
+                "stats.contingency",
+                "Pearson's χ² test",
+                "contingency",
+                contingency_body(),
+            ),
+            ComputeRequest::AbTest(r) => (
+                "stats.ab_test",
+                "A/B test",
+                "ab_test",
+                ComputedBody::AbTest(AbTestBody {
+                    arms: [&r.control, &r.treatment]
+                        .iter()
+                        .map(|a| {
+                            #[allow(clippy::cast_precision_loss)]
+                            let rate = a.conversions as f64 / a.visitors.max(1) as f64;
+                            AbArm {
+                                name: a.name.clone().unwrap_or_default(),
+                                visitors: a.visitors,
+                                conversions: a.conversions,
+                                rate,
+                                rate_lo: rate,
+                                rate_hi: rate,
+                            }
+                        })
+                        .collect(),
+                    expected_split: r.expected_split,
+                    conf_level: r.conf_level,
+                    method: AbMethod::ZTest,
+                    looks: r.looks,
+                    sample_ratio_mismatch: false,
+                }),
+            ),
+            ComputeRequest::Bootstrap(r) => (
+                "stats.bootstrap",
+                "Bootstrap",
+                "bootstrap",
+                ComputedBody::Bootstrap(BootstrapBody {
+                    statistic: r.statistic,
+                    variable: r.y.clone(),
+                    versus: None,
+                    observed: 1.0,
+                    resamples: r.resamples,
+                    conf_level: r.conf_level,
+                    histogram: Histogram {
+                        edges: vec![0.0, 1.0, 2.0],
+                        counts: vec![1, 1],
+                    },
+                    intervals: Vec::new(),
+                    z0: None,
+                    acceleration: None,
+                }),
+            ),
+            ComputeRequest::Forecast(r) => (
+                "stats.forecast",
+                "Forecast",
+                "forecast",
+                ComputedBody::Forecast(ForecastBody {
+                    variable: r.y.clone(),
+                    time: Vec::new(),
+                    model: "fake".into(),
+                    values: vec![1.0, 2.0],
+                    trend: Vec::new(),
+                    seasonal: Vec::new(),
+                    remainder: Vec::new(),
+                    forecast: vec![3.0],
+                    lo80: vec![2.5],
+                    hi80: vec![3.5],
+                    lo95: vec![2.0],
+                    hi95: vec![4.0],
+                    holdout: None,
+                }),
+            ),
+            ComputeRequest::Optimize(r) => (
+                "solve.lp",
+                "Linear program",
+                "optimization",
+                ComputedBody::Optimization(OptimizationBody {
+                    sense: r.sense,
+                    objective_expr: r.objective.clone(),
+                    status: OptimizationStatus::Optimal,
+                    objective: Some(36.0),
+                    integer: false,
+                    mip_gap: None,
+                    variables: r
+                        .variables
+                        .iter()
+                        .map(|v| OptVariable {
+                            name: v.name.clone(),
+                            value: Some(1.0),
+                            lower: v.lower,
+                            upper: v.upper,
+                            integer: v.integer,
+                            objective_coefficient: 1.0,
+                            reduced_cost: Some(0.0),
+                        })
+                        .collect(),
+                    constraints: Vec::new(),
+                }),
+            ),
+            ComputeRequest::Solve(r) => (
+                "solve.equations",
+                "Equation solver",
+                "equations",
+                ComputedBody::Equations(EquationsBody {
+                    method: SolveMethod::Newton,
+                    converged: true,
+                    unknowns: r
+                        .unknowns
+                        .iter()
+                        .map(|u| SolvedUnknown {
+                            name: u.name.clone(),
+                            value: 1.0,
+                        })
+                        .collect(),
+                    roots: Vec::new(),
+                    plug_back: Vec::new(),
+                    residual_norm: 0.0,
+                    iterations: 1,
+                    tolerance: r.tolerance,
+                    condition_number: None,
+                    curve: None,
+                }),
+            ),
+            ComputeRequest::Simulate(r) => (
+                "solve.monte_carlo",
+                "Monte Carlo simulation",
+                "simulation",
+                ComputedBody::Simulation(SimulationBody {
+                    output: r.output.clone().unwrap_or_else(|| "result".into()),
+                    unit: r.unit.clone(),
+                    model: r.model.clone().unwrap_or_default(),
+                    fermi: r.model.is_none(),
+                    samples: r.samples,
+                    inputs: Vec::new(),
+                    histogram: Histogram {
+                        edges: vec![0.0, 1.0],
+                        counts: vec![1],
+                    },
+                    convergence: Curve::default(),
+                    convergence_mcse: Vec::new(),
+                    base: 1.0,
+                    tornado: Vec::new(),
+                }),
+            ),
+            ComputeRequest::CashFlow(r) => (
+                "solve.cash_flow",
+                "Cash flow",
+                "cash_flow",
+                ComputedBody::CashFlow(CashFlowBody {
+                    rate: r.rate,
+                    finance_rate: r.finance_rate.unwrap_or(r.rate),
+                    reinvest_rate: r.reinvest_rate.unwrap_or(r.rate),
+                    currency: r.currency.clone(),
+                    period_label: r.period.clone(),
+                    rows: Vec::new(),
+                    irrs: Vec::new(),
+                    sign_changes: 1,
+                    npv_curve: Curve::default(),
+                }),
+            ),
+            ComputeRequest::Decide(r) => (
+                "solve.decision_matrix",
+                "Decision matrix",
+                "decision_matrix",
+                ComputedBody::DecisionMatrix(DecisionMatrixBody {
+                    normalization: r.normalization,
+                    criteria: r
+                        .criteria
+                        .iter()
+                        .map(|c| DecisionCriterion {
+                            name: c.name.clone(),
+                            raw_weight: c.weight,
+                            weight: c.weight,
+                            direction: c.direction,
+                        })
+                        .collect(),
+                    options: r
+                        .options
+                        .iter()
+                        .map(|o| DecisionOption {
+                            name: o.name.clone(),
+                            scores: o.scores.clone(),
+                            normalized: o.scores.clone(),
+                            total: 0.0,
+                            rank: 1,
+                        })
+                        .collect(),
+                    sensitivity: Vec::new(),
+                }),
+            ),
+            ComputeRequest::Power(r) => (
+                "stats.power",
+                "Power analysis",
+                "power",
+                ComputedBody::Power(PowerBody {
+                    test: r.test,
+                    solved_for: PowerTarget::N,
+                    alternative: r.alternative,
+                    n: 25.5,
+                    effect: r.effect.unwrap_or(0.8),
+                    alpha: r.alpha.unwrap_or(0.05),
+                    power: r.power.unwrap_or(0.8),
+                    groups: r.groups,
+                    curve: Curve::default(),
+                }),
+            ),
+            ComputeRequest::Distribution(r) => (
+                "stats.distribution",
+                "Distribution",
+                "distribution",
+                distribution_body(&r.variable),
+            ),
         };
         let engine = Engine {
             name: FAKE_ENGINE.into(),
@@ -223,6 +428,55 @@ fn describe_body(data: &DataSet) -> ComputedBody {
     ComputedBody::Descriptive(DescriptiveBody {
         by: None,
         variables,
+    })
+}
+
+fn contingency_body() -> ComputedBody {
+    let square = |a: f64, b: f64| vec![vec![a, b], vec![b, a]];
+    ComputedBody::Contingency(ContingencyBody {
+        row_variable: None,
+        column_variable: None,
+        row_levels: vec!["R1".into(), "R2".into()],
+        column_levels: vec!["C1".into(), "C2".into()],
+        observed: square(3.0, 1.0),
+        expected: square(2.0, 2.0),
+        row_percent: square(75.0, 25.0),
+        column_percent: square(75.0, 25.0),
+        std_residuals: square(2.5, -2.5),
+        test: ContingencyTest::ChiSquare,
+    })
+}
+
+fn distribution_body(variable: &str) -> ComputedBody {
+    ComputedBody::Distribution(DistributionBody {
+        variable: variable.to_owned(),
+        unit: None,
+        by: None,
+        bin_rule: BinRule::FreedmanDiaconis,
+        bin_width: 1.0,
+        bandwidth_rule: BandwidthRule::Silverman,
+        conf_level: 0.95,
+        groups: vec![DistributionGroup {
+            name: None,
+            n: 2,
+            histogram: Histogram {
+                edges: vec![0.0, 1.0],
+                counts: vec![2],
+            },
+            kde: Curve::default(),
+            bandwidth: 0.5,
+            boxplot: BoxSummary {
+                lower_hinge: 0.25,
+                median: 0.5,
+                upper_hinge: 0.75,
+                whisker_lo: 0.0,
+                whisker_hi: 1.0,
+                outliers: Vec::new(),
+            },
+            qq: Vec::new(),
+            ecdf: Vec::new(),
+            dkw_epsilon: 0.9,
+        }],
     })
 }
 
@@ -331,6 +585,50 @@ impl ComputePort for FakeCompute {
 
     fn convert(&self, request: &ConvertRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Convert(request.clone()), None)
+    }
+
+    fn distribution(&self, request: &DistributionRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Distribution(request.clone()), None)
+    }
+
+    fn contingency(&self, request: &ContingencyRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Contingency(request.clone()), None)
+    }
+
+    fn power(&self, request: &PowerRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Power(request.clone()), None)
+    }
+
+    fn ab_test(&self, request: &AbTestRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::AbTest(request.clone()), None)
+    }
+
+    fn bootstrap(&self, request: &BootstrapRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bootstrap(request.clone()), None)
+    }
+
+    fn forecast(&self, request: &ForecastRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Forecast(request.clone()), None)
+    }
+
+    fn optimize(&self, request: &OptimizeRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Optimize(request.clone()), None)
+    }
+
+    fn solve(&self, request: &SolveRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Solve(request.clone()), None)
+    }
+
+    fn simulate(&self, request: &SimulateRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Simulate(request.clone()), None)
+    }
+
+    fn cash_flow(&self, request: &CashFlowRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::CashFlow(request.clone()), None)
+    }
+
+    fn decide(&self, request: &DecideRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Decide(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

@@ -1,0 +1,222 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsContingencyTool::new(ports))"
+---
+{
+  "name": "stats_contingency",
+  "description": "Analyses a two-way contingency table with crest's deterministic engine: observed and expected counts, row and column percentages, adjusted standardised residuals (a heatmap) and a test of independence. With `test: auto` it runs Fisher's exact test when an expected count is below 5 (any r×c table; simulated p-value with a seed when too large to enumerate) and Pearson's χ² otherwise, and says why; Cramér's V, and on 2×2 tables the odds ratio with its interval. Give two categorical columns `row` and `column`, or the counts in `table`. The user sees the card; you get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/DataInput"
+      },
+      "row": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Row variable (a column of the data)."
+      },
+      "column": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Column variable (a column of the data)."
+      },
+      "table": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "description": "Counts, rows × columns, instead of `row` and `column`."
+      },
+      "row_labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Labels of the rows of `table` (default `R1`, `R2`, …)."
+      },
+      "column_labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Labels of the columns of `table` (default `C1`, `C2`, …)."
+      },
+      "test": {
+        "$ref": "#/$defs/ContingencyChoice",
+        "description": "The test; `auto` picks Fisher when an expected count is below 5.",
+        "default": "auto"
+      },
+      "correct": {
+        "type": "boolean",
+        "description": "Yates' continuity correction for χ² on a 2×2 table (default true,\nas R).",
+        "default": true
+      },
+      "alternative": {
+        "$ref": "#/$defs/Alternative",
+        "description": "Alternative of Fisher's test on a 2×2 table (the odds ratio\nagainst 1).",
+        "default": "two_sided"
+      },
+      "conf_level": {
+        "type": "number",
+        "format": "double",
+        "description": "Level of the odds-ratio interval (default 0.95).",
+        "default": 0.95
+      },
+      "seed": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Seed of the simulated p-value, when one is needed.",
+        "default": 20261025
+      },
+      "simulations": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Tables simulated for that p-value (default 10000).",
+        "default": 10000
+      }
+    },
+    "description": "Input of `contingency`: a two-way table with observed and expected\ncounts, row/column percentages, standardised residuals and a test of\nindependence. Give two categorical columns `row` and `column`, or the\ncounts in `table`.",
+    "title": "ContingencyRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "DataInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A CSV or TSV file of the workspace whose first row names the\ncolumns, e.g. `data/cars.csv`. Cells that all read as numbers make a\nnumeric column; empty cells and `NA` are missing. Give this or\n`columns`, not both.",
+            "default": null
+          },
+          "delimiter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1,
+            "description": "Field separator of `path`; by default a tab for `.tsv` files and a\ncomma otherwise.",
+            "default": null
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DataColumn"
+            },
+            "description": "Inline columns of equal length: `{\"name\": \"mpg\", \"values\": [21.0,\nnull, 22.8]}` (numbers or strings; `null` is missing).",
+            "default": []
+          }
+        },
+        "description": "Where a statistics tool reads its data from."
+      },
+      "Alternative": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "two_sided",
+            "description": "Different in either direction."
+          },
+          {
+            "type": "string",
+            "const": "less",
+            "description": "First less than second."
+          },
+          {
+            "type": "string",
+            "const": "greater",
+            "description": "First greater than second."
+          }
+        ],
+        "description": "Alternative hypothesis."
+      },
+      "DataColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name, as the other request fields refer to it."
+          },
+          "values": {
+            "$ref": "#/$defs/ColumnValues",
+            "description": "The values; `null` is a missing value."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit of numeric values, e.g. `mi/gal`."
+          }
+        },
+        "required": [
+          "name",
+          "values"
+        ],
+        "description": "One named column."
+      },
+      "ColumnValues": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Numbers (`null` = missing)."
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Categories (`null` = missing)."
+          }
+        ],
+        "description": "The values of a column: all numbers or all text."
+      },
+      "ContingencyChoice": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "auto",
+            "description": "Fisher's exact test when an expected count is below 5, else\nPearson's χ²; the card says which and why."
+          },
+          {
+            "type": "string",
+            "const": "chi_square",
+            "description": "Pearson's χ² (Yates' correction on 2×2 unless `correct = false`)."
+          },
+          {
+            "type": "string",
+            "const": "fisher",
+            "description": "Fisher's exact test (simulated p-value when the table is too large\nto enumerate)."
+          }
+        ],
+        "description": "Which test of independence a contingency table gets."
+      }
+    }
+  }
+}

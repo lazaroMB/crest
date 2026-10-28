@@ -1,0 +1,178 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(StatsPowerTool::new(ports))"
+---
+{
+  "name": "stats_power",
+  "description": "Power and sample-size calculator with crest's deterministic engine (the formulas of R's pwr: noncentral t for t-tests, noncentral F for one-way ANOVA, arcsine h for proportions). Give three of `n`, `effect` (Cohen's d, f or h; or `p1` and `p2` for proportions), `power` and `alpha` (default .05); the fourth is solved for. Designs: two_sample_t, one_sample_t, paired_t, anova (with `groups`), two_proportions, one_proportion. The user sees the quantities and the power curve; you get them as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "test": {
+        "$ref": "#/$defs/PowerTest",
+        "description": "The design: `two_sample_t`, `one_sample_t`, `paired_t`, `anova`,\n`two_proportions` or `one_proportion`."
+      },
+      "n": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Sample size: per group for two-sample t, ANOVA and two\nproportions, else in total (pairs for paired t)."
+      },
+      "effect": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Effect size: Cohen's d (t-tests), f (ANOVA) or h (proportions)."
+      },
+      "p1": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Proportions instead of `effect`: the two group proportions, or the\nexpected proportion and (in `p2`) the null value for\n`one_proportion`; h = 2·asin√p1 − 2·asin√p2."
+      },
+      "p2": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Second proportion; see `p1`."
+      },
+      "alpha": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Significance level (default 0.05)."
+      },
+      "power": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Power, 1 − β, e.g. 0.8."
+      },
+      "groups": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Number of groups (ANOVA, at least 2)."
+      },
+      "alternative": {
+        "$ref": "#/$defs/Alternative",
+        "description": "Direction of the alternative (default two_sided).",
+        "default": "two_sided"
+      },
+      "solve_for": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PowerTarget"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "What to solve for, when it is not clear from what is missing."
+      }
+    },
+    "required": [
+      "test"
+    ],
+    "description": "Input of `power`: a power or sample-size calculation. Give three of\n`n`, `effect` (or the proportions `p1`, `p2`), `power` and `alpha`;\nthe missing one is solved for (or name it in `solve_for`). `alpha`\ndefaults to 0.05 unless it is the one solved for.",
+    "title": "PowerRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "PowerTest": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "two_sample_t",
+            "description": "Two-sample t-test, equal groups; effect Cohen's d."
+          },
+          {
+            "type": "string",
+            "const": "one_sample_t",
+            "description": "One-sample t-test; effect Cohen's d."
+          },
+          {
+            "type": "string",
+            "const": "paired_t",
+            "description": "Paired t-test; effect d of the differences."
+          },
+          {
+            "type": "string",
+            "const": "anova",
+            "description": "One-way ANOVA with `groups` equal groups; effect Cohen's f."
+          },
+          {
+            "type": "string",
+            "const": "two_proportions",
+            "description": "Two proportions, equal groups; effect Cohen's h."
+          },
+          {
+            "type": "string",
+            "const": "one_proportion",
+            "description": "One proportion against a null value; effect Cohen's h."
+          }
+        ],
+        "description": "The design a power analysis is for."
+      },
+      "Alternative": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "two_sided",
+            "description": "Different in either direction."
+          },
+          {
+            "type": "string",
+            "const": "less",
+            "description": "First less than second."
+          },
+          {
+            "type": "string",
+            "const": "greater",
+            "description": "First greater than second."
+          }
+        ],
+        "description": "Alternative hypothesis."
+      },
+      "PowerTarget": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "n",
+            "description": "Sample size (per group where the design has groups)."
+          },
+          {
+            "type": "string",
+            "const": "power",
+            "description": "Power, 1 − β."
+          },
+          {
+            "type": "string",
+            "const": "effect",
+            "description": "The smallest effect detectable."
+          },
+          {
+            "type": "string",
+            "const": "alpha",
+            "description": "Significance level."
+          }
+        ],
+        "description": "The quantity a power analysis solved for."
+      }
+    }
+  }
+}

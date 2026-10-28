@@ -17,9 +17,20 @@
 //! See `docs/research/chat-blocks-for-technical-work.md`, "The `Computed`
 //! envelope".
 
+pub mod ab_test;
 pub mod apa;
+pub mod bootstrap;
+pub mod cash_flow;
+pub mod contingency;
+pub mod decision_matrix;
+pub mod distribution;
+pub mod equations;
+pub mod forecast;
 pub mod lint;
 pub mod narrative;
+pub mod optimization;
+pub mod power;
+pub mod simulation;
 pub mod slots;
 
 use std::collections::BTreeMap;
@@ -27,6 +38,26 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
+pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
+pub use self::cash_flow::{CashFlowBody, CashFlowRow};
+pub use self::contingency::{ContingencyBody, ContingencyTest};
+pub use self::decision_matrix::{
+    CriterionDirection, DecisionCriterion, DecisionMatrixBody, DecisionOption, Normalization,
+    WeightSensitivity, WeightThreshold,
+};
+pub use self::distribution::{
+    BandwidthRule, BinRule, BoxSummary, Curve, DistributionBody, DistributionGroup, EcdfStep,
+    QqPoint,
+};
+pub use self::equations::{EquationsBody, PlugBack, SolveMethod, SolvedUnknown};
+pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
+pub use self::optimization::{
+    ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
+};
+pub use self::power::{PowerBody, PowerTarget, PowerTest};
+pub use self::simulation::{SimInputSummary, SimulationBody, TornadoBar};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -588,6 +619,28 @@ pub enum ComputedBody {
     CalcSheet(CalcSheetBody),
     /// A unit conversion.
     Quantity(QuantityBody),
+    /// Histogram, density, box/violin, QQ and ECDF of one variable.
+    Distribution(DistributionBody),
+    /// A contingency table with residuals and a test of independence.
+    Contingency(ContingencyBody),
+    /// A power or sample-size calculation.
+    Power(PowerBody),
+    /// An A/B test of two conversion rates.
+    AbTest(AbTestBody),
+    /// A bootstrap of one statistic.
+    Bootstrap(BootstrapBody),
+    /// A time-series decomposition and forecast.
+    Forecast(ForecastBody),
+    /// A linear or mixed-integer program.
+    Optimization(OptimizationBody),
+    /// An equation or a small system solved numerically.
+    Equations(EquationsBody),
+    /// A Monte Carlo simulation, tornado and Fermi estimate.
+    Simulation(SimulationBody),
+    /// A cash flow's NPV, IRR and MIRR.
+    CashFlow(CashFlowBody),
+    /// A weighted decision matrix.
+    DecisionMatrix(DecisionMatrixBody),
 }
 
 impl ComputedBody {
@@ -614,6 +667,17 @@ impl ComputedBody {
                 }
             }
             Self::Correlation(body) => body.validate(),
+            Self::Distribution(body) => body.validate(),
+            Self::Contingency(body) => body.validate(),
+            Self::Power(body) => body.validate(),
+            Self::AbTest(body) => body.validate(),
+            Self::Bootstrap(body) => body.validate(),
+            Self::Forecast(body) => body.validate(),
+            Self::Optimization(body) => body.validate(),
+            Self::Equations(body) => body.validate(),
+            Self::Simulation(body) => body.validate(),
+            Self::CashFlow(body) => body.validate(),
+            Self::DecisionMatrix(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

@@ -9,6 +9,8 @@
 //!
 //! Significance in the sentences is judged at α = .05 and said as such.
 
+mod cards;
+
 use super::apa::{self, ApaLine, ApaToken};
 use super::{Computed, ComputedBody, ComputedStatus, PAdjust};
 
@@ -159,7 +161,7 @@ pub fn apa_line(computed: &Computed, body: &ComputedBody) -> Option<ApaLine> {
             }
             line
         }
-        _ => return None,
+        other => return cards::apa_line(other, computed, body),
     };
     Some(line)
 }
@@ -309,7 +311,7 @@ pub fn sentence(computed: &Computed, body: &ComputedBody) -> Option<String> {
                 ),
             }
         }
-        _ => return None,
+        (other, _) => return cards::sentence(other, computed, body),
     };
     Some(text)
 }

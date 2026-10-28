@@ -3180,6 +3180,160 @@ expression: "schemars::schema_for!(Block)"
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "Histogram, density, box/violin, QQ and ECDF of one variable.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "distribution"
+            }
+          },
+          "$ref": "#/$defs/DistributionBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A contingency table with residuals and a test of independence.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "contingency"
+            }
+          },
+          "$ref": "#/$defs/ContingencyBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A power or sample-size calculation.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "power"
+            }
+          },
+          "$ref": "#/$defs/PowerBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An A/B test of two conversion rates.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ab_test"
+            }
+          },
+          "$ref": "#/$defs/AbTestBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A bootstrap of one statistic.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "bootstrap"
+            }
+          },
+          "$ref": "#/$defs/BootstrapBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A time-series decomposition and forecast.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "forecast"
+            }
+          },
+          "$ref": "#/$defs/ForecastBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A linear or mixed-integer program.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "optimization"
+            }
+          },
+          "$ref": "#/$defs/OptimizationBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "An equation or a small system solved numerically.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "equations"
+            }
+          },
+          "$ref": "#/$defs/EquationsBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A Monte Carlo simulation, tornado and Fermi estimate.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "simulation"
+            }
+          },
+          "$ref": "#/$defs/SimulationBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A cash flow's NPV, IRR and MIRR.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cash_flow"
+            }
+          },
+          "$ref": "#/$defs/CashFlowBody",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A weighted decision matrix.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "decision_matrix"
+            }
+          },
+          "$ref": "#/$defs/DecisionMatrixBody",
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -4136,6 +4290,1862 @@ expression: "schemars::schema_for!(Block)"
         "factor",
         "exact",
         "dimension"
+      ]
+    },
+    "BinRule": {
+      "description": "How the histogram bins were chosen.",
+      "oneOf": [
+        {
+          "description": "Freedman-Diaconis: width 2·IQR·n^(−1/3) (Sturges when the IQR is 0).",
+          "type": "string",
+          "const": "freedman_diaconis"
+        },
+        {
+          "description": "Sturges: ⌈log₂ n⌉ + 1 bins.",
+          "type": "string",
+          "const": "sturges"
+        },
+        {
+          "description": "Scott: width 3.49·SD·n^(−1/3).",
+          "type": "string",
+          "const": "scott"
+        },
+        {
+          "description": "A bin count given in the request.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "BandwidthRule": {
+      "description": "How the kernel bandwidth was chosen.",
+      "oneOf": [
+        {
+          "description": "Silverman's rule of thumb, 0.9·min(SD, IQR/1.34)·n^(−1/5) (R's\n`bw.nrd0`).",
+          "type": "string",
+          "const": "silverman"
+        },
+        {
+          "description": "Scott's rule, 1.06·min(SD, IQR/1.34)·n^(−1/5) (R's `bw.nrd`).",
+          "type": "string",
+          "const": "scott"
+        },
+        {
+          "description": "A bandwidth given in the request.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "DistributionGroup": {
+      "description": "The distribution of one group.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Group value; `None` without `by`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "n": {
+          "description": "Non-missing values.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "histogram": {
+          "description": "Binned counts.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "kde": {
+          "description": "Gaussian kernel density estimate.",
+          "$ref": "#/$defs/Curve"
+        },
+        "bandwidth": {
+          "description": "Kernel bandwidth.",
+          "type": "number",
+          "format": "double"
+        },
+        "boxplot": {
+          "description": "Box-plot summary.",
+          "$ref": "#/$defs/BoxSummary"
+        },
+        "qq": {
+          "description": "Normal QQ points, in ascending order of the sample.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QqPoint"
+          },
+          "default": []
+        },
+        "ecdf": {
+          "description": "Steps of the empirical CDF: at `x` it rises to `p`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EcdfStep"
+          },
+          "default": []
+        },
+        "dkw_epsilon": {
+          "description": "Half-width of the Dvoretzky-Kiefer-Wolfowitz band around the ECDF.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "n",
+        "histogram",
+        "kde",
+        "bandwidth",
+        "boxplot",
+        "dkw_epsilon"
+      ]
+    },
+    "Curve": {
+      "description": "A curve as matching x and y coordinates.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Abscissas, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "y": {
+          "description": "Ordinates, one per abscissa.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "BoxSummary": {
+      "description": "The five numbers of a Tukey box plot (as R's `boxplot.stats`), plus\nthe points outside.",
+      "type": "object",
+      "properties": {
+        "lower_hinge": {
+          "description": "Lower hinge (Tukey's, as `fivenum`).",
+          "type": "number",
+          "format": "double"
+        },
+        "median": {
+          "description": "Median.",
+          "type": "number",
+          "format": "double"
+        },
+        "upper_hinge": {
+          "description": "Upper hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "whisker_lo": {
+          "description": "Smallest value within 1.5 hinge spreads below the lower hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "whisker_hi": {
+          "description": "Largest value within 1.5 hinge spreads above the upper hinge.",
+          "type": "number",
+          "format": "double"
+        },
+        "outliers": {
+          "description": "Values beyond the whiskers, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "lower_hinge",
+        "median",
+        "upper_hinge",
+        "whisker_lo",
+        "whisker_hi"
+      ]
+    },
+    "QqPoint": {
+      "description": "One point of a normal QQ plot with its pointwise band.",
+      "type": "object",
+      "properties": {
+        "theoretical": {
+          "description": "Standard normal quantile of the plotting position.",
+          "type": "number",
+          "format": "double"
+        },
+        "sample": {
+          "description": "The sample value (an order statistic).",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower band bound for this order statistic under the fitted normal.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper band bound.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "theoretical",
+        "sample",
+        "lo",
+        "hi"
+      ]
+    },
+    "EcdfStep": {
+      "description": "One step of an empirical CDF.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "A distinct sample value.",
+          "type": "number",
+          "format": "double"
+        },
+        "p": {
+          "description": "Share of values ≤ `x`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "p"
+      ]
+    },
+    "DistributionBody": {
+      "description": "Body of a distribution card.",
+      "type": "object",
+      "properties": {
+        "variable": {
+          "description": "The variable described.",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Its unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "description": "Grouping column, when split by group.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bin_rule": {
+          "description": "How the bins were chosen.",
+          "$ref": "#/$defs/BinRule"
+        },
+        "bin_width": {
+          "description": "Width of every bin.",
+          "type": "number",
+          "format": "double"
+        },
+        "bandwidth_rule": {
+          "description": "How the kernel bandwidths were chosen.",
+          "$ref": "#/$defs/BandwidthRule"
+        },
+        "conf_level": {
+          "description": "Coverage of the QQ and ECDF bands, e.g. `0.95`.",
+          "type": "number",
+          "format": "double"
+        },
+        "groups": {
+          "description": "One entry per group (one in all when there is no `by`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DistributionGroup"
+          }
+        }
+      },
+      "required": [
+        "variable",
+        "bin_rule",
+        "bin_width",
+        "bandwidth_rule",
+        "conf_level",
+        "groups"
+      ]
+    },
+    "ContingencyTest": {
+      "description": "The test of independence the engine ran.",
+      "oneOf": [
+        {
+          "description": "Pearson's χ² (with Yates' correction on a 2×2 table when asked).",
+          "type": "string",
+          "const": "chi_square"
+        },
+        {
+          "description": "Fisher's exact test, by full enumeration of the tables with the\nobserved margins.",
+          "type": "string",
+          "const": "fisher_exact"
+        },
+        {
+          "description": "Fisher's test with a Monte Carlo p-value (too many tables to\nenumerate), as R's `simulate.p.value`.",
+          "type": "string",
+          "const": "fisher_simulated"
+        }
+      ]
+    },
+    "ContingencyBody": {
+      "description": "Body of a contingency-table card. Every matrix is rows × columns in the\norder of the level lists.",
+      "type": "object",
+      "properties": {
+        "row_variable": {
+          "description": "Row variable, when built from data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "column_variable": {
+          "description": "Column variable, when built from data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "row_levels": {
+          "description": "Row labels.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "column_levels": {
+          "description": "Column labels.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "observed": {
+          "description": "Observed counts.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "expected": {
+          "description": "Expected counts under independence.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "row_percent": {
+          "description": "Each cell as a percentage of its row, 0–100.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "column_percent": {
+          "description": "Each cell as a percentage of its column, 0–100.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "std_residuals": {
+          "description": "Adjusted standardised residuals (R's `stdres`): about N(0, 1)\nunder independence, so |r| > 2 marks a cell that departs from it.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "test": {
+          "description": "The test that produced the p-value.",
+          "$ref": "#/$defs/ContingencyTest"
+        }
+      },
+      "required": [
+        "row_levels",
+        "column_levels",
+        "observed",
+        "expected",
+        "row_percent",
+        "column_percent",
+        "std_residuals",
+        "test"
+      ]
+    },
+    "PowerTest": {
+      "description": "The design a power analysis is for.",
+      "oneOf": [
+        {
+          "description": "Two-sample t-test, equal groups; effect Cohen's d.",
+          "type": "string",
+          "const": "two_sample_t"
+        },
+        {
+          "description": "One-sample t-test; effect Cohen's d.",
+          "type": "string",
+          "const": "one_sample_t"
+        },
+        {
+          "description": "Paired t-test; effect d of the differences.",
+          "type": "string",
+          "const": "paired_t"
+        },
+        {
+          "description": "One-way ANOVA with `groups` equal groups; effect Cohen's f.",
+          "type": "string",
+          "const": "anova"
+        },
+        {
+          "description": "Two proportions, equal groups; effect Cohen's h.",
+          "type": "string",
+          "const": "two_proportions"
+        },
+        {
+          "description": "One proportion against a null value; effect Cohen's h.",
+          "type": "string",
+          "const": "one_proportion"
+        }
+      ]
+    },
+    "PowerTarget": {
+      "description": "The quantity a power analysis solved for.",
+      "oneOf": [
+        {
+          "description": "Sample size (per group where the design has groups).",
+          "type": "string",
+          "const": "n"
+        },
+        {
+          "description": "Power, 1 − β.",
+          "type": "string",
+          "const": "power"
+        },
+        {
+          "description": "The smallest effect detectable.",
+          "type": "string",
+          "const": "effect"
+        },
+        {
+          "description": "Significance level.",
+          "type": "string",
+          "const": "alpha"
+        }
+      ]
+    },
+    "PowerBody": {
+      "description": "Body of a power card.",
+      "type": "object",
+      "properties": {
+        "test": {
+          "description": "The design.",
+          "$ref": "#/$defs/PowerTest"
+        },
+        "solved_for": {
+          "description": "What was solved for; the other three were given.",
+          "$ref": "#/$defs/PowerTarget"
+        },
+        "alternative": {
+          "description": "Direction of the alternative.",
+          "$ref": "#/$defs/Alternative"
+        },
+        "n": {
+          "description": "Sample size (per group when [`PowerTest::n_per_group`]), unrounded.",
+          "type": "number",
+          "format": "double"
+        },
+        "effect": {
+          "description": "Effect size (`d`, `f` or `h`).",
+          "type": "number",
+          "format": "double"
+        },
+        "alpha": {
+          "description": "Significance level.",
+          "type": "number",
+          "format": "double"
+        },
+        "power": {
+          "description": "Power, 1 − β.",
+          "type": "number",
+          "format": "double"
+        },
+        "groups": {
+          "description": "Number of groups (ANOVA).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "curve": {
+          "description": "Power (y) against n (x) at the effect and α above.",
+          "$ref": "#/$defs/Curve"
+        }
+      },
+      "required": [
+        "test",
+        "solved_for",
+        "alternative",
+        "n",
+        "effect",
+        "alpha",
+        "power",
+        "curve"
+      ]
+    },
+    "AbArm": {
+      "description": "One arm of an A/B test.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Arm name, e.g. `A`.",
+          "type": "string"
+        },
+        "visitors": {
+          "description": "Units exposed.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "conversions": {
+          "description": "Units that converted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "rate": {
+          "description": "Conversion rate, a fraction.",
+          "type": "number",
+          "format": "double"
+        },
+        "rate_lo": {
+          "description": "Wilson interval of the rate: lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "rate_hi": {
+          "description": "Wilson interval of the rate: upper bound.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "visitors",
+        "conversions",
+        "rate",
+        "rate_lo",
+        "rate_hi"
+      ]
+    },
+    "AbMethod": {
+      "description": "The test behind an A/B card's p-value.",
+      "oneOf": [
+        {
+          "description": "Two-proportion z-test with the pooled rate (R's `prop.test(...,\ncorrect = FALSE)`).",
+          "type": "string",
+          "const": "z_test"
+        },
+        {
+          "description": "Fisher's exact test, for small counts.",
+          "type": "string",
+          "const": "fisher_exact"
+        }
+      ]
+    },
+    "AbTestBody": {
+      "description": "Body of an A/B test card.",
+      "type": "object",
+      "properties": {
+        "arms": {
+          "description": "Control first, then treatment.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AbArm"
+          }
+        },
+        "expected_split": {
+          "description": "The share of visitors meant for the treatment, e.g. 0.5.",
+          "type": "number",
+          "format": "double"
+        },
+        "conf_level": {
+          "description": "Level of the intervals.",
+          "type": "number",
+          "format": "double"
+        },
+        "method": {
+          "description": "The test behind the p-value.",
+          "$ref": "#/$defs/AbMethod"
+        },
+        "looks": {
+          "description": "How often the results were looked at (1 = once, at the end).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "sample_ratio_mismatch": {
+          "description": "Whether the visitor split departs from `expected_split` (SRM χ²\np < .001).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "arms",
+        "expected_split",
+        "conf_level",
+        "method",
+        "looks",
+        "sample_ratio_mismatch"
+      ]
+    },
+    "BootStatistic": {
+      "description": "The statistic a bootstrap resamples.",
+      "oneOf": [
+        {
+          "description": "Mean of `y`.",
+          "type": "string",
+          "const": "mean"
+        },
+        {
+          "description": "Median of `y`.",
+          "type": "string",
+          "const": "median"
+        },
+        {
+          "description": "Standard deviation of `y`.",
+          "type": "string",
+          "const": "sd"
+        },
+        {
+          "description": "Mean of `y` without the lowest and highest `trim` share.",
+          "type": "string",
+          "const": "trimmed_mean"
+        },
+        {
+          "description": "Mean of the first group minus the mean of the second.",
+          "type": "string",
+          "const": "mean_difference"
+        },
+        {
+          "description": "Median of the first group minus the median of the second.",
+          "type": "string",
+          "const": "median_difference"
+        },
+        {
+          "description": "Pearson correlation of `y` and `y2` (pairs resampled).",
+          "type": "string",
+          "const": "correlation"
+        }
+      ]
+    },
+    "BootInterval": {
+      "description": "One bootstrap interval.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "How it was formed.",
+          "$ref": "#/$defs/BootMethod"
+        },
+        "lo": {
+          "description": "Lower bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo_mcse": {
+          "description": "Monte Carlo SE of the lower bound, when the method has one.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "hi_mcse": {
+          "description": "Monte Carlo SE of the upper bound.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "method",
+        "lo",
+        "hi"
+      ]
+    },
+    "BootMethod": {
+      "description": "How a bootstrap interval was formed.",
+      "oneOf": [
+        {
+          "description": "Quantiles of the replicates.",
+          "type": "string",
+          "const": "percentile"
+        },
+        {
+          "description": "Bias-corrected and accelerated quantiles (Efron 1987).",
+          "type": "string",
+          "const": "bca"
+        },
+        {
+          "description": "Basic (reverse percentile): 2θ̂ minus the quantiles.",
+          "type": "string",
+          "const": "basic"
+        },
+        {
+          "description": "θ̂ − bias ± z·SE.",
+          "type": "string",
+          "const": "normal"
+        }
+      ]
+    },
+    "BootstrapBody": {
+      "description": "Body of a bootstrap card.",
+      "type": "object",
+      "properties": {
+        "statistic": {
+          "description": "What was resampled.",
+          "$ref": "#/$defs/BootStatistic"
+        },
+        "variable": {
+          "description": "The variable (and the second variable or the groups).",
+          "type": "string"
+        },
+        "versus": {
+          "description": "Second variable or the two groups, e.g. `am: 1 − 0`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed": {
+          "description": "The statistic on the data.",
+          "type": "number",
+          "format": "double"
+        },
+        "resamples": {
+          "description": "Number of resamples.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "conf_level": {
+          "description": "Level of the intervals.",
+          "type": "number",
+          "format": "double"
+        },
+        "histogram": {
+          "description": "Distribution of the replicates.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "intervals": {
+          "description": "The intervals, percentile and BCa first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BootInterval"
+          }
+        },
+        "z0": {
+          "description": "BCa bias correction z₀.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "acceleration": {
+          "description": "BCa acceleration a (jackknife).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "statistic",
+        "variable",
+        "observed",
+        "resamples",
+        "conf_level",
+        "histogram",
+        "intervals"
+      ]
+    },
+    "SeasonalComponent": {
+      "description": "One seasonal component of a decomposition.",
+      "type": "object",
+      "properties": {
+        "period": {
+          "description": "Its period, in observations.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "values": {
+          "description": "One value per observation.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "period",
+        "values"
+      ]
+    },
+    "Holdout": {
+      "description": "The forecast of the held-out tail by a model fitted without it.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "Index of the first held-out observation.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "predicted": {
+          "description": "The forecast of the held-out observations.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "start",
+        "predicted"
+      ]
+    },
+    "ForecastBody": {
+      "description": "Body of a forecast card. The forecast continues the series' indices\nat `values.len()`, `values.len() + 1`, …",
+      "type": "object",
+      "properties": {
+        "variable": {
+          "description": "The variable.",
+          "type": "string"
+        },
+        "time": {
+          "description": "Time labels of the observations, when the data had a time column.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "description": "The model, e.g. `MSTL (periods 12) + AutoETS trend`.",
+          "type": "string"
+        },
+        "values": {
+          "description": "The observations.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "trend": {
+          "description": "Trend of the decomposition (empty without seasonal periods).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "seasonal": {
+          "description": "Seasonal components, one per period.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeasonalComponent"
+          },
+          "default": []
+        },
+        "remainder": {
+          "description": "Remainder of the decomposition.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "forecast": {
+          "description": "Point forecasts.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "lo80": {
+          "description": "80% interval, lower bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "hi80": {
+          "description": "80% interval, upper bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "lo95": {
+          "description": "95% interval, lower bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "hi95": {
+          "description": "95% interval, upper bounds.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "holdout": {
+          "description": "The hold-out check, when one ran.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Holdout"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "variable",
+        "model",
+        "values",
+        "forecast",
+        "lo80",
+        "hi80",
+        "lo95",
+        "hi95"
+      ]
+    },
+    "Sense": {
+      "description": "Direction of the objective.",
+      "oneOf": [
+        {
+          "description": "Largest objective.",
+          "type": "string",
+          "const": "maximize"
+        },
+        {
+          "description": "Smallest objective.",
+          "type": "string",
+          "const": "minimize"
+        }
+      ]
+    },
+    "OptimizationStatus": {
+      "description": "How a solve ended.",
+      "oneOf": [
+        {
+          "description": "Proven optimal.",
+          "type": "string",
+          "const": "optimal"
+        },
+        {
+          "description": "A feasible point, optimality not proven (node limit reached).",
+          "type": "string",
+          "const": "feasible"
+        },
+        {
+          "description": "No point satisfies every constraint.",
+          "type": "string",
+          "const": "infeasible"
+        },
+        {
+          "description": "The objective improves without limit.",
+          "type": "string",
+          "const": "unbounded"
+        },
+        {
+          "description": "Stopped before any feasible point was found.",
+          "type": "string",
+          "const": "stopped"
+        }
+      ]
+    },
+    "OptVariable": {
+      "description": "One decision variable.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "lower": {
+          "description": "Lower bound (`None` = −∞).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "upper": {
+          "description": "Upper bound (`None` = +∞).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "integer": {
+          "description": "Whether it must be a whole number.",
+          "type": "boolean",
+          "default": false
+        },
+        "objective_coefficient": {
+          "description": "Its coefficient in the objective.",
+          "type": "number",
+          "format": "double"
+        },
+        "reduced_cost": {
+          "description": "Change of the objective per unit the variable is forced up (0 for a\nvariable strictly between its bounds).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "objective_coefficient"
+      ]
+    },
+    "OptConstraint": {
+      "description": "One linear constraint.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "expr": {
+          "description": "The constraint as written.",
+          "type": "string"
+        },
+        "coefficients": {
+          "description": "Coefficient of each variable (in variable order) after moving every\nvariable term to the left.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "op": {
+          "description": "Comparison.",
+          "$ref": "#/$defs/ConstraintOp"
+        },
+        "rhs": {
+          "description": "Right-hand side after moving every variable term to the left.",
+          "type": "number",
+          "format": "double"
+        },
+        "activity": {
+          "description": "Value of the left-hand side at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "slack": {
+          "description": "How far it is from binding (≥ 0 when satisfied).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "binding": {
+          "description": "Whether it holds with equality.",
+          "type": "boolean",
+          "default": false
+        },
+        "dual": {
+          "description": "Shadow price: change of the objective per unit increase of `rhs`.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "expr",
+        "op",
+        "rhs"
+      ]
+    },
+    "ConstraintOp": {
+      "description": "A comparison of a linear constraint.",
+      "oneOf": [
+        {
+          "description": "`≤`.",
+          "type": "string",
+          "const": "le"
+        },
+        {
+          "description": "`≥`.",
+          "type": "string",
+          "const": "ge"
+        },
+        {
+          "description": "`=`.",
+          "type": "string",
+          "const": "eq"
+        }
+      ]
+    },
+    "OptimizationBody": {
+      "description": "Body of an optimisation card.",
+      "type": "object",
+      "properties": {
+        "sense": {
+          "description": "Direction.",
+          "$ref": "#/$defs/Sense"
+        },
+        "objective_expr": {
+          "description": "The objective as written.",
+          "type": "string"
+        },
+        "status": {
+          "description": "How the solve ended.",
+          "$ref": "#/$defs/OptimizationStatus"
+        },
+        "objective": {
+          "description": "Objective value at the solution.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "integer": {
+          "description": "Whether some variables are integer (a MILP).",
+          "type": "boolean",
+          "default": false
+        },
+        "mip_gap": {
+          "description": "Relative gap between the solution and the best bound (MILP).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "variables": {
+          "description": "The variables, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptVariable"
+          }
+        },
+        "constraints": {
+          "description": "The constraints, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OptConstraint"
+          }
+        }
+      },
+      "required": [
+        "sense",
+        "objective_expr",
+        "status",
+        "variables",
+        "constraints"
+      ]
+    },
+    "SolveMethod": {
+      "description": "How the solver searched.",
+      "oneOf": [
+        {
+          "description": "Damped Newton with a finite-difference Jacobian, from a guess.",
+          "type": "string",
+          "const": "newton"
+        },
+        {
+          "description": "Sign changes scanned on a grid over a range, each refined by\nbisection (one unknown).",
+          "type": "string",
+          "const": "bracket_scan"
+        }
+      ]
+    },
+    "SolvedUnknown": {
+      "description": "One unknown at the solution.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value (the first root of a scan).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "PlugBack": {
+      "description": "One equation evaluated at the solution.",
+      "type": "object",
+      "properties": {
+        "equation": {
+          "description": "The equation as written.",
+          "type": "string"
+        },
+        "lhs": {
+          "description": "Its left-hand side at the solution.",
+          "type": "number",
+          "format": "double"
+        },
+        "rhs": {
+          "description": "Its right-hand side at the solution.",
+          "type": "number",
+          "format": "double"
+        },
+        "residual": {
+          "description": "`lhs − rhs`.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "equation",
+        "lhs",
+        "rhs",
+        "residual"
+      ]
+    },
+    "EquationsBody": {
+      "description": "Body of an equation-solver card.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "How the solver searched.",
+          "$ref": "#/$defs/SolveMethod"
+        },
+        "converged": {
+          "description": "Whether it met the tolerance.",
+          "type": "boolean"
+        },
+        "unknowns": {
+          "description": "The unknowns at the solution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SolvedUnknown"
+          }
+        },
+        "roots": {
+          "description": "Every root found in the range (bracket scan).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "plug_back": {
+          "description": "The equations at the solution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlugBack"
+          }
+        },
+        "residual_norm": {
+          "description": "Largest |residual|.",
+          "type": "number",
+          "format": "double"
+        },
+        "iterations": {
+          "description": "Iterations used (Newton steps or bisection halvings in total).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tolerance": {
+          "description": "Tolerance on the residuals.",
+          "type": "number",
+          "format": "double"
+        },
+        "condition_number": {
+          "description": "Condition number of the Jacobian at the solution (Newton).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "curve": {
+          "description": "`lhs − rhs` over the range, for one unknown.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Curve"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "converged",
+        "unknowns",
+        "plug_back",
+        "residual_norm",
+        "iterations",
+        "tolerance"
+      ]
+    },
+    "SimInputSummary": {
+      "description": "One input as simulated.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "distribution": {
+          "description": "Its distribution in words, e.g. `lognormal, 90% in [2, 8]`.",
+          "type": "string"
+        },
+        "p10": {
+          "description": "10th percentile of the distribution.",
+          "type": "number",
+          "format": "double"
+        },
+        "p50": {
+          "description": "Median.",
+          "type": "number",
+          "format": "double"
+        },
+        "p90": {
+          "description": "90th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "source": {
+          "description": "Where the estimate comes from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "description": "Unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "distribution",
+        "p10",
+        "p50",
+        "p90"
+      ]
+    },
+    "TornadoBar": {
+      "description": "One bar of the tornado: the output with one input at its 10th and 90th\npercentiles, the others at their medians.",
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The input moved.",
+          "type": "string"
+        },
+        "at_p10": {
+          "description": "Output at the input's 10th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "at_p90": {
+          "description": "Output at its 90th percentile.",
+          "type": "number",
+          "format": "double"
+        },
+        "swing": {
+          "description": "|at_p90 − at_p10|.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "input",
+        "at_p10",
+        "at_p90",
+        "swing"
+      ]
+    },
+    "SimulationBody": {
+      "description": "Body of a Monte Carlo card.",
+      "type": "object",
+      "properties": {
+        "output": {
+          "description": "Name of the output.",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Its unit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model, e.g. `price * volume - cost`.",
+          "type": "string"
+        },
+        "fermi": {
+          "description": "Whether the output is the product of the inputs (a Fermi estimate).",
+          "type": "boolean",
+          "default": false
+        },
+        "samples": {
+          "description": "Draws.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "inputs": {
+          "description": "The inputs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SimInputSummary"
+          }
+        },
+        "histogram": {
+          "description": "Distribution of the output.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "convergence": {
+          "description": "The running mean (y) after n draws (x).",
+          "$ref": "#/$defs/Curve"
+        },
+        "convergence_mcse": {
+          "description": "Monte Carlo SE of the running mean at each point of `convergence`.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "base": {
+          "description": "The output with every input at its median.",
+          "type": "number",
+          "format": "double"
+        },
+        "tornado": {
+          "description": "Tornado bars, largest swing first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TornadoBar"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "output",
+        "model",
+        "samples",
+        "inputs",
+        "histogram",
+        "convergence",
+        "base"
+      ]
+    },
+    "CashFlowRow": {
+      "description": "One period of a cash flow.",
+      "type": "object",
+      "properties": {
+        "period": {
+          "description": "Period number, 0 first (undiscounted).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "cash_flow": {
+          "description": "Net cash flow of the period.",
+          "type": "number",
+          "format": "double"
+        },
+        "discount_factor": {
+          "description": "1 / (1 + rate)^period.",
+          "type": "number",
+          "format": "double"
+        },
+        "present_value": {
+          "description": "Present value of the flow.",
+          "type": "number",
+          "format": "double"
+        },
+        "cumulative": {
+          "description": "Running total of the flows.",
+          "type": "number",
+          "format": "double"
+        },
+        "cumulative_pv": {
+          "description": "Running total of the present values.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "period",
+        "cash_flow",
+        "discount_factor",
+        "present_value",
+        "cumulative",
+        "cumulative_pv"
+      ]
+    },
+    "CashFlowBody": {
+      "description": "Body of a cash-flow card.",
+      "type": "object",
+      "properties": {
+        "rate": {
+          "description": "Discount rate per period, e.g. 0.1.",
+          "type": "number",
+          "format": "double"
+        },
+        "finance_rate": {
+          "description": "Rate paid on the money invested (MIRR).",
+          "type": "number",
+          "format": "double"
+        },
+        "reinvest_rate": {
+          "description": "Rate earned on the money returned (MIRR).",
+          "type": "number",
+          "format": "double"
+        },
+        "currency": {
+          "description": "Currency of the amounts, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "period_label": {
+          "description": "Name of a period, e.g. `year`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "description": "The periods.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CashFlowRow"
+          }
+        },
+        "irrs": {
+          "description": "Every rate at which the NPV is 0, ascending.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "sign_changes": {
+          "description": "Sign changes of the flows (Descartes: at most this many IRRs).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "npv_curve": {
+          "description": "NPV (y) against the discount rate (x).",
+          "$ref": "#/$defs/Curve"
+        }
+      },
+      "required": [
+        "rate",
+        "finance_rate",
+        "reinvest_rate",
+        "rows",
+        "sign_changes",
+        "npv_curve"
+      ]
+    },
+    "Normalization": {
+      "description": "How raw scores are put on a common scale.",
+      "oneOf": [
+        {
+          "description": "(x − min)/(max − min), reversed for a cost: the best option 1, the\nworst 0.",
+          "type": "string",
+          "const": "min_max"
+        },
+        {
+          "description": "x/max, or min/x for a cost (positive scores).",
+          "type": "string",
+          "const": "max"
+        },
+        {
+          "description": "The raw scores (already on one scale); a cost counts negatively.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "DecisionCriterion": {
+      "description": "One criterion.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "raw_weight": {
+          "description": "The weight as given.",
+          "type": "number",
+          "format": "double"
+        },
+        "weight": {
+          "description": "The weight normalised to sum 1 over the criteria.",
+          "type": "number",
+          "format": "double"
+        },
+        "direction": {
+          "description": "Benefit or cost.",
+          "$ref": "#/$defs/CriterionDirection"
+        }
+      },
+      "required": [
+        "name",
+        "raw_weight",
+        "weight",
+        "direction"
+      ]
+    },
+    "CriterionDirection": {
+      "description": "Whether more of a criterion is better.",
+      "oneOf": [
+        {
+          "description": "Higher scores are better.",
+          "type": "string",
+          "const": "benefit"
+        },
+        {
+          "description": "Lower scores are better (price, risk).",
+          "type": "string",
+          "const": "cost"
+        }
+      ]
+    },
+    "DecisionOption": {
+      "description": "One option.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "scores": {
+          "description": "Raw score per criterion, in criterion order.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "normalized": {
+          "description": "Normalised score per criterion.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "total": {
+          "description": "Σ weight × normalised score.",
+          "type": "number",
+          "format": "double"
+        },
+        "rank": {
+          "description": "1 for the best; tied options share a rank.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "scores",
+        "normalized",
+        "total",
+        "rank"
+      ]
+    },
+    "WeightSensitivity": {
+      "description": "How far one criterion's weight can move before the leader changes.",
+      "type": "object",
+      "properties": {
+        "criterion": {
+          "description": "The criterion.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Its current normalised weight.",
+          "type": "number",
+          "format": "double"
+        },
+        "lower": {
+          "description": "The nearest threshold below, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WeightThreshold"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upper": {
+          "description": "The nearest threshold above, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WeightThreshold"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "criterion",
+        "weight"
+      ]
+    },
+    "WeightThreshold": {
+      "description": "A weight at which another option overtakes the leader.",
+      "type": "object",
+      "properties": {
+        "weight": {
+          "description": "The criterion's normalised weight there (the others rescaled in\nproportion).",
+          "type": "number",
+          "format": "double"
+        },
+        "new_leader": {
+          "description": "The option that takes first place.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "weight",
+        "new_leader"
+      ]
+    },
+    "DecisionMatrixBody": {
+      "description": "Body of a decision-matrix card.",
+      "type": "object",
+      "properties": {
+        "normalization": {
+          "description": "How scores were normalised.",
+          "$ref": "#/$defs/Normalization"
+        },
+        "criteria": {
+          "description": "The criteria, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionCriterion"
+          }
+        },
+        "options": {
+          "description": "The options, in request order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          }
+        },
+        "sensitivity": {
+          "description": "One entry per criterion.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WeightSensitivity"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "normalization",
+        "criteria",
+        "options"
       ]
     },
     "FormField": {

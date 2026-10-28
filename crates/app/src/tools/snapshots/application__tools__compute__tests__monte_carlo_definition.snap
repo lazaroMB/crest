@@ -1,0 +1,256 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(SimulateTool::new(ports.clone()))"
+---
+{
+  "name": "monte_carlo",
+  "description": "Runs a seeded Monte Carlo simulation with crest's deterministic engine: each input has a distribution (`fixed`, `uniform`, `normal`, `lognormal` from a 90% range low–high, `triangular`, `pert`) and the output is the `model` expression of the inputs (`price * volume - cost`). The user sees mean ± MCSE, the 5th/50th/95th percentiles, the histogram, the convergence trace and a tornado of each input's swing from its 10th to 90th percentile. Without `model` it is a Fermi estimate: the product of the inputs, each a lognormal range with its `source`, with exact percentiles. You get the values as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "inputs": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/SimInput"
+        },
+        "description": "The uncertain inputs, assumed independent."
+      },
+      "model": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The output as an expression of the inputs (`price * volume -\ncost`); without it the output is the product of the inputs."
+      },
+      "output": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Name of the output (default `result`)."
+      },
+      "unit": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Unit of the output, shown only."
+      },
+      "samples": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Draws (default 10000, at most 1000000).",
+        "default": 10000
+      },
+      "seed": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Seed of the generator.",
+        "default": 20261025
+      }
+    },
+    "required": [
+      "inputs"
+    ],
+    "description": "Input of `simulate`: a Monte Carlo model, its tornado of one-at-a-time\nswings, and (without `model`) a Fermi estimate: the product of the\ninputs.",
+    "title": "SimulateRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "SimInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name, as the model uses it."
+          },
+          "distribution": {
+            "$ref": "#/$defs/SimDistribution",
+            "description": "Its distribution."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the estimate comes from (a reference, \"guess\"), shown on the\ncard."
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Unit, shown only."
+          }
+        },
+        "required": [
+          "name",
+          "distribution"
+        ],
+        "description": "One input of a Monte Carlo model."
+      },
+      "SimDistribution": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "fixed"
+              },
+              "value": {
+                "type": "number",
+                "format": "double",
+                "description": "The value."
+              }
+            },
+            "required": [
+              "type",
+              "value"
+            ],
+            "description": "Always `value`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "uniform"
+              },
+              "min": {
+                "type": "number",
+                "format": "double",
+                "description": "Lower end."
+              },
+              "max": {
+                "type": "number",
+                "format": "double",
+                "description": "Upper end."
+              }
+            },
+            "required": [
+              "type",
+              "min",
+              "max"
+            ],
+            "description": "Uniform on [`min`, `max`]."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "normal"
+              },
+              "mean": {
+                "type": "number",
+                "format": "double",
+                "description": "Mean."
+              },
+              "sd": {
+                "type": "number",
+                "format": "double",
+                "description": "Standard deviation."
+              }
+            },
+            "required": [
+              "type",
+              "mean",
+              "sd"
+            ],
+            "description": "Normal with `mean` and `sd`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "lognormal"
+              },
+              "low": {
+                "type": "number",
+                "format": "double",
+                "description": "5th percentile."
+              },
+              "high": {
+                "type": "number",
+                "format": "double",
+                "description": "95th percentile."
+              }
+            },
+            "required": [
+              "type",
+              "low",
+              "high"
+            ],
+            "description": "Lognormal with 90% of its mass in [`low`, `high`] (both > 0): the\nusual Fermi range \"between low and high\"."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "triangular"
+              },
+              "min": {
+                "type": "number",
+                "format": "double",
+                "description": "Lower end."
+              },
+              "mode": {
+                "type": "number",
+                "format": "double",
+                "description": "Most likely value."
+              },
+              "max": {
+                "type": "number",
+                "format": "double",
+                "description": "Upper end."
+              }
+            },
+            "required": [
+              "type",
+              "min",
+              "mode",
+              "max"
+            ],
+            "description": "Triangular on [`min`, `max`] with peak at `mode`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "pert"
+              },
+              "min": {
+                "type": "number",
+                "format": "double",
+                "description": "Lower end."
+              },
+              "mode": {
+                "type": "number",
+                "format": "double",
+                "description": "Most likely value."
+              },
+              "max": {
+                "type": "number",
+                "format": "double",
+                "description": "Upper end."
+              }
+            },
+            "required": [
+              "type",
+              "min",
+              "mode",
+              "max"
+            ],
+            "description": "PERT (a scaled beta) on [`min`, `max`] with peak at `mode`."
+          }
+        ],
+        "description": "The distribution of a Monte Carlo input, tagged by `type`."
+      }
+    }
+  }
+}
