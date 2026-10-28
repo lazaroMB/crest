@@ -1,5 +1,6 @@
 use application::ports::events::DomainEvent;
 use application::ports::form::FormRequestId;
+use chrono::NaiveDate;
 use domain::block::Block;
 use domain::conversation::ToolUseId;
 use futures::FutureExt as _;
@@ -22,7 +23,9 @@ fn spec() -> FormSpec {
              "options": [{"value": "welch", "label": "Welch t"}, {"value": "student"}]},
             {"name": "plots", "type": "multi_enum",
              "options": [{"value": "qq"}, {"value": "hist"}]},
-            {"name": "notes", "type": "multiline"}
+            {"name": "notes", "type": "multiline"},
+            {"name": "due", "type": "date", "min": "2024-01-01", "max": "2024-12-31"},
+            {"name": "stay", "type": "date_range", "min": "2026-01-01", "max": "2026-12-31"}
         ]
     }))
     .unwrap_or_else(|e| panic!("{e}"))
@@ -69,7 +72,7 @@ fn ask(
         spec: spec(),
         error: None,
     });
-    cx.update(|window, cx| attach(pending, window, cx));
+    cx.update(|window, cx| attach(pending, true, window, cx));
     draw(cx, view);
     cx.run_until_parked();
     answer
@@ -167,6 +170,42 @@ fn fill_and_submit_with_inline_errors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_click_on_the_form_keeps_the_focus_in_it(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let _answer = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let card = form_view.read_with(cx, |form, _| form.focus_handle.clone());
+
+    // A click on an input: the input takes the focus on mouse down and
+    // the timeline row behind it must not take it back on mouse up.
+    click(cx, "form-input-0");
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, cx| owns_focus(window, cx)),
+        "the form keeps the focus after a click on an input"
+    );
+    cx.simulate_input("a");
+    form_view.read_with(cx, |form, cx| {
+        let typed = form.read(cx).ok().and_then(|a| a.get("label").cloned());
+        assert_eq!(typed, Some(json!("a")), "the key reached the input");
+    });
+
+    // The focus elsewhere, then a click on the card (its title): the
+    // first input takes it.
+    cx.update(|window, cx| {
+        let other = cx.focus_handle();
+        window.focus(&other, cx);
+    });
+    assert!(!cx.update(|window, cx| card.contains_focused(window, cx)));
+    click(cx, "form-card");
+    cx.run_until_parked();
+    assert!(
+        cx.update(|window, cx| card.contains_focused(window, cx)),
+        "a click on the card focuses the form"
+    );
+}
+
+#[gpui::test]
 fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
     let (cx, view, block) = window(cx);
     let answer = ask(cx, &view, &block);
@@ -204,6 +243,121 @@ fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn required_fields_are_listed_and_block_submit(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    assert!(cx.debug_bounds("form-required-legend").is_some());
+    let missing = cx.debug_bounds("form-missing");
+    assert!(
+        missing.is_some(),
+        "the footer names the empty required field"
+    );
+    // The button is disabled: a click does nothing.
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+    form(cx, &block).read_with(cx, |form, cx| {
+        assert_eq!(form.missing_required(cx), ["Label"]);
+    });
+
+    // Filled in, the note goes and the button submits.
+    cx.simulate_input("run");
+    draw(cx, &view);
+    assert!(cx.debug_bounds("form-missing").is_none());
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(answer.get("label"), Some(&json!("run")));
+}
+
+#[gpui::test]
+fn a_date_range_is_picked_and_submitted_as_start_and_end(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let picker = form_view.read_with(cx, |form, _| match &form.inputs[7] {
+        FieldInput::DateRange(state) => state.clone(),
+        _ => panic!("no range picker"),
+    });
+    let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d}"));
+
+    draw(cx, &view);
+    cx.simulate_input("run");
+    // A period starting before the bound.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date((day(2025, 12, 30), day(2026, 1, 2)), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    form_view.read_with(cx, |form, _| {
+        assert_eq!(
+            form.errors().get("stay").map(String::as_str),
+            Some("Pick a start and an end date between 2026-01-01 and 2026-12-31")
+        );
+    });
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date((day(2026, 5, 10), day(2026, 5, 14)), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(
+        answer.get("stay"),
+        Some(&json!({"start": "2026-05-10", "end": "2026-05-14"}))
+    );
+}
+
+#[gpui::test]
+fn a_date_is_picked_and_submitted_as_iso(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut reply = ask(cx, &view, &block);
+    let form_view = form(cx, &block);
+    let picker = form_view.read_with(cx, |form, _| match &form.inputs[6] {
+        FieldInput::Date(state) => state.clone(),
+        _ => panic!("no date picker"),
+    });
+    let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap_or_else(|| panic!("{y}-{m}-{d}"));
+
+    // The focus is in the label; the date is before the bound.
+    draw(cx, &view);
+    cx.simulate_input("run");
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date(day(2023, 12, 31), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    form_view.read_with(cx, |form, _| {
+        assert_eq!(
+            form.errors().get("due").map(String::as_str),
+            Some("Pick a date between 2024-01-01 and 2024-12-31")
+        );
+    });
+    assert_eq!(reply.try_recv().ok().flatten(), None);
+
+    // A day inside the bounds goes out as an ISO date.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_date(day(2024, 3, 5), window, cx);
+    });
+    draw(cx, &view);
+    click(cx, "form-submit");
+    cx.run_until_parked();
+    let Some(Ok(FormResponse::Submitted { answer })) = reply.now_or_never() else {
+        panic!("not submitted");
+    };
+    assert_eq!(answer.get("due"), Some(&json!("2024-03-05")));
+    assert_eq!(answer.get("label"), Some(&json!("run")));
+}
+
+#[gpui::test]
 fn the_port_reaches_the_block_and_a_withdrawn_form_stops_waiting(cx: &mut TestAppContext) {
     let (cx, view, block) = window(cx);
     let (port, inbox) = crate::form::UiForm::channel();
@@ -234,33 +388,6 @@ fn the_port_reaches_the_block_and_a_withdrawn_form_stops_waiting(cx: &mut TestAp
     form_view.read_with(cx, |form, _| assert!(form.request().is_none()));
     draw(cx, &view);
     drop(listener);
-}
-
-#[gpui::test]
-fn a_clicked_field_keeps_the_focus(cx: &mut TestAppContext) {
-    let (cx, view, block) = window(cx);
-    let form_view = form(cx, &block);
-    let _answer = ask(cx, &view, &block);
-    // Somewhere else first, so the click has to move the focus.
-    let timeline = view.read_with(cx, |view, cx| view.focus_handle(cx));
-    cx.update(|window, cx| window.focus(&timeline, cx));
-    assert!(!cx.update(|window, cx| owns_focus(window, cx)));
-
-    // The click lands in the second field; the timeline row around it
-    // must not take the focus back.
-    click(cx, "form-input-1");
-    draw(cx, &view);
-    assert!(
-        cx.update(|window, cx| owns_focus(window, cx)),
-        "the clicked field has the focus"
-    );
-    cx.simulate_input("7");
-    form_view.read_with(cx, |form, cx| {
-        let Some(FieldInput::Line(state)) = form.inputs.get(1) else {
-            panic!("no line input for `n`");
-        };
-        assert_eq!(state.read(cx).value().as_ref(), "7");
-    });
 }
 
 #[gpui::test]
@@ -316,53 +443,4 @@ fn long_text_wraps_inside_the_card(cx: &mut TestAppContext) {
             "{selector} wrapped onto several lines: {option:?}"
         );
     }
-}
-
-#[gpui::test]
-fn a_submit_hands_the_focus_to_the_prompt_and_a_withdrawn_form_says_why(cx: &mut TestAppContext) {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    use crate::blocks::sources::{BlockEvent, block_events};
-
-    let (cx, view, block) = window(cx);
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let recorded = Rc::clone(&events);
-    cx.update(|_, cx| {
-        let emitter = block_events(cx);
-        cx.subscribe(&emitter, move |_, event: &BlockEvent, _| {
-            recorded.borrow_mut().push(event.clone());
-        })
-        .detach();
-    });
-    let mut answer = ask(cx, &view, &block);
-    cx.simulate_input("run 1");
-    draw(cx, &view);
-    click(cx, "form-submit");
-    draw(cx, &view);
-    cx.run_until_parked();
-    assert!(matches!(
-        answer.try_recv(),
-        Ok(Some(FormResponse::Submitted { .. }))
-    ));
-    assert_eq!(
-        *events.borrow(),
-        [BlockEvent::FormSubmitted { block: block.id }]
-    );
-
-    let mut withdrawn = spec();
-    assert!(withdrawn.withdraw());
-    view.update(cx, |view, cx| {
-        view.apply(
-            &DomainEvent::BlockUpdated {
-                block: Block {
-                    id: block.id,
-                    kind: BlockKind::Form(withdrawn),
-                },
-            },
-            cx,
-        );
-    });
-    draw(cx, &view);
-    assert!(cx.debug_bounds("form-cancelled").is_some());
 }

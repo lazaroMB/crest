@@ -15,7 +15,7 @@ use std::io::IsTerminal as _;
 
 use application::ports::form::{FormPort, FormRequest, FormResponse};
 use async_trait::async_trait;
-use domain::form::{FieldKind, FormField, FormOption};
+use domain::form::{DateSpan, FieldKind, FormField, FormOption};
 use serde_json::Value;
 
 use super::StdinApproval;
@@ -64,6 +64,10 @@ fn parse(kind: &FieldKind, line: &str) -> Result<Value, String> {
     let text = line.trim();
     let value = match kind {
         FieldKind::String { .. } | FieldKind::Multiline { .. } => Value::String(line.to_owned()),
+        FieldKind::Date { .. } => Value::String(text.to_owned()),
+        FieldKind::DateRange { .. } => DateSpan::parse(text)
+            .map(|span| span.to_value())
+            .ok_or_else(|| kind.hint())?,
         FieldKind::Number { .. } => text
             .parse::<f64>()
             .ok()
@@ -103,9 +107,10 @@ fn parse(kind: &FieldKind, line: &str) -> Result<Value, String> {
 /// The default of `kind` as a value, if it has one.
 fn default_value(kind: &FieldKind) -> Option<Value> {
     match kind {
-        FieldKind::String { default, .. } | FieldKind::Multiline { default, .. } => {
-            default.clone().map(Value::String)
-        }
+        FieldKind::String { default, .. }
+        | FieldKind::Multiline { default, .. }
+        | FieldKind::Date { default, .. } => default.clone().map(Value::String),
+        FieldKind::DateRange { default, .. } => default.as_ref().map(DateSpan::to_value),
         FieldKind::Number { default, .. } => default
             .and_then(serde_json::Number::from_f64)
             .map(Value::Number),
@@ -121,6 +126,9 @@ fn default_value(kind: &FieldKind) -> Option<Value> {
 fn default_text(kind: &FieldKind) -> Option<String> {
     match (kind, default_value(kind)?) {
         (FieldKind::Multiline { .. }, _) => Some("keep the text given".to_owned()),
+        (FieldKind::DateRange { .. }, value) => {
+            DateSpan::from_value(&value).map(|span| format!("{}..{}", span.start, span.end))
+        }
         (_, Value::String(s)) => Some(s),
         (_, Value::Bool(b)) => Some(if b { "y" } else { "n" }.to_owned()),
         (_, Value::Array(items)) => Some(
@@ -164,6 +172,9 @@ impl StdinForm {
         if let Some(description) = &req.spec.description {
             w.line(Some(Style::Dim), &format!("  {description}"));
         }
+        if req.spec.fields.iter().any(|field| field.required) {
+            w.line(Some(Style::Dim), "  fields marked * are required");
+        }
         if let Some(error) = &req.error {
             w.line(
                 Some(Style::Yellow),
@@ -206,6 +217,8 @@ impl StdinForm {
             FieldKind::MultiEnum { .. } => "numbers or values, separated by commas",
             FieldKind::Number { .. } => "number",
             FieldKind::Integer { .. } => "whole number",
+            FieldKind::Date { .. } => "date YYYY-MM-DD",
+            FieldKind::DateRange { .. } => "two dates YYYY-MM-DD..YYYY-MM-DD",
             FieldKind::String { .. } => "text",
         };
         let default = default_text(&field.kind)
@@ -316,7 +329,9 @@ mod tests {
                  "options": [{"value": "welch", "label": "Welch t"}, {"value": "student"}]},
                 {"name": "plots", "type": "multi_enum",
                  "options": [{"value": "qq"}, {"value": "hist"}]},
-                {"name": "notes", "type": "multiline"}
+                {"name": "notes", "type": "multiline"},
+                {"name": "due", "type": "date", "min": "2024-01-01"},
+                {"name": "stay", "type": "date_range", "min": "2024-01-01"}
             ]
         }))
         .unwrap();
@@ -338,11 +353,15 @@ mod tests {
 
     #[tokio::test]
     async fn asks_each_field_and_explains_bad_values() {
-        let (form, buf) = stdin_form("\nrun 1\n12\n\nmaybe\ny\n2\nqq, 2,hist\nfirst\nsecond\n.\n");
+        let (form, buf) = stdin_form(
+            "\nrun 1\n12\n\nmaybe\ny\n2\nqq, 2,hist\nfirst\nsecond\n.\n2023-12-31\n2024-03-05\n\
+             2023-12-30..2024-01-02\n2024-03-05..2024-03-09\n",
+        );
         let response = form.ask(request()).await;
         let expected: BTreeMap<String, Value> = serde_json::from_value(json!({
             "label": "run 1", "n": 2, "paired": true, "test": "student",
-            "plots": ["qq", "hist"], "notes": "first\nsecond"
+            "plots": ["qq", "hist"], "notes": "first\nsecond", "due": "2024-03-05",
+            "stay": {"start": "2024-03-05", "end": "2024-03-09"}
         }))
         .unwrap();
         assert_eq!(response, FormResponse::Submitted { answer: expected });
@@ -357,6 +376,13 @@ mod tests {
         assert!(text.contains("Answer yes or no"), "{text}");
         assert!(text.contains("1) Welch t (welch)"), "{text}");
         assert!(text.contains("default 2"), "{text}");
+        assert!(text.contains("(date YYYY-MM-DD)"), "{text}");
+        assert!(text.contains("Pick a date from 2024-01-01"), "{text}");
+        assert!(text.contains("fields marked * are required"), "{text}");
+        assert!(
+            text.contains("Pick a start and an end date from 2024-01-01"),
+            "{text}"
+        );
     }
 
     #[tokio::test]

@@ -24,7 +24,9 @@
 //! The call adds a `Form` block to the timeline through the front end's
 //! event sink and waits for the answer through the [`FormPort`]: the
 //! submitted values by field name, or `nil` and the reason when the user
-//! cancels (or nobody can answer). Like the other blocking calls, it
+//! cancels (or nobody can answer). A prompt sent while the form waits
+//! answers it in prose: `nil`, [`REPLIED`] and the words as a third
+//! value. Like the other blocking calls, it
 //! holds the VM thread while it waits, so other plugin calls (hooks,
 //! commands) wait too; use it in tools and commands, not in hooks. The
 //! block belongs to this run, like plugin modals: it is not saved with
@@ -88,6 +90,17 @@ fn spec(lua: &Lua, args: &Table) -> mlua::Result<FormSpec> {
     Ok(spec)
 }
 
+/// Reason of `app.ask` returning `nil`: the user replied in the chat (with
+/// the words), cancelled the form, or answered wrong too many times.
+#[derive(Debug)]
+pub(crate) struct Refused {
+    reason: String,
+    reply: Option<String>,
+}
+
+/// The `why` of a form answered in the chat instead.
+pub(crate) const REPLIED: &str = "the user answered in the chat instead";
+
 /// Shows `spec` and waits for an answer that fits it: `Ok(answer)`, or
 /// `Err(reason)` when the form was cancelled or kept being rejected. The
 /// block is updated to its final state either way.
@@ -96,7 +109,7 @@ fn ask(
     origin: &Origin,
     port: &Arc<dyn FormPort>,
     spec: FormSpec,
-) -> mlua::Result<Result<BTreeMap<String, Json>, String>> {
+) -> mlua::Result<Result<BTreeMap<String, Json>, Refused>> {
     let ctx = context(lua)?;
     let events = ctx
         .events
@@ -108,7 +121,10 @@ fn ask(
     });
     let tool_use_id = ToolUseId::new(format!("plugin:{}", origin.plugin));
     let mut rejected = None;
-    let mut outcome = Err(String::new());
+    let mut outcome = Err(Refused {
+        reason: String::new(),
+        reply: None,
+    });
     for _ in 0..MAX_ATTEMPTS {
         let request = FormRequest {
             id: FormRequestId(NEXT_REQUEST.fetch_add(1, Ordering::Relaxed)),
@@ -125,14 +141,27 @@ fn ask(
                 }
                 Err(err) => {
                     let reason = err.to_string();
-                    outcome = Err(format!(
-                        "the answer was rejected {MAX_ATTEMPTS} times (last: {reason})"
-                    ));
+                    outcome = Err(Refused {
+                        reason: format!(
+                            "the answer was rejected {MAX_ATTEMPTS} times (last: {reason})"
+                        ),
+                        reply: None,
+                    });
                     rejected = Some(reason);
                 }
             },
+            FormResponse::Replied { text } => {
+                outcome = Err(Refused {
+                    reason: REPLIED.into(),
+                    reply: Some(text),
+                });
+                break;
+            }
             FormResponse::Cancelled { reason } => {
-                outcome = Err(reason.unwrap_or_else(|| "the user closed the form".into()));
+                outcome = Err(Refused {
+                    reason: reason.unwrap_or_else(|| "the user closed the form".into()),
+                    reply: None,
+                });
                 break;
             }
         }
@@ -143,10 +172,13 @@ fn ask(
             done.state = FormState::Submitted;
             done.answer = Some(answer.clone());
         }
-        Err(reason) => {
-            done.state = FormState::Cancelled;
-            done.reason = Some(reason.clone());
+        Err(Refused {
+            reply: Some(text), ..
+        }) => {
+            done.state = FormState::Replied;
+            done.reply = Some(text.clone());
         }
+        Err(_) => done.state = FormState::Cancelled,
     }
     block.kind = BlockKind::Form(done);
     events.0.emit(DomainEvent::BlockUpdated { block });
@@ -172,10 +204,13 @@ pub(crate) fn function(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<mlua::Fu
                     &Json::Object(map),
                 )?]))
             }
-            Err(reason) => Ok(MultiValue::from_vec(vec![
-                Value::Nil,
-                Value::String(lua.create_string(&reason)?),
-            ])),
+            Err(Refused { reason, reply }) => {
+                let mut values = vec![Value::Nil, Value::String(lua.create_string(&reason)?)];
+                if let Some(text) = reply {
+                    values.push(Value::String(lua.create_string(&text)?));
+                }
+                Ok(MultiValue::from_vec(values))
+            }
         }
     })
 }
@@ -283,6 +318,25 @@ mod tests {
         let requests = form.requests();
         assert_eq!(requests.len(), MAX_ATTEMPTS);
         assert!(requests[1].error.is_some());
+    }
+
+    #[test]
+    fn a_form_answered_in_the_chat_returns_nil_why_and_the_words() {
+        let form = Arc::new(ScriptedForm::new(vec![FormResponse::Replied {
+            text: "prod, no dry run".into(),
+        }]));
+        let (out, sink) = run(
+            "local answer, why, reply = app.ask{ title = 'Deploy', schema = { properties = { env = { type = 'string' } } } }
+             return { answer = answer, why = why, reply = reply }",
+            Some(form),
+        );
+        assert_eq!(
+            out.unwrap(),
+            json!({ "why": REPLIED, "reply": "prod, no dry run" })
+        );
+        let shown = forms(&sink);
+        assert_eq!(shown[1].state, FormState::Replied);
+        assert_eq!(shown[1].reply.as_deref(), Some("prod, no dry run"));
     }
 
     #[test]

@@ -270,14 +270,14 @@ The same dialog appears when the session reaches its spending cap (`app.opt.max_
 | Custom | Lua plugin tools | See [plugins.md](plugins.md#appui-custom-blocks). |
 | Sources, StageHeader | Research workflow | In Sources, clicking (or `Enter` on) a file inserts `@path:line`, and on a URL opens the browser. |
 | Image | [Pasted images](#pasted-images), research workflow, `show_wavedrom` | Kept at its aspect ratio, at most 360 px high; a click opens it in a modal with zoom and pan. SVG is rasterized off the UI thread at the window's scale (sharper when zoomed). |
-| Computed | `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate`, `calc`, `convert`, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations). |
+| Computed | `stats_*`, `calc`, `convert`, `solve_lp`, `solve_equations`, `monte_carlo`, `cash_flow`, `decision_matrix`, `app.compute.*` | A card of engine numbers; see [Statistics and calculations](#statistics-and-calculations). |
 | Form | `ask_user` | Typed questions the turn waits on; see [Forms](#forms-ask_user). |
-| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on numeric axes, a slider per parameter; hovering shows a crosshair with the values. |
+| Plot | `show_plot`, `app.ui.plot` | Functions and xy data on linear or log axes, a slider per parameter; hovering shows a crosshair with the values and a dot per layer. |
 | Test report | `show_test_report` | Totals by outcome, failures first; a click on a chip filters, on a case shows its trace, on its location opens the file. |
-| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page. |
-| Dataset | `show_dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
-| Molecule | `show_molecule` | 2D structure on a light card and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
-| Plate | `show_plate` | A 96- or 384-well heatmap with a legend; each well has a tooltip with its name, label and value. |
+| Findings | `show_findings` | SARIF results by file and severity; chips filter, the line opens the file there, `docs` opens the rule's page, a suggested fix shows as a diff. |
+| Dataset | `show_dataset`, `app.formats.dataset` | Shape, a profile row per column (type, missing share, distinct, min, max, sparkline) and the first rows as a sortable table. |
+| Molecule | `show_molecule`, `app.formats.molecule` | 2D structure tinted to the theme and a strip with formula, MW, charge and canonical SMILES; a chip compares the model's formula. |
+| Plate | `show_plate`, `app.ui.plate` | A 96- or 384-well heatmap with a sequential, diverging or log scale and a legend; each well has a tooltip with its name, label and value. |
 | Error | API, tool or config failures | Message and suggested action. |
 
 In the table, `Enter` means `Ctrl+G o` from the prompt or `o`/`Enter` with the timeline focused, and `t` means `Ctrl+G t` from the prompt or `t` with the timeline focused. `t` only has an effect on Chart, Markdown and Mermaid. `Ctrl+G y` (or `y` with the timeline focused) copies the content of the selected block.
@@ -291,11 +291,22 @@ The model is told never to compute numbers in its head: it calls an engine, and 
 | Tool | What the engine does |
 | --- | --- |
 | `stats_describe` | n, missing, mean, SD, median, quartiles, min/max, skew and kurtosis per variable (and per group with `by`); counts and percentages for categorical columns. |
-| `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). |
+| `stats_test` | Welch, Student, paired and one-sample t, Mann-Whitney, Wilcoxon, χ² and Fisher 2×2; `auto` chooses from Shapiro-Wilk and Brown-Forsythe checks. Effect sizes (Cohen's d, Hedges g with CIs, rank-biserial r, Cramér's V, odds ratio). From the third test of a session every card carries a `multiple_comparisons` warning with the count, suggesting Holm or a pre-registered plan. |
 | `stats_regress` | OLS with coefficients, SE, t, p, CI, standardized β and VIF; R², adjusted R², F, AIC/BIC; Durbin-Watson, Jarque-Bera, Breusch-Pagan, the largest Cook's distance and the condition number as diagnostics. |
 | `stats_correlate` | Pearson, Spearman or Kendall matrix with Holm (default), BH or Bonferroni adjustment. |
 | `calc` | A sheet of named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) evaluated in order by numbat; each line shows its value, unit and dimension, and a unit error appears on its line. |
 | `convert` | A unit conversion with the factor, whether it is exact, the dimension and an optional uncertainty. |
+| `stats_distribution` | One numeric variable (per group with `by`): histogram with the binning rule and width stated (Freedman-Diaconis by default, Sturges, Scott or fixed), Gaussian density with its bandwidth rule (Silverman, Scott or fixed), box and violin with 1.5×IQR outliers, normal QQ with a pointwise band, ECDF with its DKW band. |
+| `stats_contingency` | Two categorical columns (`row`, `column`) or the counts in `table`: observed and expected counts, row and column percentages, adjusted standardised residuals as a heatmap, Pearson's χ² or, with `test: auto`, Fisher's exact test when an expected count is below 5 (any r×c; simulated with a seed when too large to enumerate), Cramér's V and the odds ratio with its interval on 2×2 tables. |
+| `stats_power` | Power and sample size for two-sample, one-sample and paired t, one-way ANOVA and two proportions (R's `pwr` formulas on noncentral t and F); solves for whichever of `n`, `power`, `effect` or `alpha` is missing and draws the power curve. |
+| `stats_ab_test` | Visitors and conversions per arm: each rate with its interval, absolute and relative lift with intervals, a z test (Fisher when counts are small), achieved power, a sample-ratio-mismatch χ² against `expected_split`, and a peeking warning from `looks` and `planned_visitors`. |
+| `stats_bootstrap` | A seeded bootstrap of the mean, median, SD, trimmed mean or a difference between two groups: B resamples (2000 by default), percentile, BCa, basic and normal intervals, the Monte Carlo SE and a histogram with the observed statistic. The seed is in the card, so Recompute reproduces it. |
+| `stats_forecast` | MSTL decomposition (trend, one panel per season in `periods`, remainder) and an AutoETS forecast of `horizon` steps with 80 and 95 % bands; with `holdout` the last points are kept back and MAPE/sMAPE reported. Warns when the horizon goes far beyond the training range. |
+| `solve_lp` | A linear or mixed-integer program (`objective` and `constraints` in calculator notation over `variables` with bounds, `integer` or `binary` flags): status, objective, each variable with its reduced cost, each constraint with slack, whether it binds and its dual, and a sentence per binding constraint ("one more hour of `labor` is worth 12.50"). |
+| `solve_equations` | One equation or a small square system (`lhs = rhs` in calculator notation) by a bracket scan over `range` or damped Newton from the `guess` of each unknown: the solution, ‖F(x)‖ and per-equation residuals, iterations, tolerance and a plug-back row per equation. |
+| `monte_carlo` | A seeded simulation of `model` over `inputs` with named distributions (fixed, uniform, normal, lognormal, triangular): P5/P50/P95, mean with its MCSE, a histogram, a convergence trace and a tornado sorted by swing. Without `model` it is a Fermi estimate: the product of lognormal ranges, with a source per leaf. |
+| `cash_flow` | Net `flows` per period at `rate`, in decimal arithmetic: NPV, every IRR (with a warning on several sign changes), MIRR from `finance_rate` and `reinvest_rate`, simple and discounted payback and the NPV-against-rate curve with the IRR crossings. |
+| `decision_matrix` | `options` scored on weighted `criteria` (each a benefit or a cost, normalised min-max, by the maximum or not at all): weighted totals, rank, how far each weight can move before the first place changes, and a tie warning. |
 
 The data is a CSV/TSV file of the workspace (`data.path`, read through the same guard as `read_file`) or inline columns where `null` is a missing value. Every card has the same parts:
 
@@ -320,13 +331,13 @@ When the model needs structured answers it calls `ask_user` with a JSON Schema o
 
 ### Plots, reports, data and lab blocks
 
-- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. Axes are linear.
-- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`). Passed tests are folded into one row.
-- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. Suggested fixes are not shown.
-- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block (white background).
+- **`show_plot`**: explicit functions `f(x)`, parametric curves `x(t), y(t)` and implicit curves `f(x, y) = 0`, in calculator notation (`2x`, `a sin(x)`, `x^2`, `sqrt`, `ln`, `pi`...), plus scatter or line series of numeric points. Each parameter gets a slider; dragging it re-plots at once. `x_scale` / `y_scale` take `log` for an axis in decades (values at or below 0 are skipped with a note) and `aspect = "equal"` keeps one unit as long on both axes.
+- **`show_test_report`**: a JUnit XML file (cargo nextest, pytest `--junitxml`, Surefire, Jest/Vitest, gotestsum; nested suites read as `outer / inner`) or a saved libtest / nextest JSON event stream (`cargo nextest run --message-format libtest-json`). Passed tests are folded into one row.
+- **`show_findings`**: a SARIF 2.1.0 log (clippy-sarif, semgrep, CodeQL, ESLint), the most severe files first. A result's first suggested fix is shown as a unified diff when the tool can read the file it edits; otherwise its edits are listed.
+- **`show_wavedrom`**: a WaveDrom timing diagram from WaveJSON, drawn as an SVG Image block tinted to the theme.
 - **`show_dataset`**: CSV, TSV, JSON lines or Parquet. Text files are read up to 32 MiB (beyond that the profile covers the first rows and says `sampled`), Parquet files up to 256 MiB; Arrow IPC is not supported. The model is told to look at a file this way before running statistics on it.
 - **`show_molecule`**: a structure from SMILES with values computed from it, never from the model. With `claimed_formula` a chip shows whether the model's formula matches; a SMILES that does not parse shows the error (and the model gets it too).
-- **`show_plate`**: a 96- or 384-well plate map; labels are drawn inside the wells of a 96-well plate.
+- **`show_plate`**: a 96- or 384-well plate map. `scale` is `sequential` (default), `diverging` around `center` (fold changes, z-scores; 0 when the values straddle it, else their median) or `log` (concentrations, counts; wells at or below 0 are not coloured). Labels are drawn inside the wells, smaller on a 384-well plate.
 
 ### Plugin modals
 
@@ -523,15 +534,22 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `write_file` | `path`, `content` | write |
 | `run_command` | `command`, `args[]`, `timeout_s` (120). No shell, at the workspace root. | execute (read for some `git` commands) |
 | `show_chart`, `show_table`, `show_mermaid`, `show_markdown`, `show_plot` | the block's data | read |
-| `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate` | `data` (`path` of a CSV/TSV, `delimiter?`, or inline `columns`) and the request (variables, test, `y`, `x`, `group`, method...) | read |
+| `stats_describe`, `stats_test`, `stats_regress`, `stats_correlate`, `stats_distribution`, `stats_contingency`, `stats_bootstrap`, `stats_forecast` | `data` (`path` of a CSV/TSV, `delimiter?`, or inline `columns`) and the request (variables, test, `y`, `x`, `group`, method, `seed`, `horizon`...) | read |
+| `stats_power` | `test`, two or three of `n`, `effect` (or `p1`, `p2`), `alpha`, `power`; `groups?`, `alternative?`, `solve_for?` | read |
+| `stats_ab_test` | `control` and `treatment` (`visitors`, `conversions`, `name?`), `expected_split` (0.5), `conf_level?`, `looks?`, `planned_visitors?`, `minimum_lift?` | read |
+| `solve_lp` | `sense`, `objective`, `variables[]` (`name`, `lower?`, `upper?`, `integer?`, `binary?`), `constraints[]` (`expr`, `name?`) | read |
+| `solve_equations` | `equations[]`, `unknowns[]` (`name`, `guess?`), `range?`, `tolerance?`, `max_iterations?` | read |
+| `monte_carlo` | `inputs[]` (`name`, `distribution`, `source?`, `unit?`), `model?`, `output?`, `unit?`, `samples` (10000), `seed` | read |
+| `cash_flow` | `flows[]`, `rate`, `finance_rate?`, `reinvest_rate?`, `currency?`, `period?` | read |
+| `decision_matrix` | `criteria[]` (`name`, `weight`, `direction`), `options[]` (`name`, `scores[]`), `normalization?` | read |
 | `calc` | `lines` (`name = expr`, in order), `significant_digits` (6) | read |
 | `convert` | `value?`, `from`, `to`, `uncertainty?`, `significant_digits` (6) | read |
 | `ask_user` | `title`, `description?`, `schema` (a JSON Schema object), `submit_label?`: waits for the answer | read |
-| `show_test_report`, `show_findings` | `path` of a JUnit XML / SARIF file (32 MiB at most); `title?` for the report | read |
+| `show_test_report`, `show_findings` | `path` of a JUnit XML or libtest/nextest JSON file / a SARIF file (32 MiB at most); `title?` for the report | read |
 | `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
 | `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |
 | `show_molecule` | `smiles`, `name?`, `claimed_formula?` | read |
-| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?` | read |
+| `show_plate` | `format` (96 or 384), `wells` (`well`, `value?`, `label?`), `value_label?`, `title?`, `scale?` (`sequential`, `diverging`, `log`), `center?` | read |
 | `web_search` | `query`, `max_results?` (1–10; `app.opt.web.max_results`, 8, by default): title, URL and snippet of each result | network, no approval |
 | `web_fetch` | `url` (http or https): the page as text, with its final URL and title | network, no approval |
 | `task` | `description`, `prompt`: launches a read-only subagent with the `explore` role (at most 25 calls, with the web tools when they are on) that returns a summary | read |

@@ -9,11 +9,13 @@ use async_trait::async_trait;
 use crate::ports::form::{FormPort, FormRequest, FormResponse};
 
 /// Answers each request with the next scripted response; once they run
-/// out, every form is cancelled.
+/// out, every form is cancelled. A [`ScriptedForm::hanging`] one never
+/// answers: the user is still filling it.
 #[derive(Debug, Default)]
 pub struct ScriptedForm {
     responses: Mutex<VecDeque<FormResponse>>,
     requests: Mutex<Vec<FormRequest>>,
+    hang: bool,
 }
 
 impl ScriptedForm {
@@ -23,6 +25,16 @@ impl ScriptedForm {
         Self {
             responses: Mutex::new(responses.into_iter().collect()),
             requests: Mutex::new(Vec::new()),
+            hang: false,
+        }
+    }
+
+    /// A port that records every request and never answers.
+    #[must_use]
+    pub fn hanging() -> Self {
+        Self {
+            hang: true,
+            ..Self::default()
         }
     }
 
@@ -42,6 +54,9 @@ impl FormPort for ScriptedForm {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(req);
+        if self.hang {
+            futures::future::pending::<()>().await;
+        }
         self.responses
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

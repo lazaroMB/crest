@@ -8,9 +8,13 @@
 //! answer is checked against the fields ([`FormSpec::check_answer`]); an
 //! invalid one is asked again with the reason, up to [`MAX_ATTEMPTS`]
 //! times. The block then shows the answer read-only and the model gets
-//! the values as JSON. A cancelled form is marked so in the block and
+//! the values as JSON. A user who types in the chat instead of filling the
+//! form closes it too: the block shows their words and the model gets
+//! them as the answer. A cancelled form is marked so in the block and
 //! answers the model with an error saying the user declined, so the turn
-//! goes on. The call only reads: it needs no approval.
+//! goes on; a turn interrupted while the form waits ends the same way
+//! ([`PreparedCall::on_interrupt`]). The call only reads: it needs no
+//! approval.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,27 +39,39 @@ pub const ASK_USER: &str = "ask_user";
 /// Answers rejected before the call gives up.
 pub const MAX_ATTEMPTS: usize = 3;
 
+/// What every closed form tells the model, so it does not loop on it.
+const DO_NOT_RE_ASK: &str =
+    "Do not ask the same form again; go on without these answers or ask in prose.";
+
 /// What the system prompt says about `ask_user`.
 pub const FORM_TOOL_PROMPT: &str = "\
 # Asking the user
 
 When you need structured input from the user (choices among options, several values, \
 settings, yes/no decisions) call `ask_user` with a form instead of asking in prose. It waits \
-for the answer and returns it as JSON. If the user cancels, do not ask the same form again: \
-go on without the answers or ask in prose.";
+for the answer and returns it as JSON. Ask for dates with `format: \"date\"` (one day) or \
+`format: \"date-range\"` (a period), never as free text or as options. List in `required` \
+every field you cannot go on without. The user may answer in the chat instead of filling the \
+form: you then get their words, take them as the answer. If the user cancels, do not ask the \
+same form again: go on without the answers or ask in prose.";
 
 const DESCRIPTION: &str = "Shows the user a form in the timeline and waits until they submit \
 or cancel it. Use it when you need structured answers (pick one or several options, numbers \
 with bounds, yes/no, short or long text) instead of asking in prose. `schema` is a JSON Schema \
 object: `properties` are the fields in display order and `required` lists the mandatory ones. \
 Each property has `type` string, number, integer, boolean or array, plus optional `title` (the \
-label), `description` and `default`. Strings take `minLength`/`maxLength` and \
-`format: \"multiline\"` for long text; numbers and integers take `minimum`/`maximum`; one \
-choice is a string with `enum` (labels in `enumNames`) or `oneOf: [{const, title}]`; several \
-choices are `{type: \"array\", items: {type: \"string\", enum: [...]}}` with \
-`minItems`/`maxItems`. Nested objects, `$ref`, `anyOf` and patterns are not supported. \
-Returns the submitted values by field name (empty optional fields are absent), or an error \
-when the user cancels.";
+label), `description` and `default`. Strings take `minLength`/`maxLength` (whole numbers) and \
+`format: \"multiline\"` for long text. Dates are never free text: `format: \"date\"` shows a \
+date picker and returns `YYYY-MM-DD`, `format: \"date-range\"` shows a range picker and \
+returns `{\"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\"}`, both bounded by \
+`formatMinimum`/`formatMaximum` (`email`, `uri` and `date-time` are shown as text); numbers and \
+integers take `minimum`/`maximum`; one choice is a string with `enum` (labels in \
+`enumNames`) or `oneOf: [{const, title}]`; several choices are `{type: \"array\", items: \
+{type: \"string\", enum: [...]}}` with `minItems`/`maxItems` (whole numbers). Annotations \
+such as `examples`, `pattern` or `readOnly` are accepted but not enforced; nested objects, \
+`$ref`, `anyOf`, `allOf` and `const` are rejected. Returns the submitted values by field name \
+(empty optional fields are absent), the user's words when they answer in the chat instead, or \
+an error when the user cancels.";
 
 /// Input of `ask_user`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -123,7 +139,7 @@ pub fn form_spec(input: AskUser) -> Result<FormSpec, ToolError> {
         submit_label: input.submit_label.filter(|l| !l.trim().is_empty()),
         state: FormState::Pending,
         answer: None,
-        reason: None,
+        reply: None,
     };
     spec.validate().map_err(|err| invalid(err.to_string()))?;
     Ok(spec)
@@ -147,12 +163,24 @@ impl TypedTool for AskUserTool {
 
     async fn prepare(&self, input: AskUser, ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
         let spec = form_spec(input)?;
-        let block_id = BlockId::new();
+        // Derived from the call: asked again after a restart, the form
+        // lands in the block the timeline already shows.
+        let block_id = BlockId::for_tool_use(ctx.tool_use_id.as_str(), "form");
         let port = Arc::clone(&self.port);
         let next_id = Arc::clone(&self.next_id);
         let tool_use_id = ctx.tool_use_id.clone();
         let subject = spec.title.clone();
         let shown = BlockKind::Form(spec.clone());
+        // Interrupted while the user was filling it: closed like a cancel.
+        let interrupted = {
+            let mut done = spec.clone();
+            done.state = FormState::Cancelled;
+            let text = format!(
+                "{}: the turn was interrupted while the form waited. {DO_NOT_RE_ASK}",
+                ToolError::Cancelled
+            );
+            ToolOutput::error(text).with_block_update(BlockKind::Form(done))
+        };
         let run = async move {
             let mut error = None;
             for _ in 0..MAX_ATTEMPTS {
@@ -178,14 +206,21 @@ impl TypedTool for AskUserTool {
                         }
                         Err(err) => error = Some(err.to_string()),
                     },
+                    FormResponse::Replied { text } => {
+                        let mut done = spec;
+                        done.state = FormState::Replied;
+                        done.reply = Some(text.clone());
+                        let text = format!(
+                            "The user did not fill the form and answered in the chat instead:\n{text}"
+                        );
+                        return Ok(ToolOutput::text(text).with_block_update(BlockKind::Form(done)));
+                    }
                     FormResponse::Cancelled { reason } => {
                         let mut done = spec;
                         done.state = FormState::Cancelled;
-                        done.reason.clone_from(&reason);
                         let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
                         let text = format!(
-                            "{}: the user closed the form without answering{why}. Do not ask \
-                             the same form again; go on without these answers or ask in prose.",
+                            "{}: the user closed the form without answering{why}. {DO_NOT_RE_ASK}",
                             ToolError::Cancelled
                         );
                         return Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)));
@@ -200,7 +235,9 @@ impl TypedTool for AskUserTool {
             );
             Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)))
         };
-        Ok(PreparedCall::new(subject, run.boxed()).with_block_as(block_id, shown))
+        Ok(PreparedCall::new(subject, run.boxed())
+            .with_block_as(block_id, shown)
+            .with_interrupt_output(interrupted))
     }
 }
 
@@ -344,6 +381,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_reply_in_the_chat_is_the_answer() {
+        let port = Arc::new(ScriptedForm::new([FormResponse::Replied {
+            text: "mejor en Python".into(),
+        }]));
+        let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
+        let output = call.run.await.unwrap();
+        assert!(!output.is_error);
+        let text = output.text_content();
+        assert!(text.contains("answered in the chat"), "{text}");
+        assert!(text.ends_with("mejor en Python"), "{text}");
+        let done = form(&output);
+        assert_eq!(done.state, FormState::Replied);
+        assert_eq!(done.reply.as_deref(), Some("mejor en Python"));
+        assert_eq!(done.answer, None);
+    }
+
+    #[tokio::test]
     async fn a_cancelled_form_tells_the_model_the_user_declined() {
         let port = Arc::new(ScriptedForm::new([FormResponse::cancelled("closed")]));
         let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
@@ -355,6 +409,19 @@ mod tests {
         let done = form(&output);
         assert_eq!(done.state, FormState::Cancelled);
         assert_eq!(done.answer, None);
+    }
+
+    #[tokio::test]
+    async fn an_interruption_closes_the_form_and_tells_the_model_not_to_re_ask() {
+        let port = Arc::new(ScriptedForm::default());
+        let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
+        let output = call.on_interrupt.unwrap();
+        assert!(output.is_error);
+        let text = output.text_content();
+        assert!(text.starts_with("cancelled by user"), "{text}");
+        assert!(text.contains("Do not ask the same form again"), "{text}");
+        assert_eq!(form(&output).state, FormState::Cancelled);
+        assert!(port.requests().is_empty(), "nothing was asked");
     }
 
     #[tokio::test]

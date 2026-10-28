@@ -6322,6 +6322,78 @@ expression: "schemars::schema_for!(Block)"
           ]
         },
         {
+          "description": "A calendar date, `YYYY-MM-DD`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "date"
+            },
+            "default": {
+              "description": "Initial date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "min": {
+              "description": "Earliest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max": {
+              "description": "Latest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "A period between two calendar dates, answered as `{\"start\",\n\"end\"}` in `YYYY-MM-DD`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "date_range"
+            },
+            "default": {
+              "description": "Initial period.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DateSpan"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "min": {
+              "description": "Earliest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max": {
+              "description": "Latest accepted date.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
           "description": "A checkbox.",
           "type": "object",
           "properties": {
@@ -6417,6 +6489,24 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "DateSpan": {
+      "description": "A period between two dates, `YYYY-MM-DD` each, start first.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "First day.",
+          "type": "string"
+        },
+        "end": {
+          "description": "Last day.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
     "FormOption": {
       "description": "An option of an enum field.",
       "type": "object",
@@ -6449,6 +6539,11 @@ expression: "schemars::schema_for!(Block)"
           "description": "Submitted; `answer` holds the values.",
           "type": "string",
           "const": "submitted"
+        },
+        {
+          "description": "Answered in the chat instead; `reply` holds the words.",
+          "type": "string",
+          "const": "replied"
         },
         {
           "description": "Dismissed without answering.",
@@ -6499,8 +6594,8 @@ expression: "schemars::schema_for!(Block)"
           ],
           "additionalProperties": true
         },
-        "reason": {
-          "description": "Why a cancelled form was cancelled, when known (e.g.\n[`NOT_ANSWERED`]).",
+        "reply": {
+          "description": "What the user wrote in the chat instead of filling the form, once\nreplied.",
           "type": [
             "string",
             "null"

@@ -329,11 +329,11 @@ Costs follow the modal note: S = a few days, M = 1–3 weeks, L = more than 3 we
 
 Carried over to phase 2 (gaps left by phase 1):
 
-- Statistics: no session-wide multiple-testing rule (only within one correlation matrix); no Lua API for forms, datasets, molecules or plates.
-- Plots: linear axes only, no equal-aspect option, a fixed 160×120 grid for implicit curves (thin features can be missed); hover dots are not coloured per layer.
-- Formats: no nextest/libtest JSON reader; SARIF `fixes` are not shown; WaveDrom covers part of WaveJSON and draws on white with approximate text widths; Arrow IPC unsupported; CSV row count unknown beyond 32 MiB; Parquet nested columns shown as text, INT96 timestamps as `int96`.
-- Rendering: the molecule SVG and the WaveDrom diagram are not theme-tinted (light card) and molecules have no stereo wedges; the plate scale is sequential only (no diverging or log scale) and labels fit only in 96-well cells; the SVG raster cache never evicts.
-- Interaction: copy-as only on the selected block; in a form the Submit click moves focus to the timeline, and a form whose request was withdrawn stays pending in the store.
+- Statistics: the session-wide multiple-testing warning counts tests, not the hypotheses within each; it does not adjust p-values across tests.
+- Plots: a fixed 160×120 grid for implicit curves (thin features can be missed).
+- Formats: WaveDrom covers part of WaveJSON and draws with approximate text widths; Arrow IPC unsupported; CSV row count unknown beyond 32 MiB; Parquet nested columns shown as text, INT96 timestamps as `int96`; only the first SARIF fix of a result becomes a diff (up to 200 per log), and a fix whose file cannot be read or whose edits do not apply is listed as edits instead.
+- Rendering: molecules have no stereo wedges; the SVG tint only recolours black strokes, text and white fills (coloured atoms keep their colours).
+- Interaction: copy-as only on the selected block.
 
 ### Phase 2: shared widgets and domain viewers (about 12–16 weeks)
 
@@ -341,7 +341,7 @@ Carried over to phase 2 (gaps left by phase 1):
 | --- | --- | --- |
 | Timeline canvas, filterable list, node-link graph, extended tree | GPUI components exposed as `CustomNode` variants | 3–4 weeks |
 | Python/R subprocess bridge | fixed runner, `emit(envelope)`, env hashing | 1–2 weeks |
-| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks |
+| Remaining stats and solver cards (distribution, contingency, power, A/B, bootstrap, forecast, LP, Monte Carlo, cash flow, GLM via bridge, derivation) | envelope + plot painter | 3–4 weeks. Done except GLM and derivation: `stats_distribution`, `stats_contingency`, `stats_power`, `stats_ab_test`, `stats_bootstrap`, `stats_forecast` (augurs MSTL + AutoETS), `solve_lp` (microlp, duals from the dual program), `solve_equations`, `monte_carlo`, `cash_flow` (rust_decimal), `decision_matrix`; seeded ChaCha20 for resampling. |
 | Trace waterfall, flame graph, log viewer, SQL plan, HAR, IaC plan, DOT/ER, benchmark | widgets + parsers, sniffers | 3–4 weeks |
 | Waveform, netlist, beam/frame, Bode, K-map, tolerance, material, BOM, STEP via truck, clip/measure, DXF, IFC schedule | wellen, truck, dxf, ifc-lite-core spikes first | 3–4 weeks |
 | Sequence, plasmid, reaction, SAR grid, spectrum, ball-and-stick, GHS card, map + CRS card, Gantt, decision matrix, HDF5/NetCDF, network graph, training curves | gb-io, chematic, mzdata, georust, hdf5-pure | 3–4 weeks |

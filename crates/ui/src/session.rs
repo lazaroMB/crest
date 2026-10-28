@@ -272,6 +272,21 @@ pub trait SessionController: Send + Sync {
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
 
+    /// Continues the turn a restart cut while `ask_user` waited: asks the
+    /// form again and goes on once it is answered. The default does
+    /// nothing.
+    fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        let _ = cancel;
+        futures::future::ready(TurnEnd::Finished(StopReason::EndTurn)).boxed()
+    }
+
+    /// Stores `title` on the open chat and saves the session, so the next
+    /// save keeps the name. The default fails: this session has no store.
+    fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
+        let _ = title;
+        futures::future::ready(Err("this session cannot rename its chat".into())).boxed()
+    }
+
     /// Runs the Lua function `id` of a mapping with `args`.
     fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
         let _ = (id, args);
@@ -409,6 +424,12 @@ pub struct SessionParts {
     /// No model is selected for the default provider: the `/model` popup
     /// opens at once.
     pub needs_model: bool,
+    /// Id of the open session, so the chats panel can mark it.
+    pub session_id: Option<String>,
+    /// The saved session ends in an `ask_user` call nobody answered (the
+    /// process ended while the form waited): the session asks it again as
+    /// soon as it opens ([`SessionController::resume_pending`]).
+    pub resume_pending: bool,
 }
 
 impl SessionParts {
@@ -437,6 +458,8 @@ impl SessionParts {
             theme: crate::theme::default_theme(),
             needs_login: false,
             needs_model: false,
+            session_id: None,
+            resume_pending: false,
         }
     }
 }
@@ -448,6 +471,14 @@ pub enum SessionEvent {
     Reopen {
         /// What to tell once the new session shows.
         notice: Option<(NoticeLevel, String)>,
+    },
+    /// The session got busy or idle, or started or stopped waiting on the
+    /// user (an approval, a form). Sent on each change.
+    Activity {
+        /// A turn or a `/` command runs.
+        busy: bool,
+        /// The turn waits for an approval or a form.
+        waiting: bool,
     },
 }
 
@@ -469,6 +500,14 @@ pub struct Session {
     /// Names of the `/` commands waiting for the controller's reply.
     commands: Vec<String>,
     turn: Option<Task<()>>,
+    /// `/clear` was asked during a turn: the turn was interrupted and the
+    /// session resets once it has ended.
+    pending_clear: bool,
+    /// Whether the session is on screen. Parked (its chat left while a
+    /// turn ran) it keeps running but takes no keys and no focus.
+    shown: bool,
+    /// The last [`SessionEvent::Activity`] sent, to send only changes.
+    last_activity: Option<(bool, bool)>,
     queue: VecDeque<Queued>,
     model_override: Option<String>,
     /// The catalogs' models, listed once per session for the popup.
@@ -548,6 +587,8 @@ impl Session {
             theme,
             needs_login,
             needs_model,
+            session_id: _,
+            resume_pending,
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -627,18 +668,23 @@ impl Session {
         subscriptions.push(cx.subscribe_in(
             &block_events,
             window,
-            |this, _, event: &BlockEvent, window, cx| match event {
-                BlockEvent::OpenFile { path, line } => {
-                    this.insert_reference(&file_reference(path, *line), window, cx);
+            |this, _, event: &BlockEvent, window, cx| {
+                // The blocks on screen belong to the shown session.
+                if !this.shown {
+                    return;
                 }
-                BlockEvent::InspectImage {
-                    block,
-                    media_type,
-                    data,
-                } => this.inspect_image(*block, media_type, data, window, cx),
-                BlockEvent::Recompute { block } => this.recompute(*block, cx),
-                BlockEvent::FormSubmitted { .. } => this.focus_input(window, cx),
-                BlockEvent::OpenUrl { .. } => {}
+                match event {
+                    BlockEvent::OpenFile { path, line } => {
+                        this.insert_reference(&file_reference(path, *line), window, cx);
+                    }
+                    BlockEvent::InspectImage {
+                        block,
+                        media_type,
+                        data,
+                    } => this.inspect_image(*block, media_type, data, window, cx),
+                    BlockEvent::Recompute { block } => this.recompute(*block, cx),
+                    BlockEvent::OpenUrl { .. } => {}
+                }
             },
         ));
 
@@ -658,6 +704,9 @@ impl Session {
             running: None,
             commands: Vec::new(),
             turn: None,
+            pending_clear: false,
+            shown: true,
+            last_activity: None,
             queue: VecDeque::new(),
             model_override: None,
             catalog_models: None,
@@ -666,7 +715,7 @@ impl Session {
             git: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
-            _forms: forms.map(|forms| crate::form::listen(forms, window, cx)),
+            _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
             _subscriptions: subscriptions,
         };
         if let Some(message) = watch_error {
@@ -674,6 +723,9 @@ impl Session {
         }
         this.load_commands(window, cx);
         this.refresh_git(cx);
+        if resume_pending {
+            this.resume(cx);
+        }
         if needs_login {
             this.login
                 .update(cx, |login, cx| login.show(Account::Anthropic, window, cx));
@@ -739,6 +791,58 @@ impl Session {
         })
     }
 
+    /// Attaches every `ask_user` request to its `Form` block. The form takes
+    /// the focus only while the session is shown; a parked one gets it when
+    /// the session comes back ([`Self::set_shown`]).
+    fn listen_forms(
+        mut inbox: crate::form::FormInbox,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(pending) = inbox.next().await {
+                let attached = this.update_in(cx, |this, window, cx| {
+                    crate::blocks::form::attach(pending, this.shown, window, cx);
+                    this.sync_activity(cx);
+                });
+                if attached.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Whether the session is on screen.
+    pub fn is_shown(&self) -> bool {
+        self.shown
+    }
+
+    /// Tells the session whether it is on screen. Shown again, it takes
+    /// the focus back: the approval dialog if one is open, else the form
+    /// waiting for an answer, else the prompt.
+    pub fn set_shown(&mut self, shown: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.shown = shown;
+        self.approval
+            .update(cx, |dialog, cx| dialog.set_shown(shown, window, cx));
+        if shown && !self.approval.read(cx).is_open() {
+            match self.waiting_form(cx) {
+                Some(form) => form.update(cx, |form, cx| form.focus(window, cx)),
+                None => self.focus_input(window, cx),
+            }
+        }
+        self.sync_activity(cx);
+        cx.notify();
+    }
+
+    /// The form of this session waiting for an answer, if any.
+    pub fn waiting_form(&self, cx: &App) -> Option<Entity<crate::blocks::form::FormView>> {
+        let state = self.timeline.read(cx).state();
+        crate::blocks::form::waiting_forms(cx)
+            .into_iter()
+            .find(|(id, _)| state.position(*id).is_some())
+            .map(|(_, form)| form)
+    }
+
     /// The single consumer of the controller's events.
     fn consume(mut events: UnboundedReceiver<DomainEvent>, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
@@ -780,7 +884,30 @@ impl Session {
     }
 
     fn outside_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // A parked session has no keyboard.
+        if !self.shown {
+            return;
+        }
+        // The dialog may be up while the prompt still has focus (Reject does
+        // not move it). Take the keys here, before the prompt sees them.
+        if self.approval.read(cx).is_open() {
+            let handled = self.approval.update(cx, |dialog, cx| {
+                dialog.handle_keystroke(&event.keystroke, window, cx)
+            });
+            if !handled
+                && key_from_keystroke(&event.keystroke).is_some_and(|key| Self::is_ctrl_c(&key))
+            {
+                self.interrupt(cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.input.read(cx).owns_focus(window, cx) {
+            return;
+        }
+        // The chat rename field is a text input outside the prompt. Its
+        // keys stay there; a printable key must not fall into the prompt.
+        if crate::chats::rename_has_focus(window, cx) {
             return;
         }
         let Some(key) = key_from_keystroke(&event.keystroke) else {
@@ -790,6 +917,18 @@ impl Session {
             let m = key.mods;
             if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
                 self.interrupt(cx);
+                return;
+            }
+            // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
+            // to the prompt) still goes through the keymap, so the user can
+            // leave the form and answer in the chat without the mouse.
+            if (m.ctrl || m.alt || m.cmd)
+                && crate::blocks::form::owns_focus(window, cx)
+                && self
+                    .input
+                    .update(cx, |input, cx| input.feed_key(key, window, cx))
+            {
+                cx.stop_propagation();
             }
             return;
         }
@@ -1019,6 +1158,11 @@ impl Session {
         self.running.is_some() || !self.commands.is_empty()
     }
 
+    /// Renames the open chat and saves it.
+    pub fn retitle(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
+        self.controller.set_chat_title(title)
+    }
+
     /// Prompts waiting for the session to be free.
     pub fn queued(&self) -> usize {
         self.queue.len()
@@ -1113,6 +1257,28 @@ impl Session {
         cx.notify();
     }
 
+    /// Continues the turn a restart cut while a form waited: the controller
+    /// asks the form again (in the block the timeline already shows) and
+    /// goes on with the model once it is answered. Runs like a turn:
+    /// Ctrl+C interrupts it and prompts sent meanwhile answer the form or
+    /// wait in the queue.
+    fn resume(&mut self, cx: &mut Context<Self>) {
+        let cancel = CancelToken::new();
+        self.running = Some(cancel.clone());
+        let turn = self.controller.resume_pending(cancel);
+        self.turn = Some(cx.spawn(async move |this, cx| {
+            let end = turn.await;
+            this.update(cx, |this, cx| this.turn_ended(end, cx)).ok();
+        }));
+        self.notice(
+            NoticeLevel::Info,
+            "a form was left unanswered when crest closed; it is asked again",
+            cx,
+        );
+        self.sync_activity(cx);
+        cx.notify();
+    }
+
     /// Sends the next queued prompt once the session is free.
     fn drain_queue(&mut self, cx: &mut Context<Self>) {
         if !self.is_busy()
@@ -1138,6 +1304,14 @@ impl Session {
             activity.set_queue(queue, cx);
         });
         self.input.update(cx, |input, _| input.set_queued(queued));
+        // The window shows busy chats in the sidebar and drops a parked
+        // session once it is idle.
+        let busy = self.is_busy();
+        let waiting = busy && (self.approval.read(cx).is_open() || self.waiting_form(cx).is_some());
+        if self.last_activity != Some((busy, waiting)) {
+            self.last_activity = Some((busy, waiting));
+            cx.emit(SessionEvent::Activity { busy, waiting });
+        }
     }
 
     /// `Up` in an empty prompt: the last queued prompt goes back to the
@@ -1156,6 +1330,9 @@ impl Session {
     fn turn_ended(&mut self, end: TurnEnd, cx: &mut Context<Self>) {
         self.running = None;
         self.turn = None;
+        if std::mem::take(&mut self.pending_clear) {
+            self.reset(cx);
+        }
         match end {
             TurnEnd::Finished(StopReason::Interrupted) => {
                 self.notice(NoticeLevel::Info, "turn interrupted", cx);
@@ -1415,30 +1592,40 @@ impl Session {
         window.dispatch_action(Box::new(crate::workbench::SwitchProject), cx);
     }
 
+    /// `/clear`: a new, empty session. During a turn (a form waiting, a
+    /// long answer) the turn is interrupted first and the reset follows
+    /// once it has ended and saved; the prompt keeps the focus meanwhile.
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.running.is_some() {
-            self.notice(
-                NoticeLevel::Warning,
-                "a turn is running; Ctrl+C to interrupt it before /clear",
-                cx,
-            );
-            return;
-        }
         if let Some(command) = self.commands.last() {
             let message = format!("/{command} is running; /clear once it stops");
             self.notice(NoticeLevel::Warning, message, cx);
             return;
         }
+        if self.running.is_some() {
+            self.pending_clear = true;
+            self.interrupt(cx);
+            self.notice(
+                NoticeLevel::Info,
+                "interrupting the turn; clearing when it stops",
+                cx,
+            );
+            return;
+        }
+        self.reset(cx);
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    /// Replaces the timeline, the prompt history and the controller's
+    /// session with empty ones.
+    fn reset(&mut self, cx: &mut Context<Self>) {
         let reset = self.controller.new_session();
         let timeline = cx.new(TimelineView::new);
         self.timeline = timeline.clone();
         self.root
             .update(cx, |root, cx| root.set_timeline(timeline, cx))
             .ok();
-        self.input.update(cx, |input, cx| {
-            input.set_history(Vec::new());
-            input.focus(window, cx);
-        });
+        self.input
+            .update(cx, |input, _| input.set_history(Vec::new()));
         cx.spawn(async move |_, _| reset.await).detach();
         cx.notify();
     }
@@ -1529,12 +1716,24 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InputEvent::Submit(prompt) => self.submit(prompt.clone(), cx),
+            // A form waiting for an answer takes the prompt as its answer.
+            InputEvent::Submit(prompt) => match self.waiting_form(cx) {
+                Some(form) => {
+                    form.update(cx, |form, cx| form.reply(prompt.clone(), window, cx));
+                }
+                None => self.submit(prompt.clone(), cx),
+            },
             InputEvent::SubmitImages {
                 text,
                 images,
                 mode: ImageMode::Model,
-            } => self.submit_with(text.clone(), None, images.clone(), cx),
+            } => {
+                if self.waiting_form(cx).is_some() {
+                    let message = "a form is waiting for an answer; the images go to the next turn";
+                    self.notice(NoticeLevel::Info, message.to_owned(), cx);
+                }
+                self.submit_with(text.clone(), None, images.clone(), cx);
+            }
             InputEvent::SubmitImages {
                 text,
                 images,
@@ -1808,6 +2007,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use application::ports::events::EventSink;
+    use application::ports::form::FormPort;
     use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use application::testing::llm::{ScriptedLlm, ScriptedResponse};
     use application::testing::system::{RecordingSink, RecordingTelemetry};
@@ -1914,6 +2114,26 @@ mod tests {
             .boxed()
         }
 
+        fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+            let (tx, rx) = oneshot::channel();
+            let service = Arc::clone(&self.service);
+            let conversation = Arc::clone(&self.conversation);
+            std::thread::spawn(move || {
+                let end = futures::executor::block_on(async move {
+                    let opts = TurnOptions::new(ModelRole::Main).with_cancel(cancel);
+                    let mut conversation = conversation.lock().await;
+                    match service.resume_pending_tools(&mut conversation, opts).await {
+                        Ok(Some(outcome)) => TurnEnd::Finished(outcome.stop_reason),
+                        Ok(None) => TurnEnd::Finished(StopReason::EndTurn),
+                        Err(err) => TurnEnd::Failed(err.to_string()),
+                    }
+                });
+                tx.send(end).ok();
+            });
+            rx.map(|end| end.unwrap_or(TurnEnd::Failed("turn lost".into())))
+                .boxed()
+        }
+
         /// Adds the images as blocks, as the binary does.
         fn post_images(
             &self,
@@ -2012,6 +2232,29 @@ mod tests {
         history: Vec<Block>,
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_full(script, history, |_, _| {}, cx)
+    }
+
+    /// A harness whose agent also has the tools `register` adds; the
+    /// `FormPort` given answers in the session's form blocks.
+    fn harness_full(
+        script: Vec<ScriptedResponse>,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
+        harness_resuming(script, Conversation::new("/ws", 0), history, register, cx)
+    }
+
+    /// [`harness_full`] over a saved `conversation`; a turn it leaves
+    /// pending is resumed as the session opens.
+    fn harness_resuming(
+        script: Vec<ScriptedResponse>,
+        conversation: Conversation,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs =
@@ -2019,8 +2262,10 @@ mod tests {
         let (sink, events) = RecordingSink::with_channel();
         let sink = Arc::new(sink);
         let (approval, approvals) = UiApproval::channel();
+        let (form, forms) = crate::form::UiForm::channel();
         let llm = Arc::new(ScriptedLlm::new(script));
         let mut tools = ToolRegistry::new();
+        register(&mut tools, Arc::new(form));
         register_file_tools(
             &mut tools,
             FileToolPorts {
@@ -2044,13 +2289,16 @@ mod tests {
             Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask))),
         );
         let logins = Arc::new(Mutex::new(Vec::new()));
+        let resume_pending = !conversation.pending_tool_uses().is_empty();
         let controller = Arc::new(AgentController {
             service: Arc::new(service),
-            conversation: Arc::new(futures::lock::Mutex::new(Conversation::new("/ws", 0))),
+            conversation: Arc::new(futures::lock::Mutex::new(conversation)),
             events: sink.clone(),
             logins: Arc::clone(&logins),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        parts.forms = Some(forms);
+        parts.resume_pending = resume_pending;
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
         let slot = Rc::new(RefCell::new(None));
@@ -2398,6 +2646,147 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_prompt_sent_while_a_form_waits_answers_it_in_prose(cx: &mut TestAppContext) {
+        use application::tools::form::AskUserTool;
+        use domain::form::FormState;
+
+        let script = vec![
+            ScriptedResponse::tool_use(
+                "toolu_1",
+                "ask_user",
+                json!({"title": "Which?", "schema": {"properties": {
+                    "lang": {"type": "string", "enum": ["rust", "lua"]}}}}),
+            ),
+            ScriptedResponse::text("vale"),
+        ];
+        let register = |tools: &mut ToolRegistry, port: Arc<dyn FormPort>| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        };
+        let (h, cx) = harness_full(script, Vec::new(), register, cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the form", |s, cx| s.waiting_form(cx).is_some());
+        h.session.read_with(cx, |s, _| assert!(s.is_running()));
+
+        // Back to the prompt, and the answer is typed there.
+        h.session
+            .update_in(cx, |s, window, cx| s.focus_input(window, cx));
+        send("mejor en python", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 0));
+        assert_eq!(
+            h.llm.remaining(),
+            0,
+            "the tool returned and the model answered"
+        );
+        let replied: Vec<Option<String>> = h
+            .sink
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DomainEvent::BlockUpdated { block } => match block.kind {
+                    BlockKind::Form(spec) if spec.state == FormState::Replied => Some(spec.reply),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(replied, [Some("mejor en python".to_owned())]);
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).next_back(),
+            Some("vale"),
+            "{kinds:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn a_form_left_waiting_by_a_restart_is_asked_again_on_open(cx: &mut TestAppContext) {
+        use application::tools::form::AskUserTool;
+        use domain::block::BlockId;
+        use domain::conversation::{Message, Role, ToolUseId, Turn};
+        use domain::form::{FormSpec, FormState};
+
+        // The saved session: a turn cut while `ask_user` waited, and the
+        // blocks the timeline showed then.
+        let input = json!({"title": "Which?", "schema": {"properties": {
+            "lang": {"type": "string", "enum": ["rust", "lua"]}}}});
+        let mut conversation = Conversation::new("/ws", 0);
+        let mut turn = Turn::new(Message::user_text("hola"));
+        turn.messages.push(Message::new(
+            Role::Assistant,
+            vec![ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "ask_user".into(),
+                input: input.clone(),
+            }],
+        ));
+        conversation.push_turn(turn, 1);
+        let spec: FormSpec = serde_json::from_value(json!({
+            "title": "Which?",
+            "fields": [{"name": "lang", "type": "enum",
+                        "options": [{"value": "rust"}, {"value": "lua"}]}]
+        }))
+        .unwrap();
+        let history = vec![
+            prompt_block("hola"),
+            Block {
+                id: BlockId::for_tool_use("toolu_1", "tool_call"),
+                kind: BlockKind::ToolCall {
+                    tool_use_id: "toolu_1".into(),
+                    name: "ask_user".into(),
+                    summary: "Which?".into(),
+                    input,
+                    status: ToolStatus::Running,
+                    output: None,
+                },
+            },
+            Block {
+                id: BlockId::for_tool_use("toolu_1", "form"),
+                kind: BlockKind::Form(spec),
+            },
+        ];
+        let register = |tools: &mut ToolRegistry, port: Arc<dyn FormPort>| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        };
+        let (h, cx) = harness_resuming(
+            vec![ScriptedResponse::text("vale")],
+            conversation,
+            history,
+            register,
+            cx,
+        );
+
+        // Opened: the turn resumes and the form waits again, in its block.
+        wait_until(&h, cx, "the form", |s, cx| s.waiting_form(cx).is_some());
+        h.session.read_with(cx, |s, _| assert!(s.is_running()));
+        let forms = blocks(&h, cx)
+            .iter()
+            .filter(|kind| matches!(kind, BlockKind::Form(_)))
+            .count();
+        assert_eq!(forms, 1, "the same block, not a second form");
+
+        // Answered in the chat: the model goes on.
+        h.session
+            .update_in(cx, |s, window, cx| s.focus_input(window, cx));
+        send("rust", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let kinds = blocks(&h, cx);
+        assert!(
+            kinds.iter().any(|kind| matches!(
+                kind,
+                BlockKind::Form(spec) if spec.state == FormState::Replied
+            )),
+            "{kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter_map(text_of).next_back(),
+            Some("vale"),
+            "{kinds:?}"
+        );
+        assert_eq!(finished(&h), [StopReason::EndTurn]);
+    }
+
+    #[gpui::test]
     fn prompts_sent_during_a_turn_are_queued(cx: &mut TestAppContext) {
         let script = vec![
             ScriptedResponse::text("uno").hang_after(2),
@@ -2580,6 +2969,47 @@ mod tests {
             assert_eq!(s.model_override(), Some("opus"));
         });
         assert!(blocks(&h, cx).is_empty(), "/clear empties the timeline");
+    }
+
+    #[gpui::test]
+    fn clear_during_a_turn_interrupts_it_and_resets_once_it_ends(cx: &mut TestAppContext) {
+        let script = vec![
+            ScriptedResponse::text("hola mundo cruel").hang_after(4),
+            ScriptedResponse::text("nuevo"),
+        ];
+        let (h, cx) = harness(script, cx);
+        send("saluda", cx);
+        wait_until(&h, cx, "the partial answer", |s, cx| {
+            s.timeline()
+                .read(cx)
+                .state()
+                .entries()
+                .iter()
+                .filter_map(|e| text_of(&e.block.kind))
+                .any(|text| text.starts_with("hola"))
+        });
+
+        send("/clear", cx);
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+        cx.run_until_parked();
+        assert_eq!(finished(&h), [StopReason::Interrupted]);
+        assert!(blocks(&h, cx).is_empty(), "the timeline was cleared");
+        let session = h.session.clone();
+        assert!(
+            cx.update(|window, cx| session.read(cx).input().read(cx).owns_focus(window, cx)),
+            "the prompt keeps the focus"
+        );
+
+        // The session starts over: the model sees only the new prompt.
+        send("otra", cx);
+        wait_until(&h, cx, "the new turn", |s, _| !s.is_running());
+        let kinds = blocks(&h, cx);
+        assert_eq!(
+            kinds.iter().filter_map(text_of).collect::<Vec<_>>(),
+            ["> otra\n", "nuevo"]
+        );
+        let last = h.llm.last_request().expect("a request");
+        assert_eq!(last.messages.len(), 1, "{last:?}");
     }
 
     #[gpui::test]

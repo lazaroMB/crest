@@ -33,6 +33,12 @@ macro_rules! uuid_id {
             pub fn as_uuid(&self) -> Uuid {
                 self.0
             }
+
+            /// Parses an id printed by [`Display`].
+            #[must_use]
+            pub fn parse(text: &str) -> Option<Self> {
+                Uuid::parse_str(text.trim()).ok().map(Self)
+            }
         }
 
         impl Default for $name {
@@ -365,6 +371,18 @@ impl Turn {
     }
 }
 
+/// A tool use the model asked for and nobody answered yet: the turn was
+/// saved while the tool waited on the user, and the process ended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingToolUse {
+    /// Provider-assigned id of the use.
+    pub id: ToolUseId,
+    /// Tool name.
+    pub name: String,
+    /// Its input.
+    pub input: serde_json::Value,
+}
+
 /// A conversation rooted in a workspace, made of consecutive turns.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Session {
@@ -408,6 +426,59 @@ impl Session {
     /// Every message of every turn, in order: the history sent to the model.
     pub fn history(&self) -> impl Iterator<Item = &Message> + '_ {
         self.turns.iter().flat_map(|turn| turn.messages.iter())
+    }
+
+    /// The tool uses of the last turn that got no result because the turn
+    /// was never finished (saved while a tool waited on the user, then the
+    /// process ended). Empty for a finished or an empty session.
+    #[must_use]
+    pub fn pending_tool_uses(&self) -> Vec<PendingToolUse> {
+        let Some(turn) = self.turns.last() else {
+            return Vec::new();
+        };
+        if turn.stop_reason.is_some() {
+            return Vec::new();
+        }
+        let Some(last) = turn.messages.last() else {
+            return Vec::new();
+        };
+        if last.role != Role::Assistant {
+            return Vec::new();
+        }
+        last.content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::ToolUse { id, name, input } => Some(PendingToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Answers every pending tool use with `error` and closes the turn as
+    /// interrupted, so the history can be sent to the model again. Returns
+    /// whether there was anything to close.
+    pub fn close_pending_tool_uses(&mut self, error: &str) -> bool {
+        let pending = self.pending_tool_uses();
+        if pending.is_empty() {
+            return false;
+        }
+        let results = pending
+            .into_iter()
+            .map(|pending| ContentPart::ToolResult {
+                tool_use_id: pending.id,
+                content: vec![ToolResultContent::text(error)],
+                is_error: true,
+            })
+            .collect();
+        if let Some(turn) = self.turns.last_mut() {
+            turn.messages.push(Message::new(Role::User, results));
+            turn.stop_reason = Some(StopReason::Interrupted);
+        }
+        true
     }
 
     /// Sum of the usage of all turns.
@@ -837,5 +908,76 @@ mod tests {
         for name in ["Turn", "Message", "ContentPart", "Usage", "StopReason"] {
             assert!(text.contains(name), "schema mentions {name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::block::BlockId;
+
+    fn asking(stop_reason: Option<StopReason>) -> Session {
+        let mut session = Session::new("/w", 0);
+        let mut turn = Turn::new(Message::user_text("hola"));
+        turn.messages.push(Message::new(
+            Role::Assistant,
+            vec![ContentPart::ToolUse {
+                id: ToolUseId::new("toolu_1"),
+                name: "ask_user".into(),
+                input: json!({"title": "t"}),
+            }],
+        ));
+        turn.stop_reason = stop_reason;
+        session.push_turn(turn, 1);
+        session
+    }
+
+    #[test]
+    fn an_unfinished_turn_leaves_its_tool_uses_pending() {
+        let session = asking(None);
+        let pending = session.pending_tool_uses();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, ToolUseId::new("toolu_1"));
+        assert_eq!(pending[0].name, "ask_user");
+        assert_eq!(pending[0].input, json!({"title": "t"}));
+        // Finished, empty, or ending in a user message: nothing pending.
+        assert!(
+            asking(Some(StopReason::ToolUse))
+                .pending_tool_uses()
+                .is_empty()
+        );
+        assert!(Session::new("/w", 0).pending_tool_uses().is_empty());
+        let mut answered = asking(None);
+        answered.turns[0]
+            .messages
+            .push(Message::user_text("another prompt"));
+        assert!(answered.pending_tool_uses().is_empty());
+    }
+
+    #[test]
+    fn closing_the_pending_uses_makes_the_history_sendable() {
+        let mut session = asking(None);
+        assert!(session.close_pending_tool_uses("restarted"));
+        assert!(!session.close_pending_tool_uses("restarted"));
+        let turn = &session.turns[0];
+        assert_eq!(turn.stop_reason, Some(StopReason::Interrupted));
+        let last = turn.messages.last().unwrap();
+        assert_eq!(last.role, Role::User);
+        assert!(matches!(
+            &last.content[0],
+            ContentPart::ToolResult { tool_use_id, is_error: true, .. }
+                if tool_use_id.as_str() == "toolu_1"
+        ));
+        assert!(session.pending_tool_uses().is_empty());
+    }
+
+    #[test]
+    fn block_ids_derived_from_a_tool_use_are_stable_per_role() {
+        let form = BlockId::for_tool_use("toolu_1", "form");
+        assert_eq!(form, BlockId::for_tool_use("toolu_1", "form"));
+        assert_ne!(form, BlockId::for_tool_use("toolu_1", "tool_call"));
+        assert_ne!(form, BlockId::for_tool_use("toolu_2", "form"));
     }
 }

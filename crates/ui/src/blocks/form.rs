@@ -3,39 +3,53 @@
 //! The block is drawn by a [`FormView`] kept per block
 //! ([`super::block_state`]), so what the user typed survives scrolling. It
 //! shows one input per field: a text field (one line or a text area), a
-//! text field for numbers checked as they are submitted, a checkbox for a
-//! boolean, radio buttons for one choice and checkboxes for several. Labels
-//! mark the required fields with `*` and descriptions sit under them.
+//! text field for numbers checked as they are submitted, a date picker or
+//! a date range picker (their calendars grey out the days outside the
+//! bounds), a checkbox for a boolean, radio buttons for one choice and
+//! checkboxes for several. Labels mark the required fields with `*`, a
+//! legend under the title says so, and descriptions sit under the labels.
+//! While a required field is empty the submit button is disabled and the
+//! footer names the fields that are missing.
 //!
 //! The form only takes answers while the `ask_user` call waits on it: the
 //! request arrives through [`crate::form::UiForm`] and [`attach`] hands it
 //! to the view, which takes the focus. Submit checks every field and shows
 //! the problems inline; a valid answer goes back to the tool, which marks
-//! the block submitted. A submitted form shows its answers read-only, a
-//! cancelled one says so.
+//! the block submitted. A prompt sent while a form waits answers it in
+//! prose instead ([`reply_to_waiting`]). A submitted form shows its
+//! answers read-only, a replied one the words, a cancelled one says so.
+//!
+//! A click on the card while it waits keeps the focus in the form (the
+//! timeline row behind it would take it otherwise, and the next key would
+//! land in the prompt).
 //!
 //! Keys while a field has the focus: `Tab` / `Shift+Tab` move between the
 //! inputs, `Enter` in a one-line field submits, `Esc` cancels; `Space`
-//! toggles a checkbox or picks a radio button.
+//! toggles a checkbox or picks a radio button. On a date picker `Enter`
+//! opens or closes its calendar instead (the picker's own binding runs
+//! first) and `Esc` closes an open calendar before it cancels the form.
 
 use std::collections::BTreeMap;
 
 use application::ports::form::{FormRequest, FormResponse};
+use chrono::NaiveDate;
 use domain::block::{BlockId, BlockKind};
-use domain::form::{FieldKind, FormField, FormOption, FormSpec, FormState};
+use domain::form::{DateSpan, FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, FocusHandle, Focusable as _,
-    FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window, div,
+    FontWeight, Global, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, WeakEntity, Window,
+    div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::calendar::Matcher;
 use gpui_component::checkbox::Checkbox;
+use gpui_component::date_picker::{DatePicker, DatePickerEvent, DatePickerState};
 use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_component::radio::Radio;
 use gpui_component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use serde_json::Value;
 
-use super::sources::BlockEvent;
 use crate::form::PendingForm;
 use crate::timeline::TimelineEntry;
 
@@ -45,6 +59,10 @@ enum FieldInput {
     Line(Entity<InputState>),
     /// Several lines of text.
     Area(Entity<TextareaState>),
+    /// A calendar date.
+    Date(Entity<DatePickerState>),
+    /// A period between two dates.
+    DateRange(Entity<DatePickerState>),
     /// A checkbox.
     Toggle(bool),
     /// The index of the chosen option.
@@ -57,6 +75,14 @@ enum FieldInput {
 struct Waiting {
     pending: PendingForm,
     _cancel: Task<()>,
+}
+
+/// How a date reads and is written: `YYYY-MM-DD`.
+const ISO_DATE: &str = "%Y-%m-%d";
+
+/// The day `text` names, when it is an ISO date.
+fn iso_date(text: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(text, ISO_DATE).ok()
 }
 
 /// The forms drawn so far, for [`owns_focus`].
@@ -73,6 +99,21 @@ pub fn owns_focus(window: &Window, cx: &App) -> bool {
             let view = view.read(cx);
             view.waiting.is_some() && view.focus_handle.contains_focused(window, cx)
         })
+    })
+}
+
+/// The forms waiting for an answer, with the id of their block. Several
+/// sessions may be alive (one shown, the others parked): the caller keeps
+/// the ones whose block is in its timeline.
+pub fn waiting_forms(cx: &App) -> Vec<(BlockId, Entity<FormView>)> {
+    cx.try_global::<Forms>().map_or_else(Vec::new, |forms| {
+        forms
+            .0
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .filter(|view| view.read(cx).waiting.is_some())
+            .map(|view| (view.read(cx).id, view))
+            .collect()
     })
 }
 
@@ -124,6 +165,11 @@ fn answer_text(field: &FormField, value: Option<&Value>) -> String {
             _ => s.clone(),
         },
         (_, Value::Bool(b)) => if *b { "Yes" } else { "No" }.to_owned(),
+        (FieldKind::DateRange { .. }, value @ Value::Object(_)) => DateSpan::from_value(value)
+            .map_or_else(
+                || value.to_string(),
+                |span| format!("{} → {}", span.start, span.end),
+            ),
         (FieldKind::MultiEnum { options, .. }, Value::Array(items)) => {
             let picked: Vec<String> = items
                 .iter()
@@ -156,7 +202,11 @@ impl FormView {
                             window,
                             move |this: &mut Self, _, event: &InputEvent, window, cx| match event {
                                 InputEvent::PressEnter { .. } => this.submit(window, cx),
-                                InputEvent::Change => this.clear_error(&name, cx),
+                                InputEvent::Change => {
+                                    // The footer follows what is filled.
+                                    this.clear_error(&name, cx);
+                                    cx.notify();
+                                }
                                 _ => {}
                             },
                         ));
@@ -167,7 +217,18 @@ impl FormView {
                             move |this: &mut Self, _, event: &InputEvent, cx| {
                                 if let InputEvent::Change = event {
                                     this.clear_error(&name, cx);
+                                    cx.notify();
                                 }
+                            },
+                        ));
+                    }
+                    FieldInput::Date(state) | FieldInput::DateRange(state) => {
+                        // The only event is a change (a pick or a clear).
+                        subscriptions.push(cx.subscribe(
+                            state,
+                            move |this: &mut Self, _, _: &DatePickerEvent, cx| {
+                                this.clear_error(&name, cx);
+                                cx.notify();
                             },
                         ));
                     }
@@ -218,6 +279,44 @@ impl FormView {
                 window,
                 cx,
             ),
+            FieldKind::Date { default, min, max } => {
+                let (min, max) = (
+                    min.as_deref().and_then(iso_date),
+                    max.as_deref().and_then(iso_date),
+                );
+                let default = default.as_deref().and_then(iso_date);
+                FieldInput::Date(cx.new(|cx| {
+                    let mut state = DatePickerState::new(window, cx).date_format(ISO_DATE);
+                    if min.is_some() || max.is_some() {
+                        // `interval` greys out the days before `min` and
+                        // after `max` (`range` would grey out the inside).
+                        state = state.disabled_matcher(Matcher::interval(min, max));
+                    }
+                    if let Some(day) = default {
+                        state.set_date(day, window, cx);
+                    }
+                    state
+                }))
+            }
+            FieldKind::DateRange { default, min, max } => {
+                let (min, max) = (
+                    min.as_deref().and_then(iso_date),
+                    max.as_deref().and_then(iso_date),
+                );
+                let default = default
+                    .as_ref()
+                    .and_then(|span| Some((iso_date(&span.start)?, iso_date(&span.end)?)));
+                FieldInput::DateRange(cx.new(|cx| {
+                    let mut state = DatePickerState::range(window, cx).date_format(ISO_DATE);
+                    if min.is_some() || max.is_some() {
+                        state = state.disabled_matcher(Matcher::interval(min, max));
+                    }
+                    if let Some(span) = default {
+                        state.set_date(span, window, cx);
+                    }
+                    state
+                }))
+            }
             FieldKind::Multiline { default, .. } => {
                 let text = default.clone().unwrap_or_default();
                 FieldInput::Area(cx.new(|cx| {
@@ -241,21 +340,42 @@ impl FormView {
     }
 
     /// Takes the latest version of the block.
-    fn sync(&mut self, spec: &FormSpec, cx: &mut Context<Self>) {
+    fn sync(&mut self, spec: &FormSpec, window: &mut Window, cx: &mut Context<Self>) {
         if &self.spec != spec {
             // The fields never change; only the state and the answer.
             self.spec.state = spec.state;
             self.spec.answer.clone_from(&spec.answer);
+            self.spec.reply.clone_from(&spec.reply);
             if spec.state != FormState::Pending {
                 self.sent = false;
-                self.waiting = None;
+                if self.waiting.take().is_some() {
+                    self.release_focus(window, cx);
+                }
             }
             cx.notify();
         }
     }
 
-    /// Starts answering `pending` and takes the focus.
-    fn attach(&mut self, mut pending: PendingForm, window: &mut Window, cx: &mut Context<Self>) {
+    /// Gives the focus back to where it was before the form took it, when
+    /// the form still has it (the request ended without an answer).
+    fn release_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.restore_focus.take();
+        if let Some(handle) = handle
+            && self.focus_handle.contains_focused(window, cx)
+        {
+            window.focus(&handle, cx);
+        }
+    }
+
+    /// Starts answering `pending`; takes the focus when `focus` (the form
+    /// is on screen).
+    fn attach(
+        &mut self,
+        mut pending: PendingForm,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if pending.is_cancelled() {
             return;
         }
@@ -263,13 +383,14 @@ impl FormView {
         let cancellation = pending.cancellation();
         let cancel = cx.spawn_in(window, async move |this, cx| {
             cancellation.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this
                     .waiting
                     .as_ref()
                     .is_some_and(|w| w.pending.is_cancelled())
                 {
                     this.waiting = None;
+                    this.release_focus(window, cx);
                     cx.notify();
                 }
             })
@@ -280,11 +401,22 @@ impl FormView {
             _cancel: cancel,
         });
         self.sent = false;
+        if focus {
+            self.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Puts the focus in the first input, remembering where it was so an
+    /// answer gives it back. Nothing while the form does not wait.
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting.is_none() {
+            return;
+        }
         if self.restore_focus.is_none() {
             self.restore_focus = window.focused(cx);
         }
         self.focus_first(window, cx);
-        cx.notify();
     }
 
     /// Focuses the first input. The card is a tab group, so the next tab
@@ -355,12 +487,6 @@ impl FormView {
                 self.error = None;
                 self.respond(FormResponse::Submitted { answer }, window, cx);
                 self.sent = true;
-                // Read-only from now on: the prompt takes the focus, after
-                // the click that submitted has been handled.
-                let block = self.id;
-                cx.defer(move |cx| {
-                    super::sources::events::emit(BlockEvent::FormSubmitted { block }, cx);
-                });
             }
             Err(errors) => {
                 self.errors = errors;
@@ -381,9 +507,23 @@ impl FormView {
         let handle = match first {
             Some((_, FieldInput::Line(state))) => state.focus_handle(cx),
             Some((_, FieldInput::Area(state))) => state.focus_handle(cx),
+            Some((_, FieldInput::Date(state) | FieldInput::DateRange(state))) => {
+                state.focus_handle(cx)
+            }
             _ => return,
         };
         window.focus(&handle, cx);
+    }
+
+    /// Answers with `text`, written in the chat instead of the fields.
+    pub fn reply(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting.is_some() {
+            self.errors.clear();
+            self.error = None;
+            self.respond(FormResponse::Replied { text }, window, cx);
+            self.sent = true;
+            cx.notify();
+        }
     }
 
     /// Dismisses the form without answering.
@@ -448,13 +588,21 @@ impl FormView {
     ) -> AnyElement {
         let disabled = self.waiting.is_none();
         match (input, &field.kind) {
-            (FieldInput::Line(state), _) => div()
-                .debug_selector(move || format!("form-input-{index}"))
-                .child(Input::new(state).disabled(disabled))
-                .into_any_element(),
+            (FieldInput::Line(state), _) => Input::new(state).disabled(disabled).into_any_element(),
             (FieldInput::Area(state), _) => {
                 Textarea::new(state).disabled(disabled).into_any_element()
             }
+            (FieldInput::Date(state), _) => DatePicker::new(state)
+                .disabled(disabled)
+                .cleanable(true)
+                .placeholder("YYYY-MM-DD")
+                .into_any_element(),
+            (FieldInput::DateRange(state), _) => DatePicker::new(state)
+                .number_of_months(2)
+                .disabled(disabled)
+                .cleanable(true)
+                .placeholder("YYYY-MM-DD → YYYY-MM-DD")
+                .into_any_element(),
             (FieldInput::Toggle(checked), _) => wrapping()
                 .debug_selector(move || format!("form-option-{index}-0"))
                 .child(
@@ -555,7 +703,11 @@ impl FormView {
                     .child(SharedString::from(description.clone())),
             );
         }
-        column = column.child(input);
+        column = column.child(
+            div()
+                .debug_selector(move || format!("form-input-{index}"))
+                .child(input),
+        );
         if let Some(problem) = self.errors.get(&field.name) {
             column = column.child(
                 wrapping()
@@ -596,15 +748,41 @@ impl FormView {
             .into_any_element()
     }
 
+    /// The labels of the required fields still empty.
+    fn missing_required(&self, cx: &App) -> Vec<String> {
+        self.spec
+            .fields
+            .iter()
+            .zip(&self.inputs)
+            .filter(|(field, input)| {
+                field.required && matches!(read_field(field, input, cx), Ok(None))
+            })
+            .map(|(field, _)| label_of(field).to_owned())
+            .collect()
+    }
+
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let disabled = self.waiting.is_none();
-        let note = if self.sent {
-            Some("Sent…")
-        } else if disabled {
-            Some("Not waiting for an answer")
+        let missing = if disabled || self.sent {
+            Vec::new()
         } else {
-            None
+            self.missing_required(cx)
+        };
+        let (note, color) = if self.sent {
+            (Some("Sent…".to_owned()), theme.muted_foreground)
+        } else if disabled {
+            (
+                Some("Not waiting for an answer".to_owned()),
+                theme.muted_foreground,
+            )
+        } else if missing.is_empty() {
+            (None, theme.muted_foreground)
+        } else {
+            (
+                Some(format!("Required: {}", missing.join(", "))),
+                theme.danger,
+            )
         };
         let submit = self
             .spec
@@ -616,11 +794,17 @@ impl FormView {
             .items_center()
             .justify_end()
             .children(note.map(|note| {
+                let selector = if missing.is_empty() {
+                    "form-note"
+                } else {
+                    "form-missing"
+                };
                 wrapping()
+                    .debug_selector(move || selector.to_owned())
                     .flex_1()
                     .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(note)
+                    .text_color(color)
+                    .child(SharedString::from(note))
             }))
             .child(
                 Button::new(self.element_id("cancel", 0))
@@ -634,7 +818,7 @@ impl FormView {
                     .debug_selector(|| "form-submit".to_owned())
                     .primary()
                     .label(SharedString::from(submit))
-                    .disabled(disabled)
+                    .disabled(disabled || !missing.is_empty())
                     .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
             )
             .into_any_element()
@@ -677,6 +861,22 @@ fn read_field(field: &FormField, input: &FieldInput, cx: &App) -> Result<Option<
             }
             Value::String(text)
         }
+        (FieldInput::Date(state), _) => match state.read(cx).date().start() {
+            Some(day) => Value::String(day.format(ISO_DATE).to_string()),
+            None => return Ok(None),
+        },
+        (FieldInput::DateRange(state), _) => {
+            let date = state.read(cx).date();
+            match (date.start(), date.end()) {
+                (Some(start), Some(end)) => DateSpan {
+                    start: start.format(ISO_DATE).to_string(),
+                    end: end.format(ISO_DATE).to_string(),
+                }
+                .to_value(),
+                (None, None) => return Ok(None),
+                _ => return Err("Pick both the start and the end".to_owned()),
+            }
+        }
         (FieldInput::Toggle(checked), _) => Value::Bool(*checked),
         (FieldInput::Choice(selected), FieldKind::Enum { options, .. }) => {
             match selected.and_then(|i| options.get(i)) {
@@ -718,6 +918,17 @@ impl Render for FormView {
             .track_focus(&self.focus_handle)
             .tab_group()
             .on_key_down(cx.listener(Self::on_key))
+            // A click anywhere on a waiting card (a label, the padding)
+            // brings the focus into the form; a click on an input has
+            // already focused it.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if this.waiting.is_some() && !this.focus_handle.contains_focused(window, cx) {
+                        this.focus_first(window, cx);
+                    }
+                }),
+            )
             .gap_3()
             .p_3()
             .rounded_md()
@@ -739,6 +950,19 @@ impl Render for FormView {
         }
         match self.spec.state {
             FormState::Submitted => return card.child(self.render_summary(cx)).into_any_element(),
+            FormState::Replied => {
+                let reply = self.spec.reply.clone().unwrap_or_default();
+                return card
+                    .child(
+                        div()
+                            .debug_selector(|| "form-replied".to_owned())
+                            .text_sm()
+                            .text_color(muted)
+                            .child("Answered in the chat:"),
+                    )
+                    .child(div().text_sm().child(SharedString::from(reply)))
+                    .into_any_element();
+            }
             FormState::Cancelled => {
                 return card
                     .child(
@@ -746,14 +970,20 @@ impl Render for FormView {
                             .debug_selector(|| "form-cancelled".to_owned())
                             .text_sm()
                             .text_color(muted)
-                            .child(SharedString::from(match &self.spec.reason {
-                                Some(reason) => format!("Cancelled ({reason})."),
-                                None => "Cancelled: the form was closed without an answer.".into(),
-                            })),
+                            .child("Cancelled: the form was closed without an answer."),
                     )
                     .into_any_element();
             }
             FormState::Pending => {}
+        }
+        if self.spec.fields.iter().any(|field| field.required) {
+            card = card.child(
+                div()
+                    .debug_selector(|| "form-required-legend".to_owned())
+                    .text_xs()
+                    .text_color(muted)
+                    .child("* required"),
+            );
         }
         if let Some(error) = &self.error {
             card = card.child(
@@ -779,11 +1009,12 @@ fn view(id: BlockId, spec: &FormSpec, window: &mut Window, cx: &mut App) -> Enti
     })
 }
 
-/// Hands `pending` to the form of its block, which takes the focus.
-pub fn attach(pending: PendingForm, window: &mut Window, cx: &mut App) {
+/// Hands `pending` to the form of its block, which takes the focus when
+/// `focus` (its session is the one shown).
+pub fn attach(pending: PendingForm, focus: bool, window: &mut Window, cx: &mut App) {
     let request = pending.request();
     let form = view(request.block_id, &request.spec, window, cx);
-    form.update(cx, |form, cx| form.attach(pending, window, cx));
+    form.update(cx, |form, cx| form.attach(pending, focus, window, cx));
 }
 
 /// The view of block `id`, if it was drawn or attached.
@@ -797,7 +1028,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     let form = view(entry.block.id, spec, window, cx);
-    form.update(cx, |form, cx| form.sync(spec, cx));
+    form.update(cx, |form, cx| form.sync(spec, window, cx));
     form.into_any_element()
 }
 

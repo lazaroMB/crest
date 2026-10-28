@@ -100,6 +100,7 @@ fn config(ws: PathBuf) -> Config {
         trust_mcp: Vec::new(),
         trust_plugins: Vec::new(),
         resume: false,
+        session_id: None,
     }
 }
 

@@ -5,6 +5,7 @@ pub mod app;
 pub mod approval;
 pub mod blocks;
 pub mod brand;
+pub mod chats;
 pub mod commands;
 pub mod form;
 pub mod help;

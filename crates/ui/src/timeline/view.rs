@@ -422,16 +422,15 @@ impl TimelineView {
             .justify_center()
             .px(px(COLUMN_GUTTER))
             .on_click(move |_, window, cx| {
+                // The click landed in a form being answered (one of its
+                // inputs took the focus on mouse down): the form keeps the
+                // focus and its row stays as it is.
+                if crate::blocks::form::owns_focus(window, cx) {
+                    return;
+                }
                 let text_selected = !selection::selected_text(window, cx).is_empty();
                 view.update(cx, |this, cx| {
-                    // A widget inside the block (a form field) that took
-                    // the focus on mouse down keeps it.
-                    let inner = window.focused(cx).is_some_and(|focused| {
-                        focused != this.focus_handle && this.focus_handle.contains(&focused, window)
-                    });
-                    if !inner {
-                        window.focus(&this.focus_handle, cx);
-                    }
+                    window.focus(&this.focus_handle, cx);
                     this.click(ix, text_selected, cx);
                 })
                 .ok();

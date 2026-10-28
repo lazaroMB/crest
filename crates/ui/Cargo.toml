@@ -13,6 +13,7 @@ application.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bytemuck.workspace = true
+chrono.workspace = true
 domain.workspace = true
 futures.workspace = true
 gpui.workspace = true

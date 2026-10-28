@@ -114,12 +114,13 @@ impl FormPort for UiForm {
 }
 
 /// Attaches every request of `inbox` to its `Form` block, which takes the
-/// focus, until the inbox closes or the window goes away.
+/// focus, until the inbox closes or the window goes away. The session
+/// listens itself when it may be parked out of sight.
 pub fn listen(mut inbox: FormInbox, window: &mut Window, cx: &mut App) -> Task<()> {
     window.spawn(cx, async move |cx| {
         while let Some(pending) = inbox.next().await {
             if cx
-                .update(|window, cx| crate::blocks::form::attach(pending, window, cx))
+                .update(|window, cx| crate::blocks::form::attach(pending, true, window, cx))
                 .is_err()
             {
                 break;

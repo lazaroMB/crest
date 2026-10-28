@@ -57,13 +57,13 @@
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
 use domain::conversation::{
-    ContentPart, ImageAttachment, MAX_IMAGES_PER_MESSAGE, Message, Role, Session, SessionId,
-    StopReason, ToolUseId, Turn, TurnId, Usage,
+    ContentPart, ImageAttachment, MAX_IMAGES_PER_MESSAGE, Message, PendingToolUse, Role, Session,
+    SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
 };
 use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel, SpecSource};
 use domain::permission::{ActionRequest, Decision};
@@ -73,6 +73,7 @@ use serde_json::{Value, json};
 use crate::cost::CostTracker;
 use crate::decide::Decider;
 use crate::ports::approval::{ApprovalPort, ApprovalResponse};
+use crate::ports::checkpoint::TurnCheckpointPort;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
@@ -96,6 +97,12 @@ use super::web_sources::web_sources;
 
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
+
+/// What a tool use left pending by a restart is answered with when it is
+/// not run again ([`AgentService::resume_pending_tools`],
+/// [`Session::close_pending_tool_uses`]).
+pub const RESTART_INTERRUPTED: &str =
+    "the turn was interrupted by a restart before this call finished";
 
 /// Longest output summary sent in `ToolStatusChanged`, in characters.
 const OUTPUT_SUMMARY_CHARS: usize = 120;
@@ -298,6 +305,8 @@ fn check_images(images: &[ImageAttachment]) -> Result<(), TurnError> {
 /// Runs turns of the agent: the use case behind the input box.
 pub struct AgentService {
     deps: AgentDeps,
+    /// Saves a turn while a tool waits on the user, if anything does.
+    checkpoint: Option<Arc<dyn TurnCheckpointPort>>,
     tools: ToolRegistry,
     models: ModelPolicy,
     gate: ApprovalGate,
@@ -344,6 +353,7 @@ impl AgentService {
             cost: None,
             decider: Decider::none(),
             deps,
+            checkpoint: None,
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
             clock: system_now_ms,
@@ -392,6 +402,14 @@ impl AgentService {
     }
 
     /// Sets the limit of model calls per turn.
+    /// Returns the same service saving the turn in progress through
+    /// `checkpoint` whenever a tool waits on the user.
+    #[must_use]
+    pub fn with_checkpoint(mut self, checkpoint: Arc<dyn TurnCheckpointPort>) -> Self {
+        self.checkpoint = Some(checkpoint);
+        self
+    }
+
     #[must_use]
     pub fn with_max_iterations(mut self, limit: u32) -> Self {
         self.max_iterations = limit.max(1);
@@ -548,10 +566,100 @@ impl AgentService {
             }),
             context: None,
             cancel: opts.cancel,
-            open_forms: std::sync::Mutex::default(),
+            running: Mutex::new(None),
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
+        self.finish_turn(session, turn, span, model_calls, result)
+    }
+
+    /// Continues the last turn of `session` when the process ended while
+    /// `ask_user` waited for an answer: the form is asked again in the
+    /// blocks it already has and, once answered, the turn goes on with the
+    /// model as it would have. Pending calls of other tools are answered
+    /// with an error rather than run again (a side effect could repeat).
+    /// `Ok(None)` when nothing is pending.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::run_turn`]. Without a model the pending calls are closed
+    /// so the history stays sendable.
+    pub async fn resume_pending_tools(
+        &self,
+        session: &mut Session,
+        opts: TurnOptions,
+    ) -> Result<Option<TurnOutcome>, TurnError> {
+        let pending = session.pending_tool_uses();
+        if pending.is_empty() {
+            return Ok(None);
+        }
+        let model = self.models.resolve(&ResolveRequest {
+            role: opts.role,
+            turn_override: opts.turn_override,
+            pinned_role: opts.pinned_role,
+        });
+        if model.source == SpecSource::Unselected {
+            session.close_pending_tool_uses(RESTART_INTERRUPTED);
+            let err = TurnError::NoModelSelected { role: model.role };
+            self.emit(DomainEvent::BlockAdded {
+                block: Block::new(BlockKind::Error {
+                    message: err.to_string(),
+                    hint: Some(
+                        "/model lists the models of your providers; the choice is saved".into(),
+                    ),
+                }),
+            });
+            return Err(err);
+        }
+        // The turn leaves the history while it runs, as a new one would.
+        let Some(mut turn) = session.turns.pop() else {
+            return Ok(None);
+        };
+        let turn_id = turn.id;
+        self.emit(DomainEvent::TurnStarted {
+            session_id: session.id,
+            turn_id,
+            model: model.spec.id.clone(),
+            role: model.role,
+        });
+        let span = self.deps.telemetry.turn_started(TurnSpan {
+            session_id: session.id,
+            turn_id,
+            role: model.role,
+            model: model.spec.id.clone(),
+        });
+        let mut run = TurnRun {
+            service: self,
+            session,
+            turn: &mut turn,
+            model: &model,
+            tools: None,
+            span,
+            model_calls: 0,
+            max_iterations: opts.max_iterations.map_or(self.max_iterations, |limit| {
+                limit.clamp(1, self.max_iterations)
+            }),
+            context: None,
+            cancel: opts.cancel,
+            running: Mutex::new(None),
+        };
+        let result = run.resume(pending).await;
+        let model_calls = run.model_calls;
+        self.finish_turn(session, turn, span, model_calls, result)
+            .map(Some)
+    }
+
+    /// Closes `turn` with `result`: the events, the telemetry and the
+    /// session get it, finished or failed.
+    fn finish_turn(
+        &self,
+        session: &mut Session,
+        mut turn: Turn,
+        span: SpanId,
+        model_calls: u32,
+        result: Result<StopReason, TurnError>,
+    ) -> Result<TurnOutcome, TurnError> {
+        let turn_id = turn.id;
         let usage = turn.usage;
         let result = match result {
             Ok(stop_reason) => {
@@ -666,9 +774,18 @@ struct TurnRun<'a> {
     /// Context reported by the last model call, for compaction.
     context: Option<ContextMark>,
     cancel: CancelToken,
-    /// `Form` blocks of calls still waiting for the user; an interrupted
-    /// turn marks them cancelled, not answered.
-    open_forms: std::sync::Mutex<Vec<Block>>,
+    /// The tool call being awaited, while it is. An interruption drops
+    /// the future at that await and finds the entry still here: it says
+    /// what to tell the model and how its extra block ends.
+    running: Mutex<Option<RunningCall>>,
+}
+
+/// A tool call at its await (see [`TurnRun::running`]).
+struct RunningCall {
+    /// The extra block the call added (its `Form`), if any.
+    extra: Option<Block>,
+    /// What the call prepared for an interruption, if anything.
+    on_interrupt: Option<ToolOutput>,
 }
 
 /// Context size reported by a model call.
@@ -772,34 +889,89 @@ impl TurnRun<'_> {
                 self.emit_web_sources();
                 return Ok(stop_reason);
             }
-            let mut results = Vec::with_capacity(tool_uses.len());
-            let mut tool_uses = tool_uses.into_iter();
-            while let Some((id, name, input)) = tool_uses.next() {
-                let block_id = blocks.tool_calls.get(&id).copied();
-                let run = self.execute_tool(id.clone(), name, input, block_id);
-                if let Ok(result) = self.cancel.run(run).await {
-                    results.push(result);
-                    continue;
+            if let Some(stop) = self
+                .run_tools(tool_uses, &blocks.tool_calls, Vec::new())
+                .await
+            {
+                return Ok(stop);
+            }
+        }
+    }
+
+    /// Runs `tool_uses` in order, after `results` already in hand, and
+    /// pushes the message with every result. `blocks` has the `ToolCall`
+    /// block of each use. Interrupted, every use still gets a result (the
+    /// history could not be sent to the model again otherwise) and the
+    /// turn stops.
+    async fn run_tools(
+        &mut self,
+        tool_uses: Vec<(ToolUseId, String, Value)>,
+        blocks: &HashMap<ToolUseId, BlockId>,
+        mut results: Vec<ContentPart>,
+    ) -> Option<StopReason> {
+        let mut tool_uses = tool_uses.into_iter();
+        while let Some((id, name, input)) = tool_uses.next() {
+            let block_id = blocks.get(&id).copied();
+            let run = self.execute_tool(id.clone(), name, input, block_id);
+            if let Ok(result) = self.cancel.run(run).await {
+                results.push(result);
+                continue;
+            }
+            // The call that was running may have left what to say; the
+            // ones after it never started.
+            let mut interrupted = Some(self.interrupted_output());
+            let unanswered = std::iter::once(id).chain(tool_uses.map(|(id, ..)| id));
+            for id in unanswered {
+                if let Some(block_id) = blocks.get(&id) {
+                    self.emit_cancelled(*block_id);
                 }
-                // Every tool use must get a result, or the history could
-                // not be sent to the model again.
-                let unanswered = std::iter::once(id).chain(tool_uses.map(|(id, ..)| id));
-                for id in unanswered {
-                    if let Some(block_id) = blocks.tool_calls.get(&id) {
-                        self.emit_cancelled(*block_id);
-                    }
-                    results.push(ContentPart::ToolResult {
-                        tool_use_id: id,
-                        content: ToolOutput::from(ToolError::Cancelled).content,
-                        is_error: true,
-                    });
-                }
-                self.withdraw_open_forms();
-                self.turn.messages.push(Message::new(Role::User, results));
-                return Ok(StopReason::Interrupted);
+                let output = interrupted
+                    .take()
+                    .unwrap_or_else(|| ToolOutput::from(ToolError::Cancelled));
+                results.push(ContentPart::ToolResult {
+                    tool_use_id: id,
+                    content: output.content,
+                    is_error: true,
+                });
             }
             self.turn.messages.push(Message::new(Role::User, results));
+            return Some(StopReason::Interrupted);
         }
+        self.turn.messages.push(Message::new(Role::User, results));
+        None
+    }
+
+    /// Continues a turn cut while its tools ran: the `ask_user` calls run
+    /// again in the blocks they have (the form is asked again), any other
+    /// pending call is answered with an error, then the loop goes on.
+    async fn resume(&mut self, pending: Vec<PendingToolUse>) -> Result<StopReason, TurnError> {
+        let mut uses = Vec::new();
+        let mut blocks = HashMap::new();
+        let mut results = Vec::new();
+        for PendingToolUse { id, name, input } in pending {
+            let block_id = BlockId::for_tool_use(id.as_str(), "tool_call");
+            if name == crate::tools::form::ASK_USER {
+                blocks.insert(id.clone(), block_id);
+                uses.push((id, name, input));
+                continue;
+            }
+            // Run again, a command or an edit could repeat its effect.
+            let output = ToolOutput::from(ToolError::Execution(RESTART_INTERRUPTED.into()));
+            self.emit(DomainEvent::ToolStatusChanged {
+                block_id,
+                status: ToolStatus::Cancelled,
+                output: Some(output.text_content()),
+            });
+            results.push(ContentPart::ToolResult {
+                tool_use_id: id,
+                content: output.content,
+                is_error: true,
+            });
+        }
+        if let Some(stop) = self.run_tools(uses, &blocks, results).await {
+            return Ok(stop);
+        }
+        self.run().await
     }
 
     /// After the answer, the pages the turn read with `web_fetch`, as a
@@ -813,29 +985,41 @@ impl TurnRun<'_> {
         }
     }
 
-    /// Marks the forms of interrupted calls cancelled ("not answered").
-    fn withdraw_open_forms(&self) {
-        let open = std::mem::take(
-            &mut *self
-                .open_forms
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        for mut block in open {
-            if let BlockKind::Form(spec) = &mut block.kind
-                && spec.withdraw()
-            {
-                self.emit(DomainEvent::BlockUpdated { block });
-            }
-        }
-    }
-
     fn emit_cancelled(&self, block_id: BlockId) {
         self.emit(DomainEvent::ToolStatusChanged {
             block_id,
             status: ToolStatus::Cancelled,
             output: Some(ToolError::Cancelled.to_string()),
         });
+    }
+
+    /// The result of the call that was running when the turn was
+    /// interrupted: what it prepared for that case, with its extra block
+    /// updated, or a plain cancellation.
+    fn interrupted_output(&self) -> ToolOutput {
+        let running = self
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(RunningCall {
+            extra,
+            on_interrupt: Some(mut output),
+        }) = running
+        else {
+            return ToolOutput::from(ToolError::Cancelled);
+        };
+        if let Some(kind) = output.block_update.take() {
+            self.emit(match extra {
+                Some(block) => DomainEvent::BlockUpdated {
+                    block: Block { id: block.id, kind },
+                },
+                None => DomainEvent::BlockAdded {
+                    block: Block::new(kind),
+                },
+            });
+        }
+        output
     }
 
     fn request(&self) -> LlmRequest {
@@ -1108,7 +1292,10 @@ impl TurnRun<'_> {
                 });
             }
             LlmEvent::ToolUseStart { index, id, name } => {
-                let block_id = self.open_block(blocks, *index, || {
+                // Derived from the call: a turn resumed after a restart
+                // finds the block again.
+                let block_id = BlockId::for_tool_use(id.as_str(), "tool_call");
+                let block_id = self.open_block_as(blocks, *index, block_id, || {
                     tool_call_kind(id, name, Value::Null, String::new())
                 });
                 blocks.tool_calls.insert(id.clone(), block_id);
@@ -1143,10 +1330,21 @@ impl TurnRun<'_> {
         index: usize,
         kind: impl FnOnce() -> BlockKind,
     ) -> BlockId {
+        self.open_block_as(blocks, index, BlockId::new(), kind)
+    }
+
+    /// [`Self::open_block`] with the id the block gets if it is new.
+    fn open_block_as(
+        &self,
+        blocks: &mut StreamBlocks,
+        index: usize,
+        id: BlockId,
+        kind: impl FnOnce() -> BlockKind,
+    ) -> BlockId {
         *blocks.by_index.entry(index).or_insert_with(|| {
-            let block = Block::new(kind());
-            let id = block.id;
-            self.emit(DomainEvent::BlockAdded { block });
+            self.emit(DomainEvent::BlockAdded {
+                block: Block { id, kind: kind() },
+            });
             id
         })
     }
@@ -1212,7 +1410,17 @@ impl TurnRun<'_> {
         let effect = tool.effect(&input);
         let mut prepared = match tool.prepare(input.clone(), ctx).await {
             Ok(prepared) => prepared,
-            Err(err) => return failed(err),
+            Err(err) => {
+                // The block keeps the input: a rejected call reads as what
+                // it asked, not as an empty one.
+                self.emit(DomainEvent::BlockUpdated {
+                    block: Block {
+                        id: block_id,
+                        kind: tool_call_kind(&ctx.tool_use_id, name, input, String::new()),
+                    },
+                });
+                return failed(err);
+            }
         };
         let summary = prepared.subject.clone();
         self.emit(DomainEvent::BlockUpdated {
@@ -1342,7 +1550,7 @@ impl TurnRun<'_> {
         &self,
         name: &str,
         input: &Value,
-        prepared: PreparedCall,
+        mut prepared: PreparedCall,
         block_id: BlockId,
         extra: Option<Block>,
     ) -> (ToolOutput, ToolStatus) {
@@ -1352,22 +1560,24 @@ impl TurnRun<'_> {
             output: None,
         });
         let started = Instant::now();
-        let form = extra
-            .as_ref()
-            .filter(|b| matches!(b.kind, BlockKind::Form(_)))
-            .cloned();
-        let lock = || {
-            self.open_forms
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        };
-        if let Some(form) = &form {
-            lock().push(form.clone());
+        // A call that waits on the user may outlive the process: the turn
+        // so far is saved, so the next start can ask again.
+        if prepared.on_interrupt.is_some()
+            && let Some(checkpoint) = &self.service.checkpoint
+        {
+            checkpoint.checkpoint(self.session, self.turn).await;
         }
+        // Noted while awaited; an interruption drops this future here and
+        // `interrupted_output` finds the note.
+        *self.running.lock().unwrap_or_else(PoisonError::into_inner) = Some(RunningCall {
+            extra: extra.clone(),
+            on_interrupt: prepared.on_interrupt.take(),
+        });
         let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
-        if let Some(form) = &form {
-            lock().retain(|b| b.id != form.id);
-        }
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         // Masked before anyone reads it: the model, the timeline, the
         // store and the `after_tool` hooks.
         let mut output = self.service.tools.finish(output);
