@@ -153,6 +153,10 @@ pub struct PreparedCall {
     /// Performs the call. Not polled until the call is approved; dropping
     /// it cancels the call.
     pub run: ToolRun,
+    /// What the model gets, and how the extra block ends, when the turn is
+    /// interrupted while the call runs (a form the user was filling).
+    /// `None`: a plain cancellation, the block untouched.
+    pub on_interrupt: Option<ToolOutput>,
 }
 
 impl PreparedCall {
@@ -165,7 +169,16 @@ impl PreparedCall {
             block: None,
             block_id: None,
             run,
+            on_interrupt: None,
         }
+    }
+
+    /// Returns the same call with what an interruption while it runs
+    /// reports (see [`PreparedCall::on_interrupt`]).
+    #[must_use]
+    pub fn with_interrupt_output(mut self, output: ToolOutput) -> Self {
+        self.on_interrupt = Some(output);
+        self
     }
 
     /// Returns the same call with an approval preview.
@@ -198,6 +211,7 @@ impl fmt::Debug for PreparedCall {
             .field("preview", &self.preview)
             .field("block", &self.block)
             .field("block_id", &self.block_id)
+            .field("on_interrupt", &self.on_interrupt)
             .finish_non_exhaustive()
     }
 }

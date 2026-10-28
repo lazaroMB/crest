@@ -226,6 +226,60 @@ async fn cancelling_a_running_tool_drops_it_and_answers_every_tool_use() {
 }
 
 #[tokio::test]
+async fn cancelling_while_a_form_waits_closes_it_and_tells_the_model_not_to_re_ask() {
+    use crate::testing::form::ScriptedForm;
+    use crate::tools::form::AskUserTool;
+    use domain::block::BlockKind;
+    use domain::form::FormState;
+
+    let form = Arc::new(ScriptedForm::hanging());
+    let port = Arc::clone(&form);
+    let mut h = Harness::with(
+        vec![ScriptedResponse::tool_use(
+            "toolu_1",
+            "ask_user",
+            json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "boolean"}}}}),
+        )],
+        PermissionMode::Ask,
+        move |tools| {
+            tools.register_typed(AskUserTool::new(port)).unwrap();
+        },
+    );
+    let outcome = run_and_cancel(&mut h, || form.requests().len() == 1).await;
+
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    assert_eq!(statuses(&h), [ToolStatus::Running, ToolStatus::Cancelled]);
+    let id = form.requests()[0].block_id;
+    let forms: Vec<_> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockAdded { block } | DomainEvent::BlockUpdated { block } => {
+                match block.kind {
+                    BlockKind::Form(spec) => Some((block.id, spec.state)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [(id, FormState::Pending), (id, FormState::Cancelled)]
+    );
+    let results = h.tool_results();
+    assert_eq!(results.len(), 1);
+    assert!(results[0].1, "{results:?}");
+    assert!(
+        results[0].0.starts_with("cancelled by user")
+            && results[0].0.contains("Do not ask the same form again"),
+        "{results:?}"
+    );
+    assert_resendable(&h.session);
+}
+
+#[tokio::test]
 async fn cancelling_a_pending_approval_cancels_the_call() {
     let shell = Arc::new(ScriptedShell::new());
     let mut h = sh_harness(

@@ -10,7 +10,9 @@
 //! times. The block then shows the answer read-only and the model gets
 //! the values as JSON. A cancelled form is marked so in the block and
 //! answers the model with an error saying the user declined, so the turn
-//! goes on. The call only reads: it needs no approval.
+//! goes on; a turn interrupted while the form waits ends the same way
+//! ([`PreparedCall::on_interrupt`]). The call only reads: it needs no
+//! approval.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,6 +36,10 @@ pub const ASK_USER: &str = "ask_user";
 
 /// Answers rejected before the call gives up.
 pub const MAX_ATTEMPTS: usize = 3;
+
+/// What every closed form tells the model, so it does not loop on it.
+const DO_NOT_RE_ASK: &str =
+    "Do not ask the same form again; go on without these answers or ask in prose.";
 
 /// What the system prompt says about `ask_user`.
 pub const FORM_TOOL_PROMPT: &str = "\
@@ -153,6 +159,16 @@ impl TypedTool for AskUserTool {
         let tool_use_id = ctx.tool_use_id.clone();
         let subject = spec.title.clone();
         let shown = BlockKind::Form(spec.clone());
+        // Interrupted while the user was filling it: closed like a cancel.
+        let interrupted = {
+            let mut done = spec.clone();
+            done.state = FormState::Cancelled;
+            let text = format!(
+                "{}: the turn was interrupted while the form waited. {DO_NOT_RE_ASK}",
+                ToolError::Cancelled
+            );
+            ToolOutput::error(text).with_block_update(BlockKind::Form(done))
+        };
         let run = async move {
             let mut error = None;
             for _ in 0..MAX_ATTEMPTS {
@@ -183,8 +199,7 @@ impl TypedTool for AskUserTool {
                         done.state = FormState::Cancelled;
                         let why = reason.map(|r| format!(" ({r})")).unwrap_or_default();
                         let text = format!(
-                            "{}: the user closed the form without answering{why}. Do not ask \
-                             the same form again; go on without these answers or ask in prose.",
+                            "{}: the user closed the form without answering{why}. {DO_NOT_RE_ASK}",
                             ToolError::Cancelled
                         );
                         return Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)));
@@ -199,7 +214,9 @@ impl TypedTool for AskUserTool {
             );
             Ok(ToolOutput::error(text).with_block_update(BlockKind::Form(done)))
         };
-        Ok(PreparedCall::new(subject, run.boxed()).with_block_as(block_id, shown))
+        Ok(PreparedCall::new(subject, run.boxed())
+            .with_block_as(block_id, shown)
+            .with_interrupt_output(interrupted))
     }
 }
 
@@ -354,6 +371,19 @@ mod tests {
         let done = form(&output);
         assert_eq!(done.state, FormState::Cancelled);
         assert_eq!(done.answer, None);
+    }
+
+    #[tokio::test]
+    async fn an_interruption_closes_the_form_and_tells_the_model_not_to_re_ask() {
+        let port = Arc::new(ScriptedForm::default());
+        let call = tool(&port).prepare(input(), &ctx()).await.unwrap();
+        let output = call.on_interrupt.unwrap();
+        assert!(output.is_error);
+        let text = output.text_content();
+        assert!(text.starts_with("cancelled by user"), "{text}");
+        assert!(text.contains("Do not ask the same form again"), "{text}");
+        assert_eq!(form(&output).state, FormState::Cancelled);
+        assert!(port.requests().is_empty(), "nothing was asked");
     }
 
     #[tokio::test]

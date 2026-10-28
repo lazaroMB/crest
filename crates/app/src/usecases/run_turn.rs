@@ -57,7 +57,7 @@
 //! [`PermissionPolicy`]: domain::permission::PermissionPolicy
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
@@ -548,6 +548,7 @@ impl AgentService {
             }),
             context: None,
             cancel: opts.cancel,
+            running: Mutex::new(None),
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
@@ -665,6 +666,18 @@ struct TurnRun<'a> {
     /// Context reported by the last model call, for compaction.
     context: Option<ContextMark>,
     cancel: CancelToken,
+    /// The tool call being awaited, while it is. An interruption drops
+    /// the future at that await and finds the entry still here: it says
+    /// what to tell the model and how its extra block ends.
+    running: Mutex<Option<RunningCall>>,
+}
+
+/// A tool call at its await (see [`TurnRun::running`]).
+struct RunningCall {
+    /// The extra block the call added (its `Form`), if any.
+    extra: Option<Block>,
+    /// What the call prepared for an interruption, if anything.
+    on_interrupt: Option<ToolOutput>,
 }
 
 /// Context size reported by a model call.
@@ -778,15 +791,20 @@ impl TurnRun<'_> {
                     continue;
                 }
                 // Every tool use must get a result, or the history could
-                // not be sent to the model again.
+                // not be sent to the model again. The call that was running
+                // may have left what to say; the ones after it never started.
+                let mut interrupted = Some(self.interrupted_output());
                 let unanswered = std::iter::once(id).chain(tool_uses.map(|(id, ..)| id));
                 for id in unanswered {
                     if let Some(block_id) = blocks.tool_calls.get(&id) {
                         self.emit_cancelled(*block_id);
                     }
+                    let output = interrupted
+                        .take()
+                        .unwrap_or_else(|| ToolOutput::from(ToolError::Cancelled));
                     results.push(ContentPart::ToolResult {
                         tool_use_id: id,
-                        content: ToolOutput::from(ToolError::Cancelled).content,
+                        content: output.content,
                         is_error: true,
                     });
                 }
@@ -814,6 +832,35 @@ impl TurnRun<'_> {
             status: ToolStatus::Cancelled,
             output: Some(ToolError::Cancelled.to_string()),
         });
+    }
+
+    /// The result of the call that was running when the turn was
+    /// interrupted: what it prepared for that case, with its extra block
+    /// updated, or a plain cancellation.
+    fn interrupted_output(&self) -> ToolOutput {
+        let running = self
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(RunningCall {
+            extra,
+            on_interrupt: Some(mut output),
+        }) = running
+        else {
+            return ToolOutput::from(ToolError::Cancelled);
+        };
+        if let Some(kind) = output.block_update.take() {
+            self.emit(match extra {
+                Some(block) => DomainEvent::BlockUpdated {
+                    block: Block { id: block.id, kind },
+                },
+                None => DomainEvent::BlockAdded {
+                    block: Block::new(kind),
+                },
+            });
+        }
+        output
     }
 
     fn request(&self) -> LlmRequest {
@@ -1190,7 +1237,17 @@ impl TurnRun<'_> {
         let effect = tool.effect(&input);
         let mut prepared = match tool.prepare(input.clone(), ctx).await {
             Ok(prepared) => prepared,
-            Err(err) => return failed(err),
+            Err(err) => {
+                // The block keeps the input: a rejected call reads as what
+                // it asked, not as an empty one.
+                self.emit(DomainEvent::BlockUpdated {
+                    block: Block {
+                        id: block_id,
+                        kind: tool_call_kind(&ctx.tool_use_id, name, input, String::new()),
+                    },
+                });
+                return failed(err);
+            }
         };
         let summary = prepared.subject.clone();
         self.emit(DomainEvent::BlockUpdated {
@@ -1320,7 +1377,7 @@ impl TurnRun<'_> {
         &self,
         name: &str,
         input: &Value,
-        prepared: PreparedCall,
+        mut prepared: PreparedCall,
         block_id: BlockId,
         extra: Option<Block>,
     ) -> (ToolOutput, ToolStatus) {
@@ -1330,7 +1387,17 @@ impl TurnRun<'_> {
             output: None,
         });
         let started = Instant::now();
+        // Noted while awaited; an interruption drops this future here and
+        // `interrupted_output` finds the note.
+        *self.running.lock().unwrap_or_else(PoisonError::into_inner) = Some(RunningCall {
+            extra: extra.clone(),
+            on_interrupt: prepared.on_interrupt.take(),
+        });
         let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         // Masked before anyone reads it: the model, the timeline, the
         // store and the `after_tool` hooks.
         let mut output = self.service.tools.finish(output);

@@ -699,6 +699,41 @@ async fn a_disabled_redactor_masks_nothing() {
 }
 
 #[tokio::test]
+async fn a_call_whose_prepare_fails_keeps_its_input_in_the_block() {
+    use crate::testing::form::ScriptedForm;
+    use crate::tools::form::AskUserTool;
+
+    let port = Arc::new(ScriptedForm::default());
+    let input = json!({"title": "Go on?", "schema": {"properties": {"ok": {"type": "object"}}}});
+    let script = vec![
+        ScriptedResponse::tool_use("toolu_1", "ask_user", input.clone()),
+        ScriptedResponse::text("Vale."),
+    ];
+    let mut h = Harness::with(script, PermissionMode::Ask, move |tools| {
+        tools.register_typed(AskUserTool::new(port)).unwrap();
+    });
+    h.run("hola").await.unwrap();
+    let inputs: Vec<serde_json::Value> = h
+        .sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DomainEvent::BlockUpdated { block } => match block.kind {
+                BlockKind::ToolCall { input, .. } => Some(input),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(inputs, [input]);
+    let results = h.tool_results();
+    assert!(
+        results[0].1 && results[0].0.contains("nested objects"),
+        "{results:?}"
+    );
+}
+
+#[tokio::test]
 async fn ask_user_waits_in_its_form_block_and_shows_the_answer_there() {
     use crate::ports::form::FormResponse;
     use crate::testing::form::ScriptedForm;
