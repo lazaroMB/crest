@@ -4,7 +4,7 @@
 //! session is saved; `Ctrl+C` interrupts a hanging model.
 
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -3111,9 +3111,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn leader_u_takes_the_queued_prompt_back_and_leader_ctrl_c_interrupts(
-        cx: &mut TestAppContext,
-    ) {
+    fn leader_u_takes_the_queued_prompt_back_and_leader_ctrl_c_interrupts(cx: &mut TestAppContext) {
         let script = vec![
             ScriptedResponse::text("uno").hang_after(2),
             ScriptedResponse::text("dos"),
@@ -3133,8 +3131,9 @@ mod tests {
         });
         cx.simulate_keystrokes("ctrl-g ctrl-c");
         wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
-        h.session
-            .read_with(cx, |s, cx| assert_eq!(s.input().read(cx).text(cx), "segundo"));
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.input().read(cx).text(cx), "segundo")
+        });
     }
 
     #[gpui::test]
