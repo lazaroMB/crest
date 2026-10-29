@@ -76,6 +76,7 @@ use crate::args::Args;
 use crate::images::{ImageGuardSink, SharedGuard};
 use crate::mcp::{self, McpServers, TrustOptions};
 use crate::opencode::PlanAccess;
+use crate::permissions;
 use crate::plugin_trust;
 use crate::preferences::{self, Preferences};
 use crate::research;
@@ -788,6 +789,11 @@ pub async fn build_app(
             Err(err) => warnings.push(format!("could not resume the last session: {err}")),
         }
     }
+    // The project's rules join the restored session ones; "always in
+    // project" answers are written back to the same file.
+    let (project_rules, project_warnings) =
+        permissions::open_project_rules(root.as_path(), &permissions).await;
+    warnings.extend(project_warnings);
     let deps = AgentDeps {
         llm,
         events: Arc::clone(&events),
@@ -802,6 +808,7 @@ pub async fn build_app(
         Arc::clone(&permissions),
     );
     kit.system_prompt = system_prompt(&root);
+    kit.project_rules = Some(project_rules.clone());
     let implement = ImplementDeps::new(Arc::clone(&events), Arc::clone(&fs), Arc::clone(&shell))
         .with_agent(kit)
         .with_decider(decider.clone());
@@ -824,6 +831,7 @@ pub async fn build_app(
                 agent: deps.clone(),
                 tools: tools.clone(),
                 permissions: Arc::clone(&permissions),
+                project_rules: project_rules.clone(),
                 models: policy.clone(),
                 explore: ExplorePorts {
                     llm: Arc::clone(&deps.llm),
@@ -882,7 +890,8 @@ pub async fn build_app(
     let mut service = AgentService::new(deps, tools, policy, Arc::clone(&permissions))
         .with_system_prompt(prompt)
         .with_compaction(CompactionPolicy::default())
-        .with_decider(decider.clone());
+        .with_decider(decider.clone())
+        .with_project_rules(project_rules);
     if let Some(store) = &store {
         service = service.with_checkpoint(Arc::new(Checkpoint {
             store: Arc::clone(store),

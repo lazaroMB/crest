@@ -14,6 +14,7 @@ pub mod images;
 pub mod keys;
 pub mod mcp;
 pub mod opencode;
+pub mod permissions;
 pub mod plugin_trust;
 pub mod preferences;
 pub mod research;

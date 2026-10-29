@@ -43,6 +43,7 @@ use application::flows::research::session::{
 use application::flows::research::usage::StageUsage;
 use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
+use application::usecases::permissions::ProjectRules;
 use application::usecases::run_turn::{AgentDeps, SharedPermissions};
 use domain::model::ModelPolicy;
 use domain::permission::ToolEffect;
@@ -58,6 +59,8 @@ pub struct ResearchParts {
     pub tools: ToolRegistry,
     /// The chat's permissions.
     pub permissions: SharedPermissions,
+    /// Where the acting nodes' "always in project" answers are written.
+    pub project_rules: ProjectRules,
     /// Model selection.
     pub models: ModelPolicy,
     /// Ports of the read-only agent (with the web tools, when configured);
@@ -99,6 +102,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         agent,
         tools,
         permissions,
+        project_rules,
         models,
         mut explore,
         workspace,
@@ -122,7 +126,8 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         models.clone(),
         permissions,
     )
-    .with_system_prompt(system_prompt);
+    .with_system_prompt(system_prompt)
+    .with_project_rules(project_rules);
     let root = root.as_path().display().to_string();
     let deps = NodeDeps::new(llm, models, events)
         .with_agent(Arc::new(acting))
