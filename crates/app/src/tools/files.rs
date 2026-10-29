@@ -210,7 +210,8 @@ const GREP_DESCRIPTION: &str = "\
 Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by \
 its context lines as `path-line- text`; groups of lines are separated by `--`.
 - `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to \
-search for a literal string, and `ignore_case` for a case-insensitive search.
+search for a literal string, `ignore_case` for a case-insensitive search and `word` to match \
+whole words only.
 - Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).
 - Files ignored by .gitignore are skipped. Paths are relative to the workspace root.
 - Returns at most `limit` matches (default 100) with `context` lines around each (default 2; \

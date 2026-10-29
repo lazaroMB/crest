@@ -538,7 +538,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `list_files` | `glob?`, `limit` (500) | read |
 | `find_file` | `query`, `limit` (20) | read |
 | `tree` | `path?`, `depth` (3) | read |
-| `grep` | `pattern`, `path?`, `glob?`, `fixed`, `ignore_case`, `context` (2), `limit` (100) | read |
+| `grep` | `pattern`, `path?`, `glob?`, `fixed`, `ignore_case`, `word`, `context` (2), `limit` (100) | read |
 | `read_file` | `path`, `offset?`, `limit?` (2000 lines; without a range it does not read binaries or files over 2 MiB) | read |
 | `edit_file` | `path`, `old`, `new` (`old` must appear exactly once) | write |
 | `write_file` | `path`, `content` | write |

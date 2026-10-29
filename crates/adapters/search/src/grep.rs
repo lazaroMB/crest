@@ -112,6 +112,9 @@ pub async fn grep(search: &RipgrepSearch, request: GrepRequest) -> Result<GrepRe
     if request.ignore_case {
         spec = spec.arg("-i");
     }
+    if request.word {
+        spec = spec.arg("-w");
+    }
     spec = spec.arg("--").arg(&request.pattern);
     if let Some(path) = &path {
         spec = spec.arg(path.as_str());
@@ -430,6 +433,21 @@ mod tests {
             ..insensitive
         };
         assert_eq!(grep(&search, in_dir).await.unwrap().hits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn word_matches_whole_words_only() {
+        let ws = ws();
+        ws.write("src/c.rs", "fn one_more() {}\n");
+        let search = ws.search();
+        let words = GrepRequest {
+            word: true,
+            ..request("one")
+        };
+        let found = grep(&search, words).await.unwrap();
+        assert_eq!(lines(&found), [("src/a.rs", 1, "fn one() {}")]);
+        let any = grep(&search, request("one")).await.unwrap();
+        assert_eq!(any.hits.len(), 2);
     }
 
     #[tokio::test]
