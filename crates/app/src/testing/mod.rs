@@ -8,6 +8,7 @@ pub mod form;
 pub mod formats;
 pub mod fs;
 pub mod llm;
+pub mod permissions;
 pub mod projects;
 pub mod sim;
 pub mod system;

@@ -104,11 +104,13 @@ impl TypedTool for FakeRun {
             cwd: ".".into(),
         };
         let command = input.command.clone();
+        let input_command = input.command.clone();
         Ok(PreparedCall::new(
             input.command,
             async move { Ok(ToolOutput::text(format!("ran {command}"))) }.boxed(),
         )
-        .with_preview(preview))
+        .with_preview(preview)
+        .with_argv(vec![input_command]))
     }
 }
 
@@ -259,6 +261,31 @@ async fn approve_always_remembers_the_rule() {
     assert_eq!(h.approval.requests().len(), 1);
     let permissions = h.service.permissions().lock().unwrap();
     assert_eq!(permissions.rules, [rule]);
+}
+
+#[tokio::test]
+async fn command_rules_match_the_argv_of_the_call() {
+    // The subject `my tool` is unquoted, so only the argv `["my tool"]`
+    // matches the rule; the subject would be compared as `'my tool'`.
+    let (mut h, _) = harness(
+        PermissionMode::Ask,
+        vec![
+            ScriptedResponse::tool_use("toolu_1", "run", json!({ "command": "my tool" })),
+            ScriptedResponse::text("hecho"),
+        ],
+    );
+    h.service
+        .permissions()
+        .lock()
+        .unwrap()
+        .remember(PermissionRule::new(
+            "run",
+            RuleMatcher::Command(vec!["my tool".into()]),
+            RuleDecision::AllowAlways,
+        ));
+    h.run("prueba").await.unwrap();
+    assert!(h.approval.requests().is_empty());
+    assert_eq!(h.tool_results(), [("ran my tool".to_owned(), false)]);
 }
 
 #[tokio::test]

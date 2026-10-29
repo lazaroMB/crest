@@ -20,7 +20,10 @@ pub struct StoredSession {
     pub session: Session,
     /// Blocks of the timeline, in display order.
     pub timeline: Vec<Block>,
-    /// "Allow always" rules granted in the workspace.
+    /// Rules granted during the session. Only those with
+    /// [`RuleScope::Session`](domain::permission::RuleScope::Session) are
+    /// stored (adapters drop the others): project rules live in the
+    /// workspace's permissions file.
     #[serde(default)]
     pub permission_rules: Vec<PermissionRule>,
     /// Lines sent from the prompt, oldest first, which `Up` brings back.
