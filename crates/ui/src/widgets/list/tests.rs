@@ -143,3 +143,53 @@ fn follow_keeps_the_tail_in_view_of_a_long_list(cx: &mut TestAppContext) {
     click(cx, "filter-list-follow");
     assert!(!view.read_with(cx, |v, _| v.follow()));
 }
+
+#[test]
+fn steps_stop_at_the_ends_and_restart_when_hidden() {
+    let visible = [2, 5, 7];
+    assert_eq!(step(&visible, None, Step::Next), Some(2));
+    assert_eq!(step(&visible, None, Step::Prev), Some(7));
+    assert_eq!(step(&visible, Some(5), Step::Next), Some(7));
+    assert_eq!(step(&visible, Some(7), Step::Next), Some(7));
+    assert_eq!(step(&visible, Some(2), Step::Prev), Some(2));
+    assert_eq!(step(&visible, Some(3), Step::Next), Some(2), "hidden");
+    assert_eq!(step(&visible, Some(5), Step::Last), Some(7));
+    assert_eq!(step(&[], None, Step::Next), None);
+}
+
+#[gpui::test]
+fn the_arrows_move_the_selection_in_view_and_enter_opens_it(cx: &mut TestAppContext) {
+    let (view, cx) = host(cx, spec(200, false));
+    click(cx, "filter-list-item-0");
+    view.update(cx, |v, cx| v.toggle_item(0, cx));
+    for _ in 0..30 {
+        cx.simulate_keystrokes("down");
+    }
+    draw(cx);
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(30));
+    let body = cx.debug_bounds("filter-list-body").expect("body");
+    let row = cx
+        .debug_bounds("filter-list-item-30")
+        .expect("the selected row is drawn");
+    assert!(
+        row.top() >= body.top() && row.bottom() <= body.bottom() + px(1.),
+        "row {row:?} in {body:?}"
+    );
+    cx.simulate_keystrokes("enter");
+    assert!(view.read_with(cx, |v, _| v.is_open(30)), "Enter opens it");
+    cx.simulate_keystrokes("home");
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(0));
+}
+
+#[gpui::test]
+fn down_in_the_filter_goes_to_the_rows(cx: &mut TestAppContext) {
+    let (view, cx) = host(cx, spec(10, false));
+    click(cx, "filter-list-input");
+    cx.simulate_keystrokes("down");
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(0));
+    cx.update(|window, cx| {
+        assert!(view.read(cx).focus_handle().is_focused(window));
+    });
+    cx.simulate_keystrokes("down");
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(1));
+}
