@@ -3111,6 +3111,33 @@ mod tests {
     }
 
     #[gpui::test]
+    fn leader_u_takes_the_queued_prompt_back_and_leader_ctrl_c_interrupts(
+        cx: &mut TestAppContext,
+    ) {
+        let script = vec![
+            ScriptedResponse::text("uno").hang_after(2),
+            ScriptedResponse::text("dos"),
+        ];
+        let (h, cx) = harness(script, cx);
+        send("primero", cx);
+        let llm = h.llm.clone();
+        wait_until(&h, cx, "the first turn to reach the model", move |_, _| {
+            llm.remaining() == 1
+        });
+        send("segundo", cx);
+        h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 1));
+        cx.simulate_keystrokes("ctrl-g u");
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.queued(), 0);
+            assert_eq!(s.input().read(cx).text(cx), "segundo");
+        });
+        cx.simulate_keystrokes("ctrl-g ctrl-c");
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+        h.session
+            .read_with(cx, |s, cx| assert_eq!(s.input().read(cx).text(cx), "segundo"));
+    }
+
+    #[gpui::test]
     fn leader_p_cycles_the_permission_mode(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         cx.simulate_keystrokes("ctrl-g p");
