@@ -286,7 +286,8 @@ pub struct App {
     /// The Lua host that runs the callbacks of keymaps and commands, if Lua
     /// started.
     pub plugins: Option<Arc<dyn PluginHostPort>>,
-    /// Keymaps of `init.lua`, in registration order.
+    /// Keymaps of `init.lua` and `keymap.toml`, in the order to apply
+    /// them.
     pub keymaps: Vec<KeymapSpec>,
     /// Commands of `init.lua` (`:name args`).
     pub commands: Vec<CommandSpec>,
@@ -539,8 +540,12 @@ pub async fn build_app(
         .unwrap_or_else(|| default_sources(root.as_path()));
     let host = plugins.as_deref().map(|h| h as &dyn PluginHostPort);
     let config_sources = sources.clone();
-    let (loaded, config_warnings) = startup::load_config(host, sources).await;
+    let (mut loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
+    let (keymaps, keymap_warnings) =
+        crate::keys::with_keymap_files(std::mem::take(&mut loaded.keymaps), &config_sources);
+    loaded.keymaps = keymaps;
+    warnings.extend(keymap_warnings);
     let plugin_trust = plugin_trust::TrustOptions {
         store: overrides
             .plugin_trust_path

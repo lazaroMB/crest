@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use application::keymap::layers::{GLOBAL_TOML, WORKSPACE_TOML, source_label};
 use application::keymap::{Action, KeymapEntry, parse_keys};
 use application::ports::mcp::{McpServerState, McpServerStatus, parse_qualified_name};
 use application::ports::plugin::{
@@ -352,14 +353,24 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             .push(format!("command :{}", command.name));
     }
     for keymap in &app.keymaps {
+        // The keymap.toml files are not plugins; the Keys section shows
+        // what they map.
+        if keymap.plugin == GLOBAL_TOML || keymap.plugin == WORKSPACE_TOML {
+            continue;
+        }
         let plugin = if keymap.plugin.is_empty() {
             GLOBAL_CONFIG
         } else {
             &keymap.plugin
         };
+        let what = if keymap.action == KeyAction::Unmap {
+            "unmap"
+        } else {
+            "keymap"
+        };
         entry(&mut rows, plugin)
             .adds
-            .push(format!("keymap {}", keymap.lhs));
+            .push(format!("{what} {}", keymap.lhs));
     }
     for hook in &app.hooks {
         let kind = match hook.kind {
@@ -505,14 +516,8 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
     let (keymap, _) = crate::keys::keymap(&app.keymaps, &app.options);
     let leader = keymap.leader().to_owned();
     let keys = key_rows(&keymap, |entry| {
-        mapping_of(entry, &app.keymaps, &leader).map(|spec| {
-            let plugin = if spec.plugin.is_empty() {
-                GLOBAL_CONFIG.to_owned()
-            } else {
-                spec.plugin.clone()
-            };
-            (spec.description.clone(), plugin)
-        })
+        mapping_of(entry, &app.keymaps, &leader)
+            .map(|spec| (spec.description.clone(), source_label(&spec.plugin)))
     });
 
     let registry = app.service.tools();

@@ -1,48 +1,57 @@
 //! The keymap of the window: the builtin one with the mappings of
-//! `init.lua` (`app.keymap.set`) on top, and `app.opt.timeoutlen`.
+//! `init.lua` (`app.keymap.set`/`del`) and of `keymap.toml` on top, and
+//! `app.opt.timeoutlen`.
+//!
+//! The rules live in [`application::keymap::layers`]; this module reads the
+//! `keymap.toml` files next to the `init.lua` files.
 
+use std::path::Path;
 use std::time::Duration;
 
-use application::keymap::{Action, KeyCode, Keymap, default_keymap, parse_keys};
-use application::ports::plugin::{AppOptions, KeyAction, KeymapSpec};
+use application::keymap::layers::{
+    KEYMAP_FILE, KeymapLayer, build_keymap, layered, parse_keymap_toml,
+};
+use application::keymap::{Action, Keymap, Platform};
+use application::ports::plugin::{AppOptions, ConfigSources, KeymapSpec};
 
-/// The builtin keymap with `specs` applied in order (a later mapping
-/// replaces an earlier one with the same keys). `<leader>` in `specs`
-/// expands to `app.opt.leader` when set; the builtin mappings keep the
-/// default leader. Invalid mappings, and mappings that start with a plain
-/// printable key (it would be typed into the prompt), are skipped with a
-/// warning.
+/// The builtin keymap with `specs` applied in order (see
+/// [`application::keymap::layers::build_keymap`]): `app.opt.leader` moves
+/// the builtin `<leader>` mappings too. Returns the warnings to show.
 #[must_use]
 pub fn keymap(specs: &[KeymapSpec], options: &AppOptions) -> (Keymap<Action>, Vec<String>) {
-    let mut keymap = default_keymap();
-    let mut warnings = Vec::new();
-    if let Some(leader) = &options.leader
-        && let Err(err) = keymap.set_leader(leader)
-    {
-        warnings.push(format!("invalid app.opt.leader `{leader}`: {err}"));
-    }
-    for spec in specs {
-        let action = match &spec.action {
-            KeyAction::Builtin(name) => Action::Builtin(name.clone()),
-            KeyAction::Callback(id) => Action::Callback(id.0),
-        };
-        match parse_keys(&spec.lhs, keymap.leader()) {
-            Ok(keys) if is_typed(keys[0]) => warnings.push(format!(
-                "keymap `{}` ignored: it starts with a key the prompt types; use a chord \
-                 (`<C-…>`, `<F…>`) or `<leader>`",
-                spec.lhs
-            )),
-            Ok(keys) => keymap.set_keys(&keys, action),
-            Err(err) => warnings.push(format!("keymap `{}` ignored: {err}", spec.lhs)),
-        }
-    }
-    (keymap, warnings)
+    build_keymap(specs, options.leader.as_deref(), Platform::current())
 }
 
-/// Whether `key` would be typed into the prompt: a character without Ctrl,
-/// Alt or Cmd.
-fn is_typed(key: application::keymap::Key) -> bool {
-    matches!(key.code, KeyCode::Char(_)) && !(key.mods.ctrl || key.mods.alt || key.mods.cmd)
+/// `lua` with the mappings of the `keymap.toml` next to each `init.lua` of
+/// `sources`, in the order to apply them, and the problems found in those
+/// files. A missing file is fine.
+#[must_use]
+pub fn with_keymap_files(
+    lua: Vec<KeymapSpec>,
+    sources: &ConfigSources,
+) -> (Vec<KeymapSpec>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut read = |init: Option<&Path>, layer: KeymapLayer| {
+        let Some(path) = init.and_then(Path::parent).map(|dir| dir.join(KEYMAP_FILE)) else {
+            return Vec::new();
+        };
+        let file = path.display().to_string();
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                let (specs, problems) = parse_keymap_toml(&text, &file, layer);
+                warnings.extend(problems);
+                specs
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => {
+                warnings.push(format!("{file}: cannot read the file: {err}"));
+                Vec::new()
+            }
+        }
+    };
+    let global = read(sources.global.as_deref(), KeymapLayer::Global);
+    let workspace = read(sources.workspace.as_deref(), KeymapLayer::Workspace);
+    (layered(lua, global, workspace), warnings)
 }
 
 /// `app.opt.timeoutlen`, if set.
@@ -54,7 +63,7 @@ pub fn timeoutlen(options: &AppOptions) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use application::keymap::{DEFAULT_LEADER, Key, parse_keys};
-    use application::ports::plugin::CallbackId;
+    use application::ports::plugin::{CallbackId, KeyAction};
 
     use super::*;
 
@@ -110,6 +119,45 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         let r = parse_keys("<C-,>r", DEFAULT_LEADER).unwrap();
         assert_eq!(lookup(&keymap, &r), Some(Action::builtin("picker.files")));
+        // The builtin mappings moved with the leader.
+        let h = parse_keys("<C-,>h", DEFAULT_LEADER).unwrap();
+        assert_eq!(lookup(&keymap, &h), Some(Action::builtin("help.open")));
+        let old = parse_keys("<C-g>h", DEFAULT_LEADER).unwrap();
+        assert_eq!(lookup(&keymap, &old), None);
         assert_eq!(timeoutlen(&options), Some(Duration::from_millis(300)));
+    }
+
+    #[test]
+    fn keymap_files_sit_next_to_each_init_lua() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("config");
+        let workspace = dir.path().join("ws").join(".crest");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(
+            global.join(KEYMAP_FILE),
+            "[[bind]]\nkeys = \"<C-k>\"\naction = \"help.open\"\n",
+        )
+        .unwrap();
+        std::fs::write(workspace.join(KEYMAP_FILE), "[[unbind]\n").unwrap();
+        let sources = ConfigSources {
+            global: Some(global.join("init.lua")),
+            workspace: Some(workspace.join("init.lua")),
+        };
+        let lua = vec![spec("<C-k>", KeyAction::Builtin("panel.tree".into()))];
+        let (specs, warnings) = with_keymap_files(lua, &sources);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("the file is ignored"), "{warnings:?}");
+        let order: Vec<&str> = specs.iter().map(|s| s.plugin.as_str()).collect();
+        assert_eq!(order, ["global keymap.toml", "config"], "Lua wins");
+        let (keymap, _) = keymap(&specs, &AppOptions::default());
+        let k = parse_keys("<C-k>", DEFAULT_LEADER).unwrap();
+        assert_eq!(lookup(&keymap, &k), Some(Action::builtin("panel.tree")));
+        // No files: nothing changes.
+        let none = ConfigSources::default();
+        assert_eq!(
+            with_keymap_files(Vec::new(), &none),
+            (Vec::new(), Vec::new())
+        );
     }
 }
