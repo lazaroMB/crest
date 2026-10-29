@@ -540,13 +540,17 @@ make run-headless PROMPT="list the project's TODOs" WORKSPACE=~/src/api
 Each approval shows the diff or the command and asks:
 
 ```text
-Allow edit_file src/lib.rs? [y]es / [a]lways / [n]o:
+Allow edit_file src/lib.rs? [y]es / [s]ession edit_file(src/*) / [p]roject edit_file(src/*) / [e]dits (writes only) / [n]o:
 ```
+
+The rule after `[s]ession` and `[p]roject` is the one crest proposes for that call, and it cannot be changed here: `cargo test *` for `cargo test -p ui`, the file's folder (`src/*`) for an edit, the exact command for shells and interpreters (`sh -c …`, `python -c …`, `npx …`), any input for an MCP or plugin tool. `[e]dits` only appears for writes.
 
 | Answer | Effect |
 | --- | --- |
-| `y`, `yes` (Spanish aliases: `s`, `si`, `sí`) | Approve. |
-| `a`, `always` (alias: `siempre`) | Always approve (for this exact subject). |
+| `y`, `yes` (Spanish aliases: `si`, `sí`) | Approve once. |
+| `s`, `session`, or `a`, `always` (aliases: `sesion`, `sesión`, `siempre`) | Approve and allow the shown rule for the rest of the session. |
+| `p`, `project` (alias: `proyecto`) | Approve and allow the shown rule in this workspace for good: it is written to `.crest/permissions.local.toml`. |
+| `e`, `edits` (alias: `ediciones`) | Approve and switch the session to `auto-edit` mode: the next edits are not asked. Commands still are. |
 | `n`, `no`, or an empty line | Reject. |
 
 Any other answer asks again. If stdin closes, the action is rejected. With `--yes` everything is approved and logged as `approved by --yes: <tool> <subject>`.
