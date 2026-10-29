@@ -707,6 +707,8 @@ pub fn view(id: BlockId, spec: &FlameSpec, window: &mut Window, cx: &mut App) ->
     let view = super::block_state(id, window, cx, |window, cx| {
         FlameView::new(spec, window, cx)
     });
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

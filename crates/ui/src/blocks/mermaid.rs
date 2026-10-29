@@ -341,6 +341,8 @@ pub fn mermaid_view(
     let view = super::block_state(entry.block.id, window, cx, |_, cx| {
         MermaidView::new(&spec.source, cx)
     });
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(entry.block.id, &focus, cx);
     view.update(cx, |view, cx| {
         view.sync(&spec.source, entry.alt_view, cx);
     });

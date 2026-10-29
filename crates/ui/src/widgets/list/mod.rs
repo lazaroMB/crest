@@ -689,6 +689,8 @@ impl Render for ListView {
 pub fn view(id: BlockId, spec: &ListSpec, window: &mut Window, cx: &mut App) -> Entity<ListView> {
     let view =
         crate::blocks::block_state(id, window, cx, |window, cx| ListView::new(spec, window, cx));
+    let focus = view.read(cx).focus_handle.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

@@ -924,6 +924,8 @@ pub fn view(
     let view = crate::blocks::block_state(id, window, cx, |window, cx| {
         GraphView::new(spec, window, cx)
     });
+    let focus = view.read(cx).focus_handle.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, window, cx));
     view
 }

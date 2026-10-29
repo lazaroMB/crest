@@ -16,7 +16,9 @@
 //! focused element first (a block widget, the outline menu): the session
 //! hands them over as a [`DeferredKey`] and only when nothing in the
 //! timeline takes them do they fall back to the prompt (`Esc` focuses it,
-//! a letter is typed into it, a vim key moves the selection).
+//! a letter is typed into it, a vim key moves the selection). `Esc` that a
+//! block widget leaves gives the focus back to the timeline first
+//! ([`TimelineView::focus_widget`] is the way in).
 
 use application::keymap::{Action, Key, KeyCode};
 use application::ports::events::DomainEvent;
@@ -268,6 +270,13 @@ impl TimelineView {
             self.handle_action(&Action::builtin(action), cx);
             return;
         }
+        // `Esc` in a block widget gives the keys back to the timeline;
+        // only from the timeline itself does it go on to the prompt.
+        if deferred.key == Key::plain(KeyCode::Esc) && !self.focus_handle.is_focused(window) {
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
+            return;
+        }
         let fallback = deferred.fallback;
         window.defer(cx, fallback);
     }
@@ -404,6 +413,22 @@ impl TimelineView {
                 self.list.remeasure_items(ix..ix + 1);
             }
         }
+    }
+
+    /// `block.focus_widget`: the widget of the selected block (the last
+    /// one when none is) takes the keys; `Esc` gives them back to the
+    /// timeline. Returns false when the block has no keys of its own.
+    pub fn focus_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.select_last_if_none(cx);
+        let Some(entry) = self.state.selected_entry() else {
+            return false;
+        };
+        let Some(handle) = crate::blocks::block_focus(entry.block.id, cx) else {
+            return false;
+        };
+        window.focus(&handle, cx);
+        cx.notify();
+        true
     }
 
     /// Whether the menu of the user's questions is open.

@@ -409,6 +409,8 @@ pub fn image_view(
     let view = super::block_state(id, window, cx, |_, cx| {
         ImageView::new(data, media_type, alt, fit, cx)
     });
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(data, media_type, alt, fit, cx));
     view
 }

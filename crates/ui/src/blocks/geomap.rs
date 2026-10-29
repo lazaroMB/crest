@@ -871,6 +871,8 @@ pub fn view(
     cx: &mut App,
 ) -> gpui::Entity<MapView> {
     let view = super::block_state(id, window, cx, |_, cx| MapView::new(spec, cx));
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

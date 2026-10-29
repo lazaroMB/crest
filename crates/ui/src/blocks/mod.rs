@@ -64,8 +64,8 @@ use std::collections::HashMap;
 
 use domain::block::{BlockId, BlockKind};
 use gpui::{
-    AnyElement, AnyEntity, App, AppContext as _, Context, Entity, Global, IntoElement as _,
-    ParentElement as _, Styled as _, Window, div,
+    AnyElement, AnyEntity, App, AppContext as _, Context, Entity, FocusHandle, Global,
+    IntoElement as _, ParentElement as _, Styled as _, WeakFocusHandle, Window, div,
 };
 use gpui_component::ActiveTheme as _;
 
@@ -174,6 +174,30 @@ pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Opt
         .get(&key)
         .cloned()
         .and_then(|any| any.downcast::<T>().ok())
+}
+
+/// Focus handles of the block widgets with keys of their own, by block.
+#[derive(Default)]
+struct BlockFocus(HashMap<BlockId, WeakFocusHandle>);
+
+impl Global for BlockFocus {}
+
+/// Remembers `handle` as the keyboard of the widget of block `id`, for
+/// `block.focus_widget` ([`block_focus`]).
+pub(crate) fn remember_focus(id: BlockId, handle: &FocusHandle, cx: &mut App) {
+    let known = cx.default_global::<BlockFocus>();
+    if known.0.get(&id).and_then(WeakFocusHandle::upgrade).as_ref() != Some(handle) {
+        known.0.insert(id, handle.downgrade());
+    }
+}
+
+/// The focus handle of the widget of block `id`, if it has keys of its own
+/// and was drawn.
+pub fn block_focus(id: BlockId, cx: &App) -> Option<FocusHandle> {
+    cx.try_global::<BlockFocus>()?
+        .0
+        .get(&id)
+        .and_then(WeakFocusHandle::upgrade)
 }
 
 /// A host that counts the wheel events its child lets through: a block
