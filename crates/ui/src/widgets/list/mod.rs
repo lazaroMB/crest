@@ -28,10 +28,9 @@ use domain::widget::list::{LevelClass, ListSpec, value_text};
 use gpui::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, ElementId, Entity, EventEmitter,
     FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Render,
-    ScrollStrategy, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    ParentElement as _, Render, ScrollStrategy, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window,
+    div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -189,11 +188,7 @@ impl ListView {
     /// it into view and tells the parent. Follow mode stops.
     pub fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.follow = false;
-        if let Some(line) = self
-            .lines
-            .iter()
-            .position(|line| *line == Line::Item(ix))
-        {
+        if let Some(line) = self.lines.iter().position(|line| *line == Line::Item(ix)) {
             self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
         }
         if self.selected != Some(ix) {
@@ -211,7 +206,8 @@ impl ListView {
         let key = event.keystroke.key.as_str();
         if !self.focus_handle.is_focused(window) {
             // `↓` in the filter goes down to the rows.
-            let in_filter = gpui::Focusable::focus_handle(self.input.read(cx), cx).is_focused(window);
+            let in_filter =
+                gpui::Focusable::focus_handle(self.input.read(cx), cx).is_focused(window);
             if in_filter && key == "down" {
                 window.focus(&self.focus_handle, cx);
                 if let Some(ix) = step(&self.visible, self.selected, Step::First) {

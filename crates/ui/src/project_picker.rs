@@ -27,7 +27,8 @@ use application::usecases::project_picker::{filter_dirs, split_typed_path};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    px,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -669,7 +670,7 @@ mod tests {
     fn the_chosen_row_stays_in_view(cx: &mut TestAppContext) {
         let mut dirs = InMemoryDirs::new("/home/u");
         for n in 0..40 {
-            dirs = dirs.with_dir(&format!("/home/u/dir_{n:02}"));
+            dirs = dirs.with_dir(format!("/home/u/dir_{n:02}"));
         }
         let (view, cx, _) = picker(dirs, cx);
         assert_eq!(names(&view, cx).len(), 40);

@@ -538,8 +538,8 @@ impl TimelineView {
                     crate::keyscroll::ensure_visible(&self.outline_scroll, row);
                 }
                 // Asked again until the menu has been laid out once.
-                self.outline_reveal = active_row.is_some()
-                    && !crate::keyscroll::laid_out(&self.outline_scroll);
+                self.outline_reveal =
+                    active_row.is_some() && !crate::keyscroll::laid_out(&self.outline_scroll);
                 if self.outline_reveal {
                     cx.notify();
                 }

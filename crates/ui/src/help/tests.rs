@@ -223,7 +223,10 @@ fn keys_read_as_a_person_types_them() {
     assert_eq!(label("<leader>G"), "Ctrl+G G");
 
     let keymap = default_keymap();
-    assert_eq!(action_keys(&keymap, "picker.files").as_deref(), Some("Ctrl+G ff"));
+    assert_eq!(
+        action_keys(&keymap, "picker.files").as_deref(),
+        Some("Ctrl+G ff")
+    );
     assert_eq!(action_keys(&keymap, "help.open").as_deref(), Some("F1"));
     assert_eq!(action_keys(&keymap, "nothing.here"), None);
 }

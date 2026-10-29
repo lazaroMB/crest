@@ -3471,7 +3471,11 @@ mod tests {
             assert!(l.is_open(1), "and so does Enter");
         });
         h.session.read_with(cx, |s, cx| {
-            assert_eq!(s.input().read(cx).text(cx), "", "nothing reached the prompt");
+            assert_eq!(
+                s.input().read(cx).text(cx),
+                "",
+                "nothing reached the prompt"
+            );
         });
     }
 
@@ -3535,14 +3539,25 @@ mod tests {
                 .iter()
                 .find(|row| row.name == "picker.files")
                 .expect("listed");
-            assert!(files.description.ends_with("(Ctrl+G ff)"), "{}", files.description);
+            assert!(
+                files.description.ends_with("(Ctrl+G ff)"),
+                "{}",
+                files.description
+            );
         });
         // Running it from the palette opens the picker.
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
-        assert_eq!(picker.read_with(cx, |p, _| p.mode()), Some(PickerMode::Files));
-        h.session.update_in(cx, |s, window, cx| s.command("picker.grep", window, cx));
-        assert_eq!(picker.read_with(cx, |p, _| p.mode()), Some(PickerMode::Grep));
+        assert_eq!(
+            picker.read_with(cx, |p, _| p.mode()),
+            Some(PickerMode::Files)
+        );
+        h.session
+            .update_in(cx, |s, window, cx| s.command("picker.grep", window, cx));
+        assert_eq!(
+            picker.read_with(cx, |p, _| p.mode()),
+            Some(PickerMode::Grep)
+        );
         // `Alt+…` flips the options without going to the keymap or being typed.
         cx.simulate_keystrokes("alt-c alt-w alt-p");
         picker.read_with(cx, |p, cx| {
@@ -3561,7 +3576,8 @@ mod tests {
         cx.run_until_parked();
         cx.executor().advance_clock(crate::picker::SEARCH_DEBOUNCE);
         cx.run_until_parked();
-        cx.executor().advance_clock(crate::picker::preview::PREVIEW_DEBOUNCE);
+        cx.executor()
+            .advance_clock(crate::picker::preview::PREVIEW_DEBOUNCE);
         cx.run_until_parked();
         picker.read_with(cx, |p, _| {
             let preview = p.preview().expect("previewed");

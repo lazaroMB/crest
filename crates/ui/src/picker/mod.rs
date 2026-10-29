@@ -1591,7 +1591,9 @@ mod tests {
             footer_keys(PickerMode::Files, true),
             "↑↓ navigate · Enter insert · Esc close · Alt+P preview"
         );
-        assert!(footer_keys(PickerMode::Grep, false).ends_with("Alt+C case · Alt+R regex · Alt+W word"));
+        assert!(
+            footer_keys(PickerMode::Grep, false).ends_with("Alt+C case · Alt+R regex · Alt+W word")
+        );
     }
 
     #[gpui::test]
@@ -1643,7 +1645,10 @@ mod tests {
             assert_eq!(preview.lines, ["fn main() {", "    run();", "}"]);
             assert_eq!(preview.start_line, 1);
             assert_eq!(preview.match_index(), Some(1));
-            assert_eq!(preview.column_range, Some(ColumnRange { start: 4, end: 10 }));
+            assert_eq!(
+                preview.column_range,
+                Some(ColumnRange { start: 4, end: 10 })
+            );
         });
         cx.draw(
             gpui::point(px(0.), px(0.)),

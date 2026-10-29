@@ -1089,29 +1089,34 @@ impl InputView {
         let selected = self.palette_selected.min(total - 1);
         let top = self.palette_top;
         let note = window_note(top, total).unwrap_or_default();
-        let items = rows.iter().enumerate().skip(top).take(PALETTE_ROWS).map(|(ix, row)| {
-            let mut item = h_flex()
-                .id(("palette", ix))
-                .gap_3()
-                .px_2()
-                .child(
-                    div()
-                        .text_color(theme.primary)
-                        .child(SharedString::from(row.usage.clone())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(row.description.clone())),
-                );
-            if ix == selected {
-                item = item.bg(theme.list_active).rounded_sm();
-            }
-            item
-        });
+        let items = rows
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(PALETTE_ROWS)
+            .map(|(ix, row)| {
+                let mut item = h_flex()
+                    .id(("palette", ix))
+                    .gap_3()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_color(theme.primary)
+                            .child(SharedString::from(row.usage.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(row.description.clone())),
+                    );
+                if ix == selected {
+                    item = item.bg(theme.list_active).rounded_sm();
+                }
+                item
+            });
         Some(
             v_flex()
                 .id("command-palette")
@@ -1660,7 +1665,10 @@ mod tests {
     #[test]
     fn popup_windows_say_what_is_left_and_scroll_with_the_choice() {
         assert_eq!(window_note(0, 8), None);
-        assert_eq!(window_note(0, 20).as_deref(), Some(" · 1–8 of 20 · 12 more"));
+        assert_eq!(
+            window_note(0, 20).as_deref(),
+            Some(" · 1–8 of 20 · 12 more")
+        );
         assert_eq!(window_note(12, 20).as_deref(), Some(" · 13–20 of 20"));
         // Down by 3: the choice at 1 is pulled to the window's first row.
         assert_eq!(scroll_window(0, 1, 3, 20), (3, 3));
