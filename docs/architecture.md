@@ -61,7 +61,7 @@ flowchart TB
 | `adapter-mcp` | `crates/adapters/mcp` | `rmcp` client (stdio and streamable HTTP). |
 | `adapter-export` | `crates/adapters/export` | `SimExport`: the self-contained `board.html` replay of a simulated board, with three.js r160 vendored in `vendor/three/` (MIT) and inlined. |
 | `adapter-compute` | `crates/adapters/compute` | `StatsEngine`: crest-stats (descriptives, t / rank / χ² / Fisher tests, OLS, correlation with assumption checks and misuse warnings, on `statrs`) and crest-calc (`numbat` unit sheets and conversions); every result is a `Computed` envelope with BLAKE3 input hashes and reproduce lines. Synchronous and CPU-bound: callers run it on a blocking thread. |
-| `adapter-formats` | `crates/adapters/formats` | `Formats`: JUnit XML (`quick-xml`), SARIF 2.1.0 (own serde structs), WaveDrom to SVG (`wavedrom`), CSV/TSV/JSON-lines/Parquet previews and profiles (`parquet` record API, no arrow) and 2D molecules from SMILES (`chematic`). |
+| `adapter-formats` | `crates/adapters/formats` | `Formats`: JUnit XML (`quick-xml`), SARIF 2.1.0 (own serde structs), WaveDrom to SVG (`wavedrom`), CSV/TSV/JSON-lines/Parquet previews and profiles (`parquet` record API, no arrow), 2D molecules from SMILES (`chematic`), traces from OTLP/Jaeger/Zipkin JSON, profiles from folded stacks and pprof (own `prost` structs, `flate2`) and logs from JSON lines, logfmt and text. |
 | `adapter-telemetry` | `crates/adapters/telemetry` | `tracing` spans and, with the `langfuse` feature, OTLP export to Langfuse. |
 | `ui` | `crates/ui` | The GPUI window and `gpui-component`: virtualized timeline, blocks, modal input, status bar, tree, pickers, approval dialog, plugin modals, the simulation board (`sysboard/`) and its offscreen wgpu renderer (`render3d/`). |
 | `crest` | `crates/bin` | Composition root: CLI, adapter construction, window or headless. |
@@ -83,7 +83,7 @@ flowchart TB
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
 | `ThemeSourcePort` | `ports/theme.rs` | `list`, `load(name)` (sync; theme files are small and local) | `adapter_lua::LuaThemeSource` (`<config dir>/themes/*.lua`, each in a fresh sandbox) | `theme::FakeThemes` |
 | `ComputePort` | `ports/compute.rs` | `describe`, `test`, `regress`, `correlate`, `calc`, `convert`, `recompute`, `run` (sync, CPU-bound) | `adapter_compute::StatsEngine` | `compute::FakeCompute` |
-| `FormatsPort` | `ports/formats.rs` | `parse_test_report`, `parse_sarif`, `render_wavedrom`, `preview_dataset`, `depict_molecule` (sync) | `adapter_formats::Formats` | `formats::FakeFormats` |
+| `FormatsPort` | `ports/formats.rs` | `parse_test_report`, `parse_sarif`, `render_wavedrom`, `preview_dataset`, `depict_molecule`, `parse_trace`, `parse_profile`, `parse_logs` (sync) | `adapter_formats::Formats` | `formats::FakeFormats` |
 | `FormPort` | `ports/form.rs` | `ask(FormRequest) → FormResponse` | `ui::form::UiForm` (window), `crest::headless::StdinForm` (terminal) | `form::ScriptedForm` |
 | `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |

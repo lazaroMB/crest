@@ -8,17 +8,29 @@
 //! - WaveDrom WaveJSON timing diagrams to SVG ([`wave`], `wavedrom`);
 //! - dataset previews of CSV, TSV, JSON lines and Parquet ([`dataset`],
 //!   `parquet` without arrow);
-//! - 2D molecules from SMILES ([`molecule`], `chematic`).
+//! - 2D molecules from SMILES ([`molecule`], `chematic`);
+//! - distributed traces from OTLP, Jaeger and Zipkin JSON ([`trace`],
+//!   serde);
+//! - profiles from folded stacks and pprof ([`flame`], prost + flate2);
+//! - log files in JSON lines, logfmt or text ([`logs`]).
 
 pub mod dataset;
+pub mod flame;
 pub mod junit;
 pub mod libtest;
+pub mod logs;
 pub mod molecule;
 pub mod sarif;
+pub mod trace;
 pub mod wave;
 
-use application::ports::formats::{DatasetRequest, FormatError, FormatsPort};
+use application::ports::formats::{
+    DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+};
 use domain::dataset::DatasetSpec;
+use domain::devops::flame::FlameSpec;
+use domain::devops::logs::LogSpec;
+use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 
@@ -62,5 +74,22 @@ impl FormatsPort for Formats {
 
     fn depict_molecule(&self, smiles: &str, claimed_formula: Option<&str>) -> MoleculeSpec {
         molecule::depict(smiles, claimed_formula)
+    }
+
+    fn parse_trace(&self, bytes: &[u8], path: &str) -> Result<TraceSpec, FormatError> {
+        trace::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_profile(
+        &self,
+        bytes: &[u8],
+        request: &ProfileRequest,
+    ) -> Result<FlameSpec, FormatError> {
+        flame::parse(bytes, &request.path, request.sample_type.as_deref())
+            .map_err(FormatError::Invalid)
+    }
+
+    fn parse_logs(&self, bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError> {
+        logs::parse(bytes, request).map_err(FormatError::Invalid)
     }
 }

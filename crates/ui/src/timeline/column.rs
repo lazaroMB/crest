@@ -49,7 +49,10 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::TestReport(_)
         | BlockKind::Findings(_)
         | BlockKind::Dataset(_)
-        | BlockKind::Plate(_) => BlockWidth::Wide,
+        | BlockKind::Plate(_)
+        | BlockKind::Trace(_)
+        | BlockKind::FlameGraph(_)
+        | BlockKind::Logs(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

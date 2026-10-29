@@ -1,0 +1,7 @@
+# perf script | stackcollapse-perf.pl
+main;parse;lex 300
+main;parse 100
+main;eval;eval;add 500
+main;eval 50
+std::rt::lang_start;main 25
+[unknown];__libc_start_main 25

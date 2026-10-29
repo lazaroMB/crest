@@ -14,10 +14,12 @@ pub mod custom;
 pub mod dataset;
 pub mod diff;
 pub mod findings;
+pub mod flame;
 pub mod form;
 pub mod image;
 pub mod image_view;
 pub mod json;
+pub mod logs;
 pub mod markdown;
 pub mod math;
 pub mod measured;
@@ -33,6 +35,7 @@ pub mod svg;
 pub mod table;
 pub mod test_report;
 pub mod thinking;
+pub mod trace;
 
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -70,6 +73,10 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Dataset(_) => dataset::render(entry, window, cx),
         BlockKind::Molecule(_) => molecule::render(entry, window, cx),
         BlockKind::Plate(_) => plate::render(entry, window, cx),
+        // Phase 2 developer/ops viewers.
+        BlockKind::Trace(_) => trace::render(entry, window, cx),
+        BlockKind::FlameGraph(_) => flame::render(entry, window, cx),
+        BlockKind::Logs(_) => logs::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

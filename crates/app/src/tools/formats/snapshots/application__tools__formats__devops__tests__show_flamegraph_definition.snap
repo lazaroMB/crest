@@ -1,0 +1,40 @@
+---
+source: crates/app/src/tools/formats/devops.rs
+expression: "definition(ShowFlamegraphTool::new(ports.clone()))"
+---
+{
+  "name": "show_flamegraph",
+  "description": "Shows a CPU or memory profile of the workspace (folded stacks or pprof) as a flame graph in the user's timeline: callers above callees, widths by value, click a frame to zoom, search to highlight, and a table of the functions with the most self time. Returns the total, the hottest path and the top functions by self time: do not repeat the profile in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A profile of the workspace: folded stacks (`a;b;c 12` lines from\n`stackcollapse-perf.pl`, `cargo flamegraph`, py-spy `--format raw`,\nasync-profiler `collapsed`) or a pprof profile (`.pb.gz`, `.pprof`)."
+      },
+      "sample_type": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The pprof sample type to draw, e.g. `cpu`, `alloc_space`,\n`inuse_space`; the profile's default when omitted.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the flame graph; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_flamegraph`.",
+    "title": "ShowFlamegraph",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

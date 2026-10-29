@@ -1,0 +1,4 @@
+time=2026-10-24T13:05:00.000Z level=info component=http msg="server started" addr=:8080
+time=2026-10-24T13:05:01.500Z level=warn component=db msg="slow query" took=812ms
+time=2026-10-24T13:05:03.000Z level=error component=db msg="query failed" err="pq: deadlock detected"
+time=2026-10-24T13:05:04.250Z level=info component=http msg="request" path=/users status=200

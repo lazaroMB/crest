@@ -489,6 +489,48 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A distributed trace as a waterfall (tool `show_trace`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "trace"
+        }
+      },
+      "$ref": "#/$defs/TraceSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A profile as a flame graph (tool `show_flamegraph`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "flame_graph"
+        }
+      },
+      "$ref": "#/$defs/FlameSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A log file on a filterable list (tool `show_logs`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "logs"
+        }
+      },
+      "$ref": "#/$defs/LogSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -7286,6 +7328,319 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "format",
         "wells"
+      ]
+    },
+    "TraceFormat": {
+      "description": "The file format a trace came from.",
+      "oneOf": [
+        {
+          "description": "OTLP JSON (`ExportTraceServiceRequest`, or one per line).",
+          "type": "string",
+          "const": "otlp"
+        },
+        {
+          "description": "Jaeger's JSON (`/api/traces` or the UI's download).",
+          "type": "string",
+          "const": "jaeger"
+        },
+        {
+          "description": "Zipkin v2 JSON.",
+          "type": "string",
+          "const": "zipkin"
+        }
+      ]
+    },
+    "TraceSpec": {
+      "description": "One or more traces, drawn as a waterfall.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "What the file was.",
+          "$ref": "#/$defs/TraceFormat"
+        },
+        "traces": {
+          "description": "Distinct trace ids.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "services": {
+          "description": "Services, in order of first appearance.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "started_at": {
+          "description": "Wall clock of the first span start, in seconds since the epoch.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "total_spans": {
+          "description": "Spans in the file; more than the rows when it was cut at\n[`MAX_SPANS`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "timeline": {
+          "description": "One row per span in tree order, times in ms from the first start.",
+          "$ref": "#/$defs/TimelineSpec"
+        },
+        "critical_path": {
+          "description": "Row ids on the critical path of the longest trace, root first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "traces",
+        "total_spans",
+        "timeline"
+      ]
+    },
+    "ProfileFormat": {
+      "description": "The file format a profile came from.",
+      "oneOf": [
+        {
+          "description": "Brendan Gregg's collapsed stacks: `frame;frame;frame count`.",
+          "type": "string",
+          "const": "folded"
+        },
+        {
+          "description": "A pprof `profile.proto` (gzipped or not).",
+          "type": "string",
+          "const": "pprof"
+        }
+      ]
+    },
+    "FlameNode": {
+      "description": "One frame of the call tree.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Function (or frame) name.",
+          "type": "string"
+        },
+        "depth": {
+          "description": "0 for the root, 1 for its callees...",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "description": "Offset on the value axis: the parent's start plus the totals of the\nsiblings before it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total": {
+          "description": "Value of the frame and everything it called.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "self_value": {
+          "description": "Value spent in the frame itself.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "depth",
+        "start",
+        "total",
+        "self_value"
+      ]
+    },
+    "FlameSpec": {
+      "description": "A call tree to draw as an icicle.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "What the file was.",
+          "$ref": "#/$defs/ProfileFormat"
+        },
+        "unit": {
+          "description": "What a value counts: `samples`, or a pprof sample type such as\n`cpu nanoseconds` or `alloc_space bytes`.",
+          "type": "string"
+        },
+        "nodes": {
+          "description": "The root first, then each frame followed by its callees.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FlameNode"
+          }
+        },
+        "hidden": {
+          "description": "Frames left out because they were too small to draw.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "format",
+        "unit",
+        "nodes"
+      ]
+    },
+    "LogFormat": {
+      "description": "How the lines were written.",
+      "oneOf": [
+        {
+          "description": "One JSON object per line (pino, bunyan, zap, slog, tracing...).",
+          "type": "string",
+          "const": "json"
+        },
+        {
+          "description": "`key=value` pairs (logrus, Go `log/slog` text, Heroku).",
+          "type": "string",
+          "const": "logfmt"
+        },
+        {
+          "description": "Free text; level and timestamp guessed from each line.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "LogHistogram": {
+      "description": "Lines over time: `buckets.len()` buckets of `width` seconds from\n`start` (seconds since the epoch).",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "Start of the first bucket.",
+          "type": "number",
+          "format": "double"
+        },
+        "width": {
+          "description": "Width of a bucket, in seconds.",
+          "type": "number",
+          "format": "double"
+        },
+        "buckets": {
+          "description": "Counts per bucket.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BucketCounts"
+          }
+        }
+      },
+      "required": [
+        "start",
+        "width",
+        "buckets"
+      ]
+    },
+    "BucketCounts": {
+      "description": "Lines of one time bucket, by level class.",
+      "type": "object",
+      "properties": {
+        "errors": {
+          "description": "Fatal and error lines.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "warnings": {
+          "description": "Warnings.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "other": {
+          "description": "Everything else (info, debug, no level).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "LogSpec": {
+      "description": "A log file.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "How the lines were written (most of them).",
+          "$ref": "#/$defs/LogFormat"
+        },
+        "total_lines": {
+          "description": "Records in the bytes read; more than the items when cut at\n[`MAX_LINES`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "Only the head of the file was read.",
+          "type": "boolean"
+        },
+        "list": {
+          "description": "The records, with the title and facets.",
+          "$ref": "#/$defs/ListSpec"
+        },
+        "histogram": {
+          "description": "Lines per time bucket, when enough timestamps parsed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LogHistogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "format",
+        "total_lines",
+        "list"
       ]
     }
   }

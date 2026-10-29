@@ -4,8 +4,9 @@
 //! (WaveJSON as an SVG timing diagram), `show_dataset` (the schema,
 //! column statistics and first rows of a CSV, TSV, JSON lines or Parquet
 //! file), `show_molecule` (a SMILES as a 2D structure with its computed
-//! formula and mass) and `show_plate` (a 96/384-well plate map, pure).
-//! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
+//! formula and mass) and `show_plate` (a 96/384-well plate map, pure),
+//! plus the developer/ops viewers of [`devops`]: `show_trace`,
+//! `show_flamegraph` and `show_logs`. [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
 //! Files are read through the file port, with the workspace and
@@ -41,6 +42,13 @@ use crate::ports::formats::{DatasetRequest, FormatsPort};
 use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
+pub mod devops;
+
+pub use devops::{
+    SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
+    flame_summary, logs_summary, read_log, trace_summary,
+};
+
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -73,6 +81,18 @@ async fn read(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
     fs.read_bytes(&parsed, MAX_REPORT_BYTES)
         .await
         .map_err(|e| format!("cannot read `{path}`: {e}"))
+}
+
+/// Reads a report, trace or profile file of the workspace (up to
+/// [`MAX_REPORT_BYTES`]) through the guard, for callers outside the tools
+/// (Lua's `app.formats`).
+///
+/// # Errors
+///
+/// A message for the caller: a bad path, a file the guard refuses or one
+/// that cannot be read.
+pub async fn read_report(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
+    read(fs, path).await
 }
 
 /// `path` relative to `root` when it is an absolute path inside it;
@@ -1059,12 +1079,20 @@ SMILES. Never state a formula or molecular weight from memory: cite the \
 values the tool computes, and pass `claimed_formula` when you have one in \
 mind so a mismatch is caught.
 - `show_plate`: a 96- or 384-well plate map of values and sample labels.
+- `show_trace`: show a trace file (OTLP JSON, Jaeger or Zipkin JSON) as a \
+waterfall when the question is where time went or which call failed.
+- `show_flamegraph`: show a profile (folded stacks or pprof) as a flame \
+graph; reason from the hottest path and self times it returns.
+- `show_logs`: show a log file (JSON lines, logfmt, text) as a filterable \
+list instead of pasting lines; it returns the level counts and the error \
+messages grouped by shape.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
 
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
-/// `show_dataset`, `show_molecule` and `show_plate`.
+/// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
+/// `show_flamegraph` and `show_logs`.
 ///
 /// # Errors
 ///
@@ -1078,7 +1106,10 @@ pub fn register_format_tools(
     registry.register_typed(ShowWavedromTool::new(ports.clone()))?;
     registry.register_typed(ShowDatasetTool::new(ports.clone()))?;
     registry.register_typed(ShowMoleculeTool::new(ports.clone()))?;
-    registry.register_typed(ShowPlateTool)
+    registry.register_typed(ShowPlateTool)?;
+    registry.register_typed(ShowTraceTool::new(ports.clone()))?;
+    registry.register_typed(ShowFlamegraphTool::new(ports.clone()))?;
+    registry.register_typed(ShowLogsTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1196,7 +1227,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 6);
+        assert_eq!(registry.names().len(), 9);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }
