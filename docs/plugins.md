@@ -73,7 +73,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.send(text [, { role = ... }])` | `string, table? → nil` | Inside a keymap or command callback. |
 | `app.ui.*` | node constructors | Inside a tool handler (or a callback). |
 | `app.compute.*` | `table → block` | Inside a tool handler (or a callback); see [below](#appcompute-engine-computed-cards). |
-| `app.formats.dataset{ path, rows }`, `app.formats.molecule{ smiles, name, claimed_formula }` | `table → block` | Inside a tool handler (or a callback); see [below](#appformats-file-format-blocks). |
+| `app.formats.dataset{ path, rows }`, `app.formats.molecule{ smiles, name, claimed_formula }`, `app.formats.trace{ path, title }`, `app.formats.flamegraph{ path, sample_type, title }`, `app.formats.logs{ path, format }` | `table → block` | Inside a tool handler (or a callback); see [below](#appformats-file-format-blocks). |
 | `app.ask{ title, description, schema, order, submit_label }` | `table → answer?, why?, reply?` | Inside a tool or command handler; see [below](#appask-forms). |
 | `app.modal.open(def)`, `app.modal.update(id, node)`, `app.modal.close(id)` | see [below](#appmodal-modal-windows) | Anywhere: handlers, commands, keymaps, hooks. |
 | `app.plugin{ name, capabilities }` | table → nil | At the top of the file (see [Capabilities](#capabilities)). |
@@ -274,7 +274,7 @@ The envelope is in `result["$crest_block"].envelope` (its `values`, `method`, `w
 
 ### `app.formats`: file-format blocks
 
-`app.formats.dataset{ path, rows }` and `app.formats.molecule{ smiles, name, claimed_formula }` build the blocks of the `show_dataset` and `show_molecule` tools (see [usage.md](usage.md#plots-reports-data-and-lab-blocks)). Each returns a block wrapped like `app.ui.block`, so a handler that returns it shows it; the block is in `result["$crest_block"]` (e.g. the molecule's `formula`). `path` is read through the same guard as the model's `read_file`, `rows` defaults to 20 (at most 200). A file that cannot be read or parsed, or a SMILES that does not parse, raises a Lua error with the reason. The calls block the VM while they read and parse.
+`app.formats.dataset{ path, rows }`, `app.formats.molecule{ smiles, name, claimed_formula }`, `app.formats.trace{ path, title }`, `app.formats.flamegraph{ path, sample_type, title }` and `app.formats.logs{ path, format }` build the blocks of the `show_dataset`, `show_molecule`, `show_trace`, `show_flamegraph` and `show_logs` tools (see [usage.md](usage.md#plots-reports-data-lab-and-operations-blocks)). Each returns a block wrapped like `app.ui.block`, so a handler that returns it shows it; the block is in `result["$crest_block"]` (e.g. the molecule's `formula`). `path` is read through the same guard as the model's `read_file`, `rows` defaults to 20 (at most 200), `format` is `json`, `logfmt` or `text` (sniffed when omitted) and the same size limits as the tools apply. A file that cannot be read or parsed, or a SMILES that does not parse, raises a Lua error with the reason. The calls block the VM while they read and parse.
 
 ```lua
 app.tools.register{
