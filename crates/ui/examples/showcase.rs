@@ -7,9 +7,11 @@
 //! Scenes: `hero` (a turn with tool calls, a diff, a chart and an answer),
 //! `research` (the research flow at work), `approval` (an edit waiting for
 //! the user), `help` (the help modal), `model` (a 3D model opened with
-//! `/open`) and `modal` (a plugin modal with rich content). Each one
-//! prints `showcase: ready` once it is on screen and stays open;
-//! `scripts/screenshots.sh` captures the window then.
+//! `/open`), `modal` (a plugin modal with rich content), `blocks` (a chart
+//! and tables), `routing` (how a prompt is routed) and `technical` (a
+//! statistics card with its provenance, a trace waterfall and a form that
+//! waits for an answer). Each one prints `showcase: ready` once it is on
+//! screen and stays open; `scripts/screenshots.sh` captures the window then.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -22,18 +24,27 @@ use application::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
 use application::ports::events::{DomainEvent, EventSink};
+use application::ports::form::{FormPort as _, FormRequest, FormRequestId};
 use application::testing::fs::InMemoryFs;
 use application::testing::system::RecordingSink;
 use domain::block::{
     Block, BlockKind, Cell, ChartKind, ChartSpec, Column, CustomNode, DiffSpec, MermaidSpec,
     Series, TableSpec, ToolStatus,
 };
+use domain::computed::{
+    Alternative, Assumption, AssumptionStatus, Computed, ComputedBody, ComputedValue,
+    ComputedWarning, Engine, GroupSummary, InputRef, Interval, Narrative, TestBody, TestKind,
+    WarningSeverity,
+};
 use domain::conversation::{SessionId, StopReason, ToolUseId, TurnId, Usage};
+use domain::devops::trace::{SERVICE, TraceFormat, TraceSpec, critical_path};
+use domain::form::FormSpec;
 use domain::git::GitStatus;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::{ModelId, ModelRole};
 use domain::model3d::{ModelMesh, ModelSpec, UpAxis};
 use domain::permission::{PermissionMode, ToolEffect};
+use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use domain::workspace::WorkspaceRoot;
 use futures::FutureExt as _;
 use futures::channel::oneshot;
@@ -41,6 +52,7 @@ use futures::future::BoxFuture;
 use gpui::{App, Entity};
 use serde_json::json;
 use ui::approval::UiApproval;
+use ui::form::UiForm;
 use ui::help::{CommandRow, HelpSnapshot, PluginRow, ToolRow, ToolSource};
 use ui::session::{
     ModelChoice, Reply, Session, SessionController, SessionParts, TurnEnd, TurnRequest,
@@ -52,6 +64,8 @@ const HERO_PROMPT: &str = "add() returns the difference for negative numbers: fi
 const APPROVAL_PROMPT: &str = "rename add to sum everywhere";
 const BLOCKS_PROMPT: &str = "summarize the last release with a chart and a table";
 const ROUTING_PROMPT: &str = "draw how a prompt is routed";
+const TECHNICAL_PROMPT: &str = "is the new build faster? compare the response times, show me the \
+                                slowest request and ask me what to ship";
 const DIFF: &str = "--- a/src/math.rs
 +++ b/src/math.rs
 @@ -1,7 +1,7 @@
@@ -99,6 +113,7 @@ const FLOWCHART: &str = "flowchart LR
 struct Fake {
     sink: Arc<RecordingSink>,
     approval: UiApproval,
+    form: Arc<UiForm>,
     mode: Mutex<PermissionMode>,
 }
 
@@ -332,6 +347,275 @@ fn blocks(sink: &RecordingSink, prompt: &str) {
         turn_id,
         stop_reason: StopReason::EndTurn,
     });
+}
+
+/// A turn for technical work: a statistics card computed by an engine, a
+/// reply that cites it through number slots, a trace waterfall and a form
+/// the turn waits on.
+fn technical(sink: &RecordingSink, form: &UiForm, prompt: &str) {
+    let turn_id = start(sink, prompt);
+    add(
+        sink,
+        tool_call(
+            "show_dataset",
+            "bench/latency.csv",
+            "48 rows × 2 columns: latency_ms (numeric), build (2 levels)",
+        ),
+    );
+    add(
+        sink,
+        tool_call(
+            "stats_test",
+            "latency_ms by build",
+            "Welch two-sample t-test: t = −4.45, p < .001, d = 1.28",
+        ),
+    );
+    let (envelope, body) = latency_card();
+    add(
+        sink,
+        BlockKind::Computed {
+            envelope: Box::new(envelope),
+            body: Box::new(body),
+        },
+    );
+    stream(
+        sink,
+        "Build v0.18 answers in ⟦st_bench.mean_b⟧ ms on average against \
+         ⟦st_bench.mean_a⟧ ms for v0.17: Welch t(⟦st_bench.df⟧) = ⟦st_bench.statistic⟧, \
+         p ⟦st_bench.p_value⟧, Cohen's d = ⟦st_bench.cohens_d⟧ (large). Variances and \
+         normality hold, so the card uses Welch by default.\n\nThe slowest request of the \
+         new build is below: one payment attempt failed and was retried, and the retry is \
+         most of the request.",
+    );
+    add(
+        sink,
+        tool_call(
+            "show_trace",
+            "traces/checkout-slow.json",
+            "1 trace, 9 spans, 4 services; critical path 412 ms; 1 error",
+        ),
+    );
+    add(sink, BlockKind::Trace(Box::new(checkout_trace())));
+    let spec = ship_form();
+    let block = Block::new(BlockKind::Form(spec.clone()));
+    let block_id = block.id;
+    sink.emit(DomainEvent::BlockAdded { block });
+    // The turn waits here until the form is answered, as `ask_user` does.
+    let _answer = futures::executor::block_on(form.ask(FormRequest {
+        id: FormRequestId(1),
+        block_id,
+        tool_use_id: ToolUseId::new("toolu_ask_user"),
+        spec,
+        error: None,
+    }));
+    stream(
+        sink,
+        "Noted. I will prepare the canary with those settings.",
+    );
+    usage(sink, 21_310, 1_480, 0.0862);
+    sink.emit(DomainEvent::TurnFinished {
+        turn_id,
+        stop_reason: StopReason::EndTurn,
+    });
+}
+
+/// A Welch t-test of the response times of two builds, as the statistics
+/// engine would return it.
+fn latency_card() -> (Computed, ComputedBody) {
+    let shown = |v: f64, display: &str| ComputedValue {
+        display: Some(display.into()),
+        ..ComputedValue::new(v)
+    };
+    let mut c = Computed::new(
+        "st_bench",
+        "stats.ttest_welch",
+        "Welch two-sample t-test",
+        Engine {
+            name: "crest-stats".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            backend: Some("statrs 0.19.1".into()),
+            platform: Some("x86_64-linux".into()),
+        },
+    );
+    c.method.why = Some("two independent groups; Welch needs no equal-variance assumption".into());
+    c.method.alternatives = vec!["student_t".into(), "mann_whitney".into()];
+    c.values.insert("mean_a".into(), shown(184.6, "184.6"));
+    c.values.insert("mean_b".into(), shown(158.2, "158.2"));
+    c.values.insert("statistic".into(), shown(-4.45, "−4.45"));
+    c.values.insert("df".into(), shown(45.8, "45.8"));
+    c.values
+        .insert("p_value".into(), shown(0.000_056, "< .001"));
+    c.values.insert(
+        "cohens_d".into(),
+        ComputedValue {
+            ci: Some(Interval {
+                level: 0.95,
+                lo: 0.66,
+                hi: 1.9,
+                method: None,
+            }),
+            label: Some("large".into()),
+            ..shown(1.28, "1.28")
+        },
+    );
+    for (id, check, stat, p) in [
+        ("normality_a", "Shapiro-Wilk (v0.17)", 0.97, 0.68),
+        ("normality_b", "Shapiro-Wilk (v0.18)", 0.96, 0.44),
+        ("equal_var", "Brown-Forsythe", 0.27, 0.61),
+    ] {
+        c.assumptions.push(Assumption {
+            id: id.into(),
+            check: Some(check.into()),
+            stat: Some(stat),
+            p: Some(p),
+            status: AssumptionStatus::Pass,
+            consequence: None,
+            note: None,
+        });
+    }
+    c.warnings.push(ComputedWarning {
+        code: "small_n".into(),
+        severity: WarningSeverity::Info,
+        text: "24 runs per group: the interval of d is wide".into(),
+    });
+    c.inputs.push(InputRef {
+        name: "latency.csv".into(),
+        role: Some("data".into()),
+        path: Some("bench/latency.csv".into()),
+        hash: Some("blake3:4e1c0a97b2d35f68".into()),
+        rows: Some(48),
+        columns: vec!["latency_ms".into(), "build".into()],
+        filter: None,
+    });
+    c.reproduce.lua = Some(
+        "app.compute.test{ data = \"bench/latency.csv\", test = \"welch\", value = \
+         \"latency_ms\", by = \"build\" }"
+            .into(),
+    );
+    c.reproduce.python =
+        Some("scipy.stats.ttest_ind(a['latency_ms'], b['latency_ms'], equal_var=False)".into());
+    c.reproduce.r =
+        Some("t.test(latency_ms ~ build, data = read.csv(\"bench/latency.csv\"))".into());
+    c.narrative = Some(Narrative {
+        template: "apa_ttest".into(),
+        text_slots: vec!["statistic".into(), "df".into(), "p_value".into()],
+    });
+    let group = |name: &str, mean: f64, sd: f64| GroupSummary {
+        name: name.into(),
+        n: 24,
+        mean: Some(mean),
+        sd: Some(sd),
+        median: None,
+    };
+    let body = ComputedBody::Test(TestBody {
+        test: TestKind::WelchT,
+        alternative: Alternative::TwoSided,
+        groups: vec![group("v0.17", 184.6, 21.3), group("v0.18", 158.2, 19.8)],
+        observed: None,
+        expected: None,
+    });
+    (c, body)
+}
+
+/// The slowest checkout request: a failed payment attempt and its retry.
+fn checkout_trace() -> TraceSpec {
+    let row = |id: &str, label: &str, depth: u32, service: &str, start: f64, end: f64, status| {
+        let mut attrs = serde_json::Map::new();
+        attrs.insert(SERVICE.into(), json!(service));
+        TimelineRow {
+            id: id.into(),
+            label: label.into(),
+            depth,
+            group: None,
+            spans: vec![Span {
+                start,
+                end,
+                label: None,
+                color_key: Some(service.into()),
+                status: Some(status),
+                attrs,
+            }],
+            markers: Vec::new(),
+        }
+    };
+    let ok = SpanStatus::Ok;
+    let rows = vec![
+        row("s1", "POST /checkout", 0, "gateway", 0.0, 412.0, ok),
+        row("s2", "auth.verify", 1, "gateway", 2.0, 18.0, ok),
+        row("s3", "checkout.create", 1, "checkout", 20.0, 405.0, ok),
+        row("s4", "SELECT cart", 2, "db", 24.0, 61.0, ok),
+        row("s5", "pricing.rules", 2, "checkout", 63.0, 98.0, ok),
+        row(
+            "s6",
+            "payments.charge",
+            2,
+            "payments",
+            100.0,
+            388.0,
+            SpanStatus::Warning,
+        ),
+        row(
+            "s7",
+            "POST /charge · attempt 1",
+            3,
+            "payments",
+            104.0,
+            230.0,
+            SpanStatus::Error,
+        ),
+        row(
+            "s8",
+            "POST /charge · attempt 2",
+            3,
+            "payments",
+            236.0,
+            384.0,
+            ok,
+        ),
+        row("s9", "INSERT order", 2, "db", 390.0, 404.0, ok),
+    ];
+    let timeline = TimelineSpec {
+        title: None,
+        unit: TimeUnit::Ms,
+        rows,
+        range: None,
+    };
+    TraceSpec {
+        title: Some("checkout, slowest request of the run".into()),
+        path: Some("traces/checkout-slow.json".into()),
+        format: TraceFormat::Otlp,
+        traces: 1,
+        services: ["gateway", "checkout", "db", "payments"]
+            .map(String::from)
+            .to_vec(),
+        started_at: None,
+        total_spans: 9,
+        critical_path: critical_path(&timeline),
+        timeline,
+    }
+}
+
+/// The form `ask_user` shows to decide what to ship.
+fn ship_form() -> FormSpec {
+    serde_json::from_value(json!({
+        "title": "Ship the new build?",
+        "description": "v0.18 is faster on this benchmark, with one failed payment attempt in its slowest request.",
+        "submit_label": "Decide",
+        "fields": [
+            {"name": "decision", "type": "enum", "label": "Decision", "required": true,
+             "options": [
+                {"value": "ship", "label": "Ship to 10 % of traffic"},
+                {"value": "hold", "label": "Hold until the failed attempt is understood"},
+                {"value": "rerun", "label": "Rerun the benchmark with 200 requests"}
+             ]},
+            {"name": "window", "type": "date_range", "label": "Canary window",
+             "min": "2026-11-01", "max": "2026-12-31"},
+            {"name": "notify", "type": "multi_enum", "label": "Notify", "default": ["sre"],
+             "options": [{"value": "payments"}, {"value": "sre"}, {"value": "release"}]},
+            {"name": "notes", "type": "multiline", "label": "Notes"}
+        ]
+    }))
+    .unwrap_or_else(|err| panic!("{err}"))
 }
 
 /// A turn that draws how the decision model routes a prompt.
@@ -595,9 +879,12 @@ impl SessionController for Fake {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let sink = Arc::clone(&self.sink);
         let approver = self.approval.clone();
+        let form = Arc::clone(&self.form);
         on_thread(move || {
             if request.prompt == APPROVAL_PROMPT {
                 approval(&sink, &approver, &request.prompt);
+            } else if request.prompt == TECHNICAL_PROMPT {
+                technical(&sink, &form, &request.prompt);
             } else if request.prompt == BLOCKS_PROMPT {
                 blocks(&sink, &request.prompt);
             } else if request.prompt == ROUTING_PROMPT {
@@ -768,12 +1055,15 @@ fn main() {
         );
         let (sink, events) = RecordingSink::with_channel();
         let (approval, approvals) = UiApproval::channel();
+        let (form, forms) = UiForm::channel();
         let controller = Arc::new(Fake {
             sink: Arc::new(sink),
             approval,
+            form: Arc::new(form),
             mode: Mutex::new(PermissionMode::Ask),
         });
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        parts.forms = Some(forms);
         parts.workspace_label = "calc".into();
         parts.model = Some(ModelId::new("claude-sonnet-5-5"));
         let (root, session) = ui::session::open(parts, window, cx);
@@ -792,6 +1082,7 @@ fn script(scene: &str) -> Vec<Step> {
         "approval" => vec![Step::Send(APPROVAL_PROMPT)],
         "blocks" => vec![Step::Send(BLOCKS_PROMPT)],
         "routing" => vec![Step::Send(ROUTING_PROMPT)],
+        "technical" => vec![Step::Send(TECHNICAL_PROMPT)],
         "help" => vec![Step::Send(HERO_PROMPT), Step::Keys("f1")],
         "model" => vec![
             Step::Send(HERO_PROMPT),

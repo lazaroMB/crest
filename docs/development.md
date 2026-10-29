@@ -121,7 +121,7 @@ docs/                   user and developer guides
 
 ### Screenshots
 
-The README's screenshots (`assets/screenshots/`) come from the UI examples, which run on scripted fakes (no API key): the `showcase` example has one scene per screenshot, and `sysboard` draws the simulation board. `scripts/screenshots.sh` builds them, opens each window on the X display (through XWayland under a Wayland session), captures it with ImageMagick's `import` and writes the PNGs:
+The README's screenshots (`assets/screenshots/`) come from the UI examples, which run on scripted fakes (no API key): the `showcase` example has one scene per screenshot (`hero`, `research`, `approval`, `help`, `model`, `modal`, `blocks`, `routing` and `technical`, the last one a statistics card, a trace waterfall and a form), and `sysboard` draws the simulation board. `scripts/screenshots.sh` builds them, opens each window on the X display (through XWayland under a Wayland session), captures it with ImageMagick's `import` and writes the PNGs:
 
 ```bash
 scripts/screenshots.sh              # every scene
