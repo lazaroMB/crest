@@ -78,6 +78,11 @@ impl SqliteFlowStorage {
         }
     }
 
+    /// The shared connection, for the discovery store to reuse.
+    pub(crate) fn connection(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
+    }
+
     /// Runs `f` with the connection on the blocking pool.
     async fn run<T, F>(&self, f: F) -> graph_flow::Result<T>
     where

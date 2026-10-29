@@ -48,6 +48,8 @@ pub fn entry_label(source: &SourceRef) -> String {
             _ => url.clone(),
         },
         SourceRef::Command { command, .. } => format!("$ {command}"),
+        SourceRef::Repo { repo, rev, path } => format!("{repo}@{rev}: {path}"),
+        other => other.reference(),
     }
 }
 
@@ -71,7 +73,8 @@ pub fn action(source: &SourceRef) -> Option<BlockEvent> {
             line: line_start.map(u64::from),
         }),
         SourceRef::Url { url, .. } => Some(BlockEvent::OpenUrl { url: url.clone() }),
-        SourceRef::Commit { .. } | SourceRef::Command { .. } => None,
+        SourceRef::Commit { .. } | SourceRef::Command { .. } | SourceRef::Repo { .. } => None,
+        other => other.link().map(|url| BlockEvent::OpenUrl { url }),
     }
 }
 

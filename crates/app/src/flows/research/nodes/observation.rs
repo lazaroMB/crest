@@ -127,6 +127,7 @@ pub(crate) fn validate_source(source: &SourceRef) -> Result<(), String> {
         SourceRef::Commit { sha, .. } => sha.trim().is_empty(),
         SourceRef::Url { url, .. } => url.trim().is_empty(),
         SourceRef::Command { command, .. } => command.trim().is_empty(),
+        other => other.reference().trim().is_empty(),
     };
     if empty {
         return Err("the source is empty".into());

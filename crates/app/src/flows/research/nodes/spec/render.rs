@@ -203,6 +203,10 @@ pub fn describe_source(source: &SourceRef) -> String {
             None => format!("<{url}>"),
         },
         SourceRef::Command { command, .. } => format!("command `{command}`"),
+        other => match other.link() {
+            Some(url) => format!("[{}]({url})", other.reference()),
+            None => other.reference(),
+        },
     }
 }
 

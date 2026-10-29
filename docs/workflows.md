@@ -2,7 +2,7 @@
 
 crest ships two guided workflows that run inside the chat:
 
-- The **research workflow** follows the stages of the [Hashlabs X-Workflow](https://www.hashlabs.com/guides/en/methodology/X-Workflow.html). It starts from a problem described in natural language and ends in a **Spec** with its implementation plan. By default it runs a [fast flow](#fast-flow-default) of five stages; `--deep` runs the [full fourteen](#deep-mode---deep).
+- The **research workflow** follows the stages of the [Hashlabs X-Workflow](https://www.hashlabs.com/guides/en/methodology/X-Workflow.html). It starts from a problem described in natural language and ends in a **Spec** with its implementation plan. By default it runs a [fast flow](#fast-flow-default) of five stages; `--deep` runs the [full fourteen](#deep-mode---deep). With `app.opt.research = { engine = "discovery" }` the same `/research` runs on the [discovery engine](#research-on-the-discovery-engine) instead: a governed document written section by section over an event log.
 - The **implementation workflow** takes a Spec's `plan.json` and runs it task by task, with one commit per task.
 
 Between the two, on demand, you can **simulate a solution** ([below](#simulating-a-solution)): crest turns the Spec into an executable model, runs its scenarios and shows the result on a 3D board, before anything is implemented.
@@ -262,6 +262,79 @@ The critical review also accepts the Spanish headings written by earlier version
 | `constraint_tests` | no (`[]`) | `{ constraint: "C<n>", kind, ref }`. |
 
 Unknown fields are not allowed. A plan with no tasks, duplicate ids, unknown dependencies, tasks without files or cycles is rejected (for example, `tasks form a dependency cycle: T1 -> T2 -> T1`).
+
+## Research on the discovery engine
+
+```lua
+app.opt.research = { engine = "discovery" }
+```
+
+With that option `/research` keeps its commands but runs a different engine: a **discovery** is a document of fixed sections written one at a time, in order, and its state is an append-only **event log**. Every write, audit, verdict, record check and spike score is an event with a sequence number; replaying the log says which sections hold a verdict, given on which version of their inputs, and what the one legal next step is. Nothing is kept as "the step that ran last".
+
+### Two levels
+
+| Level | Command | Sections | Sources | Who approves |
+| --- | --- | --- | --- | --- |
+| research | `/research <problem>` | Goal, Background, Constraints, Scope, Findings, Breakdown, Solution proposal | the repository and a few web pages, read once and stored | you approve the framing, the Breakdown and the Solution; Constraints and Findings pass on a clean audit |
+| deep | `/research --deep <problem>` | the seven above plus Current system, Desired state and Gap | the literature: studies, standards, books, encyclopedias, documentation; every source's text is stored and every claim's quote is checked against it | you approve the framing; an isolated evaluator may approve the rest after a clean isolated audit, and hands the decision to you after two rejections |
+
+### The cycle of a section
+
+1. **Write.** The writer sees a *packet*: the request, the approved sections, and what it may cite, as excerpts around the quotes the records carry, never a whole source. One prompt per section quotes the section's format contract (one paragraph for the Goal, `### In`/`### Out` for the Scope, categories of cited facts for the Findings, ...). A draft that breaks the contract goes back to the writer with the findings, up to three times.
+2. **Audit.** The deterministic contract runs again and, at the deep level, an isolated reviewer that sees only the packet and the draft looks for what the contract cannot see: a qualifier not in the quoted span, a vendor claim stated as fact, an overstatement. The audit is an event with its counts.
+3. **Verdict.** Depending on the section and the level: you, the engine (a clean audit is enough) or the isolated evaluator. Approving opens the next section. A rejection carries a note that becomes the writer's correction.
+
+Your answers at a verdict:
+
+| You type | Verdict |
+| --- | --- |
+| `yes`, `ok`, `sí`, an empty line | approve as is |
+| `yes, but <note>` (`ok pero ...`) | approve with the note recorded |
+| anything else | reject; your text is the correction the writer applies |
+
+After two rewrites that still fail their audit, or two rejections by the evaluator, the engine stops and asks you.
+
+### Gates of the deep level
+
+Before `Findings` opens, the engine's explorer reads the repository and the web and produces **records**: the sources (fetched and stored by the engine, never trusted from the explorer), evidence and causal **claims** with verbatim quotes (each quote is searched in the stored text; a claim whose quote is not found is dropped, one that names a variable the `variables` record does not list is rejected), the **structural map** and the **variables** (checked by an isolated checker), and the **causal loop diagram**, computed from the kept claims, never written by a model. Before `Solution proposal` opens, a **risks** record is written from the diagram and a **spike** runs: its hypothesis and `k` of `n` criteria are frozen first, the acting agent runs it in a throwaway `git worktree` under `.crest/spikes/`, and the outcome is scored against the frozen criteria. A spike never runs in the workspace itself: if `git worktree add` fails, it is scored not satisfactory without running and the gate says so. The gate stays closed, and `/research` says what is missing (and what the attempt produced), until the records are confirmed *after* the `Scope` verdict and a spike is satisfactory *after* the `Breakdown` verdict.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `/research <problem>`, `/research --deep <problem>` | Starts a discovery and runs it to its first verdict. |
+| `/research` | Where it is: sections approved, the open section and the next legal step (or what a closed gate is missing). |
+| `/research resume [n]` | Continues the latest open discovery (or number `n` of `/research list`); worktrees of spikes that never finished are removed first. |
+| `/research list [all]` | The discoveries of the workspace, newest first. |
+| `/reopen <section> [reason]` (also `/back <section>`) | Reopens a section: it and every later one lose their verdicts and are written again. Records confirmed before are **re-checked, not re-explored**: the stored quotes are searched in the stored texts again, the diagram is recomputed and the checker confirms the structure and the variables, with no fetch and no new record; only if that leaves the gate closed does the explorer run again, and what it finds is merged with the stored records, never duplicated. The risks and the spike are redone, since they hang on the new verdicts. The reason is recorded. |
+| `/research accept` (or `yes` when every section is approved) | Freezes the log and derives the Spec folder. On the discovery accepted last it derives the Spec again, which is how a derivation that failed (a model or file error) is retried. |
+| `/research cancel [n\|all]`, `/abort` | Aborts the active discovery, number `n` of `/research list`, or every open one; the logs are kept. |
+
+Both engines write under `.crest/specs/NNNN-slug/`. While a discovery is open, `edit_file` and `write_file` cannot touch its folder (`run_command` is not restricted); the engine writes it itself.
+
+### What it writes
+
+```text
+.crest/specs/0007-approval-fatigue/
+  discovery.md    the document: one status line per section (open, written and audited, approved by whom at which seq)
+  events.jsonl    the log, one event per line (also in sessions.db: discovery_events)
+  sources/S1.txt  the text of every stored source
+  spikes/SP1.md   each spike: hypothesis, frozen criteria with their outcome, facts, result
+  spec.md         derived on accept (the ten sections /implement and /simulate read)
+  plan.json       derived on accept by the plan model and validated (tasks, hypothesis_tests, constraint_tests)
+  plan.md         readable plan
+  review.md       the trail: verdicts, audits, records, spikes, reopens, refusals
+  sources.json    the stored sources and the evidence, with hashes
+```
+
+The sections, drafts, audits and records also live in the database (`discovery_artifacts`), so a discovery survives the folder being deleted.
+
+### What the log guarantees
+
+- No event the state rejects is ever stored: a refused attempt is written as a `refused` entry while the discovery is open, and nothing is written once it is accepted or aborted.
+- A rerun never duplicates a record: records are checked, not appended, and the gates count only checks newer than the `Scope` verdict.
+- Reopening a section hides every later verdict; the document and the gates follow from the replay.
+- Every approval names who gave it: `human:<user>`, `process:audit` or `model:<id>`, and framing and acceptance are a person's only.
 
 ## Implementation workflow
 
