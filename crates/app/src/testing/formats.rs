@@ -31,7 +31,14 @@
 //! and a `PLATE` note; every IFC schedule is project `House` with a
 //! `Ground floor` holding `101` Kitchen (12.5 m² from
 //! Qto_SpaceBaseQuantities) and `102` Store (no area), 4 walls, 2 doors
-//! and 3 windows.
+//! and 3 windows; every sequence is the circular 30 bp `pFake` with a
+//! CDS `orf` (1..9) and one EcoRI site (cut after 10); every reaction is
+//! `H2 + O2 → H2O` (O unbalanced, 2 H2 + O2 → 2 H2O suggested) unless its
+//! SMILES is `bad`; every molecule grid gives each entry ethanol's
+//! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
+//! `bad`; every spectrum is an IR transmittance trace 4000–400 cm⁻¹ with
+//! one dip picked at 1715 cm⁻¹; every 3D molecule is water (O and two H
+//! 0.9572 Å from it) unless its SMILES is `bad`.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -66,11 +73,24 @@ use domain::widget::list::{ListItem, ListSpec};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use serde_json::Map;
 
+use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
+use domain::science::molecule3d::{
+    Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
+};
+use domain::science::reaction::{
+    ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
+};
+use domain::science::sequence::{
+    Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
+};
+use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    StepRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
+    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
+    WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -844,6 +864,292 @@ impl FormatsPort for FakeFormats {
             }],
             unplaced_spaces: Vec::new(),
             unplaced: ElementCounts::default(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_sequence(
+        &self,
+        _bytes: &[u8],
+        request: &SequenceRequest,
+    ) -> Result<SequenceSpec, FormatError> {
+        self.record(
+            "parse_sequence",
+            request.path.as_deref().unwrap_or("<inline>"),
+        )?;
+        Ok(SequenceSpec {
+            title: None,
+            path: request.path.clone(),
+            format: SequenceFormat::Genbank,
+            name: Some("pFake".into()),
+            description: Some("a fake plasmid".into()),
+            accession: None,
+            organism: None,
+            alphabet: Alphabet::Dna,
+            topology: request.topology.unwrap_or(Topology::Circular),
+            sequence: "ATGAAATAAGAATTCCCCGGGTTTTAAAAC".into(),
+            features: vec![SeqFeature {
+                kind: "CDS".into(),
+                label: Some("orf".into()),
+                segments: vec![SeqSpan { start: 0, end: 9 }],
+                strand: Strand::Forward,
+                qualifiers: Vec::new(),
+            }],
+            cut_sites: if request.enzymes {
+                vec![CutSite {
+                    enzyme: "EcoRI".into(),
+                    site: "GAATTC".into(),
+                    start: 9,
+                    cut: 10,
+                    strand: Strand::Forward,
+                }]
+            } else {
+                Vec::new()
+            },
+            enzyme_source: request.enzymes.then(|| "REBASE".to_owned()),
+            records: 1,
+            record: 0,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn depict_reaction(&self, smiles: &str, _coefficients: Option<&[u32]>) -> ReactionSpec {
+        let _ = self.record("depict_reaction", smiles);
+        let mut balance = Computed::new(
+            "ch_fake",
+            "chem.reaction_balance",
+            "Atom and charge balance",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        let mut spec = ReactionSpec {
+            title: None,
+            smiles: smiles.to_owned(),
+            conditions: None,
+            components: Vec::new(),
+            elements: Vec::new(),
+            charge: (0, 0),
+            stoichiometry: Stoichiometry::NotChecked,
+            balance: balance.clone(),
+            error: None,
+        };
+        if smiles == "bad" {
+            spec.error = Some("invalid reaction SMILES: bad".into());
+            spec.balance.status = ComputedStatus::Error;
+            return spec;
+        }
+        let component = |role, formula: &str, atoms: &[(&str, u32)]| ReactionComponent {
+            role,
+            molecule: MoleculeSpec {
+                smiles: formula.to_owned(),
+                name: None,
+                svg: Some(FAKE_SVG.to_owned()),
+                formula: Some(formula.to_owned()),
+                mw: Some(1.0),
+                charge: Some(0),
+                canonical: Some(formula.to_owned()),
+                error: None,
+                claimed_formula: None,
+                claimed_matches: None,
+            },
+            coefficient: 1,
+            atoms: atoms.iter().map(|(e, n)| ((*e).to_owned(), *n)).collect(),
+        };
+        spec.components = vec![
+            component(ReactionRole::Reactant, "H2", &[("H", 2)]),
+            component(ReactionRole::Reactant, "O2", &[("O", 2)]),
+            component(ReactionRole::Product, "H2O", &[("H", 2), ("O", 1)]),
+        ];
+        spec.elements = vec![
+            ElementBalance {
+                element: "H".into(),
+                reactants: 2,
+                products: 2,
+            },
+            ElementBalance {
+                element: "O".into(),
+                reactants: 2,
+                products: 1,
+            },
+        ];
+        spec.stoichiometry = Stoichiometry::Suggested {
+            coefficients: vec![2, 1, 2],
+        };
+        balance.status = ComputedStatus::Warning;
+        let mut flag = ComputedValue::new(0.0);
+        flag.display = Some("no".into());
+        balance.values.insert("balanced".into(), flag);
+        balance
+            .values
+            .insert("delta.O".into(), ComputedValue::new(-1.0));
+        spec.balance = balance;
+        spec
+    }
+
+    fn molecule_grid(
+        &self,
+        request: &MoleculeGridRequest,
+    ) -> Result<MoleculeGridSpec, FormatError> {
+        self.record("molecule_grid", &request.molecules.len().to_string())?;
+        if request.molecules.is_empty() {
+            return Err(FormatError::Invalid("no molecules given".into()));
+        }
+        let mut envelope = Computed::new(
+            "ch_grid",
+            "chem.descriptors",
+            "Molecular descriptors",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        let molecules = request
+            .molecules
+            .iter()
+            .map(|e| {
+                let molecule = self.depict_molecule(&e.smiles, None);
+                let descriptors = molecule.error.is_none().then(|| Descriptors {
+                    mw: 46.069,
+                    heavy_atoms: 3,
+                    hbd: 1,
+                    hba: 1,
+                    rotatable_bonds: 0,
+                    rings: 0,
+                    aromatic_rings: 0,
+                    logp: -0.0014,
+                    tpsa: 20.23,
+                });
+                if descriptors.is_some() {
+                    envelope
+                        .values
+                        .insert(format!("{}.mw", e.id), ComputedValue::new(46.069));
+                }
+                GridMolecule {
+                    id: e.id.clone(),
+                    molecule: MoleculeSpec {
+                        name: e.name.clone(),
+                        ..molecule
+                    },
+                    activity: e.activity,
+                    descriptors,
+                }
+            })
+            .collect();
+        Ok(MoleculeGridSpec {
+            title: None,
+            activity_label: request.activity_label.clone(),
+            activity_unit: request.activity_unit.clone(),
+            direction: request.direction,
+            molecules,
+            descriptors: envelope,
+        })
+    }
+
+    fn parse_spectrum(
+        &self,
+        _bytes: &[u8],
+        request: &SpectrumRequest,
+    ) -> Result<SpectrumSpec, FormatError> {
+        self.record("parse_spectrum", &request.path)?;
+        let mut picking = Computed::new(
+            "ch_peaks",
+            "chem.peak_picking",
+            "Peak picking by prominence",
+            Engine {
+                name: "crest-chem".into(),
+                version: "0.0.0".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        picking
+            .values
+            .insert("peak.1.x".into(), ComputedValue::new(1715.0));
+        Ok(SpectrumSpec {
+            title: None,
+            path: request.path.clone(),
+            format: SpectrumFormat::Jcamp,
+            kind: SpectrumKind::Infrared,
+            name: Some("acetone".into()),
+            x_label: "wavenumber (cm⁻¹)".into(),
+            y_label: "transmittance".into(),
+            x_reversed: true,
+            x: vec![4000.0, 3000.0, 1715.0, 1000.0, 400.0],
+            y: vec![0.95, 0.9, 0.2, 0.9, 0.95],
+            sticks: false,
+            peaks: vec![Peak {
+                x: 1715.0,
+                y: 0.2,
+                prominence: Some(0.7),
+            }],
+            sense: PeakSense::Minima,
+            picking,
+            metadata: vec![("origin".into(), "crest".into())],
+            blocks: 1,
+            block: 0,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError> {
+        let (arg, smiles, path, coordinates) = match source {
+            Molecule3dSource::Smiles(s) => (
+                s.clone(),
+                Some(s.clone()),
+                None,
+                CoordinateSource::Embedded {
+                    method: "fake embedding".into(),
+                },
+            ),
+            Molecule3dSource::File { path, .. } => (
+                path.clone(),
+                None,
+                Some(path.clone()),
+                CoordinateSource::File {
+                    format: StructureFormat::Xyz,
+                },
+            ),
+        };
+        self.record("molecule_3d", &arg)?;
+        if arg == "bad" {
+            return Err(FormatError::Invalid("invalid SMILES: bad".into()));
+        }
+        let atom = |element: &str, position: [f64; 3]| Atom3d {
+            element: element.to_owned(),
+            position,
+            name: None,
+            residue: None,
+        };
+        Ok(Molecule3dSpec {
+            title: None,
+            name: Some("water".into()),
+            smiles,
+            path,
+            source: coordinates,
+            atoms: vec![
+                atom("O", [0.0, 0.0, 0.0]),
+                atom("H", [0.9572, 0.0, 0.0]),
+                atom("H", [-0.24, 0.9266, 0.0]),
+            ],
+            bonds: vec![
+                Bond3d {
+                    a: 0,
+                    b: 1,
+                    order: 1,
+                },
+                Bond3d {
+                    a: 0,
+                    b: 2,
+                    order: 1,
+                },
+            ],
+            bonds_inferred: false,
             warnings: Vec::new(),
         })
     }

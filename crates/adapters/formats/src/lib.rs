@@ -23,9 +23,19 @@
 //! - netlists ([`netlist`], own SPICE and KiCad readers);
 //! - STEP parts ([`step`], truck-stepio + truck-meshalgo);
 //! - 2D DXF drawings ([`drawing`], the `dxf` crate);
-//! - IFC room schedules ([`ifc`], ifc-lite-core).
+//! - IFC room schedules ([`ifc`], ifc-lite-core);
+//! - sequences: GenBank, FASTA and bare residues ([`sequence`], gb-io and
+//!   our own FASTA reader);
+//! - reaction schemes with their balance ([`reaction`], chematic's
+//!   reaction SMILES; envelopes from [`chem`]);
+//! - molecule grids with descriptors ([`molecule_grid`], chematic);
+//! - spectra with picked peaks ([`spectrum`]: our own JCAMP-DX reader,
+//!   mzdata for mzML and MGF);
+//! - molecules in 3D ([`molecule3d`]: chematic's embedding, our own
+//!   V2000 reader, chematic's V3000, XYZ and PDB readers).
 
 pub mod bench;
+pub mod chem;
 pub mod dataset;
 pub mod dot;
 pub mod drawing;
@@ -37,9 +47,14 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod molecule3d;
+pub mod molecule_grid;
 pub mod netlist;
 pub mod query_plan;
+pub mod reaction;
 pub mod sarif;
+pub mod sequence;
+pub mod spectrum;
 pub mod step;
 pub mod terraform;
 pub mod trace;
@@ -47,8 +62,9 @@ pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
-    StepRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
+    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
+    WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -66,6 +82,11 @@ use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::molecule_grid::MoleculeGridSpec;
+use domain::science::molecule3d::Molecule3dSpec;
+use domain::science::reaction::ReactionSpec;
+use domain::science::sequence::SequenceSpec;
+use domain::science::spectrum::SpectrumSpec;
 
 /// The formats adapter. Stateless.
 #[derive(Debug, Clone, Copy, Default)]
@@ -190,5 +211,40 @@ impl FormatsPort for Formats {
 
     fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError> {
         ifc::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_sequence(
+        &self,
+        bytes: &[u8],
+        request: &SequenceRequest,
+    ) -> Result<SequenceSpec, FormatError> {
+        sequence::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn depict_reaction(&self, smiles: &str, coefficients: Option<&[u32]>) -> ReactionSpec {
+        reaction::depict(smiles, coefficients)
+    }
+
+    fn molecule_grid(
+        &self,
+        request: &MoleculeGridRequest,
+    ) -> Result<MoleculeGridSpec, FormatError> {
+        molecule_grid::grid(request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_spectrum(
+        &self,
+        bytes: &[u8],
+        request: &SpectrumRequest,
+    ) -> Result<SpectrumSpec, FormatError> {
+        spectrum::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError> {
+        match source {
+            Molecule3dSource::Smiles(smiles) => molecule3d::embed(smiles),
+            Molecule3dSource::File { path, bytes } => molecule3d::read(bytes, path),
+        }
+        .map_err(FormatError::Invalid)
     }
 }

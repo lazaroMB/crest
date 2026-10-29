@@ -63,7 +63,13 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::Material(_)
         | BlockKind::CadModel(_)
         | BlockKind::Drawing(_)
-        | BlockKind::IfcSchedule(_) => BlockWidth::Wide,
+        | BlockKind::IfcSchedule(_)
+        | BlockKind::Sequence(_)
+        | BlockKind::Reaction(_)
+        | BlockKind::MoleculeGrid(_)
+        | BlockKind::Spectrum(_)
+        | BlockKind::Molecule3d(_)
+        | BlockKind::Ghs(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

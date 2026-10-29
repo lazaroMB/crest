@@ -1,0 +1,61 @@
+---
+source: crates/app/src/tools/formats/spectrum.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_spectrum",
+  "description": "Shows a spectrum file (`path`) in the user's timeline on a plot with zoom: JCAMP-DX for IR, Raman, UV-Vis and NMR (wavenumber and ppm axes run right to left), mzML or MGF for mass spectra. The engine picks the peaks (prominence for traces, minima for IR transmittance, strongest sticks for MS). Returns the peaks with their positions and the envelope id; cite these instead of reading values off the data, and do not assign peaks the list does not have.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A spectrum file of the workspace: JCAMP-DX (`.jdx`, `.dx`, `.jcamp`:\nIR, Raman, UV-Vis, NMR, MS peak tables), mzML or MGF (mass spectra)."
+      },
+      "block": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0,
+        "description": "The data block (JCAMP-DX link files) or scan (mzML, MGF) to show,\n1-based (default 1).",
+        "default": null
+      },
+      "threshold": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Smallest peak kept, as a share of the y range (or of the base peak\nfor sticks), 0 to 1; default 0.05.",
+        "default": null
+      },
+      "max_peaks": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0,
+        "description": "Most peaks listed, 1 to 100; default 20.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the plot.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_spectrum`.",
+    "title": "ShowSpectrum",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

@@ -136,8 +136,9 @@ impl LuaHandle {
         &self,
         formats: Arc<dyn application::ports::formats::FormatsPort>,
         fs: Arc<dyn application::ports::fs::FileSystemPort>,
+        web: Option<Arc<dyn application::ports::web::WebPort>>,
     ) -> Result<(), PluginError> {
-        let services = crate::api::formats::FormatsServices { formats, fs };
+        let services = crate::api::formats::FormatsServices { formats, fs, web };
         self.run(move |vm| vm.context().provide_formats(services))
             .await
     }

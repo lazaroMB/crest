@@ -34,6 +34,12 @@ use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::ghs::GhsSpec;
+use crate::science::molecule_grid::MoleculeGridSpec;
+use crate::science::molecule3d::Molecule3dSpec;
+use crate::science::reaction::ReactionSpec;
+use crate::science::sequence::SequenceSpec;
+use crate::science::spectrum::SpectrumSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
@@ -155,6 +161,12 @@ impl Block {
             BlockKind::CadModel(spec) => spec.validate(),
             BlockKind::Drawing(spec) => spec.validate(),
             BlockKind::IfcSchedule(spec) => spec.validate(),
+            BlockKind::Sequence(spec) => spec.validate(),
+            BlockKind::Reaction(spec) => spec.validate(),
+            BlockKind::MoleculeGrid(spec) => spec.validate(),
+            BlockKind::Spectrum(spec) => spec.validate(),
+            BlockKind::Molecule3d(spec) => spec.validate(),
+            BlockKind::Ghs(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -340,6 +352,22 @@ pub enum BlockKind {
     Drawing(Box<DrawingSpec>),
     /// An IFC model's room schedule by storey (tool `show_ifc_schedule`).
     IfcSchedule(Box<IfcScheduleSpec>),
+    /// A DNA, RNA or protein sequence with its features (tool
+    /// `show_sequence`).
+    Sequence(Box<SequenceSpec>),
+    /// A reaction scheme with its atom and charge balance (tool
+    /// `show_reaction`).
+    Reaction(Box<ReactionSpec>),
+    /// A grid of molecules with descriptors and activities (tool
+    /// `show_molecule_grid`).
+    MoleculeGrid(Box<MoleculeGridSpec>),
+    /// An IR, UV-Vis, NMR or mass spectrum with its peaks (tool
+    /// `show_spectrum`).
+    Spectrum(Box<SpectrumSpec>),
+    /// A molecule in 3D as ball and stick (tool `show_molecule_3d`).
+    Molecule3d(Box<Molecule3dSpec>),
+    /// A GHS hazard card fetched from PubChem (tool `show_ghs`).
+    Ghs(Box<GhsSpec>),
 }
 
 /// Lifecycle of a tool call.

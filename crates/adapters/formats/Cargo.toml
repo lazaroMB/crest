@@ -9,12 +9,15 @@ publish.workspace = true
 
 [dependencies]
 application.workspace = true
+blake3.workspace = true
 bytes.workspace = true
 chematic.workspace = true
 domain.workspace = true
 dxf.workspace = true
 encoding_rs.workspace = true
 flate2.workspace = true
+gb-io.workspace = true
+mzdata.workspace = true
 ifc-lite-core.workspace = true
 parquet.workspace = true
 prost.workspace = true

@@ -1,0 +1,33 @@
+LOCUS       pCrest1                  515 bp    DNA     circular SYN 25-OCT-2026
+DEFINITION  Synthetic test plasmid pCrest1 (generated for crest tests).
+ACCESSION   .
+VERSION     .
+KEYWORDS    .
+SOURCE      synthetic DNA construct
+  ORGANISM  synthetic DNA construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..515
+                     /organism="synthetic DNA construct"
+                     /mol_type="other DNA"
+     promoter        77..105
+                     /label="tac promoter"
+     CDS             118..213
+                     /gene="crsA"
+                     /product="test protein"
+                     /codon_start="1"
+     terminator      complement(265..299)
+                     /label="rrnB T1"
+     misc_feature    join(476..515,1..20)
+                     /note="crosses the origin"
+ORIGIN
+        1 catacacgtc agcacgaaac ttgttggccc agtgtgaatc gaattcgctt aagggttaag
+       61 taagtgtgat gcatacttga caattaatca tcggctcgta taatggcctt tacttgcatg
+      121 ccatttagcc gcggcaatac atcggagacg cctgccaatt tcgaaatcaa gacccgtcgg
+      181 acaattaccg atcgtaattc ggcaactttt taatgtgtcc accccatcgg actggatccg
+      241 gcatttttat tacactcaga aacaaaaaaa aagcccgctc attaggcggg cttttttttg
+      301 aactcgggta attttgacag gtcacgcaga ggcgcgccct cctgaagtgc gtggacacta
+      361 agcttcgcta tgaatctctg atttacccac tctgccaaac tccagcgcgg tcagttccat
+      421 caccctaagt aaccgaataa tgcgttcgct ctattgacta cgacgcgctc attcccttgt
+      481 cggagagtta tggaacaagg acgctgtctg agact
+//

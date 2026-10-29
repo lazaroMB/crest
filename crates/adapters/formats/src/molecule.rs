@@ -7,6 +7,7 @@
 //! it on a light rounded card, so it stays legible in a dark theme.
 
 use chematic::chem;
+use chematic::core::Molecule;
 use chematic::depict::{self, RenderOptions};
 use chematic::smiles;
 use domain::science::{MoleculeSpec, formulas_match};
@@ -45,24 +46,57 @@ pub fn depict(smiles_text: &str, claimed_formula: Option<&str>) -> MoleculeSpec 
             return spec;
         }
     };
-    let formula = neutral_formula(&chem::calc_mol_formula(&mol));
-    spec.claimed_matches = claimed_formula.and_then(|claimed| formulas_match(claimed, &formula));
+    fill(&mut spec, &mol);
+    spec
+}
+
+/// The molecule spec of a parsed `mol` written as `smiles_text`.
+#[must_use]
+pub fn depict_mol(mol: &Molecule, smiles_text: &str) -> MoleculeSpec {
+    let mut spec = MoleculeSpec {
+        smiles: smiles_text.to_owned(),
+        name: None,
+        svg: None,
+        formula: None,
+        mw: None,
+        charge: None,
+        canonical: None,
+        error: None,
+        claimed_formula: None,
+        claimed_matches: None,
+    };
+    fill(&mut spec, mol);
+    spec
+}
+
+/// Fills in the computed values and the depiction of `mol`.
+fn fill(spec: &mut MoleculeSpec, mol: &Molecule) {
+    let formula = neutral_formula(&chem::calc_mol_formula(mol));
+    spec.claimed_matches = spec
+        .claimed_formula
+        .as_deref()
+        .and_then(|claimed| formulas_match(claimed, &formula));
     spec.formula = Some(formula);
-    spec.mw = Some(chem::molecular_weight(&mol));
-    spec.charge = Some(chem::formal_charge_sum(&mol));
-    spec.canonical = Some(smiles::canonical_smiles(&mol));
-    // Kekulé bonds read better than chematic's dashed aromatic style.
+    spec.mw = Some(chem::molecular_weight(mol));
+    spec.charge = Some(chem::formal_charge_sum(mol));
+    spec.canonical = Some(smiles::canonical_smiles(mol));
+    spec.svg = Some(depiction(mol));
+}
+
+/// chematic's SVG of `mol`, with Kekulé bonds (they read better than its
+/// dashed aromatic style).
+#[must_use]
+pub fn depiction(mol: &Molecule) -> String {
     let options = RenderOptions {
         kekulize: true,
         ..RenderOptions::default()
     };
-    spec.svg = Some(depict::depict_svg_opts(&mol, &options));
-    spec
+    depict::depict_svg_opts(mol, &options)
 }
 
 /// `formula` without the net charge RDKit-style formulas end with
 /// (`C7H5O2-` → `C7H5O2`, `O4S-2` → `O4S`).
-fn neutral_formula(formula: &str) -> String {
+pub fn neutral_formula(formula: &str) -> String {
     let body = formula.trim_end_matches(|c: char| c.is_ascii_digit());
     match body.strip_suffix(['+', '-']) {
         Some(neutral) => neutral.to_owned(),

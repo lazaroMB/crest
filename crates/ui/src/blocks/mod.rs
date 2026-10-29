@@ -20,6 +20,7 @@ pub mod drawing;
 pub mod findings;
 pub mod flame;
 pub mod form;
+pub mod ghs;
 pub mod har;
 pub mod ifc;
 pub mod image;
@@ -33,12 +34,17 @@ pub mod measured;
 pub mod mermaid;
 pub mod model_view;
 pub mod molecule;
+pub mod molecule3d;
+pub mod molecule_grid;
 pub mod netlist;
 pub mod plate;
 pub mod plot;
 pub mod query_plan;
+pub mod reaction;
+pub mod sequence;
 pub mod shell;
 pub mod sources;
+pub mod spectrum;
 pub mod stage;
 pub mod svg;
 pub mod table;
@@ -99,6 +105,12 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::CadModel(_) => cad::render(entry, window, cx),
         BlockKind::Drawing(_) => drawing::render(entry, window, cx),
         BlockKind::IfcSchedule(_) => ifc::render(entry, window, cx),
+        BlockKind::Sequence(_) => sequence::render(entry, window, cx),
+        BlockKind::Reaction(_) => reaction::render(entry, window, cx),
+        BlockKind::MoleculeGrid(_) => molecule_grid::render(entry, window, cx),
+        BlockKind::Spectrum(_) => spectrum::render(entry, window, cx),
+        BlockKind::Molecule3d(_) => molecule3d::render(entry, window, cx),
+        BlockKind::Ghs(_) => ghs::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

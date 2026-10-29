@@ -83,7 +83,7 @@ impl Tint {
 }
 
 /// `color` as `#rrggbb`, alpha dropped.
-fn hex(color: gpui::Hsla) -> String {
+pub(crate) fn hex(color: gpui::Hsla) -> String {
     let rgba = color.to_rgb();
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!(

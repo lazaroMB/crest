@@ -61,6 +61,10 @@ pub struct PlotSpec {
     /// Shape of the plot area.
     #[serde(default, skip_serializing_if = "PlotAspect::is_auto")]
     pub aspect: PlotAspect,
+    /// Whether the x axis runs right to left (IR wavenumbers, NMR
+    /// chemical shifts).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub x_reversed: bool,
 }
 
 /// How an axis maps values to positions.

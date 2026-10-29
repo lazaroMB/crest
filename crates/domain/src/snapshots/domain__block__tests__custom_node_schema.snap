@@ -980,6 +980,10 @@ expression: "schemars::schema_for!(CustomNode)"
         "aspect": {
           "description": "Shape of the plot area.",
           "$ref": "#/$defs/PlotAspect"
+        },
+        "x_reversed": {
+          "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
+          "type": "boolean"
         }
       }
     },

@@ -685,6 +685,90 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A DNA, RNA or protein sequence with its features (tool\n`show_sequence`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "sequence"
+        }
+      },
+      "$ref": "#/$defs/SequenceSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A reaction scheme with its atom and charge balance (tool\n`show_reaction`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "reaction"
+        }
+      },
+      "$ref": "#/$defs/ReactionSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A grid of molecules with descriptors and activities (tool\n`show_molecule_grid`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "molecule_grid"
+        }
+      },
+      "$ref": "#/$defs/MoleculeGridSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "An IR, UV-Vis, NMR or mass spectrum with its peaks (tool\n`show_spectrum`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "spectrum"
+        }
+      },
+      "$ref": "#/$defs/SpectrumSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A molecule in 3D as ball and stick (tool `show_molecule_3d`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "molecule3d"
+        }
+      },
+      "$ref": "#/$defs/Molecule3dSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A GHS hazard card fetched from PubChem (tool `show_ghs`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ghs"
+        }
+      },
+      "$ref": "#/$defs/GhsSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1790,6 +1874,10 @@ expression: "schemars::schema_for!(Block)"
         "aspect": {
           "description": "Shape of the plot area.",
           "$ref": "#/$defs/PlotAspect"
+        },
+        "x_reversed": {
+          "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
+          "type": "boolean"
         }
       }
     },
@@ -11492,6 +11580,1328 @@ expression: "schemars::schema_for!(Block)"
         "path",
         "schema",
         "storeys"
+      ]
+    },
+    "SequenceFormat": {
+      "description": "The file the sequence came from.",
+      "oneOf": [
+        {
+          "description": "A GenBank flat file.",
+          "type": "string",
+          "const": "genbank"
+        },
+        {
+          "description": "FASTA.",
+          "type": "string",
+          "const": "fasta"
+        },
+        {
+          "description": "Bare residues.",
+          "type": "string",
+          "const": "plain"
+        }
+      ]
+    },
+    "Alphabet": {
+      "description": "What the residues are.",
+      "oneOf": [
+        {
+          "description": "Nucleotides with T.",
+          "type": "string",
+          "const": "dna"
+        },
+        {
+          "description": "Nucleotides with U.",
+          "type": "string",
+          "const": "rna"
+        },
+        {
+          "description": "Amino acids.",
+          "type": "string",
+          "const": "protein"
+        }
+      ]
+    },
+    "Topology": {
+      "description": "Linear or circular (a plasmid).",
+      "oneOf": [
+        {
+          "description": "Has two ends.",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "Its end joins its start.",
+          "type": "string",
+          "const": "circular"
+        }
+      ]
+    },
+    "SeqFeature": {
+      "description": "An annotated region.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Feature key (`CDS`, `gene`, `promoter`, `rep_origin`).",
+          "type": "string"
+        },
+        "label": {
+          "description": "Its name: `/label`, `/gene`, `/product` or `/note`, the first given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segments": {
+          "description": "Its parts in reading order (two for one crossing the origin).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeqSpan"
+          }
+        },
+        "strand": {
+          "description": "The strand.",
+          "$ref": "#/$defs/Strand",
+          "default": "forward"
+        },
+        "qualifiers": {
+          "description": "Its qualifiers (capped at [`MAX_QUALIFIERS`]).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Qualifier"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "segments"
+      ]
+    },
+    "SeqSpan": {
+      "description": "A half-open range of residues, `start..end`.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "First residue, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "end": {
+          "description": "One past the last residue.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "Strand": {
+      "description": "The strand a feature or hit is on.",
+      "oneOf": [
+        {
+          "description": "The given (top) strand.",
+          "type": "string",
+          "const": "forward"
+        },
+        {
+          "description": "The complementary strand.",
+          "type": "string",
+          "const": "reverse"
+        },
+        {
+          "description": "No strand (proteins, unstranded features).",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "Qualifier": {
+      "description": "A feature qualifier, `/key=\"value\"`.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Its key (`gene`, `product`, `note`).",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value; empty for a flag such as `/pseudo`.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "CutSite": {
+      "description": "Where a restriction enzyme cuts.",
+      "type": "object",
+      "properties": {
+        "enzyme": {
+          "description": "The enzyme (`EcoRI`).",
+          "type": "string"
+        },
+        "site": {
+          "description": "Its recognition sequence on the top strand (`GAATTC`).",
+          "type": "string"
+        },
+        "start": {
+          "description": "First residue of the recognition site, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cut": {
+          "description": "The top-strand cut, before residue `cut` (0-based, modulo the\nlength on a circular sequence).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "strand": {
+          "description": "The strand the site reads on (non-palindromic sites).",
+          "$ref": "#/$defs/Strand",
+          "default": "forward"
+        }
+      },
+      "required": [
+        "enzyme",
+        "site",
+        "start",
+        "cut"
+      ]
+    },
+    "SequenceSpec": {
+      "description": "A DNA, RNA or protein sequence with its features and cut sites.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the viewer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "What it was read from.",
+          "$ref": "#/$defs/SequenceFormat",
+          "default": "plain"
+        },
+        "name": {
+          "description": "Record name (GenBank LOCUS, FASTA id).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Description (GenBank DEFINITION, the rest of the FASTA header).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accession": {
+          "description": "Accession and version, when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "organism": {
+          "description": "Organism, when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alphabet": {
+          "description": "The residues.",
+          "$ref": "#/$defs/Alphabet"
+        },
+        "topology": {
+          "description": "Linear or circular.",
+          "$ref": "#/$defs/Topology",
+          "default": "linear"
+        },
+        "sequence": {
+          "description": "The residues, upper case.",
+          "type": "string"
+        },
+        "features": {
+          "description": "The annotation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeqFeature"
+          }
+        },
+        "cut_sites": {
+          "description": "Restriction sites of the bundled enzyme table (nucleic acids).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CutSite"
+          }
+        },
+        "enzyme_source": {
+          "description": "Where the enzyme table comes from, when sites were searched.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "records": {
+          "description": "Records in the file.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1
+        },
+        "record": {
+          "description": "The record shown, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "warnings": {
+          "description": "Reader notes (non-IUPAC characters, features dropped).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "alphabet",
+        "sequence"
+      ]
+    },
+    "ReactionComponent": {
+      "description": "One molecule of the scheme.",
+      "type": "object",
+      "properties": {
+        "role": {
+          "description": "Its side.",
+          "$ref": "#/$defs/ReactionRole"
+        },
+        "molecule": {
+          "description": "The molecule (SMILES, depiction, computed formula, mass, charge).",
+          "$ref": "#/$defs/MoleculeSpec"
+        },
+        "coefficient": {
+          "description": "Its coefficient as given (1 when none was).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "atoms": {
+          "description": "Atom counts of one molecule by element, implicit hydrogens\nincluded.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "default": {}
+        }
+      },
+      "required": [
+        "role",
+        "molecule"
+      ]
+    },
+    "ReactionRole": {
+      "description": "The side of the arrow a molecule is on.",
+      "oneOf": [
+        {
+          "description": "Left of the arrow.",
+          "type": "string",
+          "const": "reactant"
+        },
+        {
+          "description": "Over the arrow (catalysts, solvents): not counted.",
+          "type": "string",
+          "const": "agent"
+        },
+        {
+          "description": "Right of the arrow.",
+          "type": "string",
+          "const": "product"
+        }
+      ]
+    },
+    "ElementBalance": {
+      "description": "One element's count on each side, with the coefficients given.",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Element symbol.",
+          "type": "string"
+        },
+        "reactants": {
+          "description": "Atoms on the left.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "products": {
+          "description": "Atoms on the right.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "element",
+        "reactants",
+        "products"
+      ]
+    },
+    "Stoichiometry": {
+      "description": "What the coefficient search found.",
+      "oneOf": [
+        {
+          "description": "The given coefficients balance.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "balanced"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "These smallest integer coefficients (reactants then products, in\norder) balance it.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "suggested"
+            },
+            "coefficients": {
+              "description": "One per counted molecule.",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "coefficients"
+          ]
+        },
+        {
+          "description": "No positive coefficients balance these molecules: something is\nmissing (a by-product, a counter-ion) or a structure is wrong.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "impossible"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "More than one independent set of coefficients balances it (two\nreactions in one); none is suggested.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ambiguous"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The search was not run (a molecule did not parse).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_checked"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "ReactionSpec": {
+      "description": "A reaction drawn from reaction SMILES with its balance.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smiles": {
+          "description": "Reaction SMILES as given (`A.B>agent>C.D`).",
+          "type": "string"
+        },
+        "conditions": {
+          "description": "Conditions written over the arrow (`Δ, 2 h`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "description": "The molecules, reactants then agents then products.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReactionComponent"
+          }
+        },
+        "elements": {
+          "description": "Element counts per side with the given coefficients (implicit H\nincluded), by symbol.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ElementBalance"
+          },
+          "default": []
+        },
+        "charge": {
+          "description": "Net charge on the left and on the right.",
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "format": "int64"
+            },
+            {
+              "type": "integer",
+              "format": "int64"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2,
+          "default": [
+            0,
+            0
+          ]
+        },
+        "stoichiometry": {
+          "description": "The coefficient search.",
+          "$ref": "#/$defs/Stoichiometry"
+        },
+        "balance": {
+          "description": "The balance check as a computed envelope (values `balanced`,\n`charge_delta`, `delta.<element>`, `suggested.<n>`).",
+          "$ref": "#/$defs/Computed"
+        },
+        "error": {
+          "description": "Why the reaction could not be read, when it could not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "smiles",
+        "components",
+        "stoichiometry",
+        "balance"
+      ]
+    },
+    "ActivityDirection": {
+      "description": "Whether a higher activity value is better (potency in %, pIC50) or a\nlower one (IC50, Ki).",
+      "oneOf": [
+        {
+          "description": "Higher is better.",
+          "type": "string",
+          "const": "higher"
+        },
+        {
+          "description": "Lower is better.",
+          "type": "string",
+          "const": "lower"
+        }
+      ]
+    },
+    "GridMolecule": {
+      "description": "One molecule of the grid.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its id (compound number), unique in the grid.",
+          "type": "string"
+        },
+        "molecule": {
+          "description": "The structure, depicted (or the parse error).",
+          "$ref": "#/$defs/MoleculeSpec"
+        },
+        "activity": {
+          "description": "The measured activity, as given.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "descriptors": {
+          "description": "Descriptors, when the SMILES parsed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Descriptors"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "molecule"
+      ]
+    },
+    "Descriptors": {
+      "description": "Descriptors computed from a structure.",
+      "type": "object",
+      "properties": {
+        "mw": {
+          "description": "Average molecular weight, g/mol.",
+          "type": "number",
+          "format": "double"
+        },
+        "heavy_atoms": {
+          "description": "Heavy (non-hydrogen) atoms.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "hbd": {
+          "description": "Hydrogen-bond donors.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "hba": {
+          "description": "Hydrogen-bond acceptors.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rotatable_bonds": {
+          "description": "Rotatable bonds.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "rings": {
+          "description": "Rings (SSSR size).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "aromatic_rings": {
+          "description": "Aromatic rings.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "logp": {
+          "description": "Crippen logP (Wildman & Crippen 1999).",
+          "type": "number",
+          "format": "double"
+        },
+        "tpsa": {
+          "description": "Topological polar surface area, Å² (Ertl 2000, N, O, S and P).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "mw",
+        "heavy_atoms",
+        "hbd",
+        "hba",
+        "rotatable_bonds",
+        "rings",
+        "aromatic_rings",
+        "logp",
+        "tpsa"
+      ]
+    },
+    "MoleculeGridSpec": {
+      "description": "A grid of molecules with descriptors and activities.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activity_label": {
+          "description": "What the activity is (`IC50`, `% inhibition at 10 µM`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activity_unit": {
+          "description": "Its unit (`nM`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction": {
+          "description": "Which way is better, for the colours.",
+          "$ref": "#/$defs/ActivityDirection",
+          "default": "higher"
+        },
+        "molecules": {
+          "description": "The molecules in the order given.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GridMolecule"
+          }
+        },
+        "descriptors": {
+          "description": "The descriptors as an envelope (values `<id>.<descriptor>`).",
+          "$ref": "#/$defs/Computed"
+        }
+      },
+      "required": [
+        "molecules",
+        "descriptors"
+      ]
+    },
+    "SpectrumFormat": {
+      "description": "The file format read.",
+      "oneOf": [
+        {
+          "description": "JCAMP-DX 4.24 / 5.01.",
+          "type": "string",
+          "const": "jcamp"
+        },
+        {
+          "description": "mzML (HUPO-PSI).",
+          "type": "string",
+          "const": "mzml"
+        },
+        {
+          "description": "Mascot generic format.",
+          "type": "string",
+          "const": "mgf"
+        }
+      ]
+    },
+    "SpectrumKind": {
+      "description": "What was measured.",
+      "oneOf": [
+        {
+          "description": "Infrared (wavenumber, right to left).",
+          "type": "string",
+          "const": "infrared"
+        },
+        {
+          "description": "Raman (shift, left to right).",
+          "type": "string",
+          "const": "raman"
+        },
+        {
+          "description": "UV-visible (wavelength).",
+          "type": "string",
+          "const": "uv_vis"
+        },
+        {
+          "description": "NMR (chemical shift, right to left).",
+          "type": "string",
+          "const": "nmr"
+        },
+        {
+          "description": "Mass spectrum (m/z).",
+          "type": "string",
+          "const": "mass"
+        },
+        {
+          "description": "Anything else.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
+    "Peak": {
+      "description": "A picked peak.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Position on the x axis.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "Height (or depth) as read.",
+          "type": "number",
+          "format": "double"
+        },
+        "prominence": {
+          "description": "Prominence above (below) the surrounding baseline, in y units;\n`None` for a listed stick.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "PeakSense": {
+      "description": "Whether peaks are maxima (absorbance, counts) or minima (IR\ntransmittance).",
+      "oneOf": [
+        {
+          "description": "Peaks point up.",
+          "type": "string",
+          "const": "maxima"
+        },
+        {
+          "description": "Peaks point down.",
+          "type": "string",
+          "const": "minima"
+        }
+      ]
+    },
+    "SpectrumSpec": {
+      "description": "A spectrum with its peaks.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the plot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Its format.",
+          "$ref": "#/$defs/SpectrumFormat"
+        },
+        "kind": {
+          "description": "What was measured.",
+          "$ref": "#/$defs/SpectrumKind"
+        },
+        "name": {
+          "description": "The block's or scan's own title or id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_label": {
+          "description": "x axis label with its unit (`wavenumber (cm⁻¹)`, `δ (ppm)`, `m/z`).",
+          "type": "string"
+        },
+        "y_label": {
+          "description": "y axis label with its unit (`transmittance`, `intensity`).",
+          "type": "string"
+        },
+        "x_reversed": {
+          "description": "Whether x runs right to left (IR wavenumber, NMR shift).",
+          "type": "boolean",
+          "default": false
+        },
+        "x": {
+          "description": "The points, in file order.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "y": {
+          "description": "One y per x.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "sticks": {
+          "description": "Whether the points are sticks (centroided MS, a peak table)\nrather than a continuous trace.",
+          "type": "boolean",
+          "default": false
+        },
+        "peaks": {
+          "description": "The peaks picked by the engine (or the file's sticks, strongest\nfirst), at most [`MAX_PEAKS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Peak"
+          },
+          "default": []
+        },
+        "sense": {
+          "description": "Which way peaks point.",
+          "$ref": "#/$defs/PeakSense",
+          "default": "maxima"
+        },
+        "picking": {
+          "description": "The peak picking as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "metadata": {
+          "description": "Header values worth showing (origin, owner, molecular formula,\nnucleus, frequency, precursor).",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "blocks": {
+          "description": "Data blocks or scans in the file.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 1
+        },
+        "block": {
+          "description": "The block or scan shown, 0-based.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "format",
+        "kind",
+        "x_label",
+        "y_label",
+        "x",
+        "y",
+        "picking"
+      ]
+    },
+    "CoordinateSource": {
+      "description": "Where the coordinates come from.",
+      "oneOf": [
+        {
+          "description": "Read from a structure file.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "file"
+            },
+            "format": {
+              "description": "Its format.",
+              "$ref": "#/$defs/StructureFormat"
+            }
+          },
+          "required": [
+            "kind",
+            "format"
+          ]
+        },
+        {
+          "description": "Embedded from SMILES by the engine (a computed conformer, not an\nexperimental structure).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "embedded"
+            },
+            "method": {
+              "description": "The method, e.g. `distance geometry + DREIDING (chematic 1.2.1)`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "method"
+          ]
+        }
+      ]
+    },
+    "StructureFormat": {
+      "description": "The file the coordinates come from.",
+      "oneOf": [
+        {
+          "description": "MDL molfile (V2000 or V3000).",
+          "type": "string",
+          "const": "mol"
+        },
+        {
+          "description": "SD file (its first record).",
+          "type": "string",
+          "const": "sdf"
+        },
+        {
+          "description": "XYZ.",
+          "type": "string",
+          "const": "xyz"
+        },
+        {
+          "description": "Protein Data Bank.",
+          "type": "string",
+          "const": "pdb"
+        }
+      ]
+    },
+    "Atom3d": {
+      "description": "An atom with its position in Å.",
+      "type": "object",
+      "properties": {
+        "element": {
+          "description": "Element symbol (`C`, `Cl`).",
+          "type": "string"
+        },
+        "position": {
+          "description": "Position, Å.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "name": {
+          "description": "Atom name from the file (PDB `CA`), when given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "residue": {
+          "description": "Residue (`ALA 12 A`), for PDB atoms.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "element",
+        "position"
+      ]
+    },
+    "Bond3d": {
+      "description": "A bond between two atoms (indices into the atoms).",
+      "type": "object",
+      "properties": {
+        "a": {
+          "description": "First atom.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "b": {
+          "description": "Second atom.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "order": {
+          "description": "1, 2 or 3; 4 for aromatic.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "order"
+      ]
+    },
+    "Molecule3dSpec": {
+      "description": "A molecule in 3D.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the view.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Name of the molecule (the file's title line, or the call's).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "smiles": {
+          "description": "The SMILES embedded, when it came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Where the coordinates come from.",
+          "$ref": "#/$defs/CoordinateSource"
+        },
+        "atoms": {
+          "description": "The atoms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Atom3d"
+          }
+        },
+        "bonds": {
+          "description": "The bonds.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bond3d"
+          },
+          "default": []
+        },
+        "bonds_inferred": {
+          "description": "Whether the bonds were inferred from distances (XYZ, PDB).",
+          "type": "boolean",
+          "default": false
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "atoms"
+      ]
+    },
+    "GhsClassification": {
+      "description": "One source's classification.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The source (`European Chemicals Agency (ECHA)`).",
+          "type": "string"
+        },
+        "substance": {
+          "description": "What the source calls the substance.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "The source's page.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "license": {
+          "description": "The source's licence note.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pictograms": {
+          "description": "Pictograms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Pictogram"
+          },
+          "default": []
+        },
+        "signal": {
+          "description": "`Danger` or `Warning`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hazards": {
+          "description": "Hazard statements.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HazardStatement"
+          },
+          "default": []
+        },
+        "precautionary": {
+          "description": "Precautionary statement codes (`P210`, `P305+P351+P338`); PubChem\ngives the codes, not their texts.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "notes": {
+          "description": "The source's notes (share of non-classified reports).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "Pictogram": {
+      "description": "A pictogram of a classification.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "`GHS01` … `GHS09`.",
+          "type": "string"
+        },
+        "label": {
+          "description": "The hazard it stands for, as the source labels it (`Flammable`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "HazardStatement": {
+      "description": "A hazard statement.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "description": "`H225`, `EUH066`.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Its text as given, with the class in brackets when the source\nadds it.",
+          "type": "string"
+        },
+        "share": {
+          "description": "The share of notifications that report it (`> 99.9%`), for\naggregated sources.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "text"
+      ]
+    },
+    "GhsSpec": {
+      "description": "A GHS card.",
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "What was looked up (name, CAS number or CID).",
+          "type": "string"
+        },
+        "cid": {
+          "description": "PubChem's compound id, when the compound was found.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "description": "PubChem's name of the compound.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "classifications": {
+          "description": "The classifications, one per source.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GhsClassification"
+          },
+          "default": []
+        },
+        "source_url": {
+          "description": "The PubChem page to check (the compound's GHS section).",
+          "type": "string"
+        },
+        "fetched_url": {
+          "description": "The URL fetched.",
+          "type": "string"
+        },
+        "retrieved": {
+          "description": "When it was fetched (UTC date, `YYYY-MM-DD`).",
+          "type": "string"
+        },
+        "message": {
+          "description": "Why there is nothing to show (not found, no classification).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "query",
+        "source_url",
+        "fetched_url",
+        "retrieved"
       ]
     }
   }

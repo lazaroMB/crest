@@ -226,6 +226,7 @@ impl TypedTool for ShowPlotTool {
             x_scale: input.x_scale,
             y_scale: input.y_scale,
             aspect: input.aspect,
+            x_reversed: false,
         };
         spec.validate()
             .map_err(|err| invalid(SHOW_PLOT, err.to_string()))?;

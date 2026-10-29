@@ -20,6 +20,12 @@
 //! | cad model (STEP) | solids CSV (faces, triangles, box), the summary line |
 //! | drawing (DXF) | layers CSV, the drawing's texts, the summary line |
 //! | IFC schedule | spaces CSV (storey, name, area, unit, source), the tree as text |
+//! | sequence | FASTA, features CSV, cut sites CSV (when searched) |
+//! | reaction | reaction SMILES, the equation (and the balanced one), balance CSV |
+//! | molecule grid | CSV of ids, SMILES, activities and descriptors; SMILES list |
+//! | spectrum | points CSV, peaks CSV |
+//! | molecule 3D | XYZ, the SMILES embedded |
+//! | GHS card | the card as text with its source and date, the PubChem URL |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -564,6 +570,64 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("spaces", "spaces CSV", spec.to_csv()),
             CopyFormat::new("tree", "schedule", spec.to_tree().to_text()),
         ],
+        BlockKind::Sequence(spec) => {
+            let mut formats = vec![
+                CopyFormat::new("fasta", "FASTA", spec.to_fasta()),
+                CopyFormat::new("features", "features CSV", spec.features_csv()),
+            ];
+            if spec.enzyme_source.is_some() {
+                formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
+            }
+            formats
+        }
+        BlockKind::Ghs(spec) => vec![
+            CopyFormat::new("card", "card", spec.to_text()),
+            CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),
+        ],
+        BlockKind::Molecule3d(spec) => {
+            let mut formats = vec![CopyFormat::new("xyz", "XYZ", spec.to_xyz())];
+            if let Some(smiles) = &spec.smiles {
+                formats.push(CopyFormat::new("smiles", "SMILES", smiles.clone()));
+            }
+            formats
+        }
+        BlockKind::Spectrum(spec) => vec![
+            CopyFormat::new("peaks", "peaks CSV", spec.peaks_csv()),
+            CopyFormat::new("points", "points CSV", spec.to_csv()),
+        ],
+        BlockKind::MoleculeGrid(spec) => vec![
+            CopyFormat::new("csv", "CSV", spec.to_csv()),
+            CopyFormat::new(
+                "smiles",
+                "SMILES",
+                spec.molecules
+                    .iter()
+                    .map(|m| format!("{} {}", m.molecule.smiles, m.id))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        ],
+        BlockKind::Reaction(spec) => {
+            let mut formats = vec![
+                CopyFormat::new("smiles", "reaction SMILES", spec.smiles.clone()),
+                CopyFormat::new("equation", "equation", spec.equation(None)),
+            ];
+            if let domain::science::reaction::Stoichiometry::Suggested { coefficients } =
+                &spec.stoichiometry
+            {
+                formats.push(CopyFormat::new(
+                    "balanced",
+                    "balanced equation",
+                    spec.equation(Some(coefficients)),
+                ));
+            }
+            formats.push(CopyFormat::new(
+                "balance",
+                "balance CSV",
+                spec.balance_csv(),
+            ));
+            formats
+        }
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }
