@@ -1312,13 +1312,13 @@ impl SessionController for UiController {
 
     fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
         let app = Arc::clone(&self.app);
+        // A running turn holds the app until it ends (and saves the old
+        // title then): this waits for it, and the save after keeps the new
+        // one. The UI shows the title meanwhile and does not wait.
         self.handle
             .spawn(async move {
-                {
-                    let mut guard = app.lock().await;
-                    guard.session.title = Some(title);
-                }
-                let guard = app.lock().await;
+                let mut guard = app.lock().await;
+                guard.session.title = Some(title);
                 guard.save().await.map_err(|err| err.to_string())
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
