@@ -45,6 +45,10 @@ use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
 use application::ports::credentials::ApiKeyPort;
+use application::ports::fs::{
+    DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
+    ReadFileRequest, WriteFileRequest,
+};
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::llm::{ModelCatalogPort, ModelInfo};
 use application::ports::mcp::{McpPort, McpServerState};
@@ -68,7 +72,7 @@ use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
 use domain::permission::PermissionMode;
-use domain::workspace::WorkspaceRoot;
+use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
@@ -160,6 +164,72 @@ impl<T: FileSearchPort + ?Sized + 'static> FileSearchPort for TokioPort<T> {
 impl<T: ContentSearchPort + ?Sized + 'static> ContentSearchPort for TokioPort<T> {
     async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
         self.run(|port| async move { port.grep(request).await })
+            .await
+    }
+}
+
+impl<T: ?Sized> TokioPort<T> {
+    async fn run_fs<R, F>(&self, call: impl FnOnce(Arc<T>) -> F) -> Result<R, FsError>
+    where
+        F: Future<Output = Result<R, FsError>> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.handle
+            .spawn(call(Arc::clone(&self.inner)))
+            .await
+            .unwrap_or_else(|_| Err(FsError::Io("the runtime is shutting down".into())))
+    }
+}
+
+/// The file system the pickers preview through (only `read_file` is used
+/// there; the rest forwards too, for completeness).
+#[async_trait]
+impl<T: FileSystemPort + ?Sized + 'static> FileSystemPort for TokioPort<T> {
+    fn root(&self) -> &WorkspaceRoot {
+        self.inner.root()
+    }
+
+    async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
+        self.run_fs(|port| async move { port.read_file(request).await })
+            .await
+    }
+
+    async fn read_bytes(&self, path: &WorkspacePath, max: u64) -> Result<Vec<u8>, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.read_bytes(&path, max).await })
+            .await
+    }
+
+    async fn read_head(&self, path: &WorkspacePath, max: u64) -> Result<(Vec<u8>, u64), FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.read_head(&path, max).await })
+            .await
+    }
+
+    async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.exists(&path).await })
+            .await
+    }
+
+    async fn list_dir(&self, path: &WorkspacePath) -> Result<Vec<DirEntry>, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.list_dir(&path).await })
+            .await
+    }
+
+    async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
+        self.run_fs(|port| async move { port.prepare_edit(request).await })
+            .await
+    }
+
+    async fn prepare_write(&self, request: WriteFileRequest) -> Result<PendingChange, FsError> {
+        self.run_fs(|port| async move { port.prepare_write(request).await })
+            .await
+    }
+
+    async fn apply(&self, change: PendingChange) -> Result<FileChange, FsError> {
+        self.run_fs(|port| async move { port.apply(change).await })
             .await
     }
 }
@@ -1670,6 +1740,8 @@ pub fn session_parts(
         Ok(app) => {
             let files = TokioPort::new(Arc::clone(&app.file_search), handle.clone());
             let content = TokioPort::new(Arc::clone(&app.content_search), handle.clone());
+            let fs: Arc<dyn FileSystemPort> =
+                Arc::new(TokioPort::new(Arc::clone(&app.fs), handle.clone()));
             let workspace = app.workspace.as_path().to_path_buf();
             let model = initial_model(&app);
             let (keymap, key_warnings) = crate::keys::keymap(&app.keymaps, &app.options);
@@ -1701,6 +1773,8 @@ pub fn session_parts(
                 Arc::new(files),
                 Arc::new(content),
             );
+            // The previews read with the app's guards (sensitive paths).
+            parts.fs = Some(fs);
             parts.model = Some(model);
             parts.needs_model = needs_model;
             parts.keymap = keymap;

@@ -97,6 +97,11 @@ fn open_with<'a>(
         .build()
         .unwrap();
     let parts = session_parts(&config, overrides, runtime.handle()).unwrap();
+    // The pickers' preview reads through the app's file system, on the
+    // runtime, from any executor.
+    let fs = parts.fs.clone().expect("the previews have a file system");
+    let root = domain::workspace::WorkspacePath::root();
+    assert_eq!(futures::executor::block_on(fs.exists(&root)), Ok(true));
     let slot = Rc::new(RefCell::new(None));
     let out = slot.clone();
     let (_host, cx) = cx.add_window_view(move |window, cx| {
