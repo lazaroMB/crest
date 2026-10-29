@@ -17,6 +17,8 @@
 //! keymap's own vocabulary. The Lua host (`app.keymap.set`) and the UI layer
 //! convert their own representations into them.
 
+pub mod layers;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -399,7 +401,36 @@ impl<A> Keymap<A> {
     /// Removes the mapping for `notation`, returning its action.
     pub fn del(&mut self, notation: &str) -> Result<Option<A>, KeyParseError> {
         let keys = parse_keys(notation, &self.leader)?;
-        Ok(remove(&mut self.root, &keys))
+        Ok(self.del_keys(&keys))
+    }
+
+    /// Removes the mapping of an already parsed sequence, returning its
+    /// action. Longer mappings that start with `keys` stay.
+    pub fn del_keys(&mut self, keys: &[Key]) -> Option<A> {
+        remove(&mut self.root, keys)
+    }
+
+    /// The keys that can follow `prefix`, sorted by their notation: each
+    /// with the action it completes (if any) and how many mappings start
+    /// with it (itself included). Empty when nothing continues `prefix`.
+    pub fn continuations(&self, prefix: &[Key]) -> Vec<Continuation<'_, A>> {
+        let Some(node) = prefix
+            .iter()
+            .try_fold(&self.root, |node, key| node.children.get(key))
+        else {
+            return Vec::new();
+        };
+        let mut out: Vec<Continuation<'_, A>> = node
+            .children
+            .iter()
+            .map(|(key, child)| Continuation {
+                key: *key,
+                action: child.action.as_ref(),
+                mappings: count(child),
+            })
+            .collect();
+        out.sort_by_cached_key(|c| c.key.to_string());
+        out
     }
 
     /// Looks up `keys`.
@@ -412,6 +443,22 @@ impl<A> Keymap<A> {
             is_prefix: node.is_some_and(|n| !n.children.is_empty()),
         }
     }
+}
+
+/// A key that can follow a prefix, as listed by [`Keymap::continuations`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct Continuation<'a, A> {
+    /// The next key.
+    pub key: Key,
+    /// What the prefix plus this key runs, if it is a mapping.
+    pub action: Option<&'a A>,
+    /// Mappings that start with the prefix plus this key (itself included).
+    pub mappings: usize,
+}
+
+/// Mappings in `node` and below.
+fn count<A>(node: &Node<A>) -> usize {
+    usize::from(node.action.is_some()) + node.children.values().map(count).sum::<usize>()
 }
 
 /// One mapping of a [`Keymap`], as listed by [`Keymap::entries`].
@@ -774,7 +821,20 @@ pub fn default_keymap() -> Keymap<Action> {
 
 /// The builtin keymap of `platform`.
 pub fn default_keymap_on(platform: Platform) -> Keymap<Action> {
+    default_keymap_with(DEFAULT_LEADER, platform)
+}
+
+/// The builtin keymap of `platform` with its `<leader>` mappings under
+/// `leader` (`app.opt.leader`), which is also the leader of the mappings
+/// added later. A leader that does not parse keeps [`DEFAULT_LEADER`].
+pub fn default_keymap_with(leader: &str, platform: Platform) -> Keymap<Action> {
+    let leader = if parse_inner(leader, None, platform).is_ok() {
+        leader
+    } else {
+        DEFAULT_LEADER
+    };
     let mut keymap = Keymap::new();
+    keymap.leader = leader.to_owned();
     let rows = DEFAULTS
         .iter()
         .map(|(notation, name, _)| (*notation, *name))
@@ -787,7 +847,7 @@ pub fn default_keymap_on(platform: Platform) -> Keymap<Action> {
     for (notation, name) in rows {
         // The table is static and covered by tests, so parsing cannot fail;
         // skipping instead of panicking keeps this path free of unwrap.
-        if let Ok(keys) = parse_keys_on(notation, DEFAULT_LEADER, platform) {
+        if let Ok(keys) = parse_keys_on(notation, leader, platform) {
             keymap.set_keys(&keys, Action::builtin(name));
         }
     }
@@ -906,6 +966,45 @@ mod tests {
 
     fn keys(n: &str) -> KeySequence {
         parse_keys(n, " ").unwrap_or_default()
+    }
+
+    #[test]
+    fn continuations_list_the_next_keys_with_their_action_and_count() {
+        let mut km = Keymap::new();
+        assert_eq!(km.set_leader(" "), Ok(()));
+        for (n, a) in [("<leader>e", 1), ("<leader>ff", 2), ("<leader>fg", 3)] {
+            assert_eq!(km.set(n, a), Ok(()));
+        }
+        assert_eq!(km.set("<leader>f", 4), Ok(()));
+        let next = km.continuations(&keys("<leader>"));
+        let shown: Vec<(String, Option<i32>, usize)> = next
+            .iter()
+            .map(|c| (c.key.to_string(), c.action.copied(), c.mappings))
+            .collect();
+        assert_eq!(shown, [("e".into(), Some(1), 1), ("f".into(), Some(4), 3)]);
+        assert!(km.continuations(&keys("<leader>e")).is_empty());
+        assert!(km.continuations(&keys("x")).is_empty());
+    }
+
+    #[test]
+    fn del_keys_keeps_longer_mappings() {
+        let mut km = Keymap::new();
+        assert_eq!(km.set_leader(" "), Ok(()));
+        assert_eq!(km.set("<leader>f", 1), Ok(()));
+        assert_eq!(km.set("<leader>ff", 2), Ok(()));
+        assert_eq!(km.del_keys(&keys("<leader>f")), Some(1));
+        assert_eq!(km.del_keys(&keys("<leader>f")), None);
+        assert_eq!(km.lookup(&keys("<leader>ff")).exact, Some(&2));
+    }
+
+    #[test]
+    fn default_keymap_with_moves_the_leader_mappings() {
+        let km = default_keymap_with("<C-Space>", Platform::Other);
+        assert_eq!(km.leader(), "<C-Space>");
+        let ff = parse_keys_on("<leader>ff", "<C-Space>", Platform::Other).unwrap_or_default();
+        assert_eq!(km.lookup(&ff).exact, Some(&Action::builtin("picker.files")));
+        let bad = default_keymap_with("<Nope>", Platform::Other);
+        assert_eq!(bad.leader(), DEFAULT_LEADER);
     }
 
     #[test]
