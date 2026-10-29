@@ -637,7 +637,10 @@ fn find_match(line: &str, needle: &str, word: bool) -> Option<usize> {
     line.match_indices(needle).map(|(at, _)| at).find(|&at| {
         !word
             || (!line[..at].chars().next_back().is_some_and(is_word)
-                && !line[at + needle.len()..].chars().next().is_some_and(is_word))
+                && !line[at + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word))
     })
 }
 

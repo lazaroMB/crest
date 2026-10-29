@@ -5,6 +5,11 @@
 //! chords (`<C-c>`, `<C-Tab>`) or the leader chord (`<C-g>` by default)
 //! and never plain printable keys.
 //!
+//! Besides Neovim's modifiers (`C-` Ctrl, `A-`/`M-` Alt, `S-` Shift, `D-`
+//! Cmd), the notation has `P-`, the platform's primary modifier: Cmd on
+//! macOS and Ctrl elsewhere (`<P-q>` quits everywhere). It is resolved when
+//! the keys are parsed, for the [`Platform`] crest runs on.
+//!
 //! This module is pure logic: no async runtime and no UI toolkit. Time is
 //! passed in as an [`Instant`] so tests never sleep.
 //!
@@ -111,15 +116,66 @@ pub enum KeyParseError {
     LeaderInLeader,
 }
 
-/// Parses Neovim key notation (`"gg"`, `"<leader>ff"`, `"<C-c>"`,
-/// `"<S-Enter>"`, `"<lt>"`...). `<leader>` expands to `leader`, which is
-/// itself parsed as notation (so both `" "` and `"<Space>"` work).
-pub fn parse_keys(notation: &str, leader: &str) -> Result<KeySequence, KeyParseError> {
-    let leader_keys = parse_inner(leader, None)?;
-    parse_inner(notation, Some(&leader_keys))
+/// The platform keys are parsed for: it decides what the primary modifier
+/// `P-` means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Platform {
+    /// macOS: `P-` is Cmd.
+    MacOs,
+    /// Linux, Windows and the rest: `P-` is Ctrl.
+    Other,
 }
 
-fn parse_inner(notation: &str, leader: Option<&[Key]>) -> Result<KeySequence, KeyParseError> {
+impl Platform {
+    /// The platform crest was built for.
+    #[must_use]
+    pub const fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else {
+            Self::Other
+        }
+    }
+
+    /// The modifiers `P-` stands for.
+    #[must_use]
+    pub fn primary(self) -> Modifiers {
+        match self {
+            Self::MacOs => Modifiers {
+                cmd: true,
+                ..Modifiers::default()
+            },
+            Self::Other => Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+        }
+    }
+}
+
+/// Parses Neovim key notation (`"gg"`, `"<leader>ff"`, `"<C-c>"`,
+/// `"<S-Enter>"`, `"<lt>"`, `"<P-q>"`...) for the current platform.
+/// `<leader>` expands to `leader`, which is itself parsed as notation (so
+/// both `" "` and `"<Space>"` work).
+pub fn parse_keys(notation: &str, leader: &str) -> Result<KeySequence, KeyParseError> {
+    parse_keys_on(notation, leader, Platform::current())
+}
+
+/// [`parse_keys`] for `platform`.
+pub fn parse_keys_on(
+    notation: &str,
+    leader: &str,
+    platform: Platform,
+) -> Result<KeySequence, KeyParseError> {
+    let leader_keys = parse_inner(leader, None, platform)?;
+    parse_inner(notation, Some(&leader_keys), platform)
+}
+
+fn parse_inner(
+    notation: &str,
+    leader: Option<&[Key]>,
+    platform: Platform,
+) -> Result<KeySequence, KeyParseError> {
     let mut keys = Vec::new();
     let mut rest = notation;
     while let Some(c) = rest.chars().next() {
@@ -139,7 +195,7 @@ fn parse_inner(notation: &str, leader: Option<&[Key]>) -> Result<KeySequence, Ke
             keys.extend_from_slice(leader);
             continue;
         }
-        keys.push(parse_bracket(inner)?);
+        keys.push(parse_bracket(inner, platform)?);
     }
     if keys.is_empty() {
         return Err(KeyParseError::Empty);
@@ -148,7 +204,7 @@ fn parse_inner(notation: &str, leader: Option<&[Key]>) -> Result<KeySequence, Ke
 }
 
 /// Parses the inside of `<...>`: optional `X-` modifiers then a key name.
-fn parse_bracket(inner: &str) -> Result<Key, KeyParseError> {
+fn parse_bracket(inner: &str, platform: Platform) -> Result<Key, KeyParseError> {
     let mut mods = Modifiers::default();
     let mut name = inner;
     // A modifier is a single ASCII letter followed by `-`, and something must
@@ -160,6 +216,11 @@ fn parse_bracket(inner: &str) -> Result<Key, KeyParseError> {
             "A" | "M" => mods.alt = true,
             "S" => mods.shift = true,
             "D" => mods.cmd = true,
+            "P" => {
+                let primary = platform.primary();
+                mods.ctrl |= primary.ctrl;
+                mods.cmd |= primary.cmd;
+            }
             _ => return Err(KeyParseError::UnknownModifier(m.to_owned())),
         }
         name = &name[2..];
@@ -314,7 +375,7 @@ impl<A> Keymap<A> {
     /// Sets the leader (notation, e.g. `"<C-g>"` or `"<C-,>"`).
     /// Validated eagerly.
     pub fn set_leader(&mut self, leader: &str) -> Result<(), KeyParseError> {
-        parse_inner(leader, None)?;
+        parse_inner(leader, None, Platform::current())?;
         self.leader = leader.to_owned();
         Ok(())
     }
@@ -569,7 +630,8 @@ impl Action {
 }
 
 /// Builtin mappings, with the default leader (documented in `docs/usage.md`):
-/// keys, action and what the action does (shown by the help).
+/// keys, action and what the action does (shown by the help). Every
+/// platform gets them; [`PLATFORM_DEFAULTS`] adds the ones of one platform.
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("<CR>", "submit", "Send the prompt (or run a /command)"),
     ("<S-CR>", "newline", "Insert a new line"),
@@ -585,13 +647,15 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "Copy the selected text (of the prompt, else of the chat); never interrupts",
     ),
     (
-        "<C-Insert>",
-        "selection.copy",
-        "Copy the selected text (of the prompt, else of the chat); never interrupts",
+        "<P-q>",
+        "app.quit",
+        "Quit crest (asks again while a turn runs)",
     ),
+    ("<F11>", "window.fullscreen", "Enter or leave full screen"),
     ("<F1>", "help.open", "Open the help"),
     ("<leader>h", "help.open", "Open the help"),
     ("<leader>e", "panel.tree", "Show or hide the workspace tree"),
+    ("<leader>s", "panel.chats", "Show or hide the chats sidebar"),
     ("<leader>ff", "picker.files", "Find a file by name"),
     ("<leader>fg", "picker.grep", "Search text in the workspace"),
     (
@@ -599,13 +663,47 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "model.pick",
         "Choose the model of the next turn",
     ),
+    ("<leader>T", "theme.pick", "Choose the color theme"),
     ("<leader>p", "permission.cycle", "Cycle the permission mode"),
+    ("<leader>P", "mode.pick", "Choose the permission mode"),
+    (
+        "<leader>W",
+        "project.switch",
+        "Close this project and choose another one",
+    ),
     (
         "<leader>w",
         "focus.next",
         "Move the focus to the next panel",
     ),
     ("<C-Tab>", "focus.next", "Move the focus to the next panel"),
+    ("<leader>c", "chat.new", "Start a new chat in this project"),
+    (
+        "<leader>n",
+        "chat.next",
+        "Open the next (older) chat of this project",
+    ),
+    (
+        "<leader>b",
+        "chat.prev",
+        "Open the previous (newer) chat of this project",
+    ),
+    ("<leader>,", "chat.rename", "Rename the open chat"),
+    (
+        "<leader>x",
+        "chat.delete",
+        "Delete the open chat (asks first)",
+    ),
+    (
+        "<leader><C-c>",
+        "turn.interrupt",
+        "Interrupt the running turn",
+    ),
+    (
+        "<leader>u",
+        "queue.edit",
+        "Take the last queued prompt back into the prompt (also Up in an empty prompt)",
+    ),
     ("<leader>k", "block.prev", "Select the previous block"),
     ("<leader>j", "block.next", "Select the next block"),
     ("<leader>gg", "block.first", "Select the first block"),
@@ -622,10 +720,30 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ),
     ("<leader>y", "block.yank", "Copy the selected block"),
     (
+        "<leader><CR>",
+        "block.focus_widget",
+        "Give the keys to the widget of the selected block (Esc gives them back)",
+    ),
+    (
+        "<leader>O",
+        "timeline.outline",
+        "Open or close the list of your questions in this chat",
+    ),
+    (
         "<leader>i",
         "image.mode",
         "Switch pasted images between sending them to the model and adding them to the chat only",
     ),
+];
+
+/// Builtin mappings of one platform: platform, keys and action (its
+/// description is the one in [`DEFAULTS`]).
+const PLATFORM_DEFAULTS: &[(Platform, &str, &str)] = &[
+    // macOS keyboards have no Insert key; Cmd+C copies there.
+    (Platform::Other, "<C-Insert>", "selection.copy"),
+    (Platform::MacOs, "<D-c>", "selection.copy"),
+    // F11 shows the desktop on macOS; its full-screen chord is Ctrl+Cmd+F.
+    (Platform::MacOs, "<C-D-f>", "window.fullscreen"),
 ];
 
 /// What the builtin action `name` does, if it is one.
@@ -647,14 +765,29 @@ pub fn builtin_actions() -> Vec<&'static str> {
     names
 }
 
-/// The builtin keymap. User mappings are layered on top with
-/// [`Keymap::set`], which replaces a default with the same keys.
+/// The builtin keymap of the current platform. User mappings are layered
+/// on top with [`Keymap::set`], which replaces a default with the same
+/// keys.
 pub fn default_keymap() -> Keymap<Action> {
+    default_keymap_on(Platform::current())
+}
+
+/// The builtin keymap of `platform`.
+pub fn default_keymap_on(platform: Platform) -> Keymap<Action> {
     let mut keymap = Keymap::new();
-    for (notation, name, _) in DEFAULTS {
+    let rows = DEFAULTS
+        .iter()
+        .map(|(notation, name, _)| (*notation, *name))
+        .chain(
+            PLATFORM_DEFAULTS
+                .iter()
+                .filter(|(on, _, _)| *on == platform)
+                .map(|(_, notation, name)| (*notation, *name)),
+        );
+    for (notation, name) in rows {
         // The table is static and covered by tests, so parsing cannot fail;
         // skipping instead of panicking keeps this path free of unwrap.
-        if let Ok(keys) = parse_keys(notation, DEFAULT_LEADER) {
+        if let Ok(keys) = parse_keys_on(notation, DEFAULT_LEADER, platform) {
             keymap.set_keys(&keys, Action::builtin(name));
         }
     }
@@ -948,6 +1081,126 @@ mod tests {
         for (notation, _, _) in DEFAULTS {
             assert!(parse_keys(notation, DEFAULT_LEADER).is_ok(), "{notation}");
         }
+        for (_, notation, action) in PLATFORM_DEFAULTS {
+            assert!(parse_keys(notation, DEFAULT_LEADER).is_ok(), "{notation}");
+            assert!(action_description(action).is_some(), "{action}");
+        }
+    }
+
+    #[test]
+    fn primary_is_cmd_on_macos_and_ctrl_elsewhere() {
+        let cmd_q = Key::new(
+            KeyCode::Char('q'),
+            Modifiers {
+                cmd: true,
+                ..Modifiers::default()
+            },
+        );
+        assert_eq!(
+            parse_keys_on("<P-q>", DEFAULT_LEADER, Platform::MacOs),
+            Ok(vec![cmd_q])
+        );
+        assert_eq!(
+            parse_keys_on("<P-q>", DEFAULT_LEADER, Platform::Other),
+            Ok(vec![ctrl('q')])
+        );
+        // Lowercase and combined with others, like any modifier.
+        let ctrl_shift_q = Key::new(
+            KeyCode::Char('q'),
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        assert_eq!(
+            parse_keys_on("<p-S-q>", DEFAULT_LEADER, Platform::Other),
+            Ok(vec![ctrl_shift_q])
+        );
+        // `<C-P-…>` on Linux is just Ctrl.
+        assert_eq!(
+            parse_keys_on("<C-P-q>", DEFAULT_LEADER, Platform::Other),
+            Ok(vec![ctrl('q')])
+        );
+        // In the leader too.
+        assert_eq!(
+            parse_keys_on("<leader>x", "<P-,>", Platform::MacOs).map(|k| k[0]),
+            Ok(Key::new(KeyCode::Char(','), cmd_q.mods))
+        );
+        // Written back resolved.
+        assert_eq!(cmd_q.to_string(), "<D-q>");
+    }
+
+    #[test]
+    fn each_platform_gets_its_own_defaults() {
+        let get = |platform: Platform, n: &str| {
+            let keys = parse_keys_on(n, DEFAULT_LEADER, platform).unwrap_or_default();
+            default_keymap_on(platform).lookup(&keys).exact.cloned()
+        };
+        let b = |name: &str| Some(Action::builtin(name));
+        assert_eq!(get(Platform::Other, "<C-q>"), b("app.quit"));
+        assert_eq!(get(Platform::MacOs, "<D-q>"), b("app.quit"));
+        assert_eq!(get(Platform::MacOs, "<C-q>"), None);
+        assert_eq!(get(Platform::Other, "<C-Insert>"), b("selection.copy"));
+        assert_eq!(get(Platform::MacOs, "<C-Insert>"), None);
+        assert_eq!(get(Platform::MacOs, "<D-c>"), b("selection.copy"));
+        assert_eq!(get(Platform::MacOs, "<C-D-f>"), b("window.fullscreen"));
+        assert_eq!(get(Platform::Other, "<C-D-f>"), None);
+        for platform in [Platform::MacOs, Platform::Other] {
+            assert_eq!(get(platform, "<F11>"), b("window.fullscreen"));
+            assert_eq!(get(platform, "<C-c>"), b("input.cancel"));
+        }
+    }
+
+    #[test]
+    fn no_two_defaults_share_keys_or_shadow_each_other() {
+        for platform in [Platform::MacOs, Platform::Other] {
+            let rows: Vec<(KeySequence, &str)> = DEFAULTS
+                .iter()
+                .map(|(n, a, _)| (*n, *a))
+                .chain(
+                    PLATFORM_DEFAULTS
+                        .iter()
+                        .filter(|(on, _, _)| *on == platform)
+                        .map(|(_, n, a)| (*n, *a)),
+                )
+                .map(|(n, a)| {
+                    (
+                        parse_keys_on(n, DEFAULT_LEADER, platform).unwrap_or_default(),
+                        a,
+                    )
+                })
+                .collect();
+            for (i, (keys, action)) in rows.iter().enumerate() {
+                for (other, other_action) in &rows[i + 1..] {
+                    let shorter = keys.len().min(other.len());
+                    assert!(
+                        keys[..shorter] != other[..shorter],
+                        "{action} and {other_action} clash on {platform:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_new_actions_are_bound_under_the_leader() {
+        let km = default_keymap();
+        let get = |n: &str| km.lookup(&default_keys(n)).exact.cloned();
+        let b = |name: &str| Some(Action::builtin(name));
+        assert_eq!(get("<C-g>c"), b("chat.new"));
+        assert_eq!(get("<C-g>n"), b("chat.next"));
+        assert_eq!(get("<C-g>b"), b("chat.prev"));
+        assert_eq!(get("<C-g>,"), b("chat.rename"));
+        assert_eq!(get("<C-g>x"), b("chat.delete"));
+        assert_eq!(get("<C-g>s"), b("panel.chats"));
+        assert_eq!(get("<C-g>O"), b("timeline.outline"));
+        assert_eq!(get("<C-g><CR>"), b("block.focus_widget"));
+        assert_eq!(get("<C-g>T"), b("theme.pick"));
+        assert_eq!(get("<C-g>P"), b("mode.pick"));
+        assert_eq!(get("<C-g>W"), b("project.switch"));
+        assert_eq!(get("<C-g><C-c>"), b("turn.interrupt"));
+        assert_eq!(get("<C-g>u"), b("queue.edit"));
     }
 
     fn default_keys(n: &str) -> KeySequence {
@@ -968,7 +1221,6 @@ mod tests {
         assert_eq!(get("<C-g>G"), b("block.last"));
         assert_eq!(get("<C-c>"), b("input.cancel"));
         assert_eq!(get("<C-S-c>"), b("selection.copy"));
-        assert_eq!(get("<C-Insert>"), b("selection.copy"));
         assert_eq!(get("<F1>"), b("help.open"));
     }
 
@@ -1065,7 +1317,8 @@ mod tests {
         assert_eq!(find("<C-g>k"), Some(Action::builtin("block.last")));
         assert_eq!(find("<C-g>ff"), Some(Action::builtin("picker.files")));
         assert_eq!(find("<CR>"), Some(Action::builtin("submit")));
-        assert_eq!(entries.len(), DEFAULTS.len() + 1, "one new mapping");
+        let defaults = default_keymap().entries().len();
+        assert_eq!(entries.len(), defaults + 1, "one new mapping");
         let notations: Vec<String> = entries.iter().map(KeymapEntry::notation).collect();
         let mut sorted = notations.clone();
         sorted.sort();
