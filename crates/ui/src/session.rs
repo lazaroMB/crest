@@ -640,6 +640,8 @@ impl Session {
                 .into_iter()
                 .map(|block| DomainEvent::BlockAdded { block });
             timeline.apply_all(restored, cx);
+            // The welcome screen names the keys of this keymap.
+            timeline.set_welcome_keys(&keymap, cx);
             timeline
         });
         let status = cx.new(|_| StatusView::new(workspace_label));
@@ -991,8 +993,21 @@ impl Session {
         }
         if self.overlay_focused(window, cx) {
             let m = key.mods;
-            if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
-                self.interrupt(cx);
+            if Self::is_ctrl_c(&key) {
+                // Text selected in the picker's query is copied, and in the
+                // (masked) key field left alone: copying never interrupts
+                // the turn. Without a selection Ctrl+C interrupts, as
+                // everywhere.
+                let picked = self.picker.read(cx).selected_text(cx);
+                let copied = picked.is_some() || self.login.read(cx).has_selection(cx);
+                if let Some(text) = picked {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                }
+                if copied {
+                    cx.stop_propagation();
+                } else {
+                    self.interrupt(cx);
+                }
                 return;
             }
             // Quitting and full screen work over any overlay.
@@ -2511,6 +2526,33 @@ mod tests {
         register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_parts(script, conversation, history, register, |_| {}, cx)
+    }
+
+    /// A harness whose session runs `keymap` (no `<leader>x` callback).
+    fn harness_keymap(
+        keymap: Keymap<Action>,
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
+        harness_parts(
+            Vec::new(),
+            Conversation::new("/ws", 0),
+            Vec::new(),
+            |_, _| {},
+            move |parts| parts.keymap = keymap,
+            cx,
+        )
+    }
+
+    /// [`harness_resuming`], with `tweak` changing the parts last.
+    fn harness_parts(
+        script: Vec<ScriptedResponse>,
+        conversation: Conversation,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        tweak: impl FnOnce(&mut SessionParts),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs =
@@ -2558,6 +2600,7 @@ mod tests {
         parts.resume_pending = resume_pending;
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
+        tweak(&mut parts);
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
         let (_host, cx) = cx.add_window_view(move |window, cx| {
@@ -4125,5 +4168,193 @@ mod tests {
             let row = rows.iter().find(|r| r.action == action).unwrap();
             assert_ne!(row.description, "unknown builtin action", "{action}");
         }
+    }
+
+    #[gpui::test]
+    fn the_leader_shows_what_can_follow_until_a_key_esc_or_the_timeout(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let which_key = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| s.input().read(cx).which_key())
+        };
+        let drawn = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            cx.debug_bounds("which-key").is_some()
+        };
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        cx.simulate_keystrokes("ctrl-g");
+        let next = which_key(cx);
+        let what = |key: &str| {
+            next.iter()
+                .find(|n| n.key == key)
+                .map(|n| n.what.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(what("h"), "Open the help");
+        assert_eq!(what("f"), "+2 more", "ff and fg start with f");
+        assert_eq!(what("x"), "Lua function", "the harness maps <leader>x");
+        assert!(drawn(cx), "the popup shows");
+        // The next key of a longer mapping narrows it down.
+        cx.simulate_keystrokes("f");
+        let next = which_key(cx);
+        let keys: Vec<&str> = next.iter().map(|n| n.key.as_str()).collect();
+        assert_eq!(keys, ["f", "g"]);
+        // Esc settles the prefix: the popup goes.
+        cx.simulate_keystrokes("escape");
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        // So does a pause.
+        cx.simulate_keystrokes("ctrl-g");
+        assert!(drawn(cx));
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        cx.run_until_parked();
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        // And a key that completes a mapping.
+        cx.simulate_keystrokes("ctrl-g p");
+        assert!(which_key(cx).is_empty());
+    }
+
+    #[gpui::test]
+    fn the_help_keys_filter_and_copy_a_remap_snippet(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("f1");
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect("the help is open");
+        cx.simulate_keystrokes("2 /");
+        cx.simulate_input("picker.grep");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.section(), Section::Keys);
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].tags, ["picker.grep", "default"]);
+        });
+        cx.simulate_keystrokes("c");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
+        assert!(
+            copied.contains("app.keymap.set(\"<leader>fg\", \"picker.grep\")"),
+            "{copied}"
+        );
+        assert!(
+            copied.contains("[[bind]]\nkeys = \"<leader>fg\"\naction = \"picker.grep\""),
+            "{copied}"
+        );
+        view.read_with(cx, |v, _| {
+            assert!(v.status().is_some_and(|s| s.contains("remap snippet")));
+        });
+        // The source is searchable; a mapping of the config says so.
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("plugin x", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            assert!(v.rows().is_empty(), "the harness maps no plugin keys");
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("global lua", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].primary, "<C-g>x");
+        });
+        // A fixed key of a panel has no snippet.
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("before".into()));
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("Expand the row", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].tags, ["Help", "fixed"]);
+        });
+        cx.simulate_keystrokes("c");
+        let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(clipboard.as_deref(), Some("before"));
+        view.read_with(cx, |v, _| {
+            assert!(v.status().is_some_and(|s| s.contains("cannot be remapped")));
+        });
+    }
+
+    #[gpui::test]
+    fn ctrl_c_in_the_picker_copies_its_selection_without_interrupting(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno").hang_after(2)], cx);
+        send("primero", cx);
+        let llm = h.llm.clone();
+        wait_until(&h, cx, "the turn to reach the model", move |_, _| {
+            llm.remaining() == 0
+        });
+        assert!(h.session.read_with(cx, |s, _| s.is_running()));
+        cx.simulate_keystrokes("ctrl-g f f");
+        let picker = h.session.read_with(cx, |s, _| s.picker.clone());
+        assert!(picker.read_with(cx, |p, _| p.is_open()));
+        cx.simulate_input("abc");
+        cx.simulate_keystrokes("shift-left shift-left");
+        assert_eq!(
+            picker.read_with(cx, |p, cx| p.selected_text(cx)).as_deref(),
+            Some("bc")
+        );
+        cx.simulate_keystrokes("ctrl-c");
+        cx.run_until_parked();
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some("bc"));
+        assert!(
+            h.session.read_with(cx, |s, _| s.is_running()),
+            "copying does not interrupt the turn"
+        );
+        assert!(picker.read_with(cx, |p, _| p.is_open()));
+        // Without a selection, Ctrl+C interrupts as before.
+        cx.simulate_keystrokes("right ctrl-c");
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+    }
+
+    #[gpui::test]
+    fn the_welcome_screen_names_the_keys_of_the_keymap(cx: &mut TestAppContext) {
+        use application::keymap::Platform;
+        use application::keymap::layers::build_keymap;
+        use application::ports::plugin::{KeyAction, KeymapSpec};
+        let unbind = |lhs: &str| KeymapSpec {
+            lhs: lhs.into(),
+            action: KeyAction::Unmap,
+            description: None,
+            plugin: "config".into(),
+        };
+        let specs = [
+            unbind("<C-Tab>"),
+            KeymapSpec {
+                lhs: "<F8>".into(),
+                action: KeyAction::Builtin("focus.next".into()),
+                description: None,
+                plugin: "config".into(),
+            },
+            unbind("<leader>m"),
+        ];
+        let (keymap, warnings) = build_keymap(&specs, Some("<C-Space>"), Platform::current());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (h, cx) = harness_keymap(keymap, cx);
+        let welcome = h
+            .session
+            .read_with(cx, |s, cx| s.timeline().read(cx).welcome_keys().to_vec());
+        let row = |keys: &str| {
+            welcome
+                .iter()
+                .find(|(k, _)| k == keys)
+                .map(|(_, what)| what.clone())
+        };
+        let shortcuts = row("Ctrl+Space").expect("the leader row");
+        assert_eq!(
+            shortcuts, "shortcuts: e tree · ff files · fg grep · j/k blocks · h help",
+            "no model: its key was removed"
+        );
+        assert!(row("Ctrl+G").is_none(), "{welcome:?}");
+        assert!(row("Ctrl+Tab").is_none(), "{welcome:?}");
+        assert!(row("F8").is_some_and(|what| what.starts_with("move the focus")));
+        assert!(row("Ctrl+Shift+C").is_some(), "{welcome:?}");
     }
 }

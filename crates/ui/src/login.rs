@@ -83,6 +83,12 @@ impl LoginView {
         self.open
     }
 
+    /// Whether text is selected in the key field. The key is masked, so it
+    /// is never copied, but `Ctrl+C` there must not interrupt the turn.
+    pub fn has_selection(&self, cx: &App) -> bool {
+        self.open && !self.input.read(cx).selected_range().is_empty()
+    }
+
     /// The account the key is for.
     pub fn account(&self) -> Account {
         self.account

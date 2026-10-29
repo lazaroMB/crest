@@ -546,6 +546,19 @@ impl PickerView {
         self.mode.is_some()
     }
 
+    /// The text selected in the query field, if the picker is open and
+    /// there is some.
+    pub fn selected_text(&self, cx: &App) -> Option<String> {
+        if !self.is_open() {
+            return None;
+        }
+        let input = self.input.read(cx);
+        let text = input.value().to_string();
+        text.get(input.selected_range())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Opens the picker in `mode` with an empty query and focuses its input.
     pub fn open(&mut self, mode: PickerMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode.is_none() {
