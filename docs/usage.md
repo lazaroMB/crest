@@ -201,7 +201,10 @@ Results update as you type, with a 120 ms debounce. In `Ctrl+G fg` the text is a
 | --- | --- |
 | `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection. |
 | `Enter` | Insert the `@...` reference into the prompt. |
-| `Esc` | Close. |
+| `Esc` | Close, even when the focus left the search field. |
+| `Ctrl+G ff` / `Ctrl+G fg` | Close the picker open in that mode, or switch to the other one. |
+
+A click outside the popup or on its `✕` closes it too.
 
 ### Workspace tree (`Ctrl+G e`)
 

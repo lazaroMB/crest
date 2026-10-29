@@ -937,9 +937,23 @@ impl Session {
             }
             // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
             // to the prompt) still goes through the keymap, so the user can
-            // leave the form and answer in the chat without the mouse.
-            if (m.ctrl || m.alt || m.cmd)
-                && crate::blocks::form::owns_focus(window, cx)
+            // leave the form and answer in the chat without the mouse. In
+            // the picker too, minus its own `Ctrl+P`/`Ctrl+N`, and with the
+            // keys after the leader: the shortcut that opened it closes it.
+            let chord = m.ctrl || m.alt || m.cmd;
+            let picker_keys = self.picker.read(cx).is_open()
+                && !self.login.read(cx).is_open()
+                && !self.modal.read(cx).is_open();
+            let picker_own =
+                m.ctrl && !m.alt && !m.cmd && matches!(key.code, KeyCode::Char('p' | 'n'));
+            let to_keymap = if crate::blocks::form::owns_focus(window, cx) {
+                chord
+            } else if picker_keys {
+                (chord && !picker_own) || self.input.read(cx).has_pending_keys()
+            } else {
+                false
+            };
+            if to_keymap
                 && self
                     .input
                     .update(cx, |input, cx| input.feed_key(key, window, cx))
@@ -3328,6 +3342,52 @@ mod tests {
         cx.simulate_keystrokes("x");
         assert_eq!(prompt(cx), "x");
         assert!(in_input(cx));
+    }
+
+    #[gpui::test]
+    fn the_picker_closes_by_shortcut_click_outside_and_esc(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let mode =
+            |cx: &mut VisualTestContext| h.session.read_with(cx, |s, cx| s.picker.read(cx).mode());
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        // The shortcut toggles it; the other one switches the mode.
+        cx.simulate_keystrokes("ctrl-g f f");
+        assert_eq!(mode(cx), Some(crate::picker::PickerMode::Files));
+        cx.simulate_keystrokes("ctrl-g f g");
+        assert_eq!(mode(cx), Some(crate::picker::PickerMode::Grep));
+        cx.simulate_keystrokes("ctrl-g f g");
+        assert_eq!(mode(cx), None, "the same shortcut closes it");
+        assert!(in_input(cx));
+        assert_eq!(
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx)),
+            "",
+            "the keys after the leader are not typed"
+        );
+        // A click on the backdrop closes it.
+        cx.simulate_keystrokes("ctrl-g f f");
+        cx.run_until_parked();
+        let backdrop = cx.debug_bounds("picker-backdrop").expect("backdrop drawn");
+        let corner = backdrop.origin + gpui::point(gpui::px(4.), gpui::px(4.));
+        cx.simulate_click(corner, gpui::Modifiers::none());
+        assert_eq!(mode(cx), None, "a click outside closes it");
+        // So does its close button.
+        cx.simulate_keystrokes("ctrl-g f f");
+        cx.run_until_parked();
+        let close = cx.debug_bounds("picker-close").expect("close drawn");
+        cx.simulate_click(close.center(), gpui::Modifiers::none());
+        assert_eq!(mode(cx), None, "the close button closes it");
+        // Esc closes it with the focus outside its input.
+        cx.simulate_keystrokes("ctrl-g f f");
+        h.session.update_in(cx, |s, window, cx| {
+            window.focus(&s.timeline().focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("escape");
+        assert_eq!(mode(cx), None, "Esc closes it from anywhere");
     }
 
     #[gpui::test]

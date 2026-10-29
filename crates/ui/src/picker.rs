@@ -19,11 +19,13 @@ use application::ports::search::{
 use domain::workspace::WorkspacePath;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeystrokeEvent, MouseButton, MouseDownEvent,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, Window, div, px,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
 /// Action that opens the file picker.
 pub const FILES_ACTION: &str = "picker.files";
@@ -126,7 +128,9 @@ pub enum PickerEvent {
 /// child of a `relative` container); it is empty while closed.
 ///
 /// Keys while open: type to search, `Up`/`Down` (or `Ctrl+P`/`Ctrl+N`)
-/// move, `Enter` opens, `Esc` closes.
+/// move, `Enter` opens, `Esc` closes (wherever the focus went). The
+/// shortcut that opened it closes it too, as do its `✕` and a click
+/// outside the popup.
 pub struct PickerView {
     files: Arc<dyn FileSearchPort>,
     content: Arc<dyn ContentSearchPort>,
@@ -205,8 +209,9 @@ impl PickerView {
         self.input.read(cx).value().to_string()
     }
 
-    /// Runs `picker.files` or `picker.grep`. Returns whether the action
-    /// belongs to the picker.
+    /// Runs `picker.files` or `picker.grep`: opens the picker in that
+    /// mode, switches to it, or closes the picker already open in it.
+    /// Returns whether the action belongs to the picker.
     pub fn handle_action(
         &mut self,
         action: &Action,
@@ -214,6 +219,10 @@ impl PickerView {
         cx: &mut Context<Self>,
     ) -> bool {
         match PickerMode::for_action(action) {
+            Some(mode) if self.mode == Some(mode) => {
+                self.dismiss(window, cx);
+                true
+            }
             Some(mode) => {
                 self.open(mode, window, cx);
                 true
@@ -336,11 +345,18 @@ impl PickerView {
         if self.mode.is_none() {
             return;
         }
+        let keystroke = &event.keystroke;
+        // `Esc` closes the picker wherever the focus went (a click in the
+        // list, elsewhere in the window).
+        if keystroke.key == "escape" && keystroke.modifiers == gpui::Modifiers::none() {
+            self.dismiss(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         if !focused {
             return;
         }
-        let keystroke = &event.keystroke;
         let ctrl = keystroke.modifiers.control;
         match keystroke.key.as_str() {
             "escape" => self.dismiss(window, cx),
@@ -430,14 +446,24 @@ impl Render for PickerView {
             .enumerate()
             .map(|(ix, item)| self.render_item(ix, item, cx).into_any_element())
             .collect();
+        // The backdrop: a click outside the popup closes it.
         div()
+            .id("picker-backdrop")
+            .debug_selector(|| "picker-backdrop".to_owned())
             .absolute()
             .inset_0()
             .flex()
             .justify_center()
             .pt(px(80.))
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, window, cx| this.dismiss(window, cx)),
+            )
             .child(
                 v_flex()
+                    .id("picker")
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .w(px(720.))
                     .max_w_full()
                     .max_h(px(520.))
@@ -451,7 +477,20 @@ impl Render for PickerView {
                         h_flex()
                             .gap_2()
                             .child(div().text_color(muted).child(mode.title()))
-                            .child(div().flex_1().child(Input::new(&self.input))),
+                            .child(div().flex_1().child(Input::new(&self.input)))
+                            .child(div().text_xs().text_color(muted).child("Esc"))
+                            .child(
+                                div().debug_selector(|| "picker-close".to_owned()).child(
+                                    Button::new("picker-close")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Close)
+                                        .tooltip("Close (Esc)")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dismiss(window, cx);
+                                        })),
+                                ),
+                            ),
                     )
                     .child(
                         div()
