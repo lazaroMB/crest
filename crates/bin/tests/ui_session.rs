@@ -685,14 +685,43 @@ fn the_picker_opens_a_project_and_slash_project_goes_back(cx: &mut TestAppContex
         std::thread::sleep(Duration::from_millis(10));
     };
     let weak = session.downgrade();
-    session.update_in(cx, |s, window, cx| s.command("project", window, cx));
+    let to_picker = |cx: &mut gpui::VisualTestContext| {
+        let session = weak.upgrade().expect("the session is alive");
+        session.update_in(cx, |s, window, cx| s.command("project", window, cx));
+        cx.run_until_parked();
+        workbench.read_with(cx, |w, cx| {
+            let picker = w.project_picker().expect("back to the picker");
+            let shown = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
+            let expected = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
+            assert_eq!(picker.read(cx).text(cx), expected);
+        });
+    };
     drop(session);
+    to_picker(cx);
+    assert!(
+        weak.upgrade().is_some(),
+        "the session is kept until another project is chosen"
+    );
+
+    // Esc returns to it.
+    cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    workbench.read_with(cx, |w, cx| {
-        let picker = w.project_picker().expect("back to the picker");
-        let shown = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
-        let expected = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
-        assert_eq!(picker.read(cx).text(cx), expected);
+    workbench.read_with(cx, |w, _| {
+        let shown = w.session().expect("the session is back");
+        assert!(Some(shown.clone()) == weak.upgrade(), "the same session");
     });
+
+    // Choosing a project drops it.
+    to_picker(cx);
+    workbench.update_in(cx, |w, window, cx| w.open(project.clone(), window, cx));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if workbench.read_with(cx, |w, _| w.session().is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the project never opened");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(weak.upgrade().is_none(), "the session was dropped");
 }
