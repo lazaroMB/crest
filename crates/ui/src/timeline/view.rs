@@ -458,6 +458,7 @@ impl TimelineView {
                 let block = mark.block;
                 div()
                     .id(("chat-outline-mark", ix))
+                    .debug_selector(move || format!("chat-outline-mark-{ix}"))
                     .w_full()
                     .h(px(12.))
                     .flex()
@@ -466,9 +467,9 @@ impl TimelineView {
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            this.outline_open = true;
+                            this.toggle_outline(window, cx);
                             this.choose_outline(block, cx);
                         }),
                     )
@@ -494,7 +495,29 @@ impl TimelineView {
                 .border_1()
                 .border_color(border)
                 .bg(popover)
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("Esc to close")
+                        .child(
+                            div()
+                                .debug_selector(|| "chat-outline-close".to_owned())
+                                .child(
+                                    Button::new("chat-outline-close")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Close)
+                                        .tooltip("Close")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.close_outline(cx);
+                                        })),
+                                ),
+                        ),
+                );
             for (group_ix, group) in outline.groups.iter().enumerate() {
                 if !group.title.is_empty() {
                     card = card.child(
@@ -512,6 +535,7 @@ impl TimelineView {
                     card = card.child(
                         div()
                             .id(("chat-outline-item", item.block))
+                            .debug_selector(move || format!("chat-outline-item-{block}"))
                             .w_full()
                             .cursor_pointer()
                             .text_sm()
@@ -521,6 +545,7 @@ impl TimelineView {
                                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                                     cx.stop_propagation();
                                     this.choose_outline(block, cx);
+                                    this.close_outline(cx);
                                 }),
                             )
                             .child(format!("{}. {}", item.number, item.label)),
@@ -531,11 +556,18 @@ impl TimelineView {
         });
         Some(
             h_flex()
+                .id("chat-outline-layer")
                 .absolute()
                 .top(px(8.))
                 .right(px(10.))
                 .items_start()
                 .gap_1()
+                // A click anywhere else closes the menu.
+                .when(self.outline_open, |layer| {
+                    layer.on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                        this.close_outline(cx);
+                    }))
+                })
                 .children(menu)
                 .child(rail)
                 .into_any_element(),
@@ -800,7 +832,7 @@ mod tests {
     use application::ports::events::EventSink as _;
     use application::testing::system::RecordingSink;
     use domain::block::{Block, BlockKind};
-    use gpui::{Entity, TestAppContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     fn text(markdown: &str) -> Block {
         Block::new(BlockKind::Text {
@@ -838,6 +870,59 @@ mod tests {
                 BlockKind::Text { markdown } if markdown == "hola mundo"
             ));
         });
+    }
+
+    #[gpui::test]
+    fn the_outline_menu_closes_every_way(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("> uno"), text("reply"), text("> dos"), text("reply")]
+                    .map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let click = |cx: &mut VisualTestContext, selector: &'static str| {
+            let at = cx
+                .debug_bounds(selector)
+                .map(|b| b.center())
+                .unwrap_or_else(|| panic!("no {selector}"));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let open = |cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.outline_open());
+        draw(cx);
+        // The rail toggles the menu.
+        click(cx, "chat-outline-mark-0");
+        assert!(open(cx));
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        assert!(!open(cx), "a second click on the rail closes it");
+        // Choosing a question closes it.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        click(cx, "chat-outline-item-2");
+        assert!(!open(cx), "choosing closes it");
+        assert_eq!(view.read_with(cx, |v, _| v.state().selected()), Some(2));
+        // The close button.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        click(cx, "chat-outline-close");
+        assert!(!open(cx), "the close button closes it");
+        // A click elsewhere.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        cx.simulate_click(gpui::point(px(40.), px(600.)), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(!open(cx), "a click outside closes it");
     }
 
     #[gpui::test]

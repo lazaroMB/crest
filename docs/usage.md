@@ -52,8 +52,9 @@ There are no modes: the prompt is always ready to type (a multi-line editor, up 
 The prompt has the focus at start and gets it back by itself after a picker, a menu, a dialog or a modal closes.
 
 - `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
-- `Esc` goes back to the prompt from anywhere.
-- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below.
+- `Esc` goes back to the prompt from anywhere. In the timeline it first closes what is open there: the questions menu, the "Copy" hint, or the state of the focused block (a zoom, a cursor, a selection, a measurement); the next `Esc` goes back to the prompt.
+- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below and the keys of the focused block (`+`, `-`, `0`, `w`/`a`/`s`/`d`...).
+- The rail of marks at the right of the timeline opens the menu of your questions; a click on the rail again, on a question, on its `✕` or anywhere else closes it.
 
 | Panel | Keys while it has the focus |
 | --- | --- |
