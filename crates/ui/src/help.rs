@@ -11,14 +11,18 @@
 //! [`filter`] is the search box: a pure function over the snapshot.
 //!
 //! The Keys section lists the keymap, then the keys each panel handles by
-//! itself ([`panel_keys::PANEL_KEYS`], a static table).
+//! itself ([`panel_keys::PANEL_KEYS`], a static table). Each keymap row
+//! says where it comes from ([`source_label`]) and carries a remap snippet
+//! ([`remap_snippet`]) that `c` copies; the panel keys are fixed.
 //!
 //! [`SessionController::help`]: crate::session::SessionController::help
 
 use std::fmt;
 
+use application::keymap::layers::{DEFAULT_SOURCE, GLOBAL_CONFIG, source_label};
 use application::keymap::{
-    Action, Key, KeyCode, Keymap, KeymapEntry, action_description, default_keymap,
+    Action, Key, KeyCode, Keymap, KeymapEntry, Platform, action_description, default_keymap_with,
+    parse_keys,
 };
 use domain::modal::ModalId;
 use domain::permission::PermissionMode;
@@ -65,12 +69,17 @@ pub struct KeyRow {
     pub action: String,
     /// What it does.
     pub description: String,
-    /// `crest`, or the plugin that mapped it.
+    /// Where the mapping comes from: `default`, `global`, `workspace`,
+    /// `global keymap.toml`, `workspace keymap.toml` or `plugin <name>`
+    /// (see [`source_label`]).
     pub source: String,
     /// Whether it replaces a builtin mapping of the same keys.
     pub overridden: bool,
     /// The panel that handles the keys by itself; `None` for the keymap.
     pub panel: Option<String>,
+    /// What `c` copies to remap the keys ([`remap_snippet`]); `None` for
+    /// the fixed keys of a panel.
+    pub snippet: Option<String>,
 }
 
 /// Where a tool comes from.
@@ -302,6 +311,44 @@ pub fn action_keys(keymap: &Keymap<Action>, name: &str) -> Option<String> {
         .map(|entry| keys_label(&entry.keys))
 }
 
+/// A key that can follow the pending ones, for the which-key popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextKey {
+    /// The key as read (`f`, `Ctrl+C`, `Enter`).
+    pub key: String,
+    /// What it runs, and how many mappings go on from it.
+    pub what: String,
+}
+
+/// The keys that can follow `pending` in `keymap`, with what they do: the
+/// description of a builtin action (else its name), `Lua function`, and
+/// `+N more` when longer mappings start there (`f` before `ff`/`fg`).
+pub fn next_keys(keymap: &Keymap<Action>, pending: &[Key]) -> Vec<NextKey> {
+    keymap
+        .continuations(pending)
+        .into_iter()
+        .map(|next| {
+            let what = match next.action {
+                Some(Action::Builtin(name)) => {
+                    action_description(name).map_or_else(|| name.clone(), str::to_owned)
+                }
+                Some(Action::Callback(_)) => "Lua function".to_owned(),
+                None => String::new(),
+            };
+            let more = next.mappings - usize::from(next.action.is_some());
+            let what = match (what.is_empty(), more) {
+                (_, 0) => what,
+                (true, n) => format!("+{n} more"),
+                (false, n) => format!("{what} (+{n} more)"),
+            };
+            NextKey {
+                key: keys_label(&[next.key]),
+                what,
+            }
+        })
+        .collect()
+}
+
 /// `keys` as a person reads them: `Ctrl+G ff`, `Alt+P`, `F1`. A key with
 /// modifiers stands alone; plain characters that follow each other are
 /// written together.
@@ -355,15 +402,55 @@ pub fn keys_label(keys: &[Key]) -> String {
     out
 }
 
-/// The rows of `keymap`. `describe` gives the description and the plugin of
-/// a mapping it knows (one set from Lua); the others get the description of
-/// their builtin action. A mapping whose keys have another action in the
-/// builtin keymap is marked as overridden.
+/// `text` as a string literal of Lua and of TOML (both take `\\` and
+/// `\"` escapes).
+fn quoted(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The lines that map `keys` (notation, `<leader>ff`) to the builtin
+/// `action` again, for `init.lua` and for `keymap.toml`: edit the keys or
+/// the action and paste one of them. Without an action (a Lua function)
+/// they remove the mapping instead.
+pub fn remap_snippet(keys: &str, action: Option<&str>) -> String {
+    let keys = quoted(keys);
+    match action {
+        Some(action) => {
+            let action = quoted(action);
+            format!(
+                "-- init.lua\napp.keymap.set({keys}, {action})\n\n# keymap.toml\n[[bind]]\n\
+                 keys = {keys}\naction = {action}\n"
+            )
+        }
+        None => format!(
+            "-- init.lua\napp.keymap.del({keys})\n\n# keymap.toml\n[[unbind]]\nkeys = {keys}\n"
+        ),
+    }
+}
+
+/// `keys` in notation, with `<leader>` in front when they start with the
+/// leader's keys.
+fn leader_notation(keys: &[Key], leader: &[Key]) -> String {
+    let notation = |keys: &[Key]| keys.iter().map(ToString::to_string).collect::<String>();
+    match keys.strip_prefix(leader) {
+        Some(rest) if !leader.is_empty() && !rest.is_empty() => {
+            format!("<leader>{}", notation(rest))
+        }
+        _ => notation(keys),
+    }
+}
+
+/// The rows of `keymap`. `describe` gives the description and the source
+/// ([`source_label`]) of a mapping it knows (one set from Lua or
+/// `keymap.toml`); the others get the description of their builtin
+/// action. A mapping whose keys have another action in the builtin keymap
+/// (with the same leader) is marked as overridden.
 pub fn key_rows(
     keymap: &Keymap<Action>,
     describe: impl Fn(&KeymapEntry<Action>) -> Option<(Option<String>, String)>,
 ) -> Vec<KeyRow> {
-    let defaults = default_keymap();
+    let defaults = default_keymap_with(keymap.leader(), Platform::current());
+    let leader = parse_keys("<leader>", keymap.leader()).unwrap_or_default();
     keymap
         .entries()
         .into_iter()
@@ -376,10 +463,17 @@ pub fn key_rows(
             };
             let known = describe(&entry);
             let source = match &known {
-                Some((_, plugin)) => plugin.clone(),
-                None if default == Some(&entry.action) => BUILTIN_SOURCE.to_owned(),
-                None => "config".to_owned(),
+                Some((_, source)) => source.clone(),
+                None if default == Some(&entry.action) => DEFAULT_SOURCE.to_owned(),
+                None => source_label(GLOBAL_CONFIG),
             };
+            let snippet = remap_snippet(
+                &leader_notation(&entry.keys, &leader),
+                match &entry.action {
+                    Action::Builtin(name) => Some(name.as_str()),
+                    Action::Callback(_) => None,
+                },
+            );
             let description = known
                 .and_then(|(description, _)| description)
                 .or_else(|| builtin.map(str::to_owned))
@@ -394,6 +488,7 @@ pub fn key_rows(
                 source,
                 overridden,
                 panel: None,
+                snippet: Some(snippet),
             }
         })
         .collect()
@@ -590,6 +685,8 @@ pub struct RowView {
     pub details: Vec<String>,
     /// What `y` copies.
     pub copy: String,
+    /// What `c` copies: a remap snippet (Keys section, keymap rows only).
+    pub snippet: Option<String>,
 }
 
 fn group_of<T>(rows: &[T], ix: usize, key: impl Fn(&T) -> String) -> Option<String> {
@@ -624,6 +721,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                             .collect(),
                         details: Vec::new(),
                         copy: format!("/{}", r.name),
+                        snippet: None,
                     }
                 })
                 .collect()
@@ -633,16 +731,27 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
             (0..rows.len())
                 .map(|ix| {
                     let r = &rows[ix];
-                    let mut tags = vec![r.action.clone()];
-                    if r.panel.is_some() {
-                        tags.clear();
-                    }
-                    if r.source != BUILTIN_SOURCE {
-                        tags.push(r.source.clone());
-                    }
+                    // Keymap rows: the action and where it comes from;
+                    // panel rows: where the keys work, and that they are
+                    // fixed.
+                    let mut tags = match &r.panel {
+                        Some(panel) => vec![panel.clone(), panel_keys::FIXED_ACTION.to_owned()],
+                        None => vec![r.action.clone(), r.source.clone()],
+                    };
                     if r.overridden {
                         tags.push("overrides default".into());
                     }
+                    let details = match (&r.snippet, &r.panel) {
+                        (Some(snippet), _) => std::iter::once(
+                            "c copies this remap snippet (init.lua or keymap.toml):".to_owned(),
+                        )
+                        .chain(snippet.lines().map(str::to_owned))
+                        .collect(),
+                        (None, Some(panel)) => vec![format!(
+                            "fixed: {panel} handles these keys itself; they cannot be remapped"
+                        )],
+                        (None, None) => Vec::new(),
+                    };
                     RowView {
                         group: group_of(rows, ix, |r| match &r.panel {
                             Some(panel) => format!("{panel} (fixed keys)"),
@@ -653,8 +762,9 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                         primary: r.keys.clone(),
                         secondary: r.description.clone(),
                         tags,
-                        details: Vec::new(),
+                        details,
                         copy: r.keys.clone(),
+                        snippet: r.snippet.clone(),
                     }
                 })
                 .collect()
@@ -682,6 +792,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                             .chain(r.schema.lines().map(str::to_owned))
                             .collect(),
                         copy: r.name.clone(),
+                        snippet: None,
                     }
                 })
                 .collect()
@@ -719,6 +830,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                     tags: vec![r.layer.clone(), r.trust.clone()],
                     details,
                     copy: r.approve.clone().unwrap_or_else(|| r.name.clone()),
+                    snippet: None,
                 }
             })
             .collect(),
@@ -738,6 +850,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                     )
                     .collect(),
                 copy: r.trust_command.clone().unwrap_or_else(|| r.name.clone()),
+                snippet: None,
             })
             .collect(),
         Section::Models => {
@@ -756,6 +869,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                         tags: Vec::new(),
                         details: Vec::new(),
                         copy: r.value.clone(),
+                        snippet: None,
                     }
                 })
                 .collect()
@@ -775,6 +889,7 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                     .find(|w| w.starts_with("--"))
                     .unwrap_or(&r.flag)
                     .to_owned(),
+                snippet: None,
             })
             .collect(),
         Section::Files => {

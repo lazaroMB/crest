@@ -88,7 +88,7 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
     let help = full.keys.iter().find(|k| k.keys == "<F1>").unwrap();
     assert_eq!(help.action, HELP_ACTION);
     assert_eq!(help.description, "Open the help");
-    assert_eq!(help.source, BUILTIN_SOURCE);
+    assert_eq!(help.source, "default");
     assert!(!help.overridden);
     let models: Vec<_> = full
         .models
@@ -120,7 +120,7 @@ fn key_rows_mark_overrides_and_name_the_plugin() {
     let j = find("<C-g>k");
     assert!(j.overridden);
     assert_eq!(j.description, "Select the last block");
-    assert_eq!(j.source, "config");
+    assert_eq!(j.source, "global");
     let x = find("<C-g>z");
     assert_eq!(
         (x.action.as_str(), x.description.as_str(), x.source.as_str()),
@@ -149,8 +149,8 @@ fn filter_keeps_matching_rows_in_every_section() {
         ("ECHO", &[(Section::Tools, 1), (Section::Mcp, 1)]),
         ("issue fetches", &[(Section::Tools, 1)]),
         ("issue nope", &[(Section::Tools, 0)]),
-        // Keys: F1 and <leader>h, then the help's own seven.
-        ("help", &[(Section::Commands, 1), (Section::Keys, 9)]),
+        // Keys: F1 and <leader>h, then the help's own eight.
+        ("help", &[(Section::Commands, 1), (Section::Keys, 10)]),
         ("model", &[(Section::Cli, 1)]),
         ("unexpected", &[(Section::Files, 1)]),
         ("pending", &[(Section::Plugins, 1)]),
@@ -264,8 +264,11 @@ fn the_keys_list_each_panel_after_the_keymap_once() {
     assert!(groups[0].starts_with("Shortcuts"));
     assert!(groups.contains(&"Chats sidebar (fixed keys)"), "{groups:?}");
     assert!(groups.contains(&"Approval dialog (fixed keys)"));
-    // A fixed row has no action tag; the search finds a panel by name.
-    assert!(rows[first_fixed].tags.is_empty());
+    // A fixed row says where it works and that it is fixed, with no
+    // snippet; the search finds a panel by name.
+    assert_eq!(rows[first_fixed].tags[1], "fixed");
+    assert!(rows[first_fixed].snippet.is_none());
+    assert!(rows[first_fixed].details[0].starts_with("fixed: "));
     let sidebar = filter(&full, "chats sidebar rename");
     assert_eq!(
         sidebar
@@ -275,4 +278,53 @@ fn the_keys_list_each_panel_after_the_keymap_once() {
             .collect::<Vec<_>>(),
         ["F2, r"]
     );
+}
+
+#[test]
+fn remap_snippets_use_the_leader_and_escape_quotes() {
+    let mut keymap = application::keymap::default_keymap_with(
+        "<C-Space>",
+        application::keymap::Platform::current(),
+    );
+    keymap.set("<F9>", Action::Callback(2)).unwrap();
+    let rows = key_rows(&keymap, |_| None);
+    let row = |keys: &str| rows.iter().find(|r| r.keys == keys).unwrap();
+    let files = row("<C-Space>ff");
+    assert_eq!(
+        files.source, "default",
+        "moved with the leader, still a default"
+    );
+    assert!(!files.overridden);
+    assert_eq!(
+        files.snippet.as_deref(),
+        Some(
+            "-- init.lua\napp.keymap.set(\"<leader>ff\", \"picker.files\")\n\n\
+             # keymap.toml\n[[bind]]\nkeys = \"<leader>ff\"\naction = \"picker.files\"\n"
+        )
+    );
+    let f9 = row("<F9>");
+    assert_eq!(f9.source, "global");
+    assert!(
+        f9.snippet
+            .as_deref()
+            .is_some_and(|s| s.contains("app.keymap.del(\"<F9>\")") && s.contains("[[unbind]]"))
+    );
+    assert_eq!(
+        remap_snippet("a\"b\\", Some("x")).lines().nth(1),
+        Some("app.keymap.set(\"a\\\"b\\\\\", \"x\")")
+    );
+}
+
+#[test]
+fn next_keys_say_what_follows_a_prefix() {
+    let mut keymap = default_keymap();
+    keymap.set("<leader>f", Action::Callback(1)).unwrap();
+    let leader = application::keymap::parse_keys("<leader>", keymap.leader()).unwrap();
+    let next = next_keys(&keymap, &leader);
+    let what = |key: &str| next.iter().find(|n| n.key == key).map(|n| n.what.as_str());
+    assert_eq!(what("e"), Some("Show or hide the workspace tree"));
+    assert_eq!(what("f"), Some("Lua function (+2 more)"));
+    assert_eq!(what("Ctrl+C"), Some("Interrupt the running turn"));
+    let q = application::keymap::Key::char('q');
+    assert!(next_keys(&keymap, &[q]).is_empty(), "nothing starts with q");
 }

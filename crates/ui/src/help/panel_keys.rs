@@ -195,6 +195,11 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
     ),
     ("Help", "Enter", "Expand the row"),
     ("Help", "y", "Copy the row's command or name"),
+    (
+        "Help",
+        "c",
+        "Keys section: copy a snippet that remaps the selected key (init.lua and keymap.toml)",
+    ),
     ("Help", "/", "Search"),
     ("Help", "Esc", "Close"),
     ("/login", "Enter", "Check the key"),
@@ -212,6 +217,7 @@ pub fn panel_key_rows() -> Vec<KeyRow> {
             source: BUILTIN_SOURCE.to_owned(),
             overridden: false,
             panel: Some((*panel).to_owned()),
+            snippet: None,
         })
         .collect()
 }
