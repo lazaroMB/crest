@@ -19,12 +19,12 @@ is sent by hand**, once:
    binary) and run:
 
    ```sh
-   komac new LazaroMB.Crest --version 0.14.0 \
-     --urls https://github.com/lazaroMB/crest/releases/download/v0.14.0/crest-0.14.0-x86_64-pc-windows-msvc-setup.exe \
+   komac new LazaroMB.Crest --version 0.18.0 \
+     --urls https://github.com/lazaroMB/crest/releases/download/v0.18.0/crest-0.18.0-x86_64-pc-windows-msvc-setup.exe \
      --token "$PACKAGES_TOKEN"
    ```
 
-   Answer its questions with:
+   Use the latest non-prerelease tag. Answer its questions with:
 
    | Field | Value |
    | --- | --- |
@@ -39,10 +39,13 @@ is sent by hand**, once:
    | UpgradeBehavior | `install` |
    | Dependencies | `BurntSushi.ripgrep.MSVC`, `junegunn.fzf`, `Git.Git` |
 
-3. Komac opens the pull request. Microsoft's bots validate it and a
-   moderator merges it (a few days the first time).
+3. Komac opens the pull request. On a first contribution to a Microsoft
+   repo a bot asks you to accept its CLA with a comment on the pull request.
+   Microsoft's bots validate it and a moderator merges it (a few days the
+   first time).
 
 From then on, a `v*` tag that is not a prerelease updates the package:
 `komac update LazaroMB.Crest --version <v> --urls <setup.exe> --submit`. Each
 update is still a pull request reviewed by Microsoft. Without the
-`PACKAGES_TOKEN` secret the job is skipped.
+`PACKAGES_TOKEN` secret, or while `LazaroMB.Crest` is not yet in
+winget-pkgs, the job is skipped with a notice.

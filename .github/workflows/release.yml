@@ -377,6 +377,15 @@ jobs:
             echo "::notice::PACKAGES_TOKEN is not set; winget is not updated"
             exit 0
           fi
+          # komac update needs the package; until the hand-sent first
+          # version is merged into winget-pkgs there is nothing to update.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $PACKAGES_TOKEN" \
+            https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/l/LazaroMB/Crest)
+          if [ "$status" = 404 ]; then
+            echo "::notice::LazaroMB.Crest is not in winget-pkgs yet (packaging/winget/README.md); winget is not updated"
+            exit 0
+          fi
           archive="komac-$KOMAC_VERSION-x86_64-unknown-linux-gnu.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$archive" \
             "https://github.com/russellbanks/Komac/releases/download/v$KOMAC_VERSION/$archive"
