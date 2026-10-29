@@ -19,8 +19,9 @@ use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
     InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
-    MouseUpEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Task, WeakEntity, Window, div, list, prelude::FluentBuilder as _, px,
+    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, list,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
@@ -43,6 +44,8 @@ pub struct TimelineView {
     _hint_expiry: Option<Task<()>>,
     /// The reply (by its last block) whose copy button just copied.
     copied_reply: Option<usize>,
+    /// The menu of the user's questions is open.
+    outline_open: bool,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -59,6 +62,7 @@ impl TimelineView {
             copy_hint: None,
             _hint_expiry: None,
             copied_reply: None,
+            outline_open: false,
             _reply_expiry: None,
             _events: None,
         }
@@ -209,6 +213,12 @@ impl TimelineView {
             cx.stop_propagation();
             return;
         }
+        if event.keystroke.key == "escape" && self.outline_open {
+            self.outline_open = false;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         // Arrows and Enter typed in a widget's filter stay there.
         if m.control || m.alt || m.platform || crate::widgets::owns_focus(window, cx) {
             return;
@@ -321,6 +331,128 @@ impl TimelineView {
                 self.list.remeasure_items(ix..ix + 1);
             }
         }
+    }
+
+    /// Selects the menu row and scrolls that block to the top of the chat.
+    fn choose_outline(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let before = self.state.selected();
+        if self.state.select(ix).is_some() {
+            self.remeasure_selection(before, Some(ix));
+            self.list.pause_following_tail();
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
+        }
+        cx.notify();
+    }
+
+    /// The chat menu: a rail of marks, and the questions when it is open.
+    fn outline_layer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let outline = super::outline::chat_outline(self.state.entries(), self.state.selected());
+        if outline.is_empty() {
+            return None;
+        }
+        let theme = cx.theme();
+        let (popover, border, muted, foreground, link) = (
+            theme.popover,
+            theme.border,
+            theme.muted_foreground,
+            theme.foreground,
+            crate::theme::token(cx, "link.fg"),
+        );
+        let marks = outline.marks();
+        let rail = v_flex()
+            .id("chat-outline-rail")
+            .w(px(18.))
+            .flex_none()
+            .py_1()
+            .children(marks.into_iter().enumerate().map(|(ix, mark)| {
+                let block = mark.block;
+                div()
+                    .id(("chat-outline-mark", ix))
+                    .w_full()
+                    .h(px(12.))
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.outline_open = true;
+                            this.choose_outline(block, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .h(px(2.))
+                            .w(if mark.active { px(16.) } else { px(10.) })
+                            .rounded_full()
+                            .bg(if mark.active { foreground } else { muted }),
+                    )
+            }));
+        let menu = self.outline_open.then(|| {
+            let mut card = v_flex()
+                .id("chat-outline")
+                .w(px(220.))
+                .max_h(px(320.))
+                .flex_none()
+                .overflow_y_scroll()
+                .py_2()
+                .px_3()
+                .gap_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(border)
+                .bg(popover)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+            for (group_ix, group) in outline.groups.iter().enumerate() {
+                if !group.title.is_empty() {
+                    card = card.child(
+                        div()
+                            .id(("chat-outline-group", group_ix))
+                            .pt(if group_ix == 0 { px(0.) } else { px(6.) })
+                            .text_sm()
+                            .text_color(muted)
+                            .child(group.title.clone()),
+                    );
+                }
+                for item in &group.items {
+                    let block = item.block;
+                    let color = if item.active { link } else { foreground };
+                    card = card.child(
+                        div()
+                            .id(("chat-outline-item", item.block))
+                            .w_full()
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(color)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.choose_outline(block, cx);
+                                }),
+                            )
+                            .child(format!("{}. {}", item.number, item.label)),
+                    );
+                }
+            }
+            card
+        });
+        Some(
+            h_flex()
+                .absolute()
+                .top(px(8.))
+                .right(px(10.))
+                .items_start()
+                .gap_1()
+                .children(menu)
+                .child(rail)
+                .into_any_element(),
+        )
     }
 
     /// A click on a row selects it and expands or collapses it, unless the
@@ -538,6 +670,7 @@ impl Render for TimelineView {
                 cx,
             )
         });
+        let outline = self.outline_layer(cx);
         div()
             .id("timeline-list")
             .track_focus(&self.focus_handle)
@@ -567,6 +700,7 @@ impl Render for TimelineView {
             )
             .vertical_scrollbar(&self.list)
             .children(hint)
+            .children(outline)
             .into_any_element()
     }
 }
