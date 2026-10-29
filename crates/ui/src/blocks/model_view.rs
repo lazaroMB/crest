@@ -4,10 +4,10 @@
 //! [`vector`] paths otherwise, through the same [`OrbitCamera`]: it starts
 //! in perspective, fitted to the model.
 //!
-//! Drag orbits; right-drag, middle-drag or shift-drag pans; the wheel
-//! zooms. With the viewport focused (click it) `+`/`-` zoom, `0` fits the
-//! model again, `i` is the isometric preset and `u` swaps the up axis (Y
-//! or Z); the toolbar does the same.
+//! Drag orbits; right-drag, middle-drag or shift-drag pans; `Ctrl`/`Cmd` +
+//! wheel zooms (a plain wheel scrolls the chat). With the viewport focused
+//! (click it) `+`/`-` zoom, `0` fits the model again, `i` is the isometric
+//! preset and `u` swaps the up axis (Y or Z); the toolbar does the same.
 //!
 //! A section plane cuts the model across the file's x, y or z axis (`s`
 //! cycles off → x → y → z, `f` flips the kept side, `[`/`]` move it by a
@@ -451,6 +451,10 @@ impl ModelView {
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // A plain wheel is the chat's: it keeps scrolling over the block.
+        if !(event.modifiers.control || event.modifiers.platform) {
+            return;
+        }
         let dy = f32::from(event.delta.pixel_delta(px(20.0)).y);
         self.zoom(WHEEL_STEP.powf(dy / 20.0), cx);
         cx.stop_propagation();
@@ -818,7 +822,7 @@ impl Render for ModelView {
                             .text_xs()
                             .text_color(token(cx, "muted.fg"))
                             .child(
-                                "drag: orbit · right/shift-drag: pan · wheel/+-: zoom · \
+                                "drag: orbit · right/shift-drag: pan · ctrl+wheel, +/-: zoom · \
                                  0: fit · i: iso · u: up axis · s/f/[ ]: cut · m: measure",
                             ),
                     ),
@@ -971,7 +975,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn drag_orbits_right_drag_pans_and_the_wheel_zooms(cx: &mut TestAppContext) {
+    fn drag_orbits_right_drag_pans_and_ctrl_wheel_zooms(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
         let fitted = view.read_with(cx, |view, _| view.camera());
         let center = view.read_with(cx, |view, _| view.viewport.get().center());
@@ -994,6 +998,14 @@ mod tests {
             position: center,
             delta: ScrollDelta::Lines(point(0.0, 1.0)),
             modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+        let zoom = view.read_with(cx, |view, _| view.camera().zoom);
+        assert_eq!(zoom, panned.zoom, "a plain wheel is the chat's");
+        cx.simulate_event(ScrollWheelEvent {
+            position: center,
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers: Modifiers::control(),
             touch_phase: TouchPhase::Moved,
         });
         let zoom = view.read_with(cx, |view, _| view.camera().zoom);

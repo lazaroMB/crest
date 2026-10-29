@@ -2,14 +2,14 @@
 //!
 //! A summary line comes first (release, units, header and geometry
 //! extents, entity and layer counts, what was not drawn). The canvas
-//! strokes every entity of the visible layers in its ACI color, mapped
-//! onto the theme ([`themed_color`]: ACI 7 is the foreground, very light
-//! colors are darkened on a light theme), with text at its height
-//! (unrotated; skipped below a few pixels). Drag pans, the wheel zooms
-//! about the cursor, `+`/`-`/`0` and the toolbar zoom and fit; the cursor
-//! position is read out in drawing units. The layer list toggles layers
-//! (the file's off layers start off) and shows each one's color and
-//! entity count. Reader notes come last.
+//! strokes every entity of the visible layers in its ACI color, mapped onto
+//! the theme ([`themed_color`]: ACI 7 is the foreground, very light colors
+//! are darkened on a light theme), with text at its height (unrotated;
+//! skipped below a few pixels). Drag pans, `Ctrl`/`Cmd` + wheel zooms about
+//! the cursor (a plain wheel scrolls the chat), `+`/`-`/`0` and the toolbar
+//! zoom and fit; the cursor position is read out in drawing units. The
+//! layer list toggles layers (the file's off layers start off) and shows
+//! each one's color and entity count. Reader notes come last.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -362,6 +362,10 @@ impl DrawingView {
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // A plain wheel is the chat's: it keeps scrolling over the block.
+        if !(event.modifiers.control || event.modifiers.platform) {
+            return;
+        }
         let dy = f64::from(f32::from(event.delta.pixel_delta(px(20.0)).y));
         let size = self.size();
         let mut view = self.viewport();
@@ -907,7 +911,7 @@ mod tests {
         view.update(cx, |v, cx| v.fit(cx));
         let refit = view.read_with(cx, |v, _| v.viewport());
         assert!(refit.center[0] > 70.0, "both layers now: {refit:?}");
-        // The wheel zooms and the cursor reads the drawing position.
+        // Ctrl + wheel zooms and the cursor reads the drawing position.
         let canvas = cx.debug_bounds("drawing-canvas").unwrap();
         cx.simulate_mouse_move(canvas.center(), None, Modifiers::none());
         cx.simulate_event(ScrollWheelEvent {
@@ -916,9 +920,35 @@ mod tests {
             modifiers: Modifiers::none(),
             touch_phase: TouchPhase::Moved,
         });
+        let plain = view.read_with(cx, |v, _| v.viewport());
+        assert_eq!(plain, refit, "a plain wheel is the chat's");
+        cx.simulate_event(ScrollWheelEvent {
+            position: canvas.center(),
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers: Modifiers::control(),
+            touch_phase: TouchPhase::Moved,
+        });
         let zoomed = view.read_with(cx, |v, _| v.viewport());
         assert!(zoomed.scale > refit.scale);
         assert!(view.read_with(cx, |v, _| v.cursor()).is_some());
         assert!(cx.debug_bounds("drawing-cursor").is_some());
+    }
+
+    #[gpui::test]
+    fn a_plain_wheel_goes_on_to_the_chat(cx: &mut TestAppContext) {
+        use crate::blocks::wheel_host::{host, wheel};
+        cx.update(gpui_component::init);
+        let (timeline, wheels, cx) = host(cx, |_, cx| Timeline::new(cx));
+        let block = Block::new(BlockKind::Drawing(Box::new(spec())));
+        timeline.update(cx, |view, cx| {
+            view.apply_all([DomainEvent::BlockAdded { block }], cx);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let canvas = cx.debug_bounds("drawing-canvas").expect("canvas").center();
+        wheel(cx, canvas, Modifiers::none());
+        assert_eq!(wheels.get(), 1);
+        wheel(cx, canvas, Modifiers::control());
+        assert_eq!(wheels.get(), 1, "Ctrl + wheel stays in the drawing");
     }
 }

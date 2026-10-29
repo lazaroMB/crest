@@ -3,16 +3,16 @@
 //!
 //! A summary line comes first (feature counts by type, the CRS and where
 //! it came from, the engine's totals). The canvas paints the features in
-//! Web Mercator as the adapter projected them: polygons filled (holes
-//! left open) and outlined, lines stroked, points as dots, in the colour
-//! of the property chosen below (categories from the palette, numbers on
-//! a one-hue ramp) or the first palette colour. Drag pans, the wheel
-//! zooms about the cursor, `+`/`-`/`0` and the toolbar zoom and fit; a
-//! click picks the feature under the cursor and the inspector shows its
-//! properties and the engine's measures (geodesic area, length,
-//! perimeter, box). The cursor's longitude and latitude, the CRS and a
-//! scale bar (ground distance at the centre's latitude) are read out on
-//! the canvas. There are no background tiles: the map is the data alone.
+//! Web Mercator as the adapter projected them: polygons filled (holes left
+//! open) and outlined, lines stroked, points as dots, in the colour of the
+//! property chosen below (categories from the palette, numbers on a one-hue
+//! ramp) or the first palette colour. Drag pans, `Ctrl`/`Cmd` + wheel zooms
+//! about the cursor (a plain wheel scrolls the chat), `+`/`-`/`0` and the
+//! toolbar zoom and fit; a click picks the feature under the cursor and the
+//! inspector shows its properties and the engine's measures (geodesic area,
+//! length, perimeter, box). The cursor's longitude and latitude, the CRS
+//! and a scale bar (ground distance at the centre's latitude) are read out
+//! on the canvas. There are no background tiles: the map is the data alone.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -347,6 +347,10 @@ impl MapView {
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // A plain wheel is the chat's: it keeps scrolling over the block.
+        if !(event.modifiers.control || event.modifiers.platform) {
+            return;
+        }
         let dy = f64::from(f32::from(event.delta.pixel_delta(px(20.0)).y));
         let size = self.size();
         let mut view = self.viewport();
@@ -1022,11 +1026,34 @@ mod tests {
         cx.simulate_event(ScrollWheelEvent {
             position: canvas.center(),
             delta: ScrollDelta::Lines(point(0.0, 1.0)),
-            modifiers: Modifiers::none(),
+            modifiers: Modifiers::control(),
             touch_phase: TouchPhase::Moved,
         });
         assert!(view.read_with(cx, |v, _| v.viewport()).scale > fitted.scale);
         assert!(view.read_with(cx, |v, _| v.cursor()).is_some());
         assert!(cx.debug_bounds("map-cursor").is_some());
+    }
+
+    #[gpui::test]
+    fn a_plain_wheel_scrolls_the_chat_and_ctrl_wheel_zooms(cx: &mut TestAppContext) {
+        use crate::blocks::wheel_host::{host, wheel};
+        cx.update(gpui_component::init);
+        let (timeline, wheels, cx) = host(cx, |_, cx| Timeline::new(cx));
+        let block = Block::new(BlockKind::GeoMap(Box::new(spec())));
+        let id = block.id;
+        timeline.update(cx, |view, cx| {
+            view.apply_all([DomainEvent::BlockAdded { block }], cx);
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let fitted = view.read_with(cx, |v, _| v.viewport());
+        let canvas = cx.debug_bounds("map-canvas").expect("canvas").center();
+        wheel(cx, canvas, Modifiers::none());
+        assert_eq!(view.read_with(cx, |v, _| v.viewport()), fitted, "no zoom");
+        assert_eq!(wheels.get(), 1, "the wheel went on to the chat");
+        wheel(cx, canvas, Modifiers::control());
+        assert!(view.read_with(cx, |v, _| v.viewport()).scale > fitted.scale);
+        assert_eq!(wheels.get(), 1, "Ctrl + wheel stays in the map");
     }
 }

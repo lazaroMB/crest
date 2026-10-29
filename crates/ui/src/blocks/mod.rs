@@ -176,6 +176,63 @@ pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Opt
         .and_then(|any| any.downcast::<T>().ok())
 }
 
+/// A host that counts the wheel events its child lets through: a block
+/// that zooms only with a modifier must leave the plain wheel to the chat.
+#[cfg(test)]
+pub(crate) mod wheel_host {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _,
+        Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled as _, TestAppContext,
+        TouchPhase, VisualTestContext, Window, div, point,
+    };
+
+    /// `child`, inside an element that counts the wheel events.
+    pub struct WheelHost<V> {
+        pub child: Entity<V>,
+        pub wheels: Rc<Cell<usize>>,
+    }
+
+    impl<V: Render> Render for WheelHost<V> {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let wheels = self.wheels.clone();
+            div()
+                .size_full()
+                .on_scroll_wheel(move |_, _, _| wheels.set(wheels.get() + 1))
+                .child(self.child.clone())
+        }
+    }
+
+    /// A window with `new` inside a [`WheelHost`]; returns the child and
+    /// the count of wheel events that reached the host.
+    pub fn host<V: Render + 'static>(
+        cx: &mut TestAppContext,
+        new: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
+    ) -> (Entity<V>, Rc<Cell<usize>>, &mut VisualTestContext) {
+        use gpui::AppContext as _;
+        let wheels = Rc::new(Cell::new(0));
+        let seen = wheels.clone();
+        let (host, cx) = cx.add_window_view(move |window, cx| WheelHost {
+            child: cx.new(|cx| new(window, cx)),
+            wheels: seen,
+        });
+        let child = host.read_with(cx, |host, _| host.child.clone());
+        (child, wheels, cx)
+    }
+
+    /// One notch of the wheel at `at` with `modifiers`.
+    pub fn wheel(cx: &mut VisualTestContext, at: Point<Pixels>, modifiers: Modifiers) {
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers,
+            touch_phase: TouchPhase::Moved,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
