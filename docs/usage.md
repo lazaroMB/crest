@@ -189,22 +189,30 @@ On Wayland, a copy that offers both text and an image may paste as text (GPUI re
 
 ### Pickers (`Ctrl+G ff`, `Ctrl+G fg`)
 
-They use the same ports and the same defaults as the agent's `find_file` and `grep` tools, so you see what the model would see:
+Open them with `Ctrl+G ff` (find a file) and `Ctrl+G fg` (search text), or from the `/` palette as `/picker.files` and `/picker.grep`; the prompt's placeholder recalls the keys. They use the same ports as the agent's `find_file` and `grep` tools, so you see what the model would see:
 
 - they respect `.gitignore`;
 - they exclude `.git/`;
 - they apply the sensitive paths.
 
-Results update as you type, with a 120 ms debounce. In `Ctrl+G fg` the text is a ripgrep regular expression.
+Results update as you type, with a 120 ms debounce. While a search runs the field shows a spinner and the previous results stay, dimmed. The line under the results gives the count, `100 of 2345 (truncated)` when the search returned only part of the matches. Long paths are cut from the left (`…/src/main.rs`).
+
+With an empty query, `Ctrl+G ff` lists the files you chose last (marked `recent`), then the first files of the workspace.
+
+`Ctrl+G fg` searches for the literal text, ignoring case, by default. The chips under the field, or their keys, change that: **Match case** (`Alt+C`), **Regex** (`Alt+R`, ripgrep syntax) and **Whole word** (`Alt+W`). The options stay as you left them for the next search. The match is highlighted in each row.
+
+On a window at least 860 px wide the popup has two columns: the results and a preview of the highlighted one, with line numbers and syntax colors. For a text match it starts 10 lines above the match, whose line and text are marked; it shows the lines grep returned at once and the file a moment later. `Alt+P` hides or shows the preview.
 
 | Key | Action |
 | --- | --- |
-| `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection. |
+| `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection; the list scrolls to keep it in view. |
 | `Enter` | Insert the `@...` reference into the prompt. |
 | `Esc` | Close, even when the focus left the search field. |
+| `Alt+P` | Hide or show the preview. |
+| `Alt+C` / `Alt+R` / `Alt+W` | In `Ctrl+G fg`: match case, regex, whole word. |
 | `Ctrl+G ff` / `Ctrl+G fg` | Close the picker open in that mode, or switch to the other one. |
 
-A click outside the popup or on its `✕` closes it too.
+A click outside the popup or on its `✕` closes it too. The footer lists these keys.
 
 ### Workspace tree (`Ctrl+G e`)
 

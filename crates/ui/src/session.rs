@@ -73,6 +73,7 @@ use std::time::Duration;
 
 use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap};
 use application::ports::events::{DomainEvent, NoticeLevel};
+use application::ports::fs::FileSystemPort;
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
@@ -414,6 +415,9 @@ pub struct SessionParts {
     pub files: Arc<dyn FileSearchPort>,
     /// Text search for `<leader>fg`.
     pub content: Arc<dyn ContentSearchPort>,
+    /// Reads the files the pickers preview; without it the text picker
+    /// previews the context lines of its matches only.
+    pub fs: Option<Arc<dyn FileSystemPort>>,
     /// Workspace name for the status bar.
     pub workspace_label: String,
     /// Workspace directory the tree watches, if any.
@@ -459,6 +463,7 @@ impl SessionParts {
             forms: None,
             files,
             content,
+            fs: None,
             workspace_label: String::new(),
             workspace_dir: None,
             model: None,
@@ -590,6 +595,7 @@ impl Session {
             forms,
             files,
             content,
+            fs,
             workspace_label,
             workspace_dir,
             model,
@@ -633,7 +639,11 @@ impl Session {
         });
         let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
-        let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
+        let picker = cx.new(|cx| {
+            let mut picker = PickerView::new(files, content, window, cx);
+            picker.set_file_system(fs);
+            picker
+        });
         let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
         let modal = cx.new(|cx| ModalHost::new(window, cx));
         let login = cx.new(|cx| LoginView::new(window, cx));
@@ -944,14 +954,19 @@ impl Session {
             // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
             // to the prompt) still goes through the keymap, so the user can
             // leave the form and answer in the chat without the mouse. In
-            // the picker too, minus its own `Ctrl+P`/`Ctrl+N`, and with the
+            // the picker too, minus its own `Ctrl+P`/`Ctrl+N` and `Alt+…`
+            // toggles, and with the
             // keys after the leader: the shortcut that opened it closes it.
             let chord = m.ctrl || m.alt || m.cmd;
             let picker_keys = self.picker.read(cx).is_open()
                 && !self.login.read(cx).is_open()
                 && !self.modal.read(cx).is_open();
             let picker_own =
-                m.ctrl && !m.alt && !m.cmd && matches!(key.code, KeyCode::Char('p' | 'n'));
+                (m.ctrl && !m.alt && !m.cmd && matches!(key.code, KeyCode::Char('p' | 'n')))
+                    || (m.alt
+                        && !m.ctrl
+                        && !m.cmd
+                        && crate::picker::PickerView::owns_alt_key(&key.code));
             let to_keymap = if crate::blocks::form::owns_focus(window, cx) {
                 chord
             } else if picker_keys {
@@ -2387,7 +2402,8 @@ mod tests {
             events: sink.clone(),
             logins: Arc::clone(&logins),
         });
-        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
+        parts.fs = Some(fs);
         parts.forms = Some(forms);
         parts.resume_pending = resume_pending;
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
@@ -3462,6 +3478,57 @@ mod tests {
         });
         cx.simulate_keystrokes("escape");
         assert_eq!(mode(cx), None, "Esc closes it from anywhere");
+    }
+
+    #[gpui::test]
+    fn the_palette_opens_the_pickers_and_their_alt_keys_reach_them(cx: &mut TestAppContext) {
+        use crate::picker::PickerMode;
+        let (h, cx) = harness(Vec::new(), cx);
+        let picker = h.session.read_with(cx, |s, _| s.picker.clone());
+        // The `/` palette lists them with their keys.
+        cx.simulate_input("/picker");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, cx| {
+            let rows = s.input().read(cx).palette(cx);
+            let files = rows
+                .iter()
+                .find(|row| row.name == "picker.files")
+                .expect("listed");
+            assert!(files.description.ends_with("(Ctrl+G ff)"), "{}", files.description);
+        });
+        // Running it from the palette opens the picker.
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(picker.read_with(cx, |p, _| p.mode()), Some(PickerMode::Files));
+        h.session.update_in(cx, |s, window, cx| s.command("picker.grep", window, cx));
+        assert_eq!(picker.read_with(cx, |p, _| p.mode()), Some(PickerMode::Grep));
+        // `Alt+…` flips the options without going to the keymap or being typed.
+        cx.simulate_keystrokes("alt-c alt-w alt-p");
+        picker.read_with(cx, |p, cx| {
+            assert!(p.options().match_case && p.options().whole_word);
+            assert!(!p.options().regex);
+            assert!(!p.preview_enabled());
+            assert_eq!(p.query(cx), "");
+        });
+        assert_eq!(
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx)),
+            ""
+        );
+        // A match is previewed from the file, through the file system.
+        cx.simulate_keystrokes("alt-p");
+        cx.simulate_input("add");
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::picker::SEARCH_DEBOUNCE);
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::picker::preview::PREVIEW_DEBOUNCE);
+        cx.run_until_parked();
+        picker.read_with(cx, |p, _| {
+            let preview = p.preview().expect("previewed");
+            assert_eq!(preview.path.as_str(), "src/lib.rs");
+            assert_eq!(preview.lines, ["pub fn add() {}"]);
+            assert!(!preview.loading);
+            assert_eq!(preview.match_index(), Some(0));
+        });
     }
 
     #[gpui::test]
