@@ -45,11 +45,11 @@ use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::flows::research::session::ResearchSession;
 use application::ports::credentials::ApiKeyPort;
+use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::{
     DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
     ReadFileRequest, WriteFileRequest,
 };
-use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::llm::{ModelCatalogPort, ModelInfo};
 use application::ports::mcp::{McpPort, McpServerState};
 use application::ports::plugin::{
