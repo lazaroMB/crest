@@ -40,11 +40,14 @@ use super::{TimelineChange, TimelineState, copy_text, render_block};
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
 const OVERDRAW: f32 = 512.0;
 
+/// What runs when a deferred key reaches the timeline unhandled.
+type KeyFallback = Box<dyn FnOnce(&mut Window, &mut App)>;
+
 /// A key the session let through to the focused element of the timeline,
 /// with what to do when no element takes it.
 pub struct DeferredKey {
     key: Key,
-    fallback: Box<dyn FnOnce(&mut Window, &mut App)>,
+    fallback: KeyFallback,
 }
 
 impl DeferredKey {
