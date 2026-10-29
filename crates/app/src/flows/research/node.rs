@@ -7,10 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use domain::block::{Block, BlockError, BlockId, BlockKind};
-use domain::conversation::{ContentPart, Message, Session};
+use domain::conversation::{Message, Session};
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest, ResolvedModel};
 use domain::research::{ResearchState, Stage};
-use futures::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -19,8 +18,9 @@ use super::gate::RESERVED_PREFIX;
 use super::json::{final_text, invalid_answer, parse_valid, retry_message, text_of};
 use super::usage::{StageUsage, UsageMeter};
 use crate::cost::PricingTable;
+use crate::flows::model_call;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use crate::ports::llm::{Citation, LlmError, LlmPort, LlmRequest, MessageAssembler, SystemBlock};
+use crate::ports::llm::{Citation, LlmError, LlmPort, LlmRequest};
 use crate::usecases::run_turn::{AgentService, TurnError, TurnOptions, TurnOutcome};
 
 /// Stages that `/skip` may jump over: the optional ones.
@@ -517,11 +517,7 @@ impl NodeContext {
     /// A request to this stage's model with `system` and `messages`.
     #[must_use]
     pub fn request(&self, system: &str, messages: Vec<Message>) -> LlmRequest {
-        let mut req = LlmRequest::new(self.model(), messages);
-        if !system.is_empty() {
-            req.system = vec![SystemBlock::new(system)];
-        }
-        req
+        model_call::request(self.model(), system, messages)
     }
 
     /// Sends `req` and returns the text of the answer, trimmed.
@@ -550,24 +546,11 @@ impl NodeContext {
     ) -> Result<(String, Vec<Citation>), NodeError> {
         let stage = self.stage.name();
         self.activity(format!("{stage}: asking {}", req.model.spec.id));
-        let model = req.model.spec.id.clone();
-        let mut stream = self.deps.llm.stream(req).await?;
-        let mut assembler = MessageAssembler::new();
-        let mut answering = false;
-        while let Some(event) = stream.next().await {
-            if !answering {
-                answering = true;
+        let assembled =
+            model_call::stream_metered(self.deps.llm.as_ref(), req, &self.meter, || {
                 self.activity(format!("{stage}: the model is answering"));
-            }
-            assembler
-                .push(event?)
-                .map_err(|e| LlmError::Decode(e.to_string()))?;
-        }
-        let assembled = assembler
-            .finish()
-            .map_err(|e| LlmError::Decode(e.to_string()))?;
-        let model = assembled.model.as_ref().unwrap_or(&model);
-        self.meter.record(model, assembled.usage, 1);
+            })
+            .await?;
         let text = text_of(&assembled.message.content);
         if text.is_empty() && assembled.citations.is_empty() {
             return Err(NodeError::EmptyAnswer);
@@ -648,7 +631,7 @@ impl NodeContext {
     pub async fn fix_parsed<T>(
         &self,
         system: &str,
-        mut messages: Vec<Message>,
+        messages: Vec<Message>,
         answer: String,
         parse: impl Fn(&str) -> Result<T, String>,
     ) -> Result<T, NodeError> {
@@ -656,8 +639,7 @@ impl NodeContext {
             Ok(value) => return Ok(value),
             Err(error) => error,
         };
-        messages.push(Message::assistant(vec![ContentPart::text(answer)]));
-        messages.push(Message::user_text(retry_message(&error)));
+        let messages = model_call::retry_conversation(messages, answer, &error);
         let again = self.complete(self.request(system, messages)).await?;
         parse(&again).map_err(|e| invalid_answer(self.stage, &e))
     }
@@ -842,6 +824,7 @@ mod tests {
     use super::*;
     use crate::testing::llm::{ScriptedLlm, ScriptedResponse};
     use crate::testing::system::RecordingSink;
+    use domain::conversation::ContentPart;
 
     fn context(llm: Arc<ScriptedLlm>, sink: Arc<RecordingSink>) -> NodeContext {
         let deps = NodeDeps::new(llm, ModelPolicy::default(), sink).with_clock(|| 7);

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::research::Research;
 use adapter_anthropic::{
     AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig, TokioClock,
 };
@@ -20,15 +21,15 @@ use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
 use adapter_shell::LocalShell;
-use adapter_store::{SqliteFlowStorage, SqliteSessionStore};
+use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage, SqliteSessionStore};
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
 use application::cost::CostTracker;
+use application::flows::discovery::lock::{DiscoveryLock, LockedFs};
 use application::flows::implement::graph::{ImplementSession, plan_path};
 use application::flows::implement::node::{AgentKit, ImplementDeps};
 use application::flows::research::agents::ExplorePorts;
 use application::flows::research::graph::ResearchWorkspace;
-use application::flows::research::session::ResearchSession;
 use application::llm_retry::RetryingLlm;
 use application::ports::approval::ApprovalPort;
 use application::ports::checkpoint::TurnCheckpointPort;
@@ -330,7 +331,7 @@ pub struct App {
     flow_storage: Option<Arc<SqliteFlowStorage>>,
     /// The research flow of the workspace (`/research`), when the flow
     /// store opened.
-    pub research: Option<ResearchSession>,
+    pub research: Option<Research>,
     /// Simulates the solution of a Spec (`/simulate`, `--simulate`, the
     /// `simulate_solution` tool).
     pub simulator: Simulator,
@@ -615,6 +616,11 @@ pub async fn build_app(
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
     let fs: Arc<dyn FileSystemPort> = Arc::new(LocalFs::new(guard));
+    // The tools' file port refuses to change the folder of an open
+    // discovery; the engine writes it through `fs` itself.
+    let discovery_lock = DiscoveryLock::new();
+    let tool_fs: Arc<dyn FileSystemPort> =
+        Arc::new(LockedFs::new(Arc::clone(&fs), discovery_lock.clone()));
     let (themes, theme_warnings) =
         startup::theme_catalog(config_sources.global.as_deref(), &loaded.themes);
     warnings.extend(theme_warnings);
@@ -638,7 +644,7 @@ pub async fn build_app(
         FileToolPorts {
             file_search: search.clone(),
             content_search: search.clone(),
-            fs: Arc::clone(&fs),
+            fs: Arc::clone(&tool_fs),
             shell: Arc::clone(&shell),
             rewriter,
         },
@@ -813,6 +819,8 @@ pub async fn build_app(
         .as_ref()
         .map(|tracker| tracker.pricing().clone())
         .unwrap_or_default();
+    let (research_engine, engine_warning) = crate::discovery::Engine::from_options(&loaded.options);
+    warnings.extend(engine_warning);
     let research = match &flow_storage {
         Some(storage) => {
             let parts = research::ResearchParts {
@@ -841,6 +849,10 @@ pub async fn build_app(
                 storage: Arc::clone(storage),
                 decider: decider.clone(),
                 pricing,
+                discovery: Arc::new(SqliteDiscoveryStore::sharing(storage)),
+                lock: discovery_lock.clone(),
+                engine: research_engine,
+                web: web.as_ref().map(|w| Arc::clone(&w.web)),
             };
             match research::build(parts) {
                 Ok(session) => Some(session),

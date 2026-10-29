@@ -5,6 +5,7 @@ pub mod checkpoint;
 pub mod compute;
 pub mod credentials;
 pub mod decision;
+pub mod discovery;
 pub mod events;
 pub mod form;
 pub mod formats;

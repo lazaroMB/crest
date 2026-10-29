@@ -311,6 +311,7 @@ pub(super) fn describe_source(source: &SourceRef) -> String {
             let excerpt: String = output_excerpt.chars().take(300).collect();
             format!("command `{command}`, output: {excerpt}")
         }
+        other => other.reference(),
     }
 }
 
@@ -349,22 +350,24 @@ fn findings_table(findings: &[Finding]) -> TableSpec {
 /// A count computed from the state itself, shown when the model has no
 /// series to chart: how much evidence each kind of source gave.
 fn evidence_by_source(state: &ResearchState) -> ChartSpec {
-    let mut counts = [0_u32; 4];
+    let mut counts = [0_u32; 5];
     for evidence in &state.evidence {
         let i = match evidence.source {
             SourceRef::File { .. } => 0,
             SourceRef::Commit { .. } => 1,
             SourceRef::Url { .. } => 2,
             SourceRef::Command { .. } => 3,
+            _ => 4,
         };
         counts[i] += 1;
     }
-    let (labels, values): (Vec<String>, Vec<f64>) = ["Files", "Commits", "Web", "Commands"]
-        .into_iter()
-        .zip(counts)
-        .filter(|(_, n)| *n > 0)
-        .map(|(label, n)| (label.to_owned(), f64::from(n)))
-        .unzip();
+    let (labels, values): (Vec<String>, Vec<f64>) =
+        ["Files", "Commits", "Web", "Commands", "Literature"]
+            .into_iter()
+            .zip(counts)
+            .filter(|(_, n)| *n > 0)
+            .map(|(label, n)| (label.to_owned(), f64::from(n)))
+            .unzip();
     ChartSpec {
         title: "Evidence by source kind".into(),
         kind: ChartKind::Bar,

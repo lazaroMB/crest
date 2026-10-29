@@ -91,6 +91,18 @@ pub const BIN_COMMANDS: &[CommandInfo] = &[
                       open one) for good; it is no longer pending",
     },
     CommandInfo {
+        name: "research",
+        usage: "/research accept",
+        description: "Discovery engine: freeze the discovery once every section is approved \
+                      and derive spec.md and plan.json",
+    },
+    CommandInfo {
+        name: "reopen",
+        usage: "/reopen <section> [reason]",
+        description: "Discovery engine: reopen a section; it and every later one lose their \
+                      verdicts and are written again",
+    },
+    CommandInfo {
         name: "retry",
         usage: "/retry",
         description: "Run the failed stage of the research flow again",

@@ -9,7 +9,7 @@
 //! Adding a migration: write `migrations/NNNN_name.sql` and append it here;
 //! never edit an applied one.
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 /// One schema step.
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +18,9 @@ pub struct Migration {
     pub name: &'static str,
     /// SQL run as a batch.
     pub sql: &'static str,
+    /// Rust run in the same transaction after the SQL, for data a script
+    /// cannot derive (backfilling from replayed logs).
+    pub after: Option<fn(&Transaction<'_>) -> rusqlite::Result<()>>,
 }
 
 /// Every migration, in order.
@@ -25,18 +28,32 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         name: "0001_init",
         sql: include_str!("../migrations/0001_init.sql"),
+        after: None,
     },
     Migration {
         name: "0002_turn_count",
         sql: include_str!("../migrations/0002_turn_count.sql"),
+        after: None,
     },
     Migration {
         name: "0003_flow_sessions",
         sql: include_str!("../migrations/0003_flow_sessions.sql"),
+        after: None,
     },
     Migration {
         name: "0004_prompt_history",
         sql: include_str!("../migrations/0004_prompt_history.sql"),
+        after: None,
+    },
+    Migration {
+        name: "0005_discovery",
+        sql: include_str!("../migrations/0005_discovery.sql"),
+        after: None,
+    },
+    Migration {
+        name: "0006_discovery_summary",
+        sql: include_str!("../migrations/0006_discovery_summary.sql"),
+        after: Some(crate::discovery::backfill_summaries),
     },
 ];
 
@@ -104,6 +121,7 @@ pub fn migrate_with(
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_err(migration.name))?;
         tx.execute_batch(migration.sql)
+            .and_then(|()| migration.after.map_or(Ok(()), |after| after(&tx)))
             .and_then(|()| tx.pragma_update(None, "user_version", version))
             .and_then(|()| tx.commit())
             .map_err(sql_err(migration.name))?;
@@ -138,6 +156,10 @@ mod tests {
         assert_eq!(
             tables(&conn),
             [
+                "discoveries",
+                "discovery_artifacts",
+                "discovery_events",
+                "discovery_sources",
                 "flow_sessions",
                 "permission_rules",
                 "sessions",
@@ -170,6 +192,7 @@ mod tests {
             Migration {
                 name: "broken",
                 sql: "CREATE TABLE half_done (x); SELECT * FROM missing_table;",
+                after: None,
             },
         ];
         let mut conn = Connection::open_in_memory().unwrap();

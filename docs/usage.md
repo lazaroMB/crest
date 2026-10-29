@@ -117,6 +117,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
 | `/implement <spec>`, `/implement resume` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
 | `/research <problem>`, `/research resume [n]`, `/research retry`, `/research list`, `/research` | Starts, resumes, retries, lists or queries the research workflow ([workflows.md](workflows.md#research-workflow)). |
+| `/research accept`, `/reopen <section> [reason]` | On the [discovery engine](workflows.md#research-on-the-discovery-engine): freeze an approved discovery and derive its Spec; reopen a section so it and the later ones are written again. |
 | `/stage`, `/back <stage>`, `/skip`, `/retry`, `/abort` | Commands of the active flow (implementation, or else research). |
 | `/simulate <spec>` | Simulates the solution of a Spec (its folder, its number or its path) and opens its board in a full-size modal ([workflows.md](workflows.md#simulating-a-solution)). The verdicts land in the timeline. |
 | `/<name> <args>` | A command registered with `app.commands.register`. |

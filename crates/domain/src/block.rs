@@ -1000,32 +1000,275 @@ pub enum SourceRef {
         /// Relevant excerpt of its output.
         output_excerpt: String,
     },
+    /// A paper, preprint or study report.
+    Paper {
+        /// Title.
+        title: String,
+        /// Authors, as written (`Anderson, B. B., and others`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authors: Option<String>,
+        /// Year of publication.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        year: Option<u32>,
+        /// Journal, conference or repository.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        venue: Option<String>,
+        /// DOI (`10.1145/2858036.2858341`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        doi: Option<String>,
+        /// arXiv id (`2301.01234`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arxiv: Option<String>,
+        /// Where it was read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    /// A book or a chapter.
+    Book {
+        /// Title.
+        title: String,
+        /// Authors or editors.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authors: Option<String>,
+        /// Year of the edition.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        year: Option<u32>,
+        /// Publisher.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        publisher: Option<String>,
+        /// ISBN.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        isbn: Option<String>,
+        /// Chapter or page range.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pages: Option<String>,
+    },
+    /// A standard, an RFC or a specification.
+    Standard {
+        /// Its id (`RFC 9110`, `ISO/IEC 25010:2023`).
+        id: String,
+        /// Title.
+        title: String,
+        /// Where it was read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    /// Documentation of a product, versioned.
+    Docs {
+        /// URL.
+        url: String,
+        /// Title.
+        title: String,
+        /// Product version or date the page states.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// A file of a repository at a revision (this one or another).
+    Repo {
+        /// `owner/name` or a URL.
+        repo: String,
+        /// Commit, tag or branch.
+        rev: String,
+        /// Path inside the repository.
+        path: String,
+    },
+    /// An article or a blog post.
+    Article {
+        /// URL.
+        url: String,
+        /// Title.
+        title: String,
+        /// Author.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author: Option<String>,
+        /// Publication date, as written.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        date: Option<String>,
+    },
 }
 
 impl SourceRef {
-    /// Checks that a file line range is 1-based and not reversed.
+    /// Checks that a file line range is 1-based and not reversed, and that
+    /// a literature source carries what identifies it: a paper needs a
+    /// DOI, an arXiv id or a URL; a standard an id; a repository file its
+    /// three parts; titles are never empty.
     ///
     /// # Errors
     ///
-    /// Returns [`BlockError::InvalidLineRange`] for a bad range.
+    /// Returns [`BlockError::InvalidLineRange`] for a bad range and
+    /// [`BlockError::Invalid`] for an incomplete literature source.
     pub fn validate(&self) -> Result<(), BlockError> {
-        if let Self::File {
-            line_start,
-            line_end,
-            ..
-        } = self
-        {
-            let bad_start = *line_start == Some(0);
-            let reversed = matches!((line_start, line_end), (Some(s), Some(e)) if e < s);
-            let end_only = line_start.is_none() && line_end.is_some();
-            if bad_start || reversed || end_only {
-                return Err(BlockError::InvalidLineRange {
-                    start: *line_start,
-                    end: *line_end,
-                });
+        let invalid = |reason: &str| BlockError::Invalid {
+            kind: "source",
+            reason: reason.to_owned(),
+        };
+        let blank = |s: &str| s.trim().is_empty();
+        match self {
+            Self::File {
+                line_start,
+                line_end,
+                ..
+            } => {
+                let bad_start = *line_start == Some(0);
+                let reversed = matches!((line_start, line_end), (Some(s), Some(e)) if e < s);
+                let end_only = line_start.is_none() && line_end.is_some();
+                if bad_start || reversed || end_only {
+                    return Err(BlockError::InvalidLineRange {
+                        start: *line_start,
+                        end: *line_end,
+                    });
+                }
             }
+            Self::Paper {
+                title,
+                doi,
+                arxiv,
+                url,
+                ..
+            } => {
+                if blank(title) {
+                    return Err(invalid("a paper needs a title"));
+                }
+                if doi.as_deref().is_none_or(blank)
+                    && arxiv.as_deref().is_none_or(blank)
+                    && url.as_deref().is_none_or(blank)
+                {
+                    return Err(invalid("a paper needs a DOI, an arXiv id or a URL"));
+                }
+            }
+            Self::Book { title, .. } => {
+                if blank(title) {
+                    return Err(invalid("a book needs a title"));
+                }
+            }
+            Self::Standard { id, title, .. } => {
+                if blank(id) || blank(title) {
+                    return Err(invalid("a standard needs an id and a title"));
+                }
+            }
+            Self::Docs { url, title, .. } | Self::Article { url, title, .. } => {
+                if blank(url) || blank(title) {
+                    return Err(invalid("documentation and articles need a URL and a title"));
+                }
+            }
+            Self::Repo { repo, rev, path } => {
+                if blank(repo) || blank(rev) || blank(path) {
+                    return Err(invalid("a repository file needs repo, rev and path"));
+                }
+            }
+            Self::Commit { .. } | Self::Url { .. } | Self::Command { .. } => {}
         }
         Ok(())
+    }
+
+    /// The link a source opens, if it has one.
+    #[must_use]
+    pub fn link(&self) -> Option<String> {
+        match self {
+            Self::Url { url, .. } | Self::Docs { url, .. } | Self::Article { url, .. } => {
+                Some(url.clone())
+            }
+            Self::Standard { url, .. } => url.clone(),
+            Self::Paper {
+                doi, arxiv, url, ..
+            } => url
+                .clone()
+                .or_else(|| doi.as_ref().map(|d| format!("https://doi.org/{d}")))
+                .or_else(|| arxiv.as_ref().map(|a| format!("https://arxiv.org/abs/{a}"))),
+            Self::Book { isbn, .. } => isbn
+                .as_ref()
+                .map(|i| format!("https://openlibrary.org/isbn/{}", i.replace(['-', ' '], ""))),
+            Self::File { .. } | Self::Commit { .. } | Self::Command { .. } | Self::Repo { .. } => {
+                None
+            }
+        }
+    }
+
+    /// The source as one line of a reference list: authors, year, title,
+    /// venue, identifier and link, whichever it has.
+    #[must_use]
+    pub fn reference(&self) -> String {
+        fn join(parts: Vec<Option<String>>) -> String {
+            parts
+                .into_iter()
+                .flatten()
+                .filter(|p| !p.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(". ")
+        }
+        match self {
+            Self::Paper {
+                title,
+                authors,
+                year,
+                venue,
+                doi,
+                arxiv,
+                url,
+            } => join(vec![
+                authors.clone(),
+                year.map(|y| y.to_string()),
+                Some(title.clone()),
+                venue.clone(),
+                doi.as_ref().map(|d| format!("doi:{d}")),
+                arxiv.as_ref().map(|a| format!("arXiv:{a}")),
+                url.clone(),
+            ]),
+            Self::Book {
+                title,
+                authors,
+                year,
+                publisher,
+                isbn,
+                pages,
+            } => join(vec![
+                authors.clone(),
+                year.map(|y| y.to_string()),
+                Some(title.clone()),
+                publisher.clone(),
+                pages.as_ref().map(|p| format!("pp. {p}")),
+                isbn.as_ref().map(|i| format!("ISBN {i}")),
+            ]),
+            Self::Standard { id, title, url } => {
+                join(vec![Some(format!("{id}: {title}")), url.clone()])
+            }
+            Self::Docs {
+                url,
+                title,
+                version,
+            } => join(vec![
+                Some(title.clone()),
+                version.as_ref().map(|v| format!("version {v}")),
+                Some(url.clone()),
+            ]),
+            Self::Repo { repo, rev, path } => format!("{repo}@{rev}: {path}"),
+            Self::Article {
+                url,
+                title,
+                author,
+                date,
+            } => join(vec![
+                author.clone(),
+                date.clone(),
+                Some(title.clone()),
+                Some(url.clone()),
+            ]),
+            Self::File {
+                path,
+                line_start,
+                line_end,
+            } => match (line_start, line_end) {
+                (Some(s), Some(e)) if s != e => format!("{path}:{s}-{e}"),
+                (Some(s), _) => format!("{path}:{s}"),
+                _ => path.clone(),
+            },
+            Self::Commit { sha, summary } => format!("commit {sha}: {summary}"),
+            Self::Url { url, title } => match title {
+                Some(t) => format!("{t}. {url}"),
+                None => url.clone(),
+            },
+            Self::Command { command, .. } => format!("$ {command}"),
+        }
     }
 }
 
@@ -1828,5 +2071,84 @@ mod tests {
         insta::assert_json_snapshot!("diff_spec_schema", schemars::schema_for!(DiffSpec));
         insta::assert_json_snapshot!("custom_node_schema", schemars::schema_for!(CustomNode));
         insta::assert_json_snapshot!("source_ref_schema", schemars::schema_for!(SourceRef));
+    }
+
+    #[test]
+    fn literature_sources_validate_link_and_render() {
+        let paper = SourceRef::Paper {
+            title: "Habituation of security warnings".into(),
+            authors: Some("Anderson, B. B., and others".into()),
+            year: Some(2016),
+            venue: Some("CHI".into()),
+            doi: Some("10.1145/2858036.2858341".into()),
+            arxiv: None,
+            url: None,
+        };
+        paper.validate().unwrap();
+        assert_eq!(
+            paper.link().as_deref(),
+            Some("https://doi.org/10.1145/2858036.2858341")
+        );
+        assert_eq!(
+            paper.reference(),
+            "Anderson, B. B., and others. 2016. Habituation of security warnings. CHI. doi:10.1145/2858036.2858341"
+        );
+        let bare = SourceRef::Paper {
+            title: "x".into(),
+            authors: None,
+            year: None,
+            venue: None,
+            doi: None,
+            arxiv: None,
+            url: None,
+        };
+        assert!(matches!(
+            bare.validate(),
+            Err(BlockError::Invalid { kind: "source", .. })
+        ));
+        let standard = SourceRef::Standard {
+            id: "RFC 9110".into(),
+            title: "HTTP Semantics".into(),
+            url: Some("https://www.rfc-editor.org/rfc/rfc9110".into()),
+        };
+        standard.validate().unwrap();
+        assert_eq!(
+            standard.reference(),
+            "RFC 9110: HTTP Semantics. https://www.rfc-editor.org/rfc/rfc9110"
+        );
+        let repo = SourceRef::Repo {
+            repo: "twocrest/crest".into(),
+            rev: "2808992".into(),
+            path: "crates/app/src/lib.rs".into(),
+        };
+        assert_eq!(
+            repo.reference(),
+            "twocrest/crest@2808992: crates/app/src/lib.rs"
+        );
+        assert!(repo.link().is_none());
+        let book = SourceRef::Book {
+            title: "Thinking in Systems".into(),
+            authors: Some("Meadows, D.".into()),
+            year: Some(2008),
+            publisher: None,
+            isbn: Some("978-1-60358-055-7".into()),
+            pages: None,
+        };
+        assert_eq!(
+            book.link().as_deref(),
+            Some("https://openlibrary.org/isbn/9781603580557")
+        );
+        let json = serde_json::to_string(&book).unwrap();
+        assert!(json.contains("\"type\":\"book\""));
+        assert_eq!(serde_json::from_str::<SourceRef>(&json).unwrap(), book);
+        assert!(
+            SourceRef::Docs {
+                url: " ".into(),
+                title: "t".into(),
+                version: None
+            }
+            .validate()
+            .is_err()
+        );
     }
 }
