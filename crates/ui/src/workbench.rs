@@ -405,6 +405,11 @@ impl Workbench {
             }
             ChatsEvent::Rename { id, title } => self.rename_chat(id, title, window, cx),
             ChatsEvent::Delete { root, id } => self.delete_chat(root, id, window, cx),
+            ChatsEvent::Dismissed => {
+                if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| session.focus_input(window, cx));
+                }
+            }
         }
     }
 
@@ -976,6 +981,69 @@ mod tests {
         });
         cx.update(|_, _| {});
         assert!(weak.upgrade().is_none(), "the first session was dropped");
+    }
+
+    #[gpui::test]
+    fn the_chat_menu_cancels_by_button_esc_or_click_outside(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let at = |cx: &mut VisualTestContext, selector: &'static str| {
+            cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("no {selector}"))
+                .center()
+        };
+        let right_click = |cx: &mut VisualTestContext| {
+            redraw(cx);
+            let row = at(cx, "chats-session-0-1");
+            cx.simulate_mouse_down(row, gpui::MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(row, gpui::MouseButton::Right, gpui::Modifiers::none());
+            redraw(cx);
+            assert!(chats.read_with(cx, |c, _| c.menu_open()));
+        };
+        let prompt_focused = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        // Cancel.
+        right_click(cx);
+        let cancel = at(cx, "chats-cancel-0-1");
+        cx.simulate_click(cancel, gpui::Modifiers::none());
+        assert!(
+            !chats.read_with(cx, |c, _| c.menu_open()),
+            "Cancel closes it"
+        );
+        // Esc while renaming gives the prompt the focus back.
+        right_click(cx);
+        let rename = at(cx, "chats-rename-0-1");
+        cx.simulate_click(rename, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)),
+            "the rename field has the focus"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()), "Esc closes it");
+        assert!(prompt_focused(cx), "the prompt has the focus again");
+        // A click elsewhere.
+        right_click(cx);
+        cx.simulate_click(
+            gpui::point(gpui::px(900.), gpui::px(300.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(
+            !chats.read_with(cx, |c, _| c.menu_open()),
+            "a click outside closes it"
+        );
     }
 
     #[gpui::test]

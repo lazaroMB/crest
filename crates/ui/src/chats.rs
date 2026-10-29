@@ -3,8 +3,8 @@
 //!
 //! The binary fills the list ([`crate::workbench::ProjectOpener::catalog`]).
 //! Choosing a row emits [`ChatsEvent`]; the workbench opens that session.
-//! A right click renames or deletes the chat. The file tree stays the
-//! other side panel.
+//! A right click renames or deletes the chat; `Esc`, **Cancel** or a click
+//! elsewhere closes that menu. The file tree stays the other side panel.
 
 use std::collections::{HashMap, HashSet};
 
@@ -74,6 +74,9 @@ pub enum ChatsEvent {
         /// Session id.
         id: String,
     },
+    /// The menu was cancelled (`Esc`, **Cancel**): the prompt takes the
+    /// focus back from the rename field.
+    Dismissed,
 }
 
 /// What the right-click menu is doing.
@@ -215,7 +218,8 @@ impl ChatsPanel {
 
     fn on_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key == "escape" && self.action.is_some() {
-            self.clear_action(cx);
+            self.cancel_action(cx);
+            cx.stop_propagation();
             return;
         }
         let Some(input) = &self.rename_input else {
@@ -319,6 +323,18 @@ impl ChatsPanel {
         });
     }
 
+    /// Whether the right-click menu (or its rename field or delete
+    /// question) is open.
+    pub fn menu_open(&self) -> bool {
+        self.action.is_some()
+    }
+
+    /// Closes the menu without doing anything and gives the focus back.
+    fn cancel_action(&mut self, cx: &mut Context<Self>) {
+        self.clear_action(cx);
+        cx.emit(ChatsEvent::Dismissed);
+    }
+
     fn clear_action(&mut self, cx: &mut Context<Self>) {
         self.action = None;
         self.rename_input = None;
@@ -369,8 +385,10 @@ impl ChatsPanel {
                 let (root, id, title) = (project.root.clone(), chat.id.clone(), chat.title.clone());
                 let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
                 let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
+                let selector = format!("chats-session-{index}-{row}");
                 let mut item = h_flex()
-                    .id(SharedString::from(format!("chats-session-{index}-{row}")))
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
                     .w_full()
                     .pl(px(22.))
                     .pr_2()
@@ -433,6 +451,15 @@ impl ChatsPanel {
             theme.list_active,
         );
         let mut menu = v_flex()
+            .id("chats-menu")
+            .debug_selector(|| "chats-menu".to_owned())
+            // A click elsewhere closes it (a right click on another chat
+            // opens that one's).
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if event.button == MouseButton::Left {
+                    this.clear_action(cx);
+                }
+            }))
             .mx_2()
             .mb_1()
             .py_1()
@@ -459,6 +486,14 @@ impl ChatsPanel {
                         active,
                         danger,
                         cx.listener(|this, _, _, cx| this.ask_delete(cx)),
+                    ))
+                    .child(menu_row(
+                        format!("chats-cancel-{index}-{row}"),
+                        "Cancel",
+                        false,
+                        active,
+                        danger,
+                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
                     ));
             }
             ChatActionKind::Rename => {
@@ -471,7 +506,15 @@ impl ChatsPanel {
                                 .text_xs()
                                 .text_color(muted)
                                 .child("Enter saves · Esc cancels"),
-                        );
+                        )
+                        .child(menu_row(
+                            format!("chats-cancel-rename-{index}-{row}"),
+                            "Cancel",
+                            false,
+                            active,
+                            danger,
+                            cx.listener(|this, _, _, cx| this.cancel_action(cx)),
+                        ));
                 }
             }
             ChatActionKind::ConfirmDelete => {
@@ -497,7 +540,7 @@ impl ChatsPanel {
                         false,
                         active,
                         danger,
-                        cx.listener(|this, _, _, cx| this.clear_action(cx)),
+                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
                     ));
             }
         }
@@ -513,8 +556,10 @@ fn menu_row(
     danger_color: gpui::Hsla,
     click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
+    let selector = id.clone();
     let mut row = h_flex()
         .id(SharedString::from(id))
+        .debug_selector(move || selector.clone())
         .w_full()
         .px_2()
         .py_1()
