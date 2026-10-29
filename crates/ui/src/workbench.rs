@@ -12,6 +12,11 @@
 //! session of the same directory again, so the agent starts with the new
 //! API key.
 //!
+//! The chats sidebar shows beside the session; `panel.chats` hides it.
+//! The session's [`SessionEvent::Chats`] (the keymap's `chat.*` actions,
+//! `focus.next` into the list) are run here. With no session open (the
+//! picker), the keys of `app.quit` and `window.fullscreen` still work.
+//!
 //! Switching chats while a turn runs (a form waiting for an answer, a long
 //! reply) parks the busy session instead of dropping it: it keeps running
 //! out of sight, without the keyboard or the focus, and comes back as it
@@ -30,12 +35,12 @@ use futures::future::BoxFuture;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, actions, div,
+    Subscription, Window, actions, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
 use crate::app::{RootView, set_theme, window_title};
-use crate::chats::{ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
+use crate::chats::{ChatsCommand, ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -107,8 +112,11 @@ pub struct Workbench {
     /// The session `/project` left, until a project is chosen.
     back: Option<Live>,
     chats: Entity<ChatsPanel>,
+    /// The chats sidebar is on screen (`panel.chats`).
+    chats_shown: bool,
     focus_handle: FocusHandle,
     _chats: Subscription,
+    _keys: Subscription,
 }
 
 impl Workbench {
@@ -120,14 +128,21 @@ impl Workbench {
     ) -> Self {
         let chats = cx.new(|cx| ChatsPanel::new(String::new(), None, cx));
         let subscription = cx.subscribe_in(&chats, window, Self::on_chats);
+        let weak = cx.entity().downgrade();
+        let keys = cx.intercept_keystrokes(move |event, window, cx| {
+            weak.update(cx, |this, cx| this.key_without_session(event, window, cx))
+                .ok();
+        });
         Self {
             opener,
             content: Content::Opening(dir),
             parked: HashMap::new(),
             back: None,
             chats,
+            chats_shown: true,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
+            _keys: keys,
         }
     }
 
@@ -204,6 +219,117 @@ impl Workbench {
     /// How many busy sessions run out of sight.
     pub fn parked(&self) -> usize {
         self.parked.len()
+    }
+
+    /// Whether the chats sidebar is on screen.
+    pub fn chats_shown(&self) -> bool {
+        self.chats_shown
+    }
+
+    /// The chats sidebar.
+    pub fn chats(&self) -> &Entity<ChatsPanel> {
+        &self.chats
+    }
+
+    /// With no session on screen (the picker, a project opening), the keys
+    /// the builtin keymap gives to `app.quit` and `window.fullscreen` still
+    /// work; with one, the session's keymap has them.
+    fn key_without_session(
+        &mut self,
+        event: &gpui::KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session().is_some() {
+            return;
+        }
+        let Some(key) = crate::input::key_from_keystroke(&event.keystroke) else {
+            return;
+        };
+        let keymap = application::keymap::default_keymap();
+        let Some(application::keymap::Action::Builtin(name)) =
+            keymap.lookup(std::slice::from_ref(&key)).exact
+        else {
+            return;
+        };
+        match name.as_str() {
+            crate::session::QUIT_ACTION => {
+                window.dispatch_action(Box::new(crate::app::Quit), cx);
+            }
+            crate::session::FULLSCREEN_ACTION => window.toggle_fullscreen(),
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// Shows or hides the chats sidebar; hidden, it cannot keep the focus.
+    pub fn toggle_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let had_focus = self.chats.focus_handle(cx).contains_focused(window, cx);
+        self.chats_shown = !self.chats_shown;
+        let shown = self.chats_shown;
+        if let Some(session) = self.session().cloned() {
+            session.update(cx, |session, cx| {
+                session.set_chats_shown(shown);
+                if !shown && had_focus {
+                    session.focus_input(window, cx);
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    /// Runs what a key asked the session about the chats.
+    fn chats_command(
+        &mut self,
+        command: ChatsCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Content::Session(live) = &self.content else {
+            return;
+        };
+        let dir = live.dir.clone();
+        match command {
+            ChatsCommand::New => self.switch_chat(dir, SessionOpen::New, window, cx),
+            ChatsCommand::Next | ChatsCommand::Prev => {
+                let step = if command == ChatsCommand::Next { 1 } else { -1 };
+                match self.chats.read(cx).neighbor(step) {
+                    Some((root, id)) => {
+                        self.switch_chat(PathBuf::from(root), SessionOpen::Id(id), window, cx);
+                    }
+                    None => self.inform("this project has no other chat".into(), cx),
+                }
+            }
+            ChatsCommand::Rename | ChatsCommand::Delete => {
+                if !self.chats_shown {
+                    self.toggle_chats(window, cx);
+                }
+                self.chats.update(cx, |chats, cx| {
+                    if command == ChatsCommand::Rename {
+                        chats.rename_current(window, cx);
+                    } else {
+                        chats.delete_current(window, cx);
+                    }
+                });
+            }
+            ChatsCommand::TogglePanel => self.toggle_chats(window, cx),
+            ChatsCommand::Focus => {
+                if self.chats_shown {
+                    self.chats.update(cx, |chats, cx| chats.focus(window, cx));
+                } else if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| session.focus_input(window, cx));
+                }
+            }
+        }
+    }
+
+    /// Shows `message` as information in the shown session, if any.
+    fn inform(&self, message: String, cx: &mut Context<Self>) {
+        if let Some(session) = self.session().cloned() {
+            session.update(cx, |session, cx| {
+                session.show_notice(NoticeLevel::Info, message, cx);
+            });
+        }
     }
 
     fn show_picker(
@@ -313,8 +439,11 @@ impl Workbench {
     /// Puts `live` on screen: new, or back from the parked ones.
     fn show_live(&mut self, live: Live, window: &mut Window, cx: &mut Context<Self>) {
         window.set_window_title(&window_title(&live.label));
-        live.session
-            .update(cx, |session, cx| session.set_shown(true, window, cx));
+        let chats_shown = self.chats_shown;
+        live.session.update(cx, |session, cx| {
+            session.set_chats_shown(chats_shown);
+            session.set_shown(true, window, cx);
+        });
         let (root, id) = (live.dir.display().to_string(), live.session_id.clone());
         self.chats
             .update(cx, |chats, cx| chats.set_current(root, id, cx));
@@ -330,6 +459,12 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         match event {
+            SessionEvent::Chats(command) => {
+                // Only the shown session has the keyboard.
+                if self.session() == Some(session) {
+                    self.chats_command(*command, window, cx);
+                }
+            }
             SessionEvent::Reopen { notice } => {
                 // Only the shown session reopens; a parked one is idle by
                 // the time it could ask.
@@ -661,7 +796,7 @@ impl Render for Workbench {
             Content::Picker(picker) => picker.clone().into_any_element(),
             Content::Session(live) => h_flex()
                 .size_full()
-                .child(self.chats.clone())
+                .when(self.chats_shown, |row| row.child(self.chats.clone()))
                 .child(div().flex_1().h_full().min_w_0().child(live.root.clone()))
                 .into_any_element(),
             Content::Opening(dir) => div()
@@ -1089,5 +1224,147 @@ mod tests {
         cx.run_until_parked();
         cx.update(|_, _| {});
         assert!(weak.upgrade().is_none(), "the left session was dropped");
+    }
+
+    fn shown_id(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<String> {
+        view.read_with(cx, |view, _| view.open_id())
+    }
+
+    fn list_focused(cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| crate::chats::list_has_focus(window, cx))
+    }
+
+    #[gpui::test]
+    fn the_chat_keys_switch_create_and_hide_chats(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("latest"));
+        cx.simulate_keystrokes("ctrl-g n");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("second"));
+        cx.simulate_keystrokes("ctrl-g n");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("latest"), "wraps");
+        cx.simulate_keystrokes("ctrl-g b");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("second"));
+        cx.simulate_keystrokes("ctrl-g c");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("new-1"));
+        // The sidebar hides and comes back; hidden, the cycle skips it.
+        cx.simulate_keystrokes("ctrl-g s");
+        assert!(!view.read_with(cx, |view, _| view.chats_shown()));
+        draw(&view, cx);
+        assert!(cx.debug_bounds("chats-empty").is_none());
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(!list_focused(cx));
+        cx.simulate_keystrokes("ctrl-g s");
+        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+    }
+
+    #[gpui::test]
+    fn the_chats_list_takes_the_keyboard(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let session = shown(&view, cx);
+        // prompt → timeline → (no tree) → chats, on the open chat.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx), "Ctrl+Tab reaches the chats");
+        let selected = |cx: &mut VisualTestContext| chats.read_with(cx, |c, _| c.selected_index());
+        assert_eq!(
+            selected(cx),
+            Some(1),
+            "on the open chat (row 0 is the project)"
+        );
+        // Letters do not land in the prompt; arrows move.
+        cx.simulate_keystrokes("j");
+        assert_eq!(selected(cx), Some(2));
+        assert_eq!(prompt_text(&session, cx), "");
+        // A session kept alive here would still take the keys after the
+        // switch below.
+        drop(session);
+        cx.simulate_keystrokes("up up up");
+        assert_eq!(selected(cx), Some(0), "stops at the top");
+        cx.simulate_keystrokes("end");
+        assert_eq!(selected(cx), Some(2));
+        // Delete asks; Esc cancels.
+        cx.simulate_keystrokes("delete");
+        assert!(chats.read_with(cx, |c, _| c.menu_open()));
+        cx.simulate_keystrokes("escape");
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()));
+        // F2 opens the name field.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx));
+        cx.simulate_keystrokes("down f2");
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Enter opens the selected chat.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        let target = chats.read_with(cx, |c, _| c.rows()[2].clone());
+        cx.simulate_keystrokes("end enter");
+        cx.run_until_parked();
+        let crate::chats::ChatRow::Chat { id, .. } = target else {
+            panic!("a chat row");
+        };
+        assert_eq!(shown_id(&view, cx), Some(id));
+        // Ctrl+Tab from the list goes back to the prompt.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx));
+        cx.simulate_keystrokes("ctrl-tab");
+        assert!(!list_focused(cx));
+    }
+
+    #[gpui::test]
+    fn chat_rename_and_delete_keys_act_on_the_open_chat(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        cx.simulate_keystrokes("ctrl-g ,");
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Hidden, the sidebar comes back to ask.
+        cx.simulate_keystrokes("ctrl-g s ctrl-g x");
+        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+        assert!(chats.read_with(cx, |c, _| c.menu_open()), "asks first");
+        assert!(list_focused(cx), "so Enter confirms");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()));
+        // The test opener cannot delete: the session says so.
+        let session = shown(&view, cx);
+        session.read_with(cx, |s, cx| {
+            let now = cx.background_executor().now();
+            let notice = s
+                .status()
+                .read(cx)
+                .state()
+                .notice(now)
+                .map(|n| n.message.clone());
+            assert!(
+                notice.is_some_and(|m| m.contains("could not delete")),
+                "the delete was asked"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn quit_works_in_the_project_picker(cx: &mut TestAppContext) {
+        let (_view, cx) = workbench(cx);
+        let quits = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = quits.clone();
+        cx.update(|_, cx| {
+            cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1);
     }
 }

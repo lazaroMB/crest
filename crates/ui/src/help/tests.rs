@@ -111,7 +111,7 @@ fn key_rows_mark_overrides_and_name_the_plugin() {
     keymap
         .set("<leader>k", Action::builtin("block.last"))
         .unwrap();
-    keymap.set("<leader>x", Action::Callback(4)).unwrap();
+    keymap.set("<leader>z", Action::Callback(4)).unwrap();
     let rows = key_rows(&keymap, |entry| match entry.action {
         Action::Callback(4) => Some((Some("Clear".into()), "jira".into())),
         _ => None,
@@ -121,7 +121,7 @@ fn key_rows_mark_overrides_and_name_the_plugin() {
     assert!(j.overridden);
     assert_eq!(j.description, "Select the last block");
     assert_eq!(j.source, "config");
-    let x = find("<C-g>x");
+    let x = find("<C-g>z");
     assert_eq!(
         (x.action.as_str(), x.description.as_str(), x.source.as_str()),
         ("Lua function", "Clear", "jira")

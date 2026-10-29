@@ -1,17 +1,19 @@
 //! Application entry point: boots GPUI, opens the main window and owns the
-//! app-wide key bindings.
+//! app-wide actions ([`Quit`], [`ToggleFullscreen`]).
 //!
 //! The window opens as `app.opt.window` says ([`WindowMode`]): fullscreen
 //! by default (maximized on Windows), which GPUI implements on macOS, X11
 //! and Wayland (on X11 fullscreen and maximized are requested after the
 //! first frame; see `open_main_window`). A compositor that refuses the
 //! request leaves the window at its restore bounds, centered on the primary
-//! display. `F11` toggles fullscreen.
+//! display. The keys come from the crest keymap (`app.quit` and
+//! `window.fullscreen`, remappable): the session runs them, and the
+//! workbench while no project is open.
 
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
-    Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px, size,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px, size,
 };
 use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
@@ -171,16 +173,10 @@ pub fn set_theme(theme_data: &ColorTheme, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// App-wide key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
-fn app_key_bindings() -> Vec<KeyBinding> {
-    vec![
-        KeyBinding::new("secondary-q", Quit, None),
-        KeyBinding::new("f11", ToggleFullscreen, None),
-    ]
-}
-
+/// What the app-wide actions do. They have no GPUI key bindings: the
+/// crest keymap dispatches them, so they can be remapped and the help
+/// lists them.
 fn bind_app_keys(cx: &mut App) {
-    cx.bind_keys(app_key_bindings());
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &ToggleFullscreen, cx| {
         if let Some(window) = cx.active_window() {
@@ -412,29 +408,6 @@ impl Render for RootView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    #[gpui::test]
-    fn secondary_q_dispatches_quit_from_root_view(cx: &mut TestAppContext) {
-        let quits = Rc::new(Cell::new(0));
-        let counter = quits.clone();
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            cx.bind_keys(app_key_bindings());
-            cx.on_action(move |_: &Quit, _| counter.set(counter.get() + 1));
-        });
-        let window = cx.add_window(|window, cx| {
-            let view = RootView::new(cx);
-            window.focus(&view.focus_handle, cx);
-            view
-        });
-
-        cx.simulate_keystrokes(window.into(), "secondary-q");
-
-        assert_eq!(quits.get(), 1);
-    }
 
     #[test]
     fn x11_asks_for_fullscreen_and_maximized_after_the_first_frame() {

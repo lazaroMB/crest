@@ -69,7 +69,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap};
 use application::ports::events::{DomainEvent, NoticeLevel};
@@ -120,6 +120,23 @@ pub const PERMISSION_ACTION: &str = "permission.cycle";
 pub const MODEL_ACTION: &str = "model.pick";
 /// Action of `<C-Tab>` and `<leader>w`.
 pub const FOCUS_NEXT_ACTION: &str = "focus.next";
+/// Action of `<P-q>` (Ctrl+Q, Cmd+Q on macOS).
+pub const QUIT_ACTION: &str = "app.quit";
+/// Action of `<F11>` (and Ctrl+Cmd+F on macOS).
+pub const FULLSCREEN_ACTION: &str = "window.fullscreen";
+/// Action of `<leader>T`.
+pub const THEME_ACTION: &str = "theme.pick";
+/// Action of `<leader>P`.
+pub const MODE_ACTION: &str = "mode.pick";
+/// Action of `<leader>W`.
+pub const PROJECT_ACTION: &str = "project.switch";
+/// Action of `<leader>O`.
+pub const OUTLINE_ACTION: &str = "timeline.outline";
+/// Action of `<leader><CR>`.
+pub const FOCUS_WIDGET_ACTION: &str = "block.focus_widget";
+
+/// How long a second quit has to come while a turn runs.
+pub const QUIT_CONFIRM: Duration = Duration::from_secs(3);
 
 /// How often the git state of the status bar is refreshed while idle.
 const GIT_REFRESH: Duration = Duration::from_secs(5);
@@ -488,6 +505,9 @@ pub enum SessionEvent {
         /// What to tell once the new session shows.
         notice: Option<(NoticeLevel, String)>,
     },
+    /// A key or a command asks the window about the chats (the sidebar
+    /// lives beside the session): `chat.new`, `focus.next` into the list...
+    Chats(crate::chats::ChatsCommand),
     /// The session got busy or idle, or started or stopped waiting on the
     /// user (an approval, a form). Sent on each change.
     Activity {
@@ -535,6 +555,11 @@ pub struct Session {
     git: Option<Task<()>>,
     /// The `/login` key being checked; dropping it cancels the check.
     login_check: Option<Task<()>>,
+    /// The window shows the chats sidebar: `focus.next` goes through it.
+    chats_shown: bool,
+    /// When quitting was asked during a turn: a second ask within
+    /// [`QUIT_CONFIRM`] quits.
+    quit_asked_at: Option<Instant>,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -737,6 +762,8 @@ impl Session {
             theme_choices: Vec::new(),
             git: None,
             login_check: None,
+            chats_shown: false,
+            quit_asked_at: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -778,8 +805,10 @@ impl Session {
                     permission_mode: this.controller.permission_mode(),
                     turn_override: None,
                 });
+                let mut commands = full.commands;
+                commands.extend(mode_rows());
                 this.input
-                    .update(cx, |input, cx| input.set_commands(full.commands, cx));
+                    .update(cx, |input, cx| input.set_commands(commands, cx));
             })
             .ok();
         })
@@ -926,10 +955,13 @@ impl Session {
             let handled = self.approval.update(cx, |dialog, cx| {
                 dialog.handle_keystroke(&event.keystroke, window, cx)
             });
-            if !handled
-                && key_from_keystroke(&event.keystroke).is_some_and(|key| Self::is_ctrl_c(&key))
-            {
+            let key = key_from_keystroke(&event.keystroke);
+            if !handled && key.is_some_and(|key| Self::is_ctrl_c(&key)) {
                 self.interrupt(cx);
+            } else if !handled
+                && let Some(action) = key.and_then(|key| self.app_wide_action(&key, cx))
+            {
+                self.action(&action, window, cx);
             }
             cx.stop_propagation();
             return;
@@ -945,10 +977,28 @@ impl Session {
         let Some(key) = key_from_keystroke(&event.keystroke) else {
             return;
         };
+        // The chats list takes its own keys (arrows, Enter, F2, `r`,
+        // Delete); chords, `Esc` and function keys still go through the
+        // keymap, and nothing it leaves is typed into the prompt.
+        if crate::chats::list_has_focus(window, cx) {
+            if self
+                .input
+                .update(cx, |input, cx| input.feed_key(key, window, cx))
+            {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.overlay_focused(window, cx) {
             let m = key.mods;
             if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
                 self.interrupt(cx);
+                return;
+            }
+            // Quitting and full screen work over any overlay.
+            if let Some(action) = self.app_wide_action(&key, cx) {
+                self.action(&action, window, cx);
+                cx.stop_propagation();
                 return;
             }
             // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
@@ -1045,6 +1095,20 @@ impl Session {
         if !consumed && let Some(text) = typed_text(&key) {
             self.input
                 .update(cx, |input, cx| input.insert_text(&text, window, cx));
+        }
+    }
+
+    /// The action of `key` alone when it quits or switches full screen.
+    fn app_wide_action(&self, key: &Key, cx: &App) -> Option<Action> {
+        let input = self.input.read(cx);
+        if input.has_pending_keys() {
+            return None;
+        }
+        match input.keymap().lookup(std::slice::from_ref(key)).exact {
+            Some(Action::Builtin(name)) if name == QUIT_ACTION || name == FULLSCREEN_ACTION => {
+                Some(Action::Builtin(name.clone()))
+            }
+            _ => None,
         }
     }
 
@@ -1200,20 +1264,58 @@ impl Session {
         true
     }
 
-    /// `<C-Tab>`: prompt → timeline → tree (when shown) → prompt.
+    /// `<C-Tab>`: prompt → timeline → tree (when shown) → chats (when
+    /// shown) → prompt.
     pub fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let timeline = self.timeline.focus_handle(cx);
         let tree_shown = self.tree.read(cx).is_visible();
+        let in_timeline = timeline.contains_focused(window, cx);
+        let in_tree = self.tree.focus_handle(cx).contains_focused(window, cx);
         if self.input.read(cx).owns_focus(window, cx) {
             window.focus(&timeline, cx);
             self.timeline
                 .update(cx, |view, cx| view.select_last_if_none(cx));
-        } else if timeline.contains_focused(window, cx) && tree_shown {
+        } else if in_timeline && tree_shown {
             self.tree.update(cx, |tree, cx| tree.focus(window, cx));
+        } else if (in_timeline || in_tree) && self.chats_shown {
+            cx.emit(SessionEvent::Chats(crate::chats::ChatsCommand::Focus));
         } else {
             self.focus_input(window, cx);
         }
         cx.notify();
+    }
+
+    /// Tells the session whether the window shows the chats sidebar, so
+    /// `focus.next` goes through it.
+    pub fn set_chats_shown(&mut self, shown: bool) {
+        self.chats_shown = shown;
+    }
+
+    /// `app.quit` and `/quit`. While a turn runs the first ask only warns;
+    /// a second one within [`QUIT_CONFIRM`] quits.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let confirmed = self
+            .quit_asked_at
+            .is_some_and(|at| now.saturating_duration_since(at) < QUIT_CONFIRM);
+        if self.running.is_some() && !confirmed {
+            self.quit_asked_at = Some(now);
+            let keys = crate::help::action_keys(self.input.read(cx).keymap(), QUIT_ACTION)
+                .unwrap_or_else(|| "/quit".to_owned());
+            let message = format!(
+                "a turn is running; {keys} again within {} s quits anyway",
+                QUIT_CONFIRM.as_secs()
+            );
+            self.notice(NoticeLevel::Warning, message, cx);
+            return;
+        }
+        self.quit_asked_at = None;
+        window.dispatch_action(Box::new(crate::app::Quit), cx);
+    }
+
+    /// Whether the session waits for a second quit.
+    pub fn quit_pending(&self) -> bool {
+        self.quit_asked_at.is_some()
     }
 
     /// The timeline view (replaced by `/clear`).
@@ -1536,7 +1638,7 @@ impl Session {
         };
         let arg = arg.trim();
         match name {
-            "q" | "quit" | "qa" => cx.quit(),
+            "q" | "quit" | "qa" => self.quit(window, cx),
             "model" => match arg
                 .split_once(' ')
                 .map_or((arg, ""), |(a, b)| (a, b.trim()))
@@ -1911,6 +2013,31 @@ impl Session {
             FOCUS_NEXT_ACTION => self.focus_next(window, cx),
             MODEL_ACTION => self.open_model_popup(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
+            QUIT_ACTION => self.quit(window, cx),
+            FULLSCREEN_ACTION => window.toggle_fullscreen(),
+            THEME_ACTION => self.open_theme_popup(window, cx),
+            MODE_ACTION => self.open_mode_popup(window, cx),
+            PROJECT_ACTION => self.switch_project(window, cx),
+            OUTLINE_ACTION => self
+                .timeline
+                .update(cx, |timeline, cx| timeline.toggle_outline(window, cx)),
+            FOCUS_WIDGET_ACTION => {
+                let focused = self
+                    .timeline
+                    .update(cx, |timeline, cx| timeline.focus_widget(window, cx));
+                if !focused {
+                    self.notice(
+                        NoticeLevel::Info,
+                        "the selected block has no keys of its own",
+                        cx,
+                    );
+                }
+            }
+            name if crate::chats::ChatsCommand::for_action(name).is_some() => {
+                if let Some(command) = crate::chats::ChatsCommand::for_action(name) {
+                    cx.emit(SessionEvent::Chats(command));
+                }
+            }
             _ => self.notice(
                 NoticeLevel::Info,
                 format!("the action {action:?} does nothing yet"),
@@ -1976,6 +2103,16 @@ impl Session {
     pub fn open_model_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| {
             input.set_text("/model ", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Puts `/mode ` in the prompt, whose palette lists the permission
+    /// modes.
+    pub fn open_mode_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            input.set_text("/mode ", window, cx);
             input.focus(window, cx);
         });
         cx.notify();
@@ -2080,6 +2217,19 @@ impl Session {
         })
         .detach();
     }
+}
+
+/// The palette rows `/mode ` lists: one per permission mode.
+fn mode_rows() -> Vec<crate::help::CommandRow> {
+    PermissionMode::ALL
+        .iter()
+        .map(|mode| crate::help::CommandRow {
+            name: format!("mode {mode}"),
+            usage: format!("/mode {mode}"),
+            description: format!("Set the permission mode to {mode}"),
+            source: crate::help::BUILTIN_SOURCE.into(),
+        })
+        .collect()
 }
 
 /// The aliases whose model is in `catalog` (an alias of a provider without
@@ -3786,5 +3936,168 @@ mod tests {
             &content[1],
             ContentPart::Image { media_type, .. } if media_type == "image/png"
         ));
+    }
+
+    fn prompt_of(h: &Harness, cx: &mut VisualTestContext) -> String {
+        h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
+    }
+
+    #[gpui::test]
+    fn the_leader_opens_the_theme_mode_and_outline_pickers(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        cx.simulate_keystrokes("ctrl-g shift-t");
+        assert_eq!(prompt_of(&h, cx), "/theme ");
+        cx.simulate_keystrokes("escape");
+        h.session.update_in(cx, |s, window, cx| {
+            s.input()
+                .update(cx, |input, cx| input.set_text("", window, cx));
+        });
+        cx.simulate_keystrokes("ctrl-g shift-p");
+        assert_eq!(prompt_of(&h, cx), "/mode ");
+        let rows: Vec<String> = h.session.read_with(cx, |s, cx| {
+            s.input()
+                .read(cx)
+                .palette(cx)
+                .iter()
+                .map(|row| row.name.clone())
+                .collect()
+        });
+        assert_eq!(rows, ["mode ask", "mode auto-edit", "mode plan"]);
+        // Enter on the chosen row sets that mode.
+        cx.simulate_keystrokes("down enter");
+        h.session.read_with(cx, |s, _| {
+            assert_eq!(s.controller.permission_mode(), PermissionMode::AutoEdit);
+        });
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        cx.simulate_keystrokes("ctrl-g shift-o");
+        assert!(timeline.read_with(cx, |t, _| t.outline_open()), "opened");
+        cx.simulate_keystrokes("ctrl-g shift-o");
+        assert!(!timeline.read_with(cx, |t, _| t.outline_open()), "closed");
+    }
+
+    #[gpui::test]
+    fn chat_keys_reach_the_window_and_focus_next_goes_through_the_chats(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let chats = |h: &Harness| -> Vec<crate::chats::ChatsCommand> {
+            h.reopens
+                .borrow()
+                .iter()
+                .filter_map(|event| match event {
+                    SessionEvent::Chats(command) => Some(*command),
+                    _ => None,
+                })
+                .collect()
+        };
+        // The harness maps `<leader>x` to a Lua function: chat.delete is
+        // left out here.
+        cx.simulate_keystrokes("ctrl-g c ctrl-g n ctrl-g b ctrl-g , ctrl-g s");
+        use crate::chats::ChatsCommand as C;
+        assert_eq!(
+            chats(&h),
+            [C::New, C::Next, C::Prev, C::Rename, C::TogglePanel]
+        );
+        // Without the sidebar the cycle skips it.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert_eq!(chats(&h).len(), 5);
+        h.session.update(cx, |s, _| s.set_chats_shown(true));
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert_eq!(chats(&h).last(), Some(&C::Focus), "the timeline hands over");
+    }
+
+    #[gpui::test]
+    fn quitting_during_a_turn_asks_twice(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let quits = Rc::new(std::cell::Cell::new(0));
+        let counter = quits.clone();
+        cx.update(|_, cx| {
+            cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1, "idle: quits at once");
+        // A turn that never ends by itself.
+        let (_tx, rx) = oneshot::channel::<()>();
+        h.session.update(cx, |s, cx| {
+            s.running = Some(CancelToken::new());
+            s.turn = Some(cx.spawn(async move |_, _| {
+                rx.await.ok();
+            }));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1, "the first ask only warns");
+        assert!(h.session.read_with(cx, |s, _| s.quit_pending()));
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 2, "the second quits");
+        // Over the help modal too.
+        cx.simulate_keystrokes("f1");
+        cx.run_until_parked();
+        h.session.update(cx, |s, _| s.running = None);
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 3);
+    }
+
+    #[gpui::test]
+    fn the_leader_enter_gives_the_keys_to_the_block_widget_and_esc_back(cx: &mut TestAppContext) {
+        use domain::devops::flame::{FlameTree, ProfileFormat};
+        let mut tree = FlameTree::new();
+        tree.add(["main", "parse"], 30);
+        let spec = tree.finish(ProfileFormat::Folded, "samples");
+        let block = Block::new(BlockKind::FlameGraph(Box::new(spec.clone())));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let focused = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let s = h.session.read(cx);
+                (
+                    flame.read(cx).focus_handle(cx).is_focused(window),
+                    s.timeline().focus_handle(cx).is_focused(window),
+                    s.input().focus_handle(cx).contains_focused(window, cx),
+                )
+            })
+        };
+        cx.simulate_keystrokes("ctrl-g enter");
+        assert_eq!(focused(cx), (true, false, false), "the widget has the keys");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            focused(cx),
+            (false, true, false),
+            "Esc: back to the timeline"
+        );
+        cx.simulate_keystrokes("escape");
+        assert_eq!(focused(cx), (false, false, true), "then to the prompt");
+        // A block without keys of its own says so.
+        h.session.update(cx, |s, cx| {
+            s.dispatch(
+                DomainEvent::BlockAdded {
+                    block: Block::new(BlockKind::Markdown {
+                        title: None,
+                        source: "plain".into(),
+                    }),
+                },
+                cx,
+            );
+        });
+        cx.simulate_keystrokes("ctrl-tab end ctrl-g enter");
+        assert_eq!(focused(cx), (false, true, false), "the timeline keeps it");
+    }
+
+    #[test]
+    fn the_new_actions_have_descriptions_in_the_help() {
+        let rows = crate::help::key_rows(&default_keymap(), |_| None);
+        for action in [
+            "turn.interrupt",
+            "queue.edit",
+            "app.quit",
+            "window.fullscreen",
+            "chat.new",
+            "block.focus_widget",
+        ] {
+            let row = rows.iter().find(|r| r.action == action).unwrap();
+            assert_ne!(row.description, "unknown builtin action", "{action}");
+        }
     }
 }
