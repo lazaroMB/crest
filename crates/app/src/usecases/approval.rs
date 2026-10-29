@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use domain::block::{BlockId, ToolStatus};
 use domain::conversation::ToolUseId;
 use domain::permission::{
-    ActionRequest, Decision, PermissionMode, PermissionPolicy, PermissionRule, RuleScope, ToolEffect,
+    ActionRequest, Decision, PermissionMode, PermissionPolicy, PermissionRule, RuleScope,
+    ToolEffect,
 };
 
 use crate::ports::approval::{
@@ -409,7 +410,10 @@ mod tests {
             gate.ask(pending("cargo test"), &sink).await,
             UserVerdict::Approved
         );
-        assert_eq!(lock_permissions(gate.permissions()).mode, PermissionMode::Ask);
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::Ask
+        );
         assert_eq!(gate.decide(&pending("cargo test").action), Decision::Ask);
         assert_eq!(gate.decide(&write("b.rs").action), Decision::Ask);
         assert_eq!(gate.ask(write("a.rs"), &sink).await, UserVerdict::Approved);
@@ -433,6 +437,9 @@ mod tests {
         // From plan mode (changed while the dialog was open) nothing moves.
         lock_permissions(gate.permissions()).mode = PermissionMode::Plan;
         gate.ask(write("c.rs"), &sink).await;
-        assert_eq!(lock_permissions(gate.permissions()).mode, PermissionMode::Plan);
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::Plan
+        );
     }
 }

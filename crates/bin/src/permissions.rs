@@ -114,10 +114,10 @@ pub async fn open_project_rules(
 mod tests {
     use std::sync::Mutex;
 
+    use domain::permission::ActionRequest;
     use domain::permission::{
         Decision, PermissionMode, PermissionPolicy, RuleDecision, RuleScope, ToolEffect,
     };
-    use domain::permission::ActionRequest;
 
     use super::*;
 
@@ -130,7 +130,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let loaded = FilePermissionStore.load(dir.path()).await.unwrap();
         assert_eq!(loaded, LoadedRules::default());
-        assert!(!dir.path().join(".crest").exists(), "loading creates nothing");
+        assert!(
+            !dir.path().join(".crest").exists(),
+            "loading creates nothing"
+        );
     }
 
     #[tokio::test]
@@ -171,8 +174,10 @@ mod tests {
         let (project, warnings) = open_project_rules(dir.path(), &permissions).await;
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("allow #2"), "{warnings:?}");
-        let cargo = ActionRequest::new("run_command", ToolEffect::Execute, "cargo test -p ui")
-            .with_argv(vec!["cargo".into(), "test".into(), "-p".into(), "ui".into()]);
+        let cargo =
+            ActionRequest::new("run_command", ToolEffect::Execute, "cargo test -p ui").with_argv(
+                vec!["cargo".into(), "test".into(), "-p".into(), "ui".into()],
+            );
         assert_eq!(
             permissions.lock().unwrap().decide(&cargo),
             Decision::Allow,

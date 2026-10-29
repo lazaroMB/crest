@@ -233,7 +233,10 @@ async fn a_project_rule_is_written_and_kept_by_the_next_session() {
 
     // The rule is in the project file and in force, but not in SQLite.
     let text = std::fs::read_to_string(permissions_file(&demo.workspace)).unwrap();
-    assert!(text.contains("allow = [\n    \"edit_file(src/*)\",\n]"), "{text}");
+    assert!(
+        text.contains("allow = [\n    \"edit_file(src/*)\",\n]"),
+        "{text}"
+    );
     assert!(
         lock_permissions(demo.app.permissions())
             .rules
@@ -245,8 +248,14 @@ async fn a_project_rule_is_written_and_kept_by_the_next_session() {
     assert_eq!(saved.permission_rules, []);
 
     // A new session in the same workspace edits without asking.
-    let (mut app, _llm, output) =
-        open_app(&demo.workspace, &demo.db, "", PermissionMode::Ask, second_edit()).await;
+    let (mut app, _llm, output) = open_app(
+        &demo.workspace,
+        &demo.db,
+        "",
+        PermissionMode::Ask,
+        second_edit(),
+    )
+    .await;
     assert_eq!(lock_permissions(app.permissions()).rules, [project]);
     assert!(app.service.project_rules().is_some());
     let exit = run_turn(&mut app, "multiplica", CancelToken::new()).await;
@@ -262,8 +271,14 @@ async fn problems_of_the_project_file_are_startup_warnings() {
     let file = permissions_file(&demo.workspace);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, "allow = [\"edit_file(src/*)\", \"bad(\"]\n").unwrap();
-    let (app, _llm, _output) =
-        open_app(&demo.workspace, &demo.db, "", PermissionMode::Ask, Vec::new()).await;
+    let (app, _llm, _output) = open_app(
+        &demo.workspace,
+        &demo.db,
+        "",
+        PermissionMode::Ask,
+        Vec::new(),
+    )
+    .await;
     assert!(
         app.warnings
             .iter()
@@ -287,7 +302,11 @@ async fn edits_turns_on_auto_edit_for_the_session() {
     let exit = run_turn(&mut demo.app, "arregla add", CancelToken::new()).await;
     let out = demo.output.text();
     assert_eq!(exit, Exit::Success, "{out}");
-    assert_eq!(out.matches("Allow").count(), 1, "the second edit is not asked: {out}");
+    assert_eq!(
+        out.matches("Allow").count(),
+        1,
+        "the second edit is not asked: {out}"
+    );
     assert_eq!(lib(&demo.workspace), LIB.replace("a - b", "a * b"));
     let policy = lock_permissions(demo.app.permissions());
     assert_eq!(policy.mode, PermissionMode::AutoEdit);
