@@ -449,6 +449,11 @@ impl InputView {
         self.sequencer.keymap()
     }
 
+    /// Whether a key sequence (the leader) waits for its next key.
+    pub fn has_pending_keys(&self) -> bool {
+        !self.sequencer.pending().is_empty()
+    }
+
     /// The sequencer, e.g. to change `timeoutlen` or add mappings.
     pub fn sequencer_mut(&mut self) -> &mut KeySequencer<Action> {
         &mut self.sequencer

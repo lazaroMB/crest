@@ -108,7 +108,7 @@ use crate::login::{LoginEvent, LoginView};
 use crate::modal::ModalHost;
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
-use crate::timeline::TimelineView;
+use crate::timeline::{DeferredKey, TimelineView};
 use crate::tree::{TreePanel, TreePanelEvent};
 
 /// Action of `Ctrl+C`.
@@ -870,10 +870,13 @@ impl Session {
     }
 
     /// Keys typed while the focus is outside the prompt. In an overlay
-    /// (picker, dialog, menu, modal) only `Ctrl+C` is taken; elsewhere
-    /// (timeline, tree) the keys go through the input's keymap, a vim key of
-    /// the focused timeline acts on it, any other printable key is typed
-    /// into the prompt and the rest is left to the panel.
+    /// (picker, dialog, menu, modal) only `Ctrl+C` is taken. With the focus
+    /// in the timeline, `Esc` and printable keys go first to the focused
+    /// element (a block widget, the outline menu) and fall back to the
+    /// prompt only when nothing takes them ([`DeferredKey`]). Elsewhere
+    /// (the tree) the keys go through the input's keymap, any other
+    /// printable key is typed into the prompt and the rest is left to the
+    /// panel.
     fn intercept_keys(cx: &mut Context<Self>) -> Subscription {
         let weak = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
@@ -895,6 +898,11 @@ impl Session {
         // A parked session has no keyboard.
         if !self.shown {
             return;
+        }
+        // A key deferred before was taken by an element of the timeline.
+        if self.timeline.read(cx).has_deferred_key() {
+            self.timeline
+                .update(cx, |timeline, _| timeline.clear_deferred_key());
         }
         // The dialog may be up while the prompt still has focus (Reject does
         // not move it). Take the keys here, before the prompt sees them.
@@ -951,6 +959,9 @@ impl Session {
             cx.stop_propagation();
             return;
         }
+        if self.defer_to_timeline(key, window, cx) {
+            return;
+        }
         let consumed = self
             .input
             .update(cx, |input, cx| input.feed_key(key, window, cx));
@@ -958,19 +969,47 @@ impl Session {
             cx.stop_propagation();
             return;
         }
-        if let Some(action) = TimelineView::vim_action(&key)
-            && self.timeline.focus_handle(cx).contains_focused(window, cx)
-        {
-            self.timeline.update(cx, |timeline, cx| {
-                timeline.handle_action(&Action::builtin(action), cx)
-            });
-            cx.stop_propagation();
-            return;
-        }
         if let Some(text) = typed_text(&key) {
             self.input
                 .update(cx, |input, cx| input.insert_text(&text, window, cx));
             cx.stop_propagation();
+        }
+    }
+
+    /// With the focus in the timeline, lets a plain `Esc` or printable key
+    /// through to the focused element (it may close a menu, clear a
+    /// cursor, zoom). The timeline runs [`Self::fallback_key`] if the key
+    /// reaches it unhandled. A key after a pending prefix (the leader) is
+    /// the keymap's. Returns whether the key was deferred.
+    fn defer_to_timeline(&mut self, key: Key, window: &Window, cx: &mut Context<Self>) -> bool {
+        let plain_esc = key.code == KeyCode::Esc
+            && !(key.mods.ctrl || key.mods.alt || key.mods.cmd || key.mods.shift);
+        if !(plain_esc || typed_text(&key).is_some())
+            || self.input.read(cx).has_pending_keys()
+            || !self.timeline.focus_handle(cx).contains_focused(window, cx)
+        {
+            return false;
+        }
+        let session = cx.entity().downgrade();
+        let deferred = DeferredKey::new(key, move |window, cx| {
+            session
+                .update(cx, |this, cx| this.fallback_key(key, window, cx))
+                .ok();
+        });
+        self.timeline
+            .update(cx, |timeline, _| timeline.defer_key(deferred));
+        true
+    }
+
+    /// A deferred key nothing in the timeline took: it goes through the
+    /// keymap (`Esc` focuses the prompt) or is typed into the prompt.
+    fn fallback_key(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+        let consumed = self
+            .input
+            .update(cx, |input, cx| input.feed_key(key, window, cx));
+        if !consumed && let Some(text) = typed_text(&key) {
+            self.input
+                .update(cx, |input, cx| input.insert_text(&text, window, cx));
         }
     }
 
@@ -3228,6 +3267,67 @@ mod tests {
         h.session.read_with(cx, |s, _| {
             assert_eq!(s.controller.permission_mode(), PermissionMode::Ask.next());
         });
+    }
+
+    #[gpui::test]
+    fn esc_closes_the_outline_before_focusing_the_prompt(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        timeline.update_in(cx, |t, window, cx| t.toggle_outline(window, cx));
+        cx.run_until_parked();
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        assert!(timeline.read_with(cx, |t, _| t.outline_open()));
+        assert!(!in_input(cx), "the open menu takes the focus");
+        cx.simulate_keystrokes("escape");
+        assert!(
+            !timeline.read_with(cx, |t, _| t.outline_open()),
+            "Esc closes the menu"
+        );
+        assert!(!in_input(cx), "the first Esc only closes the menu");
+        cx.simulate_keystrokes("escape");
+        assert!(in_input(cx), "a second Esc goes back to the prompt");
+    }
+
+    #[gpui::test]
+    fn a_focused_block_widget_gets_esc_and_its_keys(cx: &mut TestAppContext) {
+        use domain::devops::flame::{FlameTree, ProfileFormat};
+        let mut tree = FlameTree::new();
+        tree.add(["main", "parse"], 30);
+        tree.add(["idle"], 10);
+        let spec = tree.finish(ProfileFormat::Folded, "samples");
+        let block = Block::new(BlockKind::FlameGraph(Box::new(spec.clone())));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.run_until_parked();
+        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        flame.update_in(cx, |f, window, cx| {
+            f.zoom_to(1, cx);
+            window.focus(&f.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        let prompt = |cx: &mut VisualTestContext| {
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
+        };
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        cx.simulate_keystrokes("escape");
+        assert_eq!(flame.read_with(cx, |f, _| f.zoom()), 0, "Esc zooms out");
+        assert!(!in_input(cx), "the widget took the Esc");
+        // A key the widget does not take still lands in the prompt.
+        cx.simulate_keystrokes("x");
+        assert_eq!(prompt(cx), "x");
+        assert!(in_input(cx));
     }
 
     #[gpui::test]

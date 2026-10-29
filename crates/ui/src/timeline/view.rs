@@ -11,6 +11,12 @@
 //! select blocks, `Home`/`End` the first and last, `Enter` expands or
 //! collapses the selected one and `PageUp`/`PageDown` scroll by a page.
 //! Empty, it shows the crest mark and the keys to start with.
+//!
+//! `Esc` and printable keys typed with the focus in the timeline reach the
+//! focused element first (a block widget, the outline menu): the session
+//! hands them over as a [`DeferredKey`] and only when nothing in the
+//! timeline takes them do they fall back to the prompt (`Esc` focuses it,
+//! a letter is typed into it, a vim key moves the selection).
 
 use application::keymap::{Action, Key, KeyCode};
 use application::ports::events::DomainEvent;
@@ -34,6 +40,24 @@ use super::{TimelineChange, TimelineState, copy_text, render_block};
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
 const OVERDRAW: f32 = 512.0;
 
+/// A key the session let through to the focused element of the timeline,
+/// with what to do when no element takes it.
+pub struct DeferredKey {
+    key: Key,
+    fallback: Box<dyn FnOnce(&mut Window, &mut App)>,
+}
+
+impl DeferredKey {
+    /// `key`, and `fallback` to run when it reaches the timeline itself
+    /// unhandled (and is not one of its vim keys).
+    pub fn new(key: Key, fallback: impl FnOnce(&mut Window, &mut App) + 'static) -> Self {
+        Self {
+            key,
+            fallback: Box::new(fallback),
+        }
+    }
+}
+
 /// The timeline area of the main window.
 pub struct TimelineView {
     state: TimelineState,
@@ -46,6 +70,8 @@ pub struct TimelineView {
     copied_reply: Option<usize>,
     /// The menu of the user's questions is open.
     outline_open: bool,
+    /// The key being dispatched, when the session deferred it.
+    deferred: Option<DeferredKey>,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -63,6 +89,7 @@ impl TimelineView {
             _hint_expiry: None,
             copied_reply: None,
             outline_open: false,
+            deferred: None,
             _reply_expiry: None,
             _events: None,
         }
@@ -204,17 +231,51 @@ impl TimelineView {
         }
     }
 
+    /// Hands the key about to be dispatched to the focused element of the
+    /// timeline; [`DeferredKey::fallback`] runs if nothing takes it.
+    pub fn defer_key(&mut self, deferred: DeferredKey) {
+        self.deferred = Some(deferred);
+    }
+
+    /// Forgets a deferred key that an element took (it stopped the key
+    /// before it reached the timeline).
+    pub fn clear_deferred_key(&mut self) {
+        self.deferred = None;
+    }
+
+    /// Whether a deferred key waits.
+    pub fn has_deferred_key(&self) -> bool {
+        self.deferred.is_some()
+    }
+
+    /// A deferred key reached the timeline unhandled: a vim key acts on
+    /// it, any other runs its fallback once this dispatch is over.
+    fn fall_through(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(deferred) = self.deferred.take() else {
+            return;
+        };
+        cx.stop_propagation();
+        if let Some(action) = Self::vim_action(&deferred.key) {
+            self.handle_action(&Action::builtin(action), cx);
+            return;
+        }
+        let fallback = deferred.fallback;
+        window.defer(cx, fallback);
+    }
+
     /// Keys while the timeline has the focus.
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = &event.keystroke.modifiers;
         if event.keystroke.key == "escape" && self.copy_hint.take().is_some() {
             gpui_base::TextSelection::clear(window, cx);
+            self.deferred = None;
             cx.notify();
             cx.stop_propagation();
             return;
         }
         if event.keystroke.key == "escape" && self.outline_open {
             self.outline_open = false;
+            self.deferred = None;
             cx.notify();
             cx.stop_propagation();
             return;
@@ -238,7 +299,10 @@ impl TimelineView {
                 cx.stop_propagation();
                 return;
             }
-            _ => return,
+            _ => {
+                self.fall_through(window, cx);
+                return;
+            }
         };
         self.handle_action(&Action::builtin(action), cx);
         cx.stop_propagation();
@@ -330,6 +394,29 @@ impl TimelineView {
             if ix < self.state.len() {
                 self.list.remeasure_items(ix..ix + 1);
             }
+        }
+    }
+
+    /// Whether the menu of the user's questions is open.
+    pub fn outline_open(&self) -> bool {
+        self.outline_open
+    }
+
+    /// Opens or closes the menu of the user's questions. Open, the
+    /// timeline takes the focus so `Esc` closes it.
+    pub fn toggle_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.outline_open = !self.outline_open;
+        if self.outline_open {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Closes the menu of the user's questions.
+    pub fn close_outline(&mut self, cx: &mut Context<Self>) {
+        if self.outline_open {
+            self.outline_open = false;
+            cx.notify();
         }
     }
 
@@ -645,6 +732,7 @@ impl Render for TimelineView {
             return div()
                 .id("timeline-empty")
                 .track_focus(&self.focus_handle)
+                .on_key_down(cx.listener(Self::on_key))
                 .size_full()
                 .border_t_1()
                 .border_color(edge)
