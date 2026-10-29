@@ -1571,7 +1571,12 @@ impl Session {
                 cx,
             ),
             _ => {
-                if let Some(reply) = self.controller.run_command(name, arg) {
+                if crate::picker::PickerMode::for_action(&Action::Builtin(name.to_owned()))
+                    .is_some()
+                {
+                    // `/picker.files` from the palette.
+                    self.action(&Action::Builtin(name.to_owned()), window, cx);
+                } else if let Some(reply) = self.controller.run_command(name, arg) {
                     self.commands.push(name.to_owned());
                     self.sync_activity(cx);
                     let name = name.to_owned();
@@ -3281,13 +3286,13 @@ mod tests {
         let view = help_view(&h, cx).expect("F1 opens the help");
         cx.simulate_keystrokes("/");
         cx.update(|window, cx| assert!(view.read(cx).is_searching(window, cx)));
-        cx.simulate_input("picker");
+        cx.simulate_input("block.toggle");
         cx.run_until_parked();
         view.read_with(cx, |v, cx| {
-            assert_eq!(v.query(cx), "picker");
+            assert_eq!(v.query(cx), "block.toggle");
             let f = v.filtered();
             assert_eq!(f.commands.len(), 0);
-            assert_eq!(f.keys.len(), 2, "picker.files and picker.grep");
+            assert_eq!(f.keys.len(), 2, "block.toggle and block.toggle_view");
             // The search moved to the section with matches.
             assert_eq!(v.section(), Section::Keys);
         });

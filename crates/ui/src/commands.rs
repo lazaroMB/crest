@@ -60,6 +60,17 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Delete the API key of one account (or of every account) from the system keyring",
     },
     CommandInfo {
+        name: "picker.files",
+        usage: "/picker.files",
+        description: "Find a file by name, with a preview; Enter inserts @path in the prompt",
+    },
+    CommandInfo {
+        name: "picker.grep",
+        usage: "/picker.grep",
+        description: "Search text in the workspace (ripgrep), with a preview; Enter inserts @path:line \
+                      in the prompt",
+    },
+    CommandInfo {
         name: "modal",
         usage: "/modal close",
         description: "Close the front modal window",

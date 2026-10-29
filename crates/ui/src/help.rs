@@ -14,7 +14,9 @@
 
 use std::fmt;
 
-use application::keymap::{Action, Keymap, KeymapEntry, action_description, default_keymap};
+use application::keymap::{
+    Action, Key, KeyCode, Keymap, KeymapEntry, action_description, default_keymap,
+};
 use domain::modal::ModalId;
 use domain::permission::PermissionMode;
 
@@ -209,6 +211,13 @@ impl HelpSnapshot {
     pub fn complete(mut self, local: &LocalHelp<'_>) -> Self {
         let mut commands = builtin_command_rows();
         commands.append(&mut self.commands);
+        // A command that runs a builtin action (`/picker.files`) says
+        // which keys run it too.
+        for row in &mut commands {
+            if let Some(keys) = action_keys(local.keymap, &row.name) {
+                row.description = format!("{} ({keys})", row.description);
+            }
+        }
         self.commands = commands;
         if self.keys.is_empty() {
             self.keys = key_rows(local.keymap, |_| None);
@@ -270,6 +279,70 @@ pub fn builtin_command_rows() -> Vec<CommandRow> {
             source: BUILTIN_SOURCE.into(),
         })
         .collect()
+}
+
+/// The keys that run the builtin action `name` in `keymap`, for a hint
+/// (`Ctrl+G ff`): the shortest mapping, if any.
+pub fn action_keys(keymap: &Keymap<Action>, name: &str) -> Option<String> {
+    keymap
+        .entries()
+        .into_iter()
+        .filter(|entry| matches!(&entry.action, Action::Builtin(action) if action == name))
+        .min_by_key(|entry| entry.keys.len())
+        .map(|entry| keys_label(&entry.keys))
+}
+
+/// `keys` as a person reads them: `Ctrl+G ff`, `Alt+P`, `F1`. A key with
+/// modifiers stands alone; plain characters that follow each other are
+/// written together.
+pub fn keys_label(keys: &[Key]) -> String {
+    let mut out = String::new();
+    let mut after_plain_char = false;
+    for key in keys {
+        let m = key.mods;
+        let plain_char = matches!(key.code, KeyCode::Char(c) if c != ' ')
+            && !(m.ctrl || m.alt || m.cmd || m.shift);
+        if !out.is_empty() && !(plain_char && after_plain_char) {
+            out.push(' ');
+        }
+        after_plain_char = plain_char;
+        if plain_char {
+            if let KeyCode::Char(c) = key.code {
+                out.push(c);
+            }
+            continue;
+        }
+        for (on, name) in [
+            (m.ctrl, "Ctrl+"),
+            (m.alt, "Alt+"),
+            (m.shift, "Shift+"),
+            (m.cmd, "Cmd+"),
+        ] {
+            if on {
+                out.push_str(name);
+            }
+        }
+        out.push_str(&match key.code {
+            KeyCode::Char(' ') => "Space".to_owned(),
+            KeyCode::Char(c) => c.to_uppercase().collect(),
+            KeyCode::Enter => "Enter".to_owned(),
+            KeyCode::Esc => "Esc".to_owned(),
+            KeyCode::Tab => "Tab".to_owned(),
+            KeyCode::Backspace => "Backspace".to_owned(),
+            KeyCode::Delete => "Delete".to_owned(),
+            KeyCode::Insert => "Insert".to_owned(),
+            KeyCode::Up => "Up".to_owned(),
+            KeyCode::Down => "Down".to_owned(),
+            KeyCode::Left => "Left".to_owned(),
+            KeyCode::Right => "Right".to_owned(),
+            KeyCode::Home => "Home".to_owned(),
+            KeyCode::End => "End".to_owned(),
+            KeyCode::PageUp => "PageUp".to_owned(),
+            KeyCode::PageDown => "PageDown".to_owned(),
+            KeyCode::F(n) => format!("F{n}"),
+        });
+    }
+    out
 }
 
 /// The rows of `keymap`. `describe` gives the description and the plugin of

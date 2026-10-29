@@ -182,6 +182,22 @@ pub fn classify_line(text: &str) -> Option<Line> {
     }
 }
 
+/// The prompt's placeholder: what to type, with the keys of the pickers
+/// (`Ask crest…  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)`),
+/// so they can be found without the help.
+pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
+    let mut hints = vec!["/ for commands".to_owned()];
+    for (action, what) in [
+        (crate::picker::FILES_ACTION, "files"),
+        (crate::picker::GREP_ACTION, "text"),
+    ] {
+        if let Some(keys) = crate::help::action_keys(keymap, action) {
+            hints.push(format!("{keys} {what}"));
+        }
+    }
+    format!("Ask crest…  ({})", hints.join(" · "))
+}
+
 /// The commands the palette offers for `text`, best first: names starting
 /// with what follows the `/`, then names containing it. Empty unless
 /// `text` is a `/` and a partial name (no arguments yet).
@@ -357,10 +373,11 @@ impl InputView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let placeholder = prompt_placeholder(&keymap);
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, MAX_ROWS)
-                .placeholder("Ask crest…  (/ for commands)")
+                .placeholder(placeholder)
         });
         let weak = cx.entity().downgrade();
         let intercept = cx.intercept_keystrokes(move |event, window, cx| {
@@ -1652,6 +1669,18 @@ mod tests {
         cx.executor().advance_clock(BLINK_INTERVAL / 2);
         cx.run_until_parked();
         assert!(!visible(cx), "blinks again a whole interval after the key");
+    }
+
+    #[test]
+    fn the_placeholder_names_the_picker_keys() {
+        assert_eq!(
+            prompt_placeholder(&default_keymap()),
+            "Ask crest…  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)"
+        );
+        assert_eq!(
+            prompt_placeholder(&Keymap::new()),
+            "Ask crest…  (/ for commands)"
+        );
     }
 
     #[test]

@@ -210,3 +210,35 @@ fn rows_group_and_copy_what_is_useful() {
     assert_eq!(files.len(), 2);
     assert_eq!(files[1].group.as_deref(), Some("Problems at startup"));
 }
+
+#[test]
+fn keys_read_as_a_person_types_them() {
+    use application::keymap::parse_keys;
+    let label = |notation: &str| keys_label(&parse_keys(notation, "<C-g>").unwrap());
+    assert_eq!(label("<leader>ff"), "Ctrl+G ff");
+    assert_eq!(label("<A-p>"), "Alt+P");
+    assert_eq!(label("<F1>"), "F1");
+    assert_eq!(label("<C-S-c>"), "Ctrl+Shift+C");
+    assert_eq!(label("<Space>fg"), "Space fg");
+    assert_eq!(label("<leader>G"), "Ctrl+G G");
+
+    let keymap = default_keymap();
+    assert_eq!(action_keys(&keymap, "picker.files").as_deref(), Some("Ctrl+G ff"));
+    assert_eq!(action_keys(&keymap, "help.open").as_deref(), Some("F1"));
+    assert_eq!(action_keys(&keymap, "nothing.here"), None);
+}
+
+#[test]
+fn commands_of_builtin_actions_say_their_keys() {
+    let keymap = default_keymap();
+    let full = snapshot().complete(&LocalHelp {
+        keymap: &keymap,
+        models: &[],
+        permission_mode: PermissionMode::Ask,
+        turn_override: None,
+    });
+    let row = |name: &str| full.commands.iter().find(|row| row.name == name).unwrap();
+    assert!(row("picker.files").description.ends_with("(Ctrl+G ff)"));
+    assert!(row("picker.grep").description.ends_with("(Ctrl+G fg)"));
+    assert_eq!(row("review").description, "Review the changes");
+}
