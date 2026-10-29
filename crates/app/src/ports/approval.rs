@@ -10,7 +10,7 @@ use std::fmt;
 use async_trait::async_trait;
 use domain::block::DiffSpec;
 use domain::conversation::ToolUseId;
-use domain::permission::{PermissionRule, ToolEffect};
+use domain::permission::{ActionRequest, PermissionRule, ToolEffect};
 use serde::{Deserialize, Serialize};
 
 /// Identifies one pending [`ApprovalRequest`].
@@ -65,6 +65,23 @@ pub struct ApprovalRequest {
     pub subject: String,
     /// The exact change or command to show.
     pub preview: ApprovalPreview,
+}
+
+impl ApprovalRequest {
+    /// The action asked about, as the permission policy sees it, to build
+    /// the options of the dialog with
+    /// [`rule_ladder`](domain::permission::rule_ladder). A
+    /// [`Command`](ApprovalPreview::Command) preview gives its `argv`.
+    #[must_use]
+    pub fn action(&self) -> ActionRequest {
+        let action = ActionRequest::new(self.tool.clone(), self.effect, self.subject.clone());
+        match &self.preview {
+            ApprovalPreview::Command { command, args, .. } => {
+                action.with_argv(std::iter::once(command).chain(args).cloned().collect())
+            }
+            _ => action,
+        }
+    }
 }
 
 /// The user's answer to an [`ApprovalRequest`].
@@ -152,6 +169,11 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let back: ApprovalRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back, req);
+        assert_eq!(
+            req.action(),
+            ActionRequest::new("run_command", ToolEffect::Execute, "cargo test")
+                .with_argv(vec!["cargo".into(), "test".into()])
+        );
     }
 
     #[test]

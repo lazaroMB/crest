@@ -145,6 +145,9 @@ pub struct PreparedCall {
     pub subject: String,
     /// What to show in the approval dialog; `None` shows the subject.
     pub preview: Option<ApprovalPreview>,
+    /// The program and its arguments when the call runs a command, for
+    /// rules that match commands token by token.
+    pub argv: Option<Vec<String>>,
     /// Extra block to add to the timeline before running (e.g. a `Diff`).
     pub block: Option<BlockKind>,
     /// Id the extra block gets, when the call must know it (a `Form`
@@ -166,6 +169,7 @@ impl PreparedCall {
         Self {
             subject: subject.into(),
             preview: None,
+            argv: None,
             block: None,
             block_id: None,
             run,
@@ -185,6 +189,13 @@ impl PreparedCall {
     #[must_use]
     pub fn with_preview(mut self, preview: ApprovalPreview) -> Self {
         self.preview = Some(preview);
+        self
+    }
+
+    /// Returns the same call with the `argv` of the command it runs.
+    #[must_use]
+    pub fn with_argv(mut self, argv: Vec<String>) -> Self {
+        self.argv = Some(argv);
         self
     }
 
@@ -209,6 +220,7 @@ impl fmt::Debug for PreparedCall {
         f.debug_struct("PreparedCall")
             .field("subject", &self.subject)
             .field("preview", &self.preview)
+            .field("argv", &self.argv)
             .field("block", &self.block)
             .field("block_id", &self.block_id)
             .field("on_interrupt", &self.on_interrupt)

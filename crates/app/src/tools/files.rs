@@ -779,6 +779,7 @@ impl TypedTool for RunCommandTool {
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
         let subject = input.display();
+        let argv = input.argv();
         let preview = ApprovalPreview::Command {
             command: input.command.clone(),
             args: input.args.clone(),
@@ -800,7 +801,9 @@ impl TypedTool for RunCommandTool {
                 Err(err) => ToolOutput::error(err.to_string()),
             })
         };
-        Ok(PreparedCall::new(subject, run.boxed()).with_preview(preview))
+        Ok(PreparedCall::new(subject, run.boxed())
+            .with_preview(preview)
+            .with_argv(argv))
     }
 }
 
@@ -1175,6 +1178,14 @@ mod tests {
         assert_eq!(tool.effect(&input), ToolEffect::Execute);
         let prepared = tool.prepare(input, &ctx()).await.unwrap();
         assert_eq!(prepared.subject, "cargo test -p 'my crate'");
+        assert_eq!(
+            prepared.argv.as_deref(),
+            Some(
+                ["cargo", "test", "-p", "my crate"]
+                    .map(String::from)
+                    .as_slice()
+            )
+        );
         assert_eq!(
             prepared.preview,
             Some(ApprovalPreview::Command {

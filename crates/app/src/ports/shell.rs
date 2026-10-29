@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use domain::permission::ToolEffect;
+use domain::permission::{ToolEffect, command_line};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -92,25 +92,18 @@ impl RunCommandRequest {
     }
 
     /// The command line as shown in approval dialogs: the program and its
-    /// arguments separated by spaces, quoting arguments that need it.
+    /// arguments separated by spaces, quoting arguments that need it
+    /// ([`command_line`]).
     pub fn display(&self) -> String {
+        command_line(&self.argv())
+    }
+
+    /// The program followed by its arguments, unquoted.
+    pub fn argv(&self) -> Vec<String> {
         std::iter::once(&self.command)
             .chain(&self.args)
-            .map(|part| quote(part))
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-}
-
-fn quote(part: &str) -> String {
-    let plain = !part.is_empty()
-        && part
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c));
-    if plain {
-        part.to_owned()
-    } else {
-        format!("'{}'", part.replace('\'', r"'\''"))
+            .cloned()
+            .collect()
     }
 }
 
