@@ -17,7 +17,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::paths::{PathEntry, TokenDir, complete, path_matches, path_token, token_dir};
-use super::{InputView, PALETTE_ROWS};
+use super::{InputView, PALETTE_ROWS, window_note};
 
 /// What the `@` popup shows for the current word.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,7 +161,7 @@ pub fn path_key(key: &Key, popup: &PathPopup, text: &str, selected: usize) -> Pa
         PathPopup::Message(_) if key.code == KeyCode::Esc => return PathKey::Hide,
         PathPopup::Message(_) => return PathKey::Ignored,
     };
-    let len = entries.len().min(PALETTE_ROWS);
+    let len = entries.len();
     let selected = selected.min(len - 1);
     let Some(token) = path_token(text) else {
         return PathKey::Ignored;
@@ -178,17 +178,18 @@ pub fn path_key(key: &Key, popup: &PathPopup, text: &str, selected: usize) -> Pa
     }
 }
 
-/// Draws `popup` with entry `selected` highlighted.
-pub fn render(popup: PathPopup, selected: usize, cx: &App) -> AnyElement {
+/// Draws `popup` from entry `top` on, with entry `selected` highlighted.
+pub fn render(popup: PathPopup, selected: usize, top: usize, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (rows, more) = match popup {
+    let (rows, note) = match popup {
         PathPopup::Entries(entries) => {
-            let selected = selected.min(entries.len().min(PALETTE_ROWS) - 1);
-            let more = entries.len().saturating_sub(PALETTE_ROWS);
+            let selected = selected.min(entries.len() - 1);
+            let note = window_note(top, entries.len());
             let rows: Vec<_> = entries
                 .into_iter()
-                .take(PALETTE_ROWS)
                 .enumerate()
+                .skip(top)
+                .take(PALETTE_ROWS)
                 .map(|(ix, entry)| {
                     let (marker, name, color) = if entry.dir {
                         ("▸", format!("{}/", entry.name), theme.primary)
@@ -214,7 +215,7 @@ pub fn render(popup: PathPopup, selected: usize, cx: &App) -> AnyElement {
                     row.into_any_element()
                 })
                 .collect();
-            (rows, more)
+            (rows, note)
         }
         PathPopup::Message(message) => (
             vec![
@@ -224,14 +225,13 @@ pub fn render(popup: PathPopup, selected: usize, cx: &App) -> AnyElement {
                     .child(SharedString::from(message))
                     .into_any_element(),
             ],
-            0,
+            None,
         ),
     };
-    let footer = if more > 0 {
-        format!("↑↓ choose · Tab complete · Enter accept · Esc hide · {more} more, keep typing")
-    } else {
-        "↑↓ choose · Tab complete · Enter accept · Esc hide".to_owned()
-    };
+    let footer = format!(
+        "↑↓ choose · Tab complete · Enter accept · Esc hide{}",
+        note.unwrap_or_default()
+    );
     v_flex()
         .id("path-palette")
         .mb_1()

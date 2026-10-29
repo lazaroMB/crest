@@ -62,8 +62,8 @@ use application::keymap::{
 use gpui::canvas;
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, Window, div,
+    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render,
+    ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
 
@@ -114,6 +114,34 @@ fn palette_top(selected: usize, top: usize, len: usize) -> usize {
         top
     };
     top.min(len.saturating_sub(PALETTE_ROWS))
+}
+
+/// Pixels of wheel that move a popup by one row.
+const WHEEL_ROW: f32 = 20.0;
+
+/// The footer note of a popup of `total` entries showing
+/// [`PALETTE_ROWS`] from `top`: `· 1–8 of 20 · 12 more`, or nothing when
+/// they all fit.
+fn window_note(top: usize, total: usize) -> Option<String> {
+    if total <= PALETTE_ROWS {
+        return None;
+    }
+    let last = (top + PALETTE_ROWS).min(total);
+    let below = total - last;
+    Some(if below > 0 {
+        format!(" · {}–{last} of {total} · {below} more", top + 1)
+    } else {
+        format!(" · {}–{last} of {total}", top + 1)
+    })
+}
+
+/// The window of a popup of `len` entries moved by `rows` (down when
+/// positive) from `top`, and the chosen entry pulled into it.
+fn scroll_window(top: usize, selected: usize, rows: isize, len: usize) -> (usize, usize) {
+    let max_top = len.saturating_sub(PALETTE_ROWS);
+    let top = top.saturating_add_signed(rows).min(max_top);
+    let last = (top + PALETTE_ROWS).min(len).saturating_sub(1);
+    (top, selected.clamp(top, last.max(top)))
 }
 
 /// What the input asks the rest of the UI to do.
@@ -342,6 +370,8 @@ pub struct InputView {
     palette_selected: usize,
     /// First visible row of the `/model ` popup, which scrolls.
     palette_top: usize,
+    /// Wheel pixels over a popup not yet a whole row.
+    wheel_rest: f32,
     palette_hidden: bool,
     paths: PathCompletion,
     models: ModelCompletion,
@@ -419,6 +449,7 @@ impl InputView {
             commands: Vec::new(),
             palette_selected: 0,
             palette_top: 0,
+            wheel_rest: 0.0,
             palette_hidden: false,
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
@@ -715,7 +746,12 @@ impl InputView {
         }
         if let Some(popup) = self.path_popup(cx) {
             match path_key(key, &popup, &self.text(cx), self.palette_selected) {
-                PathKey::Select(ix) => self.palette_selected = ix,
+                PathKey::Select(ix) => {
+                    if let PathPopup::Entries(entries) = &popup {
+                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                    }
+                    self.palette_selected = ix;
+                }
                 PathKey::Hide => self.palette_hidden = true,
                 PathKey::SetText(text) => self.set_text(&text, window, cx),
                 PathKey::Ignored => return false,
@@ -773,11 +809,18 @@ impl InputView {
         if choices.is_empty() {
             return false;
         }
-        let len = choices.len().min(PALETTE_ROWS);
+        let len = choices.len();
         let selected = self.palette_selected.min(len - 1);
         match (key.code, &choices[selected]) {
-            (KeyCode::Down, _) => self.palette_selected = (selected + 1) % len,
-            (KeyCode::Up, _) => self.palette_selected = (selected + len - 1) % len,
+            (KeyCode::Down | KeyCode::Up, _) => {
+                let ix = if key.code == KeyCode::Down {
+                    (selected + 1) % len
+                } else {
+                    (selected + len - 1) % len
+                };
+                self.palette_top = palette_top(ix, self.palette_top, len);
+                self.palette_selected = ix;
+            }
             (KeyCode::Esc, _) => self.palette_hidden = true,
             (KeyCode::Tab, Choice::Run(line)) => self.set_text(&format!("/{line} "), window, cx),
             (KeyCode::Tab | KeyCode::Enter, Choice::Complete(line)) => {
@@ -981,14 +1024,72 @@ impl InputView {
             .collect()
     }
 
+    /// Entries of the popup the input shows, the same one `render` picks.
+    fn popup_len(&self, cx: &App) -> usize {
+        if let Some(popup) = self.path_popup(cx) {
+            return match popup {
+                PathPopup::Entries(entries) => entries.len(),
+                PathPopup::Message(_) => 0,
+            };
+        }
+        if let Some(popup) = self.model_popup(cx) {
+            return match popup {
+                ModelPopup::Entries(entries) => entries.len(),
+                ModelPopup::Message(_) => 0,
+            };
+        }
+        if let Some(popup) = self.theme_popup(cx) {
+            return match popup {
+                ThemePopup::Entries(entries) => entries.len(),
+                ThemePopup::Message(_) => 0,
+            };
+        }
+        self.palette(cx).len()
+    }
+
+    /// The wheel over a popup scrolls its rows, carrying the chosen one
+    /// along when it would leave the window (the `/theme ` popup previews
+    /// it).
+    fn popup_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let len = self.popup_len(cx);
+        if len <= PALETTE_ROWS {
+            return;
+        }
+        cx.stop_propagation();
+        // Up is a positive delta; small touchpad deltas add up to a row.
+        self.wheel_rest -= f32::from(event.delta.pixel_delta(px(WHEEL_ROW)).y);
+        let rows = (self.wheel_rest / WHEEL_ROW).trunc();
+        if rows == 0.0 {
+            return;
+        }
+        self.wheel_rest -= rows * WHEEL_ROW;
+        let before = self.palette_selected.min(len - 1);
+        let (top, selected) = scroll_window(self.palette_top, before, rows as isize, len);
+        self.palette_top = top;
+        self.palette_selected = selected;
+        if selected != before
+            && let Some(ThemePopup::Entries(entries)) = self.theme_popup(cx)
+            && self.path_popup(cx).is_none()
+            && self.model_popup(cx).is_none()
+            && let Some(choice) = entries.get(selected)
+        {
+            self.theme_previewing = true;
+            cx.emit(InputEvent::ThemePreview(choice.name.clone()));
+        }
+        cx.notify();
+    }
+
     fn render_palette(&self, cx: &App) -> Option<impl IntoElement> {
         let rows = self.palette(cx);
         if rows.is_empty() {
             return None;
         }
         let theme = cx.theme();
-        let selected = self.palette_selected.min(rows.len().min(PALETTE_ROWS) - 1);
-        let items = rows.iter().take(PALETTE_ROWS).enumerate().map(|(ix, row)| {
+        let total = rows.len();
+        let selected = self.palette_selected.min(total - 1);
+        let top = self.palette_top;
+        let note = window_note(top, total).unwrap_or_default();
+        let items = rows.iter().enumerate().skip(top).take(PALETTE_ROWS).map(|(ix, row)| {
             let mut item = h_flex()
                 .id(("palette", ix))
                 .gap_3()
@@ -1028,7 +1129,9 @@ impl InputView {
                         .pt_1()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child("↑↓ choose · Tab complete · Enter run · Esc hide"),
+                        .child(SharedString::from(format!(
+                            "↑↓ choose · Tab complete · Enter run · Esc hide{note}"
+                        ))),
                 ),
         )
     }
@@ -1043,9 +1146,13 @@ impl Focusable for InputView {
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tray = self.tray.render(cx);
-        let paths = self
-            .path_popup(cx)
-            .map(|popup| path_popup::render(popup, self.palette_selected, cx));
+        let paths = self.path_popup(cx).map(|popup| {
+            if let PathPopup::Entries(entries) = &popup {
+                let selected = self.palette_selected.min(entries.len() - 1);
+                self.palette_top = palette_top(selected, self.palette_top, entries.len());
+            }
+            path_popup::render(popup, self.palette_selected, self.palette_top, cx)
+        });
         let models = if paths.is_none() {
             self.model_popup(cx).map(|popup| {
                 // The list may have arrived or shrunk since the last key.
@@ -1082,6 +1189,11 @@ impl Render for InputView {
             None
         };
         let palette = if paths.is_none() && models.is_none() && themes.is_none() {
+            let total = self.palette(cx).len();
+            if total > 0 {
+                let selected = self.palette_selected.min(total - 1);
+                self.palette_top = palette_top(selected, self.palette_top, total);
+            }
             self.render_palette(cx)
         } else {
             None
@@ -1145,10 +1257,17 @@ impl Render for InputView {
                 this.hide_popups(cx);
             }))
             .font_family(theme.mono_font_family.clone())
-            .children(paths)
-            .children(models)
-            .children(themes)
-            .children(palette)
+            .child(
+                // The wheel over a popup moves its window of rows.
+                v_flex()
+                    .id("input-popups")
+                    .debug_selector(|| "input-popups".to_owned())
+                    .on_scroll_wheel(cx.listener(Self::popup_wheel))
+                    .children(paths)
+                    .children(models)
+                    .children(themes)
+                    .children(palette),
+            )
             .children(tray)
             .child(prompt)
             .children(status)
@@ -1530,6 +1649,83 @@ mod tests {
         assert_eq!(copied.as_deref(), Some("copiame"));
         view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "copiame"));
         assert!(take(&events).is_empty());
+    }
+
+    fn commands(n: usize) -> Vec<CommandRow> {
+        (0..n)
+            .map(|i| row(&format!("cmd{i:02}"), &format!("/cmd{i:02}")))
+            .collect()
+    }
+
+    #[test]
+    fn popup_windows_say_what_is_left_and_scroll_with_the_choice() {
+        assert_eq!(window_note(0, 8), None);
+        assert_eq!(window_note(0, 20).as_deref(), Some(" · 1–8 of 20 · 12 more"));
+        assert_eq!(window_note(12, 20).as_deref(), Some(" · 13–20 of 20"));
+        // Down by 3: the choice at 1 is pulled to the window's first row.
+        assert_eq!(scroll_window(0, 1, 3, 20), (3, 3));
+        // Up past the top, and down past the end, stop there.
+        assert_eq!(scroll_window(2, 5, -9, 20), (0, 5));
+        assert_eq!(scroll_window(10, 15, 9, 20), (12, 15));
+    }
+
+    #[gpui::test]
+    fn arrows_reach_the_last_command_of_the_palette(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        view.update(cx, |view, cx| view.set_commands(commands(20), cx));
+        cx.simulate_input("/");
+        let total = view.read_with(cx, |view, cx| view.palette(cx).len());
+        assert!(total > PALETTE_ROWS, "more commands than rows: {total}");
+        let last = view.read_with(cx, |view, cx| view.palette(cx)[total - 1].name.clone());
+        cx.simulate_keystrokes(&vec!["down"; total - 1].join(" "));
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.palette_selected, total - 1);
+            assert_eq!(view.palette_top, total - PALETTE_ROWS, "scrolled");
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let drawn = cx.debug_bounds("input-popups").is_some();
+        assert!(drawn);
+        // Down wraps to the first.
+        cx.simulate_keystrokes("down");
+        view.read_with(cx, |view, _| {
+            assert_eq!((view.palette_selected, view.palette_top), (0, 0));
+        });
+        cx.simulate_keystrokes("up tab");
+        let text = view.read_with(cx, |view, cx| view.text(cx));
+        assert!(text.starts_with(&format!("/{last}")), "{text} for {last}");
+        assert!(take(&events).is_empty());
+    }
+
+    #[gpui::test]
+    fn the_wheel_scrolls_the_palette(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, ScrollDelta, TouchPhase, point};
+        let (view, cx, _) = input(cx);
+        view.update(cx, |view, cx| view.set_commands(commands(20), cx));
+        cx.simulate_input("/");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let at = cx
+            .debug_bounds("input-popups")
+            .expect("the palette is drawn")
+            .center();
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(point(px(0.), px(-3. * WHEEL_ROW))),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.palette_top, 3, "three rows down");
+            assert_eq!(view.palette_selected, 3, "the choice came along");
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Lines(point(0., 1.)),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.palette_top, 2, "a line up"));
     }
 
     #[gpui::test]
