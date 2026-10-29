@@ -1,8 +1,8 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
 //! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
 //! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
-//! `show_er`, `show_benchmarks`, `show_waveform` and `show_netlist` tools
-//! from Lua. Each returns a block (wrapped like
+//! `show_er`, `show_benchmarks`, `show_waveform`, `show_netlist`,
+//! `show_step`, `show_dxf` and `show_ifc_schedule` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -19,6 +19,9 @@
 //! return app.formats.benchmarks{ path = 'target/criterion', baseline = 'base' }
 //! return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'tb.dut.*' } }
 //! return app.formats.netlist{ path = 'hw/amp.cir' }
+//! return app.formats.step{ path = 'cad/bracket.step' }
+//! return app.formats.dxf{ path = 'dwg/plate.dxf' }
+//! return app.formats.ifc_schedule{ path = 'bim/house.ifc' }
 //! ```
 //!
 //! | Function | Block |
@@ -36,6 +39,9 @@
 //! | `benchmarks{ path, baseline, filter, title }` | criterion results, baseline against new (`target/criterion`, `base` by default) |
 //! | `waveform{ path, signals, radix, title }` | a VCD, FST or GHW dump as digital waves (`signals`: paths or `*` patterns; `radix`: `hex`, `bin`, `dec`) |
 //! | `netlist{ path or source, format, title }` | a SPICE deck or KiCad netlist as a component–net graph and table (`format`: `spice` or `kicad`, guessed when absent) |
+//! | `step{ path, tolerance, title }` | a STEP part tessellated into the 3D view with its solids (`tolerance` in the file's unit) |
+//! | `dxf{ path, title }` | a 2D DXF drawing with its layers, zoom and pan |
+//! | `ifc_schedule{ path, title }` | an IFC model's spaces and areas (only the file's) and wall/door/window counts per storey |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -46,12 +52,13 @@
 use std::sync::Arc;
 
 use application::ports::formats::{
-    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
+    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, StepRequest, WaveRequest,
 };
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
-    collect_benchmarks, dataset_format, read_dataset, read_har, read_log, read_report, read_wave,
+    collect_benchmarks, dataset_format, read_dataset, read_har, read_ifc, read_log, read_report,
+    read_step, read_wave,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
@@ -418,6 +425,70 @@ fn waveform(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Waveform(Box::new(spec)))
 }
 
+fn step(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "step";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let tolerance = match args.get::<Value>("tolerance")? {
+        Value::Nil => None,
+        Value::Integer(n) => Some(n as f64),
+        Value::Number(n) if n.is_finite() && n > 0.0 => Some(n),
+        _ => return Err(error(F, "`tolerance` must be a positive number")),
+    };
+    if tolerance.is_some_and(|t| t <= 0.0) {
+        return Err(error(F, "`tolerance` must be a positive number"));
+    }
+    let bytes = context(lua)?
+        .block_on(read_step(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let request = StepRequest {
+        path: path.clone(),
+        tolerance,
+    };
+    let mut spec = services
+        .formats
+        .parse_step(&bytes, &request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::CadModel(Box::new(spec)))
+}
+
+fn dxf(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "dxf";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_dxf(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Drawing(Box::new(spec)))
+}
+
+fn ifc_schedule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "ifc_schedule";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_ifc(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_ifc_schedule(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::IfcSchedule(Box::new(spec)))
+}
+
 fn netlist(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "netlist";
     let services = services(lua, F)?;
@@ -481,6 +552,27 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => waveform(lua, &args),
             _ => Err(error("waveform", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "step",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => step(lua, &args),
+            _ => Err(error("step", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "dxf",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => dxf(lua, &args),
+            _ => Err(error("dxf", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "ifc_schedule",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => ifc_schedule(lua, &args),
+            _ => Err(error("ifc_schedule", "expected a table of arguments")),
         })?,
     )?;
     formats.set(
@@ -561,6 +653,9 @@ mod tests {
             .with_file("db/schema.sql", "create table a (id int);")
             .with_file("target/criterion/fib/new/estimates.json", "{}")
             .with_file("sim/tb.vcd", "$enddefinitions $end")
+            .with_file("cad/block.step", "ISO-10303-21;\n")
+            .with_file("dwg/plate.dxf", "0\nEOF\n")
+            .with_file("bim/house.ifc", "ISO-10303-21;\n")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -710,6 +805,43 @@ mod tests {
             panic!("not a netlist: {out:?}");
         };
         assert_eq!(spec.components.len(), 4);
+        let out = run_code(
+            "return app.formats.step{ path = 'cad/block.step', tolerance = 0.5, title = 'b' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::CadModel(spec)) = out else {
+            panic!("not a part: {out:?}");
+        };
+        assert_eq!((spec.tolerance, spec.title.as_deref()), (0.5, Some("b")));
+        let bad = run_code(
+            "return app.formats.step{ path = 'cad/block.step', tolerance = -1 }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("`tolerance`"), "{bad}");
+        let out = run_code(
+            "return app.formats.dxf{ path = 'dwg/plate.dxf' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Drawing(spec)) = out else {
+            panic!("not a drawing: {out:?}");
+        };
+        assert_eq!(spec.layers.len(), 2);
+        let out = run_code(
+            "return app.formats.ifc_schedule{ path = 'bim/house.ifc', title = 'h' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::IfcSchedule(spec)) = out else {
+            panic!("not a schedule: {out:?}");
+        };
+        assert_eq!(
+            (spec.missing_areas(), spec.title.as_deref()),
+            (1, Some("h"))
+        );
     }
 
     #[test]

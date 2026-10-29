@@ -8,6 +8,7 @@
 
 pub mod ansi;
 pub mod bench;
+pub mod cad;
 pub mod chart;
 pub mod computed;
 pub mod copy;
@@ -15,10 +16,12 @@ pub mod custom;
 pub mod dataset;
 pub mod diagram;
 pub mod diff;
+pub mod drawing;
 pub mod findings;
 pub mod flame;
 pub mod form;
 pub mod har;
+pub mod ifc;
 pub mod image;
 pub mod image_view;
 pub mod json;
@@ -93,6 +96,9 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Waveform(_) => waveform::render(entry, window, cx),
         BlockKind::Netlist(_) => netlist::render(entry, window, cx),
         BlockKind::Material(_) => material::render(entry, window, cx),
+        BlockKind::CadModel(_) => cad::render(entry, window, cx),
+        BlockKind::Drawing(_) => drawing::render(entry, window, cx),
+        BlockKind::IfcSchedule(_) => ifc::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

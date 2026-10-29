@@ -1,0 +1,41 @@
+---
+source: crates/app/src/tools/formats/step.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_step",
+  "description": "Shows a STEP part (`path`, AP203/AP214/AP242 B-rep) in a 3D view in the user's timeline: tessellated solids with orbit, pan and zoom, a list of solids the user can hide, a section plane and point-to-point measuring in the file's unit. Returns the schema, CAD tool, length unit, products, the part's box and each solid's faces, triangles and box, with the faces that could not be meshed: cite those sizes instead of guessing from the file text, and do not repeat the list in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A STEP file of the workspace (`.step`, `.stp`; AP203, AP214 or\nAP242 B-rep), e.g. an export of CadQuery, build123d, FreeCAD,\nOnshape or KiCad."
+      },
+      "tolerance": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Chord tolerance of the tessellation in the file's length unit;\nsmaller is finer. By default 0.05% of the part's size.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the view; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_step`.",
+    "title": "ShowStep",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

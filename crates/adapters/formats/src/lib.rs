@@ -20,14 +20,19 @@
 //!   DDL ([`er`], sqlparser);
 //! - criterion benchmark estimates ([`bench`], serde);
 //! - digital waveforms ([`waveform`], wellen: VCD, FST, GHW);
-//! - netlists ([`netlist`], own SPICE and KiCad readers).
+//! - netlists ([`netlist`], own SPICE and KiCad readers);
+//! - STEP parts ([`step`], truck-stepio + truck-meshalgo);
+//! - 2D DXF drawings ([`drawing`], the `dxf` crate);
+//! - IFC room schedules ([`ifc`], ifc-lite-core).
 
 pub mod bench;
 pub mod dataset;
 pub mod dot;
+pub mod drawing;
 pub mod er;
 pub mod flame;
 pub mod har;
+pub mod ifc;
 pub mod junit;
 pub mod libtest;
 pub mod logs;
@@ -35,13 +40,15 @@ pub mod molecule;
 pub mod netlist;
 pub mod query_plan;
 pub mod sarif;
+pub mod step;
 pub mod terraform;
 pub mod trace;
 pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    StepRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -52,6 +59,9 @@ use domain::devops::logs::LogSpec;
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::cad::CadModelSpec;
+use domain::engineering::drawing::DrawingSpec;
+use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
@@ -168,5 +178,17 @@ impl FormatsPort for Formats {
         path: Option<&str>,
     ) -> Result<NetlistSpec, FormatError> {
         netlist::parse(text, format, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_step(&self, bytes: &[u8], request: &StepRequest) -> Result<CadModelSpec, FormatError> {
+        step::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_dxf(&self, bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError> {
+        drawing::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_ifc_schedule(&self, bytes: &[u8], path: &str) -> Result<IfcScheduleSpec, FormatError> {
+        ifc::parse(bytes, path).map_err(FormatError::Invalid)
     }
 }

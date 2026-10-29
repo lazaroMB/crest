@@ -24,6 +24,9 @@ use crate::devops::logs::LogSpec;
 use crate::devops::query_plan::QueryPlanSpec;
 use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
+use crate::engineering::cad::CadModelSpec;
+use crate::engineering::drawing::DrawingSpec;
+use crate::engineering::ifc::IfcScheduleSpec;
 use crate::engineering::material::MaterialSpec;
 use crate::engineering::netlist::NetlistSpec;
 use crate::engineering::waveform::WaveformSpec;
@@ -149,6 +152,9 @@ impl Block {
             BlockKind::Waveform(spec) => spec.validate(),
             BlockKind::Netlist(spec) => spec.validate(),
             BlockKind::Material(spec) => spec.validate(),
+            BlockKind::CadModel(spec) => spec.validate(),
+            BlockKind::Drawing(spec) => spec.validate(),
+            BlockKind::IfcSchedule(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -327,6 +333,13 @@ pub enum BlockKind {
     /// A material's properties, each with its source or marked
     /// unverified (tool `show_material`).
     Material(Box<MaterialSpec>),
+    /// A STEP part tessellated into the 3D view, with its solids (tool
+    /// `show_step`).
+    CadModel(Box<CadModelSpec>),
+    /// A 2D DXF drawing with its layers (tool `show_dxf`).
+    Drawing(Box<DrawingSpec>),
+    /// An IFC model's room schedule by storey (tool `show_ifc_schedule`).
+    IfcSchedule(Box<IfcScheduleSpec>),
 }
 
 /// Lifecycle of a tool call.

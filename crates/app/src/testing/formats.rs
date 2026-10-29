@@ -25,7 +25,13 @@
 //! every waveform is `tb.clk` (period 10 ns) and an 8-bit `tb.count`
 //! counting 00, 01, 02 on its rising edges, over 0–30 ns; every netlist
 //! is a divider `V1` (in, 0), `R1` (in, out), `R2` (out, 0) plus `R3`
-//! (out, nc) left open.
+//! (out, nc) left open; every STEP part is a 10 mm tetrahedron `Body`
+//! (4 faces, one not meshed) in product `Block`; every DXF drawing is a
+//! 100 × 50 mm rectangle on layer `Outline` with a hole on `Holes` (off)
+//! and a `PLATE` note; every IFC schedule is project `House` with a
+//! `Ground floor` holding `101` Kitchen (12.5 m² from
+//! Qto_SpaceBaseQuantities) and `102` Store (no area), 4 walls, 2 doors
+//! and 3 windows.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -44,10 +50,14 @@ use domain::devops::terraform::{
     AttrChange, AttrValue, PlanAction, PlanSource, ResourceChange, TerraformPlanSpec,
 };
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
+use domain::engineering::cad::{CadModelSpec, CadSolid};
+use domain::engineering::drawing::{DrawEntity, DrawingLayer, DrawingSpec, PolyVertex, Shape};
+use domain::engineering::ifc::{ElementCounts, IfcScheduleSpec, IfcSpace, IfcStorey};
 use domain::engineering::netlist::{Component, NetlistFormat, NetlistSpec, PinNet};
 use domain::engineering::waveform::{
     SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal, WaveformSpec,
 };
+use domain::model3d::{ModelMesh, UpAxis};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
@@ -59,7 +69,8 @@ use serde_json::Map;
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    StepRequest, WaveRequest,
 };
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
@@ -697,6 +708,142 @@ impl FormatsPort for FakeFormats {
                 part("R3", "resistor", "1k", ["out", "nc"]),
             ],
             subcircuits: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_step(
+        &self,
+        _bytes: &[u8],
+        request: &StepRequest,
+    ) -> Result<CadModelSpec, FormatError> {
+        self.record("parse_step", &request.path)?;
+        Ok(CadModelSpec {
+            title: None,
+            path: request.path.clone(),
+            schema: Some("AUTOMOTIVE_DESIGN".to_owned()),
+            application: Some("fake CAD".to_owned()),
+            unit: Some("mm".to_owned()),
+            products: vec!["Block".to_owned()],
+            solids: vec![CadSolid {
+                name: "Body".to_owned(),
+                product: Some("Block".to_owned()),
+                faces: 4,
+                failed_faces: 1,
+                first_triangle: 0,
+                triangles: 3,
+                min: [0.0; 3],
+                max: [10.0; 3],
+            }],
+            mesh: ModelMesh {
+                positions: vec![
+                    [0.0, 0.0, 0.0],
+                    [10.0, 0.0, 0.0],
+                    [0.0, 10.0, 0.0],
+                    [0.0, 0.0, 10.0],
+                ],
+                triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2]],
+                up: UpAxis::Z,
+            },
+            tolerance: request.tolerance.unwrap_or(0.01),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_dxf(&self, _bytes: &[u8], path: &str) -> Result<DrawingSpec, FormatError> {
+        self.record("parse_dxf", path)?;
+        let layer = |name: &str, color: u8, off: bool, entities: usize| DrawingLayer {
+            name: name.to_owned(),
+            color,
+            off,
+            entities,
+        };
+        let corner = |x: f64, y: f64| PolyVertex { x, y, bulge: 0.0 };
+        Ok(DrawingSpec {
+            title: None,
+            path: path.to_owned(),
+            version: Some("R2000".to_owned()),
+            units: Some("mm".to_owned()),
+            header_extents: None,
+            layers: vec![layer("Outline", 5, false, 2), layer("Holes", 1, true, 1)],
+            entities: vec![
+                DrawEntity {
+                    layer: 0,
+                    color: None,
+                    shape: Shape::Polyline {
+                        vertices: vec![
+                            corner(0.0, 0.0),
+                            corner(100.0, 0.0),
+                            corner(100.0, 50.0),
+                            corner(0.0, 50.0),
+                        ],
+                        closed: true,
+                    },
+                },
+                DrawEntity {
+                    layer: 0,
+                    color: Some(3),
+                    shape: Shape::Text {
+                        at: [5.0, 5.0],
+                        height: 2.5,
+                        rotation: 0.0,
+                        text: "PLATE".to_owned(),
+                    },
+                },
+                DrawEntity {
+                    layer: 1,
+                    color: None,
+                    shape: Shape::Circle {
+                        center: [50.0, 25.0],
+                        radius: 3.0,
+                    },
+                },
+            ],
+            inserts: 0,
+            skipped: Vec::new(),
+            truncated: false,
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_ifc_schedule(
+        &self,
+        _bytes: &[u8],
+        path: &str,
+    ) -> Result<IfcScheduleSpec, FormatError> {
+        self.record("parse_ifc_schedule", path)?;
+        let space = |name: &str, long: &str, area: Option<f64>| IfcSpace {
+            name: Some(name.to_owned()),
+            long_name: Some(long.to_owned()),
+            area,
+            area_source: area.map(|_| "Qto_SpaceBaseQuantities.NetFloorArea".to_owned()),
+            global_id: None,
+        };
+        Ok(IfcScheduleSpec {
+            title: None,
+            path: path.to_owned(),
+            schema: "IFC4".to_owned(),
+            project: Some("House".to_owned()),
+            site: None,
+            buildings: Vec::new(),
+            length_unit: Some("m".to_owned()),
+            area_unit: Some("m²".to_owned()),
+            storeys: vec![IfcStorey {
+                name: "Ground floor".to_owned(),
+                elevation: Some(0.0),
+                building: None,
+                spaces: vec![
+                    space("101", "Kitchen", Some(12.5)),
+                    space("102", "Store", None),
+                ],
+                elements: ElementCounts {
+                    walls: 4,
+                    doors: 2,
+                    windows: 3,
+                },
+            }],
+            unplaced_spaces: Vec::new(),
+            unplaced: ElementCounts::default(),
             warnings: Vec::new(),
         })
     }

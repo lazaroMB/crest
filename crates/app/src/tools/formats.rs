@@ -10,7 +10,9 @@
 //! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`),
 //! [`diagram`] (`show_dot`, `show_er`), [`bench`] (`show_benchmarks`) and
 //! the engineering viewers [`waveform`] (`show_waveform`), [`netlist`]
-//! (`show_netlist`) and [`material`] (`show_material`).
+//! (`show_netlist`), [`material`] (`show_material`), [`step`]
+//! (`show_step`), [`dxf`] (`show_dxf`) and [`ifc`]
+//! (`show_ifc_schedule`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -50,10 +52,13 @@ use crate::usecases::compute::{Offload, offloaded};
 pub mod bench;
 pub mod devops;
 pub mod diagram;
+pub mod dxf;
 pub mod har;
+pub mod ifc;
 pub mod material;
 pub mod netlist;
 pub mod query_plan;
+pub mod step;
 pub mod terraform;
 pub mod waveform;
 
@@ -66,10 +71,13 @@ pub use devops::{
     flame_summary, logs_summary, read_log, trace_summary,
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
+pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
+pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
+pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
 
@@ -1138,6 +1146,14 @@ before reasoning about a circuit's wiring; use the nets it returns \
 - `show_material`: put material properties in a card with the source of \
 each value; a value you only remember goes without a source and shows as \
 unverified. Never present remembered values as sourced.
+- `show_step`: show a STEP part (for example one your CadQuery or \
+build123d script exported) in the 3D view so the user can check it; cite \
+the boxes, solids and faces it returns, and say when faces were not meshed.
+- `show_dxf`: show a 2D DXF drawing with its layers instead of reading the \
+DXF text; cite the extents, units, layers and texts it returns.
+- `show_ifc_schedule`: show an IFC model's rooms and areas per storey; \
+quote only the areas it returns with their source, and say \
+`not given` for spaces without one instead of estimating.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1146,7 +1162,8 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
 /// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
-/// `show_waveform`, `show_netlist` and `show_material`.
+/// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
+/// `show_dxf` and `show_ifc_schedule`.
 ///
 /// # Errors
 ///
@@ -1172,7 +1189,10 @@ pub fn register_format_tools(
     registry.register_typed(ShowBenchmarksTool::new(ports.clone()))?;
     registry.register_typed(ShowWaveformTool::new(ports.clone()))?;
     registry.register_typed(ShowNetlistTool::new(ports.clone()))?;
-    registry.register_typed(ShowMaterialTool)
+    registry.register_typed(ShowMaterialTool)?;
+    registry.register_typed(ShowStepTool::new(ports.clone()))?;
+    registry.register_typed(ShowDxfTool::new(ports.clone()))?;
+    registry.register_typed(ShowIfcScheduleTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1290,7 +1310,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 18);
+        assert_eq!(registry.names().len(), 21);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

@@ -17,6 +17,9 @@
 //! | waveform | value changes CSV, every signal's value at the end |
 //! | netlist | `net,component,pin` CSV, components CSV, the graph as DOT |
 //! | material | properties CSV with the source of each value (or `unverified`) |
+//! | cad model (STEP) | solids CSV (faces, triangles, box), the summary line |
+//! | drawing (DXF) | layers CSV, the drawing's texts, the summary line |
+//! | IFC schedule | spaces CSV (storey, name, area, unit, source), the tree as text |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -548,6 +551,19 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             CopyFormat::new("dot", "DOT", spec.to_graph().to_dot()),
         ],
         BlockKind::Material(spec) => vec![CopyFormat::new("csv", "properties CSV", spec.to_csv())],
+        BlockKind::CadModel(spec) => vec![
+            CopyFormat::new("solids", "solids CSV", spec.to_csv()),
+            CopyFormat::new("summary", "summary", super::cad::summary_text(spec)),
+        ],
+        BlockKind::Drawing(spec) => vec![
+            CopyFormat::new("layers", "layers CSV", spec.layers_csv()),
+            CopyFormat::new("texts", "texts", spec.texts().join("\n")),
+            CopyFormat::new("summary", "summary", super::drawing::summary_text(spec)),
+        ],
+        BlockKind::IfcSchedule(spec) => vec![
+            CopyFormat::new("spaces", "spaces CSV", spec.to_csv()),
+            CopyFormat::new("tree", "schedule", spec.to_tree().to_text()),
+        ],
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }

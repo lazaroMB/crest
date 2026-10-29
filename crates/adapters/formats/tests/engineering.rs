@@ -1,10 +1,10 @@
-//! Engineering viewers on fixture files: a VCD dump, a SPICE deck and a
-//! KiCad netlist.
+//! Engineering viewers on fixture files: a VCD dump, a SPICE deck, a
+//! KiCad netlist, a STEP part, a DXF drawing and an IFC model.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, WaveRequest};
+use application::ports::formats::{FormatsPort, StepRequest, WaveRequest};
 use domain::engineering::netlist::NetlistFormat;
 use domain::engineering::waveform::{Radix, SignalKind, WaveFormat};
 
@@ -170,4 +170,169 @@ fn kicad_netlists_read_components_and_nets() {
             .parse_netlist("title only\n.end\n", None, None)
             .is_err()
     );
+}
+
+#[test]
+fn a_step_block_is_tessellated_through_the_port() {
+    let request = StepRequest {
+        path: "parts/block.step".into(),
+        tolerance: Some(0.1),
+    };
+    let spec = Formats::new()
+        .parse_step(&fixture("block.step"), &request)
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.application.as_deref(), Some("crest fixture"));
+    assert_eq!(spec.tolerance, 0.1);
+    assert_eq!(spec.bounds(), Some(([0.0; 3], [10.0, 20.0, 5.0])));
+    assert_eq!(spec.mesh.triangles.len(), 12);
+    assert!(spec.warnings.is_empty(), "{:?}", spec.warnings);
+    let mut cut = fixture("block.step");
+    cut.truncate(cut.len() / 2);
+    assert!(Formats::new().parse_step(&cut, &request).is_err());
+}
+
+#[test]
+fn a_dxf_plate_reads_layers_inserts_and_text() {
+    use domain::engineering::drawing::Shape;
+    let spec = Formats::new()
+        .parse_dxf(&fixture("plate.dxf"), "dwg/plate.dxf")
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.version.as_deref(), Some("R2000"));
+    assert_eq!(spec.units.as_deref(), Some("mm"));
+    let header = spec.header_extents.unwrap();
+    assert_eq!((header.min, header.max), ([-5.0, -5.0], [105.0, 65.0]));
+    let layer = |name: &str| spec.layers.iter().position(|l| l.name == name).unwrap();
+    assert!(spec.layers[layer("Hidden")].off);
+    assert_eq!(spec.layers[layer("Holes")].color, 1);
+    // Five inserts of a circle and a cross.
+    assert_eq!(spec.inserts, 5);
+    let circles: Vec<f64> = spec
+        .entities
+        .iter()
+        .filter_map(|e| match e.shape {
+            Shape::Circle { radius, .. } => Some(radius),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(circles.len(), 5);
+    assert!(
+        circles.iter().filter(|r| (**r - 6.4).abs() < 1e-9).count() == 1,
+        "{circles:?}"
+    );
+    // The cross of a hole is on layer 0 in the block: it takes the
+    // insert's layer and (BYBLOCK) its color.
+    let cross = spec
+        .entities
+        .iter()
+        .find(|e| matches!(e.shape, Shape::Line { a, .. } if (a[0] - 6.0).abs() < 1e-9 && (a[1] - 10.0).abs() < 1e-9))
+        .unwrap();
+    assert_eq!(
+        (spec.layers[cross.layer].name.as_str(), cross.color),
+        ("Holes", Some(1))
+    );
+    // The rotated, doubled insert turns its cross upright.
+    assert!(spec.entities.iter().any(|e| matches!(e.shape,
+        Shape::Line { a, b } if (a[0] - 45.0).abs() < 1e-9 && (a[1] - 42.0).abs() < 1e-9
+            && (b[1] - 58.0).abs() < 1e-9)));
+    assert_eq!(spec.texts(), ["PLATE 100x60 S235", "Thickness\n5 mm"]);
+    let outline = spec
+        .entities
+        .iter()
+        .find_map(|e| match &e.shape {
+            Shape::Polyline { vertices, closed } if *closed && vertices.len() == 4 => {
+                Some(vertices)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!((outline[1].bulge - 0.2).abs() < 1e-12);
+    // The bulged side reaches past x = 90.
+    let computed = spec.computed_extents().unwrap();
+    assert!(
+        computed.max[0] > 95.0 && computed.max[0] < 100.0,
+        "{computed:?}"
+    );
+    assert_eq!(spec.skipped.len(), 1, "{:?}", spec.skipped);
+    assert_eq!(spec.skipped[0].count, 1);
+    assert!(
+        spec.warnings[0].contains("1 ellipses"),
+        "{:?}",
+        spec.warnings
+    );
+}
+
+#[test]
+fn an_ifc_house_gives_storeys_spaces_areas_and_counts() {
+    let spec = Formats::new()
+        .parse_ifc_schedule(&fixture("house.ifc"), "bim/house.ifc")
+        .unwrap();
+    assert_eq!(spec.validate(), Ok(()));
+    assert_eq!(spec.schema, "IFC4");
+    assert_eq!(spec.project.as_deref(), Some("Small house"));
+    assert_eq!(spec.site.as_deref(), Some("Plot 7"));
+    assert_eq!(spec.buildings, ["House A"]);
+    assert_eq!(
+        (spec.length_unit.as_deref(), spec.area_unit.as_deref()),
+        (Some("mm"), Some("m²"))
+    );
+    // By elevation, though the file aggregates the first floor first.
+    let names: Vec<&str> = spec.storeys.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Ground floor", "First floor"]);
+    let ground = &spec.storeys[0];
+    assert_eq!(ground.elevation, Some(0.0));
+    assert_eq!(ground.building.as_deref(), Some("House A"));
+    let area = |name: &str| {
+        spec.spaces()
+            .find(|(_, s)| s.name.as_deref() == Some(name))
+            .map(|(_, s)| (s.area, s.area_source.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        area("101"),
+        (
+            Some(24.5),
+            Some("Qto_SpaceBaseQuantities.NetFloorArea".into())
+        ),
+        "net before gross"
+    );
+    assert_eq!(
+        area("102"),
+        (
+            Some(10.75),
+            Some("Qto_SpaceBaseQuantities.GrossFloorArea".into())
+        )
+    );
+    assert_eq!(
+        area("103"),
+        (None, None),
+        "no area: not given, not computed"
+    );
+    assert_eq!(
+        area("201"),
+        (Some(14.2), Some("Pset_SpaceCommon.NetPlannedArea".into()))
+    );
+    assert_eq!(ground.spaces[1].long_name.as_deref(), Some("K\u{fc}che"));
+    // The door contained in space 101 counts for its storey.
+    assert_eq!(
+        (
+            ground.elements.walls,
+            ground.elements.doors,
+            ground.elements.windows
+        ),
+        (3, 3, 1)
+    );
+    let first = &spec.storeys[1];
+    assert_eq!(first.elevation, Some(3000.0));
+    assert_eq!(
+        (
+            first.elements.walls,
+            first.elements.doors,
+            first.elements.windows
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(spec.unplaced.walls, 1, "the garden wall is in no storey");
+    assert_eq!(spec.missing_areas(), 1);
 }

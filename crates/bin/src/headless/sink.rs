@@ -246,6 +246,34 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 netlist.single_pin_nets().len()
             ),
         ),
+        BlockKind::CadModel(part) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[step: {}, {} solids, {} triangles, {} faces not meshed]",
+                part.display_title(),
+                part.solids.len(),
+                part.mesh.triangles.len(),
+                part.failed_faces()
+            ),
+        ),
+        BlockKind::IfcSchedule(schedule) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[ifc schedule: {} storeys, {} spaces, {} without area]",
+                schedule.storeys.len(),
+                schedule.space_count(),
+                schedule.missing_areas()
+            ),
+        ),
+        BlockKind::Drawing(drawing) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[dxf: {}, {} entities, {} layers]",
+                drawing.display_title(),
+                drawing.entities.len(),
+                drawing.layers.len()
+            ),
+        ),
         BlockKind::Material(material) => w.line(
             Some(Style::Dim),
             &format!(

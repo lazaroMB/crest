@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats/ifc.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_ifc_schedule",
+  "description": "Shows the room schedule of an IFC building model (`path`) in the user's timeline: storeys by elevation with their spaces (name, long name, floor area and the property or quantity it was read from) and how many walls, doors and windows each storey holds. Areas come only from the file (Qto_SpaceBaseQuantities, Pset_SpaceCommon); a space without one says \"not given\". Returns the schedule: cite its areas and counts, never estimate a missing area, and do not repeat the table in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "An IFC file of the workspace (`.ifc`, STEP physical file; IFC2X3,\nIFC4 or IFC4X3), e.g. an export of Revit, ArchiCAD, BlenderBIM or\nIfcOpenShell."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the schedule; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_ifc_schedule`.",
+    "title": "ShowIfcSchedule",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

@@ -12,7 +12,9 @@
 //! - [`gpu`]: the device, the passes of `board.wgsl` (scene, edge outlines,
 //!   bloom, tone-mapped composite) and the readback;
 //! - [`camera`]: the isometric preset and orbit/zoom/pan, projection for
-//!   the labels GPUI draws on top, and rays for [`pick`]ing on the CPU.
+//!   the labels GPUI draws on top, and rays for [`pick`]ing on the CPU;
+//! - [`section`]: a model cut by an axis-aligned plane and the surface
+//!   point under a ray, for the model viewer's section and measuring.
 //!
 //! [`Renderer3d::new`] fails cleanly when there is no adapter; the board
 //! then falls back to its 2.5D vector drawing.
@@ -22,6 +24,7 @@ pub mod gpu;
 pub mod math;
 pub mod mesh;
 pub mod pick;
+pub mod section;
 
 use std::sync::Arc;
 
