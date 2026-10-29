@@ -9,6 +9,7 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 | Global config | `$XDG_CONFIG_HOME/crest/init.lua`, or `~/.config/crest/init.lua` (Windows: `%APPDATA%\crest\init.lua`) | A relative `XDG_CONFIG_HOME` is ignored. macOS uses the same path (not `~/Library`). |
 | Plugins | `<global config dir>/plugins/<name>/init.lua` | Loaded in alphabetical order, followed by those listed in `app.plugins`. |
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
+| Key mappings without Lua | `<global config dir>/keymap.toml`, `<workspace>/.crest/keymap.toml` | Optional, next to each `init.lua`. See [`keymap.toml` and the leader](#keymaptoml-and-the-leader). |
 | Theme files | `<global config dir>/themes/<name>.lua` | One theme per file, picked with `app.opt.theme` or `/theme`. The installers copy the [example themes](../examples/themes/) and a commented `init.lua` here when they are missing. See [themes.md](themes.md). |
 | Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` (Windows: `%LOCALAPPDATA%\crest\sessions.db`) | SQLite. Stores the chat sessions and the workflow checkpoints. |
 | Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions (on Windows the folder's access list, private to the user, applies). |
@@ -32,7 +33,7 @@ When the layers are combined, precedence from lowest to highest is: plugins, glo
 | `app.opt.*` | Key by key. |
 | `app.models.roles` | Role by role and field by field. For example, if the workspace only sets `max_tokens`, it keeps the `id` and `thinking` of the global layer. `fallbacks` is replaced as a whole. |
 | `app.models.aliases` | Key by key. |
-| Keymaps | By keys: the last definition wins. |
+| Keymaps | All are kept and applied in order (plugins, global `keymap.toml`, global config, workspace `keymap.toml`, workspace config): for the same keys the last definition (or `app.keymap.del`) wins. See [`keymap.toml` and the leader](#keymaptoml-and-the-leader). |
 | Commands, tools and MCP servers | By name: the highest-precedence layer wins. |
 | Hooks | All are kept, in the order the files ran (global, plugins, workspace). |
 | `app.permissions.sensitive_paths` | The global config (or a plugin) can **replace** the default list. The workspace can only **add** patterns, so a cloned repository cannot remove the protection. |
@@ -143,7 +144,7 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 
 | Option | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`, `"<P-,>"`: `<P-…>` is Cmd on macOS and Ctrl elsewhere) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
+| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`, `"<P-,>"`: `<P-…>` is Cmd on macOS and Ctrl elsewhere) | `"<C-g>"` | The value of `<leader>` in every keymap: the builtin ones (see [usage.md](usage.md#default-key-bindings)), yours in Lua and in `keymap.toml`. Changing it frees `Ctrl+G` ([below](#keymaptoml-and-the-leader)). Use a chord: a plain key would be typed into the prompt, so it is a warning and the leader stays `Ctrl+G`. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the status bar shows the session's tokens instead of the cost. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
@@ -172,6 +173,29 @@ app.opt.max_session_cost = 5
   - **always** removes the cap for the session;
   - **reject** ends the turn ("turn stopped by the spend cap ($X of $Y)").
 - The cost lives in memory: a resumed session counts from zero again.
+
+## `keymap.toml` and the leader
+
+To remap keys without writing Lua, put a `keymap.toml` next to an `init.lua`: `<global config dir>/keymap.toml` and `<workspace>/.crest/keymap.toml`. Both are optional.
+
+```toml
+# ~/.config/crest/keymap.toml
+[[bind]]
+keys = "<leader>r"          # Neovim notation, as app.keymap.set
+action = "picker.grep"      # a builtin action (plugins.md lists them)
+desc = "Search the text"    # optional: shown in the help's Keys section
+
+[[unbind]]
+keys = "<leader>x"          # removes a mapping, builtin ones included
+```
+
+- `keys` and `action` follow the rules of [`app.keymap.set`](plugins.md#appkeymapsetkeys-action) (an `action` can only be a builtin action; Lua functions need `init.lua`), and `[[unbind]]` those of [`app.keymap.del`](plugins.md#appkeymapdelkeys). A file's `[[unbind]]` entries apply before its `[[bind]]` ones, so it can free a builtin key and bind something else to it.
+- Precedence follows the layers: the workspace wins over the global config and, **within one layer, `init.lua` wins over `keymap.toml`** (Lua is applied after the file next to it). The order is: plugins, global `keymap.toml`, global `init.lua`, workspace `keymap.toml`, workspace `init.lua`.
+- The leader and `timeoutlen` are set in `init.lua` only (`app.opt.leader`, `app.opt.timeoutlen`); `<leader>` in `keymap.toml` uses that leader.
+- Problems never stop crest: a file that does not parse is ignored with a startup warning (the file and line), and an entry without `keys` or `action`, with a value that is not a string, or with unknown fields is reported (and skipped when it cannot apply). The checks of the keymap itself (unknown action, keys mapped twice, a mapping that starts a longer one) apply to these mappings too.
+- The help's Keys section shows each mapping's source (`global keymap.toml`, `workspace keymap.toml`, `global`, `workspace`, `plugin <name>`, `default`), and `c` there copies the `[[bind]]` entry (and the `app.keymap.set` line) of the selected key.
+
+**The leader.** `app.opt.leader` moves every `<leader>` mapping, the builtin ones included: with `app.opt.leader = "<C-,>"`, the file picker is `Ctrl+, ff`, the help `Ctrl+, h`, and `Ctrl+G` does nothing. Before, builtin mappings stayed on `Ctrl+G` whatever the leader was; a config that relied on that keeps its own mappings and can bring a builtin one back with the chord written out (`app.keymap.set("<C-g>ff", "picker.files")`). The welcome screen, the tray hint, the prompt's placeholder and the which-key popup name the keys in use.
 
 ## Web search
 
@@ -512,7 +536,7 @@ A global config, checked against the current implementation (it loads without di
 local app = require("app")
 
 -- Keys -------------------------------------------------------------------
-app.opt.leader = "<C-g>" -- <leader> for the keymaps in this file
+app.opt.leader = "<C-g>" -- <leader> for every keymap, the builtin ones too
 app.opt.timeoutlen = 600    -- ms to wait between the keys of a sequence
 
 -- Look -------------------------------------------------------------------

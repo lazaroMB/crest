@@ -65,6 +65,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.permissions.sensitive_paths` | list of strings | Paths the tools cannot read. |
 | `app.plugins` | list of strings | Extra plugins (global config only). |
 | `app.keymap.set(keys, action [, { desc }])` | see below | At load time. |
+| `app.keymap.del(keys)`, `app.keymap.unmap(keys)` | `string → nil` (see below) | At load time. |
 | `app.commands.register(name, fn [, { desc }])` | see below | At load time. |
 | `app.tools.register(def)` | see below | At load time. |
 | `app.on(event, fn)` | see below | At load time. |
@@ -98,11 +99,18 @@ crest has no modes: the prompt is always ready to type and a mapping works in th
   - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd), `<P-x>` (the platform's primary modifier: Cmd on macOS, Ctrl elsewhere; the builtin `<P-q>` quits on both);
   - key names `<CR>`/`<Enter>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, `<Space>`, `<lt>`, `<gt>`, `<Bar>`, `<Bslash>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<Home>`, `<End>`, `<PageUp>`, `<PageDown>` and `<F1>`–`<F24>`.
 
-  `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
+  `<leader>` expands to `app.opt.leader` when the keymap is built, in the builtin mappings too: with `app.opt.leader = "<C-,>"`, `<C-,>ff` opens the file picker and `Ctrl+G` is free.
 - **`action`**: the name of a builtin action or a Lua function. The function is called with no arguments (`nil`) and can use `app.cmd` and `app.send`. If it returns `app.ui.block(...)`, that block is added to the timeline.
 - **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`F1`, `/help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
 
-A keymap replaces any other with the same keys, builtin ones included. These are the builtin actions valid as a string:
+A keymap replaces any other with the same keys, builtin ones included; the layers apply in order (plugins, the global `keymap.toml`, the global `init.lua`, the workspace `keymap.toml`, the workspace `init.lua`), so a later one wins. When the window opens, crest warns (the notices in the status bar and the startup problems of the help's Files section) about:
+
+- an action name that is not one of the builtin actions below: the mapping is skipped;
+- the same keys mapped twice in one file (or by two plugins): the last one wins;
+- a mapping that is the start of a longer one (`<leader>f` with `<leader>ff` also mapped, builtin or not): the short one waits for the next key and only runs after `timeoutlen`;
+- keys that do not parse, or that start with a plain key: the mapping is skipped.
+
+These are the builtin actions valid as a string:
 
 | Action | What it does |
 | --- | --- |
@@ -132,7 +140,17 @@ A keymap replaces any other with the same keys, builtin ones included. These are
 | `timeline.outline` | Opens or closes the menu of your questions. |
 | `block.focus_widget` | Gives the keys to the widget of the selected block (`Esc` gives them back). |
 
-Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
+Any other name (`session.resume`, a typo) is skipped with the warning ``keymap `<leader>r` ignored: unknown action `session.resume` `` when the window opens; before, it was accepted and only failed when pressed.
+
+### `app.keymap.del(keys)`
+
+```lua
+app.keymap.del("<leader>x")      -- free Ctrl+G x (chat.delete)
+app.keymap.unmap("<C-c>")        -- the same function; Ctrl+C then does nothing
+app.keymap.set("<leader>x", "picker.grep")   -- the keys can be mapped again
+```
+
+Removes the mapping of `keys`, builtin ones included, with the same notation and `<leader>` as `set`; `unmap` is the same function, and the Neovim form with a mode first (`app.keymap.del("n", keys)`) is accepted. Removals run in call order with the mappings of the same file, and the layers apply in order, so a workspace `init.lua` can remove what the global one mapped. Only the exact keys go: deleting `<leader>f` leaves `<leader>ff`. A removal that finds nothing mapped is a startup warning, and a `keys` that is not a string is a diagnostic with the line.
 
 ### `app.commands.register(name, fn, opts)`
 
@@ -699,7 +717,9 @@ Approve it with `crest --trust-plugin jsonq` and ask "list the dependencies in p
 | Error in a keymap or command callback | `Error` block with `Lua: <message>`. |
 | Malformed `app.plugin` entry | Diagnostic with the line of the call. Only that entry is ignored. |
 | Capability API without approval | Lua error saying how to approve it (`crest --trust-plugin <name>` or `/plugin trust <name>`). |
-| Keymap with invalid notation | Notice ``keymap `x` ignored: …`` when the window opens. |
+| Keymap with invalid notation, a plain first key or an unknown action | Notice ``keymap `x` ignored: …`` when the window opens. |
+| Keys mapped twice in a file, a mapping that starts a longer one, `keymap.del` of unmapped keys | A warning notice when the window opens; the keymap still loads. |
+| Problem in a `keymap.toml` | A startup warning with the file (and the line of a syntax error); a file that does not parse is ignored, a bad entry is skipped. |
 
 In headless mode the diagnostics go to the terminal. Run `crest --headless "hello"` to check that your config loads cleanly.
 
@@ -833,12 +853,13 @@ app.keymap.set("<leader>t", function()
 end)
 ```
 
-With `leader = "<C-,>"`, the mappings in this file use `Ctrl+,`, but the builtin ones (`Ctrl+G ff`, `Ctrl+G m`...) keep using `Ctrl+G`. If you want to move them, map them again:
+With `leader = "<C-,>"`, the mappings in this file and the builtin ones (`Ctrl+, ff`, `Ctrl+, m`...) use `Ctrl+,`, and `Ctrl+G` does nothing. Earlier versions left the builtin mappings on `Ctrl+G`; to keep one there, map it with the chord written out:
 
 ```lua
-app.keymap.set("<leader>ff", "picker.files")
-app.keymap.set("<leader>fg", "picker.grep")
+app.keymap.set("<C-g>ff", "picker.files")
 ```
+
+A leader that does not parse, or that is a plain key the prompt types (`" "`, `","`), is a startup warning and the leader stays `Ctrl+G`.
 
 ### Testing a plugin
 
