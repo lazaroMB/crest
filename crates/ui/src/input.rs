@@ -388,10 +388,15 @@ impl InputView {
                 cx.notify();
             }
         });
+        let focus_handle = cx.focus_handle();
+        // The popups belong to the prompt: they go when it loses the focus.
+        let blur = cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
+            this.hide_popups(cx);
+        });
         Self {
             sequencer: KeySequencer::new(keymap),
             editor,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             timeout: None,
             queued: false,
             commands: Vec::new(),
@@ -408,8 +413,19 @@ impl InputView {
             history: PromptHistory::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
-            _subscriptions: vec![intercept, changes],
+            _subscriptions: vec![intercept, changes, blur],
         }
+    }
+
+    /// Hides the `/`, `@`, `/model` and `/theme` popups (until the text
+    /// changes), ending a theme preview.
+    pub fn hide_popups(&mut self, cx: &mut Context<Self>) {
+        if self.palette_hidden {
+            return;
+        }
+        self.palette_hidden = true;
+        self.end_theme_preview(cx);
+        cx.notify();
     }
 
     /// Toggles the cursor every [`BLINK_INTERVAL`] while the window is
@@ -1107,6 +1123,10 @@ impl Render for InputView {
             .id("crest-input")
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
+            // A click anywhere else closes the popups.
+            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                this.hide_popups(cx);
+            }))
             .font_family(theme.mono_font_family.clone())
             .children(paths)
             .children(models)
@@ -1142,6 +1162,39 @@ mod tests {
         });
         cx.run_until_parked();
         (view, cx, events)
+    }
+
+    #[gpui::test]
+    fn a_click_outside_hides_the_palette(cx: &mut TestAppContext) {
+        struct Wrapper(Entity<InputView>);
+        impl Render for Wrapper {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                v_flex()
+                    .size_full()
+                    .child(div().id("outside").h(gpui::px(200.)).w_full())
+                    .child(self.0.clone())
+            }
+        }
+        cx.update(gpui_component::init);
+        let (wrapper, cx) = cx.add_window_view(|window, cx| {
+            let input = cx.new(|cx| InputView::new(window, cx));
+            Wrapper(input)
+        });
+        let view = wrapper.read_with(cx, |w, _| w.0.clone());
+        view.update_in(cx, |view, window, cx| {
+            view.set_commands(vec![row("model", "/model")], cx);
+            view.focus(window, cx);
+        });
+        cx.simulate_input("/mo");
+        assert!(view.read_with(cx, |v, cx| !v.palette(cx).is_empty()));
+        cx.simulate_click(
+            gpui::point(gpui::px(10.), gpui::px(10.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(view.read_with(cx, |v, cx| v.palette(cx).is_empty()));
+        cx.update(|window, cx| {
+            assert!(view.read(cx).owns_focus(window, cx), "the focus stayed");
+        });
     }
 
     /// The events so far but the history's [`InputEvent::Recorded`].

@@ -3521,6 +3521,34 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_palette_hides_on_blur_and_on_a_click_outside(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        // Focus events are only sent to the active window.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let shown = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| !s.input().read(cx).palette(cx).is_empty())
+        };
+        cx.simulate_input("/mo");
+        assert!(shown(cx));
+        h.session.update_in(cx, |s, window, cx| {
+            window.focus(&s.timeline().focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        assert!(!shown(cx), "the prompt lost the focus");
+        cx.simulate_keystrokes("escape");
+        cx.simulate_input("d");
+        assert!(shown(cx), "typing shows it again");
+        // A click on the timeline.
+        cx.simulate_click(
+            gpui::point(gpui::px(20.), gpui::px(20.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(!shown(cx), "a click outside hides it");
+    }
+
+    #[gpui::test]
     fn help_command_opens_a_section_or_a_search(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         cx.simulate_input("/help models");
