@@ -72,7 +72,12 @@ pub fn derive_id(request: &ComputeRequest) -> String {
         | ComputeRequest::Solve(_)
         | ComputeRequest::Simulate(_)
         | ComputeRequest::CashFlow(_)
-        | ComputeRequest::Decide(_) => "so",
+        | ComputeRequest::Decide(_)
+        | ComputeRequest::Bom(_)
+        | ComputeRequest::Tolerance(_)
+        | ComputeRequest::Beam(_)
+        | ComputeRequest::Karnaugh(_)
+        | ComputeRequest::Bode(_) => "so",
         _ => "st",
     };
     format!("{prefix}_{}", &hex.as_str()[..12])

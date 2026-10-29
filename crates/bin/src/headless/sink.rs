@@ -228,6 +228,33 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::Waveform(wave) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[waveform: {} signals, {} – {}]",
+                wave.signals.len(),
+                wave.time_text(wave.start),
+                wave.time_text(wave.end)
+            ),
+        ),
+        BlockKind::Netlist(netlist) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[netlist: {} components, {} nets, {} single-pin]",
+                netlist.components.len(),
+                netlist.nets().len(),
+                netlist.single_pin_nets().len()
+            ),
+        ),
+        BlockKind::Material(material) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[material: {}, {} properties, {} unverified]",
+                material.full_name(),
+                material.properties.len(),
+                material.unverified().len()
+            ),
+        ),
         BlockKind::Benchmarks(bench) => w.line(
             Some(Style::Dim),
             &format!(

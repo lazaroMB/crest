@@ -1202,3 +1202,747 @@ fn decision_matrix_totals_and_weight_thresholds_by_hand() {
     bad.options[0].scores.pop();
     assert!(engine().decide(&bad).is_err());
 }
+
+// --- Bode / Nyquist -----------------------------------------------------------
+
+fn bode(numerator: &[f64], denominator: &[f64], delay: f64) -> BodeRequest {
+    BodeRequest {
+        numerator: numerator.to_vec(),
+        denominator: denominator.to_vec(),
+        zeros: Vec::new(),
+        poles: Vec::new(),
+        gain: None,
+        delay,
+        w_min: None,
+        w_max: None,
+        points: 400,
+        unit: FrequencyUnit::RadPerS,
+    }
+}
+
+/// The sweep point nearest `w`.
+fn at(body: &BodeBody, w: f64) -> BodePoint {
+    *body
+        .points
+        .iter()
+        .min_by(|a, b| {
+            (a.w.ln() - w.ln())
+                .abs()
+                .total_cmp(&(b.w.ln() - w.ln()).abs())
+        })
+        .unwrap()
+}
+
+#[test]
+fn bode_first_order_lag_is_minus_3_db_and_45_degrees_at_the_corner() {
+    let mut request = bode(&[1.0], &[1.0, 1.0], 0.0);
+    request.w_min = Some(0.01);
+    request.w_max = Some(100.0);
+    request.points = 401;
+    let (c, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    // 401 log-spaced points over four decades put ω = 1 on the grid.
+    let corner = at(&b, 1.0);
+    near(corner.w, 1.0, 1e-12);
+    near(corner.magnitude_db, -10.0 * 2f64.log10(), 1e-9);
+    near(corner.phase_deg, -45.0, 1e-9);
+    near(b.points[0].phase_deg, -(0.01f64).atan().to_degrees(), 1e-9);
+    near(v(&c, "dc_gain"), 0.0, 1e-12);
+    near(v(&c, "bandwidth"), 1.0, 1e-9);
+    assert!(c.value("phase_margin").is_none());
+    assert!(c.value("gain_margin").is_none());
+    assert_eq!(b.poles, [Complex { re: -1.0, im: 0.0 }]);
+    // 1/(s+1) + 1 = 0 → s = −2.
+    near(b.closed_loop_poles[0].re, -2.0, 1e-12);
+    assert_eq!(
+        c.value("closed_loop_max_re")
+            .and_then(|x| x.label.clone())
+            .as_deref(),
+        Some("stable")
+    );
+}
+
+#[test]
+fn bode_second_order_peaks_at_one_over_two_zeta() {
+    // ωn = 10, ζ = 0.1: |G(jωn)| = 1/(2ζ) = 5, phase −90°.
+    let (wn, zeta) = (10.0, 0.1);
+    let mut request = bode(&[wn * wn], &[1.0, 2.0 * zeta * wn, wn * wn], 0.0);
+    request.w_min = Some(0.1);
+    request.w_max = Some(1000.0);
+    request.points = 401;
+    let (_, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    let p = at(&b, wn);
+    near(p.w, wn, 1e-9);
+    near(p.magnitude_db, 20.0 * 5f64.log10(), 1e-9);
+    near(p.phase_deg, -90.0, 1e-9);
+    near(b.points.last().unwrap().phase_deg, -180.0, 0.2);
+    near(b.poles[0].re, -1.0, 1e-12);
+    near(b.poles[0].im.abs(), 99f64.sqrt(), 1e-12);
+}
+
+#[test]
+fn bode_integrator_lag_has_the_closed_form_phase_margin() {
+    // G = 1/(s(s+1)): ωc² = (√5 − 1)/2, PM = 90° − atan(ωc).
+    let (c, body) = engine().bode(&bode(&[1.0], &[1.0, 1.0, 0.0], 0.0)).unwrap();
+    let wc = ((5f64.sqrt() - 1.0) / 2.0).sqrt();
+    near(v(&c, "gain_crossover"), wc, 1e-9);
+    near(v(&c, "phase_margin"), 90.0 - wc.atan().to_degrees(), 1e-7);
+    printed(v(&c, "phase_margin"), "51.83");
+    assert!(c.value("gain_margin").is_none());
+    assert!(c.value("dc_gain").is_none());
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    // An integrator starts near −90°, not −90° ± 360°.
+    near(b.points[0].phase_deg, -90.0, 1.0);
+    // s² + s + 1: −0.5 ± 0.866j.
+    near(b.closed_loop_poles[0].re, -0.5, 1e-12);
+}
+
+#[test]
+fn bode_third_order_gain_margin_is_20_log_6() {
+    // G = 1/(s(s+1)(s+2)): phase −180° at ω = √2, |G| = 1/6 there.
+    let (c, _) = engine()
+        .bode(&bode(&[1.0], &[1.0, 3.0, 2.0, 0.0], 0.0))
+        .unwrap();
+    near(v(&c, "phase_crossover"), 2f64.sqrt(), 1e-9);
+    near(v(&c, "gain_margin"), 20.0 * 6f64.log10(), 1e-8);
+    printed(v(&c, "gain_margin"), "15.56");
+    let wc = v(&c, "gain_crossover");
+    near(
+        wc * (wc * wc + 1.0).sqrt() * (wc * wc + 4.0).sqrt(),
+        1.0,
+        1e-9,
+    );
+    let pm = 90.0 - wc.atan().to_degrees() - (wc / 2.0).atan().to_degrees();
+    near(v(&c, "phase_margin"), pm, 1e-7);
+    // The same plant given as poles and a gain.
+    let mut by_poles = bode(&[], &[], 0.0);
+    by_poles.poles = vec![
+        Complex { re: 0.0, im: 0.0 },
+        Complex { re: -1.0, im: 0.0 },
+        Complex { re: -2.0, im: 0.0 },
+    ];
+    let (c2, _) = engine().bode(&by_poles).unwrap();
+    near(v(&c2, "gain_margin"), v(&c, "gain_margin"), 1e-9);
+}
+
+#[test]
+fn bode_dead_time_adds_minus_omega_t_to_the_phase() {
+    let mut request = bode(&[1.0], &[1.0, 1.0], 0.1);
+    request.w_min = Some(0.01);
+    request.w_max = Some(100.0);
+    request.points = 401;
+    let (c, body) = engine().bode(&request).unwrap();
+    let ComputedBody::Bode(b) = body else {
+        panic!()
+    };
+    let p = at(&b, 1.0);
+    near(p.phase_deg, -45.0 - 0.1f64.to_degrees(), 1e-9);
+    near(p.magnitude_db, -10.0 * 2f64.log10(), 1e-9);
+    assert!(b.closed_loop_poles.is_empty());
+    // The delay brings the phase to −180° even for a first-order lag.
+    assert!(c.value("phase_crossover").is_some());
+    assert!(engine().bode(&bode(&[1.0], &[0.0], 0.0)).is_err());
+    let mut lone = bode(&[], &[], 0.0);
+    lone.poles = vec![Complex { re: -1.0, im: 1.0 }];
+    assert!(engine().bode(&lone).is_err());
+}
+
+// --- Karnaugh map --------------------------------------------------------------
+
+fn kmap(variables: &[&str], minterms: &[u32], dont_cares: &[u32]) -> KarnaughRequest {
+    KarnaughRequest {
+        variables: variables.iter().map(|s| (*s).to_owned()).collect(),
+        minterms: minterms.to_vec(),
+        maxterms: Vec::new(),
+        dont_cares: dont_cares.to_vec(),
+        expression: None,
+    }
+}
+
+fn terms(implicants: &[Implicant]) -> std::collections::BTreeSet<String> {
+    implicants.iter().map(|i| i.term.clone()).collect()
+}
+
+#[test]
+fn karnaugh_four_variables_match_the_textbook_sop_and_pos() {
+    // Mano: F(w,x,y,z) = Σm(0,1,2,4,5,6,8,9,12,13,14) = y' + w'z' + xz'.
+    let request = kmap(
+        &["w", "x", "y", "z"],
+        &[0, 1, 2, 4, 5, 6, 8, 9, 12, 13, 14],
+        &[],
+    );
+    let (c, body) = engine().karnaugh(&request).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        terms(&k.sop),
+        ["w'z'", "xz'", "y'"].map(String::from).into()
+    );
+    // Zeros 3, 7, 10, 11, 15: (y' + z')(w' + x + y').
+    assert_eq!(
+        terms(&k.pos),
+        ["(w' + x + y')", "(y' + z')"].map(String::from).into()
+    );
+    assert_eq!(v(&c, "sop_terms"), 3.0);
+    assert_eq!(v(&c, "sop_literals"), 5.0);
+    assert_eq!(k.method, CoverMethod::Exact);
+    assert_eq!(c.assumptions[0].status, AssumptionStatus::Pass);
+}
+
+#[test]
+fn karnaugh_dont_cares_and_five_variables() {
+    // Σm(1,3,7,11,15) + d(0,2,5): two terms of two literals (yz + w'x').
+    let (c, _) = engine()
+        .karnaugh(&kmap(&["w", "x", "y", "z"], &[1, 3, 7, 11, 15], &[0, 2, 5]))
+        .unwrap();
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (2.0, 4.0));
+    // Mano: F(A..E) = Σm(0,2,4,6,9,13,21,23,25,29,31) = A'B'E' + BD'E + ACE.
+    let (_, body) = engine()
+        .karnaugh(&kmap(
+            &["A", "B", "C", "D", "E"],
+            &[0, 2, 4, 6, 9, 13, 21, 23, 25, 29, 31],
+            &[],
+        ))
+        .unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        terms(&k.sop),
+        ["A'B'E'", "ACE", "BD'E"].map(String::from).into()
+    );
+    assert_eq!(k.maps().len(), 2);
+}
+
+#[test]
+fn karnaugh_expressions_constants_and_errors() {
+    let mut request = kmap(&[], &[], &[]);
+    request.expression = Some("A ^ B ^ C".into());
+    let (c, body) = engine().karnaugh(&request).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(k.variables, ["A", "B", "C"]);
+    assert_eq!(k.minterms, [1, 2, 4, 7]);
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (4.0, 12.0));
+    let (_, body) = engine()
+        .karnaugh(&kmap(&["A", "B"], &[0, 1, 2, 3], &[]))
+        .unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        (k.sop_expression.as_str(), k.pos_expression.as_str()),
+        ("1", "1")
+    );
+    let mut zeros = kmap(&["A", "B"], &[], &[]);
+    zeros.maxterms = vec![0, 1, 2, 3];
+    let (_, body) = engine().karnaugh(&zeros).unwrap();
+    let ComputedBody::Karnaugh(k) = body else {
+        panic!()
+    };
+    assert_eq!(
+        (k.sop_expression.as_str(), k.pos_expression.as_str()),
+        ("0", "0")
+    );
+    assert!(engine().karnaugh(&kmap(&["A"], &[2], &[])).is_err());
+    assert!(engine().karnaugh(&kmap(&["A", "B"], &[1], &[1])).is_err());
+    let seven = kmap(&["A", "B", "C", "D", "E", "F", "G"], &[1], &[]);
+    assert!(engine().karnaugh(&seven).is_err());
+}
+
+#[test]
+fn karnaugh_six_variables_stay_fast_and_correct() {
+    // Every term with an odd number of ones: no two ones are adjacent, so
+    // 32 primes of six literals and no merging.
+    let odd: Vec<u32> = (0..64u32).filter(|m| m.count_ones() % 2 == 1).collect();
+    let (c, _) = engine().karnaugh(&kmap(&[], &odd, &[])).unwrap();
+    assert_eq!((v(&c, "sop_terms"), v(&c, "sop_literals")), (32.0, 192.0));
+    // A dense function with many primes.
+    let dense: Vec<u32> = (0..64u32).filter(|m| m % 7 != 0).collect();
+    let (c, _) = engine().karnaugh(&kmap(&[], &dense, &[0, 7])).unwrap();
+    assert_eq!(c.assumptions[0].status, AssumptionStatus::Pass);
+}
+
+// --- Beam ------------------------------------------------------------------------
+
+fn support(at: f64, kind: SupportKind) -> BeamSupport {
+    BeamSupport { at, kind }
+}
+
+fn point(at: f64, value: f64) -> BeamLoad {
+    BeamLoad {
+        kind: BeamLoadKind::Point,
+        at,
+        end: None,
+        value,
+        end_value: None,
+    }
+}
+
+fn udl(at: f64, end: f64, value: f64) -> BeamLoad {
+    BeamLoad {
+        kind: BeamLoadKind::Distributed,
+        at,
+        end: Some(end),
+        value,
+        end_value: None,
+    }
+}
+
+fn beam(length: f64, supports: Vec<BeamSupport>, loads: Vec<BeamLoad>) -> BeamRequest {
+    BeamRequest {
+        length,
+        length_unit: LengthUnit::M,
+        force_unit: ForceUnit::KN,
+        supports,
+        loads,
+        e: Some(200.0),
+        e_unit: ModulusUnit::GPa,
+        i: Some(8.0e7),
+        i_unit: InertiaUnit::Mm4,
+        segments: 200,
+    }
+}
+
+/// E·I of [`beam`] in kN·m²: 200 GPa × 8e7 mm⁴ = 16 000 kN·m².
+const EI: f64 = 16_000.0;
+
+fn rel(actual: f64, expected: f64, tol: f64) {
+    near(actual / expected, 1.0, tol);
+}
+
+#[test]
+fn beam_simply_supported_udl_matches_the_closed_forms() {
+    // w = 10 kN/m on 6 m: R = wL/2, Mmax = wL²/8 at midspan, δ = 5wL⁴/384EI.
+    let (w, l) = (10.0, 6.0);
+    let request = beam(
+        l,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(l, SupportKind::Roller),
+        ],
+        vec![udl(0.0, l, w)],
+    );
+    let (c, body) = engine().beam(&request).unwrap();
+    assert_eq!(c.status, ComputedStatus::Ok, "{:?}", c.warnings);
+    rel(v(&c, "reaction.A"), w * l / 2.0, 1e-9);
+    rel(v(&c, "reaction.B"), w * l / 2.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / 8.0, 1e-9);
+    near(v(&c, "max_moment_at"), l / 2.0, 1e-9);
+    rel(v(&c, "max_shear").abs(), w * l / 2.0, 1e-9);
+    // Downward: negative; in mm.
+    rel(
+        -v(&c, "max_deflection"),
+        5.0 * w * l.powi(4) / (384.0 * EI) * 1000.0,
+        1e-9,
+    );
+    near(v(&c, "indeterminacy"), 0.0, 0.0);
+    let ComputedBody::Beam(b) = body else {
+        panic!()
+    };
+    assert_eq!(c.assumptions[1].status, AssumptionStatus::Pass);
+    assert_eq!(b.x.len(), b.moment.len());
+    assert_eq!(b.deflection.len(), b.x.len());
+}
+
+#[test]
+fn beam_cantilever_tip_load_and_fixed_end_moment() {
+    // P = 5 kN at the tip of a 2 m cantilever: M_A = PL (ccw), M(0) = −PL,
+    // δ = PL³/3EI.
+    let (p, l) = (5.0, 2.0);
+    let request = beam(l, vec![support(0.0, SupportKind::Fixed)], vec![point(l, p)]);
+    let (c, _) = engine().beam(&request).unwrap();
+    rel(v(&c, "reaction.A"), p, 1e-9);
+    rel(v(&c, "moment.A"), p * l, 1e-9);
+    rel(v(&c, "min_moment"), -p * l, 1e-9);
+    near(v(&c, "min_moment_at"), 0.0, 1e-12);
+    assert!(c.value("max_moment").is_none());
+    rel(
+        -v(&c, "max_deflection"),
+        p * l.powi(3) / (3.0 * EI) * 1000.0,
+        1e-9,
+    );
+    near(v(&c, "max_deflection_at"), l, 1e-12);
+}
+
+#[test]
+fn beam_indeterminate_cases_match_the_textbook_reactions() {
+    let (w, l) = (12.0, 5.0);
+    // Propped cantilever, UDL: R_B = 3wL/8, M_A = wL²/8.
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Fixed),
+                support(l, SupportKind::Roller),
+            ],
+            vec![udl(0.0, l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 3.0 * w * l / 8.0, 1e-9);
+    rel(v(&c, "moment.A"), w * l * l / 8.0, 1e-9);
+    near(v(&c, "indeterminacy"), 1.0, 0.0);
+    // Fixed both ends, UDL: end moments wL²/12, midspan wL²/24, δ = wL⁴/384EI.
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Fixed),
+                support(l, SupportKind::Fixed),
+            ],
+            vec![udl(0.0, l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "min_moment"), -w * l * l / 12.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / 24.0, 1e-9);
+    rel(
+        -v(&c, "max_deflection"),
+        w * l.powi(4) / (384.0 * EI) * 1000.0,
+        1e-9,
+    );
+    // Two equal spans, UDL: middle reaction 1.25wL, ends 0.375wL, M_B = −wL²/8.
+    let (c, _) = engine()
+        .beam(&beam(
+            2.0 * l,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(l, SupportKind::Roller),
+                support(2.0 * l, SupportKind::Roller),
+            ],
+            vec![udl(0.0, 2.0 * l, w)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 1.25 * w * l, 1e-9);
+    rel(v(&c, "reaction.A"), 0.375 * w * l, 1e-9);
+    rel(v(&c, "min_moment"), -w * l * l / 8.0, 1e-9);
+    near(v(&c, "min_moment_at"), l, 1e-9);
+}
+
+#[test]
+fn beam_overhang_point_moment_and_triangular_loads() {
+    // Supports at 0 and 4 m, P = 10 kN at the tip of a 6 m beam:
+    // R_B = P·6/4 = 15, R_A = −5, M_B = −P·2 = −20.
+    let (c, _) = engine()
+        .beam(&beam(
+            6.0,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(4.0, SupportKind::Roller),
+            ],
+            vec![point(6.0, 10.0)],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), 15.0, 1e-9);
+    rel(v(&c, "reaction.A"), -5.0, 1e-9);
+    rel(v(&c, "min_moment"), -20.0, 1e-9);
+    // A 30 kN·m counterclockwise moment at midspan of a 6 m simple beam:
+    // R_A = M/L up, R_B = M/L down; the moment jumps from +15 to −15.
+    let moment = BeamLoad {
+        kind: BeamLoadKind::Moment,
+        at: 3.0,
+        end: None,
+        value: 30.0,
+        end_value: None,
+    };
+    let (c, _) = engine()
+        .beam(&beam(
+            6.0,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(6.0, SupportKind::Roller),
+            ],
+            vec![moment],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.A"), 5.0, 1e-9);
+    rel(v(&c, "reaction.B"), -5.0, 1e-9);
+    rel(v(&c, "min_moment"), -15.0, 1e-9);
+    rel(v(&c, "max_moment"), 15.0, 1e-9);
+    // Triangular load 0 → w on a simple beam: R_B = wL/3, Mmax = wL²/(9√3)
+    // at L/√3.
+    let (w, l) = (9.0, 6.0);
+    let triangle = BeamLoad {
+        kind: BeamLoadKind::Distributed,
+        at: 0.0,
+        end: Some(l),
+        value: 0.0,
+        end_value: Some(w),
+    };
+    let (c, _) = engine()
+        .beam(&beam(
+            l,
+            vec![
+                support(0.0, SupportKind::Pin),
+                support(l, SupportKind::Roller),
+            ],
+            vec![triangle],
+        ))
+        .unwrap();
+    rel(v(&c, "reaction.B"), w * l / 3.0, 1e-9);
+    rel(v(&c, "max_moment"), w * l * l / (9.0 * 3f64.sqrt()), 1e-9);
+    near(v(&c, "max_moment_at"), l / 3f64.sqrt(), 1e-9);
+}
+
+#[test]
+fn beam_rejects_mechanisms_and_bad_positions() {
+    let one_pin = beam(
+        4.0,
+        vec![support(0.0, SupportKind::Pin)],
+        vec![point(2.0, 1.0)],
+    );
+    assert!(engine().beam(&one_pin).is_err());
+    let outside = beam(
+        4.0,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(5.0, SupportKind::Roller),
+        ],
+        vec![],
+    );
+    assert!(engine().beam(&outside).is_err());
+    let mut imperial = beam(
+        10.0,
+        vec![
+            support(0.0, SupportKind::Pin),
+            support(10.0, SupportKind::Roller),
+        ],
+        vec![point(5.0, 1.0)],
+    );
+    imperial.length_unit = LengthUnit::Ft;
+    imperial.force_unit = ForceUnit::Kip;
+    imperial.e = Some(29_000.0);
+    imperial.e_unit = ModulusUnit::Ksi;
+    imperial.i = Some(100.0);
+    imperial.i_unit = InertiaUnit::In4;
+    // PL³/48EI with L = 120 in, P = 1 kip, E = 29 000 ksi: 0.012414 in.
+    let (c, _) = engine().beam(&imperial).unwrap();
+    rel(
+        -v(&c, "max_deflection"),
+        120f64.powi(3) / (48.0 * 29_000.0 * 100.0),
+        1e-9,
+    );
+    assert_eq!(
+        c.value("max_deflection")
+            .and_then(|x| x.unit.clone())
+            .as_deref(),
+        Some("in")
+    );
+}
+
+// --- Tolerance stack-up -----------------------------------------------------------
+
+fn dim(name: &str, nominal: f64, tolerance: f64, direction: StackDirection) -> StackDimensionInput {
+    StackDimensionInput {
+        name: name.into(),
+        nominal,
+        tolerance: Some(tolerance),
+        plus: None,
+        minus: None,
+        direction,
+        distribution: ToleranceDistribution::Normal,
+    }
+}
+
+fn gap_stack() -> ToleranceRequest {
+    // A housing of 50 ± 0.1 holding parts of 30 ± 0.05 and 19.8 ± 0.05:
+    // gap 0.2 nominal.
+    ToleranceRequest {
+        dimensions: vec![
+            dim("housing", 50.0, 0.1, StackDirection::Add),
+            dim("part 1", 30.0, 0.05, StackDirection::Subtract),
+            dim("part 2", 19.8, 0.05, StackDirection::Subtract),
+        ],
+        lower_limit: Some(0.05),
+        upper_limit: None,
+        unit: Some("mm".into()),
+        sigmas: 3.0,
+        samples: 200_000,
+        seed: 7,
+    }
+}
+
+#[test]
+fn tolerance_worst_case_and_rss_are_closed_form() {
+    let (c, body) = engine().tolerance(&gap_stack()).unwrap();
+    near(v(&c, "nominal"), 0.2, 1e-12);
+    near(v(&c, "worst_case_min"), 0.0, 1e-12);
+    near(v(&c, "worst_case_max"), 0.4, 1e-12);
+    let rss = (0.1f64.powi(2) + 2.0 * 0.05f64.powi(2)).sqrt();
+    near(v(&c, "rss_min"), 0.2 - rss, 1e-12);
+    near(v(&c, "rss_max"), 0.2 + rss, 1e-12);
+    let ComputedBody::Tolerance(t) = body else {
+        panic!()
+    };
+    // Shares: 0.1/0.2 of the worst case, 0.01/0.015 of the RSS variance.
+    near(t.dimensions[0].worst_case_share, 0.5, 1e-12);
+    near(t.dimensions[0].rss_share, 2.0 / 3.0, 1e-12);
+    let total: f64 = t.dimensions.iter().map(|d| d.variance_share).sum();
+    near(total, 1.0, 1e-12);
+    assert_eq!(t.histogram.counts.iter().sum::<u64>(), 200_000);
+    assert_eq!(c.method.params["worst_case_fits"], serde_json::json!(false));
+    assert_eq!(c.method.params["rss_fits"], serde_json::json!(true));
+}
+
+#[test]
+fn tolerance_monte_carlo_matches_the_normal_stack_within_its_error() {
+    let (c, _) = engine().tolerance(&gap_stack()).unwrap();
+    let sigma = (0.1f64.powi(2) + 2.0 * 0.05f64.powi(2)).sqrt() / 3.0;
+    let n = 200_000.0;
+    near(v(&c, "mc_mean"), 0.2, 4.0 * sigma / f64::sqrt(n));
+    near(v(&c, "mc_sd") / sigma, 1.0, 0.01);
+    // P(gap < 0.05) = Φ((0.05 − 0.2)/σ).
+    let p = statrs::distribution::ContinuousCDF::cdf(
+        &statrs::distribution::Normal::new(0.2, sigma).unwrap(),
+        0.05,
+    );
+    near(
+        v(&c, "out_of_spec"),
+        p,
+        4.0 * (p * (1.0 - p) / n).sqrt() + 1e-6,
+    );
+    // Seeded: the same request gives the same draws, and recompute matches.
+    let (again, _) = engine().tolerance(&gap_stack()).unwrap();
+    assert_eq!(v(&again, "mc_sd"), v(&c, "mc_sd"));
+    let (re, _) = engine().recompute(&c).unwrap();
+    assert_eq!(re.verification.matched, Some(true));
+    assert_eq!(c.seed, Some(7));
+}
+
+#[test]
+fn tolerance_asymmetric_and_uniform_dimensions() {
+    let mut request = gap_stack();
+    request.dimensions = vec![
+        StackDimensionInput {
+            name: "shaft".into(),
+            nominal: 10.0,
+            tolerance: None,
+            plus: Some(0.2),
+            minus: Some(0.0),
+            direction: StackDirection::Add,
+            distribution: ToleranceDistribution::Uniform,
+        },
+        dim("spacer", 4.0, 0.06, StackDirection::Subtract),
+    ];
+    request.lower_limit = None;
+    let (c, body) = engine().tolerance(&request).unwrap();
+    near(v(&c, "nominal"), 6.0, 1e-12);
+    near(v(&c, "center"), 6.1, 1e-12);
+    near(v(&c, "worst_case_max"), 6.1 + 0.16, 1e-12);
+    let ComputedBody::Tolerance(t) = body else {
+        panic!()
+    };
+    near(t.dimensions[0].sd, 0.1 / 3f64.sqrt(), 1e-15);
+    let sigma = ((0.1f64 / 3f64.sqrt()).powi(2) + 0.02f64.powi(2)).sqrt();
+    near(v(&c, "mc_sd") / sigma, 1.0, 0.01);
+    assert!(c.value("out_of_spec").is_none());
+    let mut bad = gap_stack();
+    bad.dimensions[0].plus = Some(0.1);
+    assert!(engine().tolerance(&bad).is_err());
+    bad = gap_stack();
+    bad.dimensions[1].tolerance = Some(-0.1);
+    assert!(engine().tolerance(&bad).is_err());
+}
+
+// --- BOM costing ------------------------------------------------------------------
+
+fn bom_file(builds: f64) -> BomRequest {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/board_bom.csv",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let data = application::csv::data_set(&text, ',', inline_source()).unwrap();
+    BomRequest {
+        data,
+        items: Vec::new(),
+        part: None,
+        quantity: None,
+        unit_cost: None,
+        category: None,
+        reference: None,
+        mpn: None,
+        builds,
+        currency: Some("USD".into()),
+    }
+}
+
+#[test]
+fn bom_costs_lines_exactly_and_flags_gaps() {
+    let (c, body) = engine().bom(&bom_file(100.0)).unwrap();
+    let ComputedBody::Bom(b) = body else { panic!() };
+    // R1, R2, R5–R8: six resistors counted from the references.
+    assert_eq!(b.lines[0].quantity, "6");
+    assert!(b.lines[0].quantity_from_references);
+    assert_eq!(b.lines[0].extended.as_deref(), Some("0.0126"));
+    // "$3,45" is 3.45 (a decimal comma).
+    assert_eq!(b.lines[2].unit_cost.as_deref(), Some("3.45"));
+    // 0.0126 + 0.014 + 3.45 + 0.42 = 3.8966; the switch has no price.
+    assert_eq!(b.total, "3.8966");
+    assert_eq!(b.total_builds, "389.66");
+    assert_eq!(
+        c.value("total").and_then(|v| v.display.clone()).as_deref(),
+        Some("3.8966")
+    );
+    assert_eq!(c.value("total_builds").map(|v| v.v), Some(389.66));
+    assert_eq!(v(&c, "missing_prices"), 1.0);
+    assert_eq!(v(&c, "missing_mpns"), 1.0);
+    assert_eq!(b.categories[0].name, "ICs");
+    assert_eq!(
+        b.categories
+            .iter()
+            .find(|k| k.name == "passives")
+            .map(|k| k.total.as_str()),
+        Some("0.0266")
+    );
+    let codes: Vec<&str> = c.warnings.iter().map(|w| w.code.as_str()).collect();
+    // J1's file total 0.50 disagrees with 1 × 0.42.
+    assert!(codes.contains(&"extended_mismatch"), "{codes:?}");
+    assert!(codes.contains(&"missing_prices"));
+    assert!(c.warnings.iter().any(|w| w.text.contains("rows 4")));
+}
+
+#[test]
+fn bom_inline_items_and_errors() {
+    let mut request = bom_file(1.0);
+    request.data = DataSet::default();
+    request.items = vec![
+        BomItem {
+            part: "M3 screw".into(),
+            quantity: Some(4.0),
+            unit_cost: Some(0.1),
+            category: Some("mechanical".into()),
+            reference: None,
+            mpn: None,
+            description: None,
+        },
+        BomItem {
+            part: "case".into(),
+            quantity: Some(1.0),
+            unit_cost: Some(2.2),
+            category: None,
+            reference: None,
+            mpn: None,
+            description: None,
+        },
+    ];
+    let (c, body) = engine().bom(&request).unwrap();
+    let ComputedBody::Bom(b) = body else { panic!() };
+    // 0.1 × 4 + 2.2 = 2.6 exactly (2.6000000000000005 in binary).
+    assert_eq!(b.total, "2.6");
+    assert!(c.value("total_builds").is_none());
+    let mut negative = request.clone();
+    negative.items[0].quantity = Some(-1.0);
+    assert!(engine().bom(&negative).is_err());
+    let mut wrong = bom_file(1.0);
+    wrong.unit_cost = Some("Nope".into());
+    assert!(engine().bom(&wrong).is_err());
+}

@@ -244,6 +244,76 @@ expression: "schemars::schema_for!(ComputedBody)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A transfer function's Bode and Nyquist plots with its margins.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "bode"
+        }
+      },
+      "$ref": "#/$defs/BodeBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A Boolean function's Karnaugh map with minimal SOP and POS.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "karnaugh"
+        }
+      },
+      "$ref": "#/$defs/KarnaughBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A beam's reactions, shear, moment and deflection.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "beam"
+        }
+      },
+      "$ref": "#/$defs/BeamBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A tolerance stack-up: worst case, RSS and Monte Carlo.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tolerance"
+        }
+      },
+      "$ref": "#/$defs/ToleranceBody",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A bill of materials costed line by line.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "bom"
+        }
+      },
+      "$ref": "#/$defs/BomBody",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -3056,6 +3126,981 @@ expression: "schemars::schema_for!(ComputedBody)"
         "normalization",
         "criteria",
         "options"
+      ]
+    },
+    "FrequencyUnit": {
+      "description": "How frequencies are shown.",
+      "oneOf": [
+        {
+          "description": "Radians per second.",
+          "type": "string",
+          "const": "rad_per_s"
+        },
+        {
+          "description": "Hertz (ω / 2π).",
+          "type": "string",
+          "const": "hz"
+        }
+      ]
+    },
+    "BodePoint": {
+      "description": "One frequency of the response.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "description": "Frequency, rad/s.",
+          "type": "number",
+          "format": "double"
+        },
+        "magnitude_db": {
+          "description": "20·log10 |G(jω)|.",
+          "type": "number",
+          "format": "double"
+        },
+        "phase_deg": {
+          "description": "arg G(jω) in degrees, unwrapped along the sweep.",
+          "type": "number",
+          "format": "double"
+        },
+        "re": {
+          "description": "Re G(jω).",
+          "type": "number",
+          "format": "double"
+        },
+        "im": {
+          "description": "Im G(jω).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "w",
+        "magnitude_db",
+        "phase_deg",
+        "re",
+        "im"
+      ]
+    },
+    "Complex": {
+      "description": "A complex number (a pole or zero).",
+      "type": "object",
+      "properties": {
+        "re": {
+          "description": "Real part.",
+          "type": "number",
+          "format": "double"
+        },
+        "im": {
+          "description": "Imaginary part.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "re"
+      ]
+    },
+    "Crossover": {
+      "description": "A crossover: where |G| = 1 (gain) or the phase is −180° + k·360°\n(phase), with the margin there.",
+      "type": "object",
+      "properties": {
+        "w": {
+          "description": "Frequency, rad/s.",
+          "type": "number",
+          "format": "double"
+        },
+        "margin": {
+          "description": "Phase margin in degrees (gain crossover) or gain margin in dB\n(phase crossover).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "w",
+        "margin"
+      ]
+    },
+    "BodeBody": {
+      "description": "Body of a Bode / Nyquist card.",
+      "type": "object",
+      "properties": {
+        "numerator": {
+          "description": "Numerator coefficients, highest power of s first (gain included).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "denominator": {
+          "description": "Denominator coefficients, highest power of s first.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "delay": {
+          "description": "Dead time T in seconds (0 for none).",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "unit": {
+          "description": "How frequencies are shown.",
+          "$ref": "#/$defs/FrequencyUnit",
+          "default": "rad_per_s"
+        },
+        "points": {
+          "description": "The sweep, ascending in ω.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BodePoint"
+          }
+        },
+        "zeros": {
+          "description": "Zeros of N(s).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        },
+        "poles": {
+          "description": "Poles (zeros of D(s)).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        },
+        "gain_crossovers": {
+          "description": "Gain crossovers with the phase margin at each.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Crossover"
+          },
+          "default": []
+        },
+        "phase_crossovers": {
+          "description": "Phase crossovers with the gain margin at each.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Crossover"
+          },
+          "default": []
+        },
+        "closed_loop_poles": {
+          "description": "Poles of G/(1+G) (roots of D + N), when there is no delay.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Complex"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator",
+        "points"
+      ]
+    },
+    "Implicant": {
+      "description": "A product term (or, in a POS, the sum term of a group of zeros).",
+      "type": "object",
+      "properties": {
+        "care": {
+          "description": "Bit `n − 1 − i` set when variable `i` appears.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "value": {
+          "description": "The values of the variables that appear.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "term": {
+          "description": "The term as written (`AB'`, or `(A' + B)` in a POS).",
+          "type": "string"
+        },
+        "covers": {
+          "description": "The minterms (or maxterms) it covers, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "essential": {
+          "description": "Whether it is essential (the only prime covering some minterm).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "care",
+        "value",
+        "term",
+        "covers"
+      ]
+    },
+    "CoverMethod": {
+      "description": "How the cover was chosen.",
+      "oneOf": [
+        {
+          "description": "Essential primes, then Petrick's method: a cover with the fewest\nterms, then the fewest literals.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Essential primes, then the prime covering most uncovered minterms\n(Petrick's expansion grew too large): minimal not guaranteed.",
+          "type": "string",
+          "const": "greedy"
+        }
+      ]
+    },
+    "KarnaughBody": {
+      "description": "Body of a Karnaugh-map card.",
+      "type": "object",
+      "properties": {
+        "variables": {
+          "description": "Variable names, most significant first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "minterms": {
+          "description": "Minterms where F = 1, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "dont_cares": {
+          "description": "Don't-care minterms, ascending.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "default": []
+        },
+        "prime_implicants": {
+          "description": "Every prime implicant of F (ones and don't-cares).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          },
+          "default": []
+        },
+        "sop": {
+          "description": "The chosen product terms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          }
+        },
+        "sop_expression": {
+          "description": "The minimal sum of products, e.g. `AB' + C`.",
+          "type": "string"
+        },
+        "pos": {
+          "description": "The chosen sum terms (groups of zeros).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Implicant"
+          }
+        },
+        "pos_expression": {
+          "description": "The minimal product of sums, e.g. `(A + C)(B' + C)`.",
+          "type": "string"
+        },
+        "method": {
+          "description": "How the covers were chosen.",
+          "$ref": "#/$defs/CoverMethod"
+        }
+      },
+      "required": [
+        "variables",
+        "minterms",
+        "sop",
+        "sop_expression",
+        "pos",
+        "pos_expression",
+        "method"
+      ]
+    },
+    "LengthUnit": {
+      "description": "Length units.",
+      "oneOf": [
+        {
+          "description": "Metres.",
+          "type": "string",
+          "const": "m"
+        },
+        {
+          "description": "Millimetres.",
+          "type": "string",
+          "const": "mm"
+        },
+        {
+          "description": "Feet.",
+          "type": "string",
+          "const": "ft"
+        },
+        {
+          "description": "Inches.",
+          "type": "string",
+          "const": "in"
+        }
+      ]
+    },
+    "ForceUnit": {
+      "description": "Force units.",
+      "oneOf": [
+        {
+          "description": "Newtons.",
+          "type": "string",
+          "const": "N"
+        },
+        {
+          "description": "Kilonewtons.",
+          "type": "string",
+          "const": "kN"
+        },
+        {
+          "description": "Pounds-force.",
+          "type": "string",
+          "const": "lbf"
+        },
+        {
+          "description": "Kips (1000 lbf).",
+          "type": "string",
+          "const": "kip"
+        }
+      ]
+    },
+    "BeamSupport": {
+      "description": "A support.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "Position from the left end.",
+          "type": "number",
+          "format": "double"
+        },
+        "kind": {
+          "description": "Its kind.",
+          "$ref": "#/$defs/SupportKind",
+          "default": "pin"
+        }
+      },
+      "required": [
+        "at"
+      ]
+    },
+    "SupportKind": {
+      "description": "How a support restrains the beam.",
+      "oneOf": [
+        {
+          "description": "A pin: no vertical movement, free rotation.",
+          "type": "string",
+          "const": "pin"
+        },
+        {
+          "description": "A roller: as a pin for a beam without axial load.",
+          "type": "string",
+          "const": "roller"
+        },
+        {
+          "description": "Fixed (clamped): no movement, no rotation.",
+          "type": "string",
+          "const": "fixed"
+        }
+      ]
+    },
+    "BeamLoad": {
+      "description": "A load.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Its kind.",
+          "$ref": "#/$defs/BeamLoadKind",
+          "default": "point"
+        },
+        "at": {
+          "description": "Position (start of a distributed load).",
+          "type": "number",
+          "format": "double"
+        },
+        "end": {
+          "description": "End of a distributed load (default the beam's end).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "value": {
+          "description": "Force, force per length or moment.",
+          "type": "number",
+          "format": "double"
+        },
+        "end_value": {
+          "description": "Intensity at `end` for a linearly varying load.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "at",
+        "value"
+      ]
+    },
+    "BeamLoadKind": {
+      "description": "What a load is.",
+      "oneOf": [
+        {
+          "description": "A concentrated force at `at` (positive downward).",
+          "type": "string",
+          "const": "point"
+        },
+        {
+          "description": "A force per length from `at` to `end`, `value` at `at` and\n`end_value` (default the same) at `end` (positive downward).",
+          "type": "string",
+          "const": "distributed"
+        },
+        {
+          "description": "A concentrated moment at `at` (positive counterclockwise).",
+          "type": "string",
+          "const": "moment"
+        }
+      ]
+    },
+    "BeamReaction": {
+      "description": "A support reaction.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Support name (`A`, `B`… from the left).",
+          "type": "string"
+        },
+        "at": {
+          "description": "Position.",
+          "type": "number",
+          "format": "double"
+        },
+        "kind": {
+          "description": "Kind of support.",
+          "$ref": "#/$defs/SupportKind"
+        },
+        "force": {
+          "description": "Vertical force, positive upward.",
+          "type": "number",
+          "format": "double"
+        },
+        "moment": {
+          "description": "Moment of a fixed support, positive counterclockwise.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "at",
+        "kind",
+        "force"
+      ]
+    },
+    "BeamBody": {
+      "description": "Body of a beam card.",
+      "type": "object",
+      "properties": {
+        "length": {
+          "description": "Span.",
+          "type": "number",
+          "format": "double"
+        },
+        "length_unit": {
+          "description": "Unit of positions and the span.",
+          "$ref": "#/$defs/LengthUnit"
+        },
+        "force_unit": {
+          "description": "Unit of forces (moments are force × length).",
+          "$ref": "#/$defs/ForceUnit"
+        },
+        "supports": {
+          "description": "The supports, from the left.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamSupport"
+          }
+        },
+        "loads": {
+          "description": "The loads as given.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamLoad"
+          }
+        },
+        "reactions": {
+          "description": "One reaction per support, from the left.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BeamReaction"
+          }
+        },
+        "x": {
+          "description": "Section positions; a position repeats where shear or moment jumps\n(left value, then right).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "shear": {
+          "description": "Shear at each position.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "moment": {
+          "description": "Bending moment at each position.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "deflection": {
+          "description": "Deflection at each position, in [`LengthUnit::deflection_unit`];\nempty without E·I.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "default": []
+        },
+        "ei": {
+          "description": "E·I in N·m², when given.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "indeterminacy": {
+          "description": "Reactions beyond the two statics gives (0: statically\ndeterminate).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "length",
+        "length_unit",
+        "force_unit",
+        "supports",
+        "loads",
+        "reactions",
+        "x",
+        "shear",
+        "moment",
+        "indeterminacy"
+      ]
+    },
+    "StackDimension": {
+      "description": "One dimension of the chain.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "nominal": {
+          "description": "Nominal value.",
+          "type": "number",
+          "format": "double"
+        },
+        "plus": {
+          "description": "Upper deviation (≥ 0).",
+          "type": "number",
+          "format": "double"
+        },
+        "minus": {
+          "description": "Lower deviation as a magnitude (≥ 0).",
+          "type": "number",
+          "format": "double"
+        },
+        "direction": {
+          "description": "Added or subtracted.",
+          "$ref": "#/$defs/StackDirection"
+        },
+        "distribution": {
+          "description": "Monte Carlo distribution.",
+          "$ref": "#/$defs/ToleranceDistribution"
+        },
+        "center": {
+          "description": "Centre of the band.",
+          "type": "number",
+          "format": "double"
+        },
+        "half_width": {
+          "description": "Half-width of the band.",
+          "type": "number",
+          "format": "double"
+        },
+        "sd": {
+          "description": "Standard deviation used in the Monte Carlo.",
+          "type": "number",
+          "format": "double"
+        },
+        "worst_case_share": {
+          "description": "Share of the worst-case spread (half-width / Σ half-widths).",
+          "type": "number",
+          "format": "double"
+        },
+        "rss_share": {
+          "description": "Share of the RSS variance (half-width² / Σ half-width²).",
+          "type": "number",
+          "format": "double"
+        },
+        "variance_share": {
+          "description": "Share of the Monte Carlo variance (sd² / Σ sd²).",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "nominal",
+        "plus",
+        "minus",
+        "direction",
+        "distribution",
+        "center",
+        "half_width",
+        "sd",
+        "worst_case_share",
+        "rss_share",
+        "variance_share"
+      ]
+    },
+    "StackDirection": {
+      "description": "Whether a dimension adds to the stack or is taken away.",
+      "oneOf": [
+        {
+          "description": "Adds (+).",
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "description": "Subtracts (−).",
+          "type": "string",
+          "const": "subtract"
+        }
+      ]
+    },
+    "ToleranceDistribution": {
+      "description": "How a dimension varies within its tolerance in the Monte Carlo.",
+      "oneOf": [
+        {
+          "description": "Normal, centred, with the half-width = `sigmas` standard\ndeviations.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "Uniform over the tolerance band (a process that is not centred).",
+          "type": "string",
+          "const": "uniform"
+        }
+      ]
+    },
+    "ToleranceBody": {
+      "description": "Body of a tolerance stack-up card.",
+      "type": "object",
+      "properties": {
+        "unit": {
+          "description": "Unit of every length, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dimensions": {
+          "description": "The chain in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StackDimension"
+          }
+        },
+        "nominal": {
+          "description": "Σ ± nominal.",
+          "type": "number",
+          "format": "double"
+        },
+        "center": {
+          "description": "Σ ± centre.",
+          "type": "number",
+          "format": "double"
+        },
+        "worst_case": {
+          "description": "Worst-case lower and upper limits.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "rss": {
+          "description": "RSS lower and upper limits.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "sigmas": {
+          "description": "Standard deviations a tolerance stands for (3 by default).",
+          "type": "number",
+          "format": "double"
+        },
+        "samples": {
+          "description": "Monte Carlo draws.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mc_mean": {
+          "description": "Mean and standard deviation of the simulated stack.",
+          "type": "number",
+          "format": "double"
+        },
+        "mc_sd": {
+          "description": "Standard deviation of the simulated stack.",
+          "type": "number",
+          "format": "double"
+        },
+        "mc_range": {
+          "description": "The simulated 0.135% and 99.865% quantiles (±3σ of a normal).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "histogram": {
+          "description": "Histogram of the simulated stack.",
+          "$ref": "#/$defs/Histogram"
+        },
+        "lower_limit": {
+          "description": "Lower specification limit, if any.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "upper_limit": {
+          "description": "Upper specification limit, if any.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "dimensions",
+        "nominal",
+        "center",
+        "worst_case",
+        "rss",
+        "sigmas",
+        "samples",
+        "mc_mean",
+        "mc_sd",
+        "mc_range",
+        "histogram"
+      ]
+    },
+    "BomLine": {
+      "description": "One line of the bill of materials.",
+      "type": "object",
+      "properties": {
+        "row": {
+          "description": "Row in the source (1 = the first data row).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "part": {
+          "description": "Part name or number.",
+          "type": "string"
+        },
+        "reference": {
+          "description": "Reference designators (`R1, R2`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mpn": {
+          "description": "Manufacturer part number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "description": "Category (`uncategorized` when none).",
+          "type": "string"
+        },
+        "quantity": {
+          "description": "Quantity per unit built, decimal.",
+          "type": "string"
+        },
+        "unit_cost": {
+          "description": "Unit cost, decimal; `None` when the source has no price.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extended": {
+          "description": "Quantity × unit cost, decimal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quantity_from_references": {
+          "description": "Whether the quantity was counted from the reference designators.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "row",
+        "part",
+        "category",
+        "quantity"
+      ]
+    },
+    "BomCategory": {
+      "description": "Totals of one category.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name.",
+          "type": "string"
+        },
+        "lines": {
+          "description": "Lines in it.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "quantity": {
+          "description": "Σ quantity, decimal.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Σ extended cost of the priced lines, decimal.",
+          "type": "string"
+        },
+        "missing_prices": {
+          "description": "Lines without a price.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "lines",
+        "quantity",
+        "total",
+        "missing_prices"
+      ]
+    },
+    "BomBody": {
+      "description": "Body of a BOM costing card.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "description": "Currency of the costs, shown only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "builds": {
+          "description": "Units built, decimal (the totals are per unit and × this).",
+          "type": "string"
+        },
+        "lines": {
+          "description": "The lines in source order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BomLine"
+          }
+        },
+        "categories": {
+          "description": "Totals per category, largest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BomCategory"
+          }
+        },
+        "total": {
+          "description": "Cost of one unit (priced lines only), decimal.",
+          "type": "string"
+        },
+        "total_builds": {
+          "description": "Cost of all the units built, decimal.",
+          "type": "string"
+        },
+        "has_mpn": {
+          "description": "Whether the source had an MPN column (so missing MPNs mean\nsomething).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "builds",
+        "lines",
+        "categories",
+        "total",
+        "total_builds"
       ]
     }
   }

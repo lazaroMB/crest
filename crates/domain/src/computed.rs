@@ -19,6 +19,9 @@
 
 pub mod ab_test;
 pub mod apa;
+pub mod beam;
+pub mod bode;
+pub mod bom;
 pub mod bootstrap;
 pub mod cash_flow;
 pub mod contingency;
@@ -26,12 +29,14 @@ pub mod decision_matrix;
 pub mod distribution;
 pub mod equations;
 pub mod forecast;
+pub mod karnaugh;
 pub mod lint;
 pub mod narrative;
 pub mod optimization;
 pub mod power;
 pub mod simulation;
 pub mod slots;
+pub mod tolerance;
 
 use std::collections::BTreeMap;
 
@@ -40,6 +45,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use self::ab_test::{AbArm, AbMethod, AbTestBody};
+pub use self::beam::{
+    BeamBody, BeamLoad, BeamLoadKind, BeamReaction, BeamSupport, ForceUnit, InertiaUnit,
+    LengthUnit, ModulusUnit, SupportKind,
+};
+pub use self::bode::{BodeBody, BodePoint, Complex, Crossover, FrequencyUnit};
+pub use self::bom::{BomBody, BomCategory, BomLine};
 pub use self::bootstrap::{BootInterval, BootMethod, BootStatistic, BootstrapBody};
 pub use self::cash_flow::{CashFlowBody, CashFlowRow};
 pub use self::contingency::{ContingencyBody, ContingencyTest};
@@ -53,11 +64,13 @@ pub use self::distribution::{
 };
 pub use self::equations::{EquationsBody, PlugBack, SolveMethod, SolvedUnknown};
 pub use self::forecast::{ForecastBody, Holdout, SeasonalComponent};
+pub use self::karnaugh::{CoverMethod, Implicant, KarnaughBody};
 pub use self::optimization::{
     ConstraintOp, OptConstraint, OptVariable, OptimizationBody, OptimizationStatus, Sense,
 };
 pub use self::power::{PowerBody, PowerTarget, PowerTest};
 pub use self::simulation::{SimInputSummary, SimulationBody, TornadoBar};
+pub use self::tolerance::{StackDimension, StackDirection, ToleranceBody, ToleranceDistribution};
 
 /// Version written in `crest_computed`. Readers accept any `1.x`.
 pub const COMPUTED_VERSION: &str = "1.0";
@@ -641,6 +654,16 @@ pub enum ComputedBody {
     CashFlow(CashFlowBody),
     /// A weighted decision matrix.
     DecisionMatrix(DecisionMatrixBody),
+    /// A transfer function's Bode and Nyquist plots with its margins.
+    Bode(BodeBody),
+    /// A Boolean function's Karnaugh map with minimal SOP and POS.
+    Karnaugh(KarnaughBody),
+    /// A beam's reactions, shear, moment and deflection.
+    Beam(BeamBody),
+    /// A tolerance stack-up: worst case, RSS and Monte Carlo.
+    Tolerance(ToleranceBody),
+    /// A bill of materials costed line by line.
+    Bom(BomBody),
 }
 
 impl ComputedBody {
@@ -678,6 +701,11 @@ impl ComputedBody {
             Self::Simulation(body) => body.validate(),
             Self::CashFlow(body) => body.validate(),
             Self::DecisionMatrix(body) => body.validate(),
+            Self::Bode(body) => body.validate(),
+            Self::Karnaugh(body) => body.validate(),
+            Self::Beam(body) => body.validate(),
+            Self::Tolerance(body) => body.validate(),
+            Self::Bom(body) => body.validate(),
             Self::Test(_) | Self::CalcSheet(_) | Self::Quantity(_) => Ok(()),
         }
     }

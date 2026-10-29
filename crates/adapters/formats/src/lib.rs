@@ -18,7 +18,9 @@
 //! - Terraform / OpenTofu plans ([`terraform`], serde_json);
 //! - Graphviz DOT ([`dot`], own reduced parser) and ER diagrams from SQL
 //!   DDL ([`er`], sqlparser);
-//! - criterion benchmark estimates ([`bench`], serde).
+//! - criterion benchmark estimates ([`bench`], serde);
+//! - digital waveforms ([`waveform`], wellen: VCD, FST, GHW);
+//! - netlists ([`netlist`], own SPICE and KiCad readers).
 
 pub mod bench;
 pub mod dataset;
@@ -30,14 +32,16 @@ pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod netlist;
 pub mod query_plan;
 pub mod sarif;
 pub mod terraform;
 pub mod trace;
 pub mod wave;
+pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -48,6 +52,8 @@ use domain::devops::logs::LogSpec;
 use domain::devops::query_plan::QueryPlanSpec;
 use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
+use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
+use domain::engineering::waveform::WaveformSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
 
@@ -145,5 +151,22 @@ impl FormatsPort for Formats {
 
     fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError> {
         bench::parse(request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_waveform(
+        &self,
+        bytes: &[u8],
+        request: &WaveRequest,
+    ) -> Result<WaveformSpec, FormatError> {
+        waveform::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_netlist(
+        &self,
+        text: &str,
+        format: Option<NetlistFormat>,
+        path: Option<&str>,
+    ) -> Result<NetlistSpec, FormatError> {
+        netlist::parse(text, format, path).map_err(FormatError::Invalid)
     }
 }

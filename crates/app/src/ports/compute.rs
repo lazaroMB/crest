@@ -17,6 +17,7 @@
 //! Engines are CPU-bound and synchronous: async callers run them on a
 //! blocking thread.
 
+mod engineering;
 mod solve;
 mod stats;
 
@@ -26,6 +27,7 @@ use domain::computed::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use self::engineering::*;
 pub use self::solve::*;
 pub use self::stats::*;
 
@@ -427,6 +429,16 @@ pub enum ComputeRequest {
     CashFlow(CashFlowRequest),
     /// [`ComputePort::decide`].
     Decide(DecideRequest),
+    /// [`ComputePort::bom`].
+    Bom(BomRequest),
+    /// [`ComputePort::tolerance`].
+    Tolerance(ToleranceRequest),
+    /// [`ComputePort::beam`].
+    Beam(BeamRequest),
+    /// [`ComputePort::karnaugh`].
+    Karnaugh(KarnaughRequest),
+    /// [`ComputePort::bode`].
+    Bode(BodeRequest),
 }
 
 impl ComputeRequest {
@@ -456,6 +468,7 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&r.data),
             Self::Bootstrap(r) => Some(&r.data),
             Self::Forecast(r) => Some(&r.data),
+            Self::Bom(r) => Some(&r.data),
             Self::Calc(_)
             | Self::Convert(_)
             | Self::Power(_)
@@ -464,7 +477,11 @@ impl ComputeRequest {
             | Self::Solve(_)
             | Self::Simulate(_)
             | Self::CashFlow(_)
-            | Self::Decide(_) => None,
+            | Self::Decide(_)
+            | Self::Tolerance(_)
+            | Self::Beam(_)
+            | Self::Karnaugh(_)
+            | Self::Bode(_) => None,
         }
     }
 
@@ -480,6 +497,7 @@ impl ComputeRequest {
             Self::Contingency(r) => Some(&mut r.data),
             Self::Bootstrap(r) => Some(&mut r.data),
             Self::Forecast(r) => Some(&mut r.data),
+            Self::Bom(r) => Some(&mut r.data),
             Self::Calc(_)
             | Self::Convert(_)
             | Self::Power(_)
@@ -488,7 +506,11 @@ impl ComputeRequest {
             | Self::Solve(_)
             | Self::Simulate(_)
             | Self::CashFlow(_)
-            | Self::Decide(_) => None,
+            | Self::Decide(_)
+            | Self::Tolerance(_)
+            | Self::Beam(_)
+            | Self::Karnaugh(_)
+            | Self::Bode(_) => None,
         }
     }
 }
@@ -640,6 +662,57 @@ pub trait ComputePort: Send + Sync {
     /// fewer than two options.
     fn decide(&self, request: &DecideRequest) -> ComputeResult;
 
+    /// A bill of materials costed line by line in decimal arithmetic:
+    /// quantity times unit cost, totals per category and per build, and the
+    /// lines without a price or MPN.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty BOM, a missing part column,
+    /// negative quantities or prices, or unreadable numbers.
+    fn bom(&self, request: &BomRequest) -> ComputeResult;
+
+    /// A one-dimensional tolerance stack: worst-case and RSS limits, a seeded
+    /// Monte Carlo of the result with the share out of specification, and
+    /// each dimension's contribution.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for an empty chain, negative tolerances,
+    /// limits that cross, or a sample count out of range.
+    fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult;
+
+    /// A straight Euler-Bernoulli beam by the stiffness method: reactions,
+    /// shear and bending-moment diagrams and, given E and I, the deflection.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for positions outside the span, a beam that
+    /// is not held (a mechanism), loads with no extent, or non-finite
+    /// numbers.
+    fn beam(&self, request: &BeamRequest) -> ComputeResult;
+
+    /// A Boolean function of up to six variables: its Karnaugh map, prime
+    /// implicants and a minimal sum of products and product of sums.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for more than six variables, out-of-range
+    /// terms, a term that is both a minterm and a don't-care, or an
+    /// expression that does not parse.
+    fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult;
+
+    /// The frequency response of a transfer function: Bode magnitude and
+    /// phase, the Nyquist curve, poles and zeros, crossovers with gain and
+    /// phase margins and the closed-loop poles.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::Invalid`] for a zero denominator or numerator,
+    /// degrees above 30, a pole on the sweep, or complex roots without
+    /// their conjugates.
+    fn bode(&self, request: &BodeRequest) -> ComputeResult;
+
     /// Re-runs `envelope` from its stored request. The result keeps the
     /// envelope's id and fills `verification` (time, match, the values
     /// that changed) against `envelope`.
@@ -674,6 +747,11 @@ pub trait ComputePort: Send + Sync {
             ComputeRequest::Simulate(r) => self.simulate(r),
             ComputeRequest::CashFlow(r) => self.cash_flow(r),
             ComputeRequest::Decide(r) => self.decide(r),
+            ComputeRequest::Bom(r) => self.bom(r),
+            ComputeRequest::Tolerance(r) => self.tolerance(r),
+            ComputeRequest::Beam(r) => self.beam(r),
+            ComputeRequest::Karnaugh(r) => self.karnaugh(r),
+            ComputeRequest::Bode(r) => self.bode(r),
         }
     }
 }

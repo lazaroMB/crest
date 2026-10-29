@@ -296,6 +296,143 @@ impl FakeCompute {
                     npv_curve: Curve::default(),
                 }),
             ),
+            ComputeRequest::Bode(r) => (
+                "solve.bode",
+                "Frequency response",
+                "bode",
+                ComputedBody::Bode(BodeBody {
+                    numerator: r.numerator.clone(),
+                    denominator: r.denominator.clone(),
+                    delay: r.delay,
+                    unit: r.unit,
+                    points: vec![BodePoint {
+                        w: 1.0,
+                        magnitude_db: -3.0,
+                        phase_deg: -45.0,
+                        re: 0.5,
+                        im: -0.5,
+                    }],
+                    zeros: Vec::new(),
+                    poles: vec![Complex { re: -1.0, im: 0.0 }],
+                    gain_crossovers: Vec::new(),
+                    phase_crossovers: Vec::new(),
+                    closed_loop_poles: vec![Complex { re: -2.0, im: 0.0 }],
+                }),
+            ),
+            ComputeRequest::Karnaugh(r) => (
+                "solve.karnaugh",
+                "Karnaugh map",
+                "karnaugh",
+                ComputedBody::Karnaugh(KarnaughBody {
+                    variables: if r.variables.is_empty() {
+                        vec!["A".into(), "B".into()]
+                    } else {
+                        r.variables.clone()
+                    },
+                    minterms: r.minterms.clone(),
+                    dont_cares: r.dont_cares.clone(),
+                    prime_implicants: Vec::new(),
+                    sop: vec![Implicant {
+                        care: 0b10,
+                        value: 0b10,
+                        term: "A".into(),
+                        covers: vec![2, 3],
+                        essential: true,
+                    }],
+                    sop_expression: "A".into(),
+                    pos: Vec::new(),
+                    pos_expression: "A".into(),
+                    method: CoverMethod::Exact,
+                }),
+            ),
+            ComputeRequest::Beam(r) => (
+                "solve.beam",
+                "Beam analysis",
+                "beam",
+                ComputedBody::Beam(BeamBody {
+                    length: r.length,
+                    length_unit: r.length_unit,
+                    force_unit: r.force_unit,
+                    supports: r.supports.clone(),
+                    loads: r.loads.clone(),
+                    reactions: r
+                        .supports
+                        .iter()
+                        .map(|s| BeamReaction {
+                            name: "A".into(),
+                            at: s.at,
+                            kind: s.kind,
+                            force: 1.0,
+                            moment: None,
+                        })
+                        .collect(),
+                    x: vec![0.0, r.length],
+                    shear: vec![1.0, -1.0],
+                    moment: vec![0.0, 0.0],
+                    deflection: Vec::new(),
+                    ei: None,
+                    indeterminacy: 0,
+                }),
+            ),
+            ComputeRequest::Tolerance(r) => (
+                "solve.tolerance",
+                "Tolerance stack-up",
+                "tolerance",
+                ComputedBody::Tolerance(ToleranceBody {
+                    unit: r.unit.clone(),
+                    dimensions: Vec::new(),
+                    nominal: r
+                        .dimensions
+                        .iter()
+                        .map(|d| d.direction.sign() * d.nominal)
+                        .sum(),
+                    center: 0.0,
+                    worst_case: [-0.3, 0.3],
+                    rss: [-0.17, 0.17],
+                    sigmas: r.sigmas,
+                    samples: r.samples,
+                    mc_mean: 0.0,
+                    mc_sd: 0.058,
+                    mc_range: [-0.17, 0.17],
+                    histogram: Histogram {
+                        edges: vec![-0.3, 0.0, 0.3],
+                        counts: vec![1, 1],
+                    },
+                    lower_limit: r.lower_limit,
+                    upper_limit: r.upper_limit,
+                }),
+            ),
+            ComputeRequest::Bom(r) => (
+                "solve.bom",
+                "BOM cost",
+                "bom",
+                ComputedBody::Bom(BomBody {
+                    currency: r.currency.clone(),
+                    builds: "1".into(),
+                    lines: vec![BomLine {
+                        row: 1,
+                        part: "R 10k".into(),
+                        reference: Some("R1, R2".into()),
+                        mpn: None,
+                        description: None,
+                        category: "passives".into(),
+                        quantity: "2".into(),
+                        unit_cost: Some("0.01".into()),
+                        extended: Some("0.02".into()),
+                        quantity_from_references: false,
+                    }],
+                    categories: vec![BomCategory {
+                        name: "passives".into(),
+                        lines: 1,
+                        quantity: "2".into(),
+                        total: "0.02".into(),
+                        missing_prices: 0,
+                    }],
+                    total: "0.02".into(),
+                    total_builds: "0.02".into(),
+                    has_mpn: false,
+                }),
+            ),
             ComputeRequest::Decide(r) => (
                 "solve.decision_matrix",
                 "Decision matrix",
@@ -629,6 +766,26 @@ impl ComputePort for FakeCompute {
 
     fn decide(&self, request: &DecideRequest) -> ComputeResult {
         self.answer(&ComputeRequest::Decide(request.clone()), None)
+    }
+
+    fn bom(&self, request: &BomRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bom(request.clone()), None)
+    }
+
+    fn tolerance(&self, request: &ToleranceRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Tolerance(request.clone()), None)
+    }
+
+    fn beam(&self, request: &BeamRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Beam(request.clone()), None)
+    }
+
+    fn karnaugh(&self, request: &KarnaughRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Karnaugh(request.clone()), None)
+    }
+
+    fn bode(&self, request: &BodeRequest) -> ComputeResult {
+        self.answer(&ComputeRequest::Bode(request.clone()), None)
     }
 
     fn recompute(&self, envelope: &Computed) -> ComputeResult {

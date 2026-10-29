@@ -6,7 +6,7 @@
 //! | table | TSV, CSV |
 //! | chart | CSV, TSV (its data table, [`ChartSpec::to_table`]) |
 //! | plot | the `PlotSpec` JSON |
-//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix), envelope JSON (in the card's own footer) |
+//! | computed card | APA line, reproduce lines, the card's tables as CSV (distribution bins, contingency cells, power curve, A/B arms, bootstrap intervals, forecast, LP solution, equation plug-back, Monte Carlo tornado, cash-flow periods, decision matrix, frequency response, Karnaugh SOP / POS / truth table, beam diagrams, tolerance chain, costed BOM), envelope JSON (in the card's own footer) |
 //! | mermaid | source |
 //! | test report | failing test names |
 //! | findings | `file:line: rule message` lines |
@@ -14,6 +14,9 @@
 //! | dataset | column profile CSV, preview rows CSV |
 //! | molecule | SMILES, canonical SMILES, formula, SVG |
 //! | plate | `well,label,value` CSV |
+//! | waveform | value changes CSV, every signal's value at the end |
+//! | netlist | `net,component,pin` CSV, components CSV, the graph as DOT |
+//! | material | properties CSV with the source of each value (or `unverified`) |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -368,6 +371,45 @@ pub fn computed_body(body: &ComputedBody) -> Vec<CopyFormat> {
         }
         formats.push(CopyFormat::new("matrix", "matrix CSV", csv));
     }
+    if let ComputedBody::Bode(b) = body {
+        let mut csv = format!(
+            "w_{},magnitude_db,phase_deg,re,im\n",
+            b.unit.symbol().replace('/', "_per_")
+        );
+        for p in &b.points {
+            csv.push_str(&format!(
+                "{},{},{},{},{}\n",
+                b.unit.from_rad(p.w),
+                p.magnitude_db,
+                p.phase_deg,
+                p.re,
+                p.im
+            ));
+        }
+        formats.push(CopyFormat::new("response", "frequency response CSV", csv));
+    }
+    if let ComputedBody::Karnaugh(k) = body {
+        formats.push(CopyFormat::new("sop", "SOP", k.sop_expression.clone()));
+        formats.push(CopyFormat::new("pos", "POS", k.pos_expression.clone()));
+        formats.push(CopyFormat::new(
+            "truth",
+            "truth table CSV",
+            k.truth_table_csv(),
+        ));
+    }
+    if let ComputedBody::Beam(b) = body {
+        formats.push(CopyFormat::new(
+            "diagrams",
+            "shear/moment/deflection CSV",
+            b.to_csv(),
+        ));
+    }
+    if let ComputedBody::Tolerance(t) = body {
+        formats.push(CopyFormat::new("chain", "stack chain CSV", t.to_csv()));
+    }
+    if let ComputedBody::Bom(b) = body {
+        formats.push(CopyFormat::new("bom", "costed BOM CSV", b.to_csv()));
+    }
     formats
 }
 
@@ -496,6 +538,16 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
         BlockKind::Benchmarks(spec) => {
             vec![CopyFormat::new("csv", "CSV", spec.to_csv())]
         }
+        BlockKind::Waveform(spec) => vec![
+            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
+            CopyFormat::new("end", "values at end", spec.values_at(spec.end, spec.radix)),
+        ],
+        BlockKind::Netlist(spec) => vec![
+            CopyFormat::new("nets", "nets CSV", spec.nets_csv()),
+            CopyFormat::new("components", "components CSV", spec.components_csv()),
+            CopyFormat::new("dot", "DOT", spec.to_graph().to_dot()),
+        ],
+        BlockKind::Material(spec) => vec![CopyFormat::new("csv", "properties CSV", spec.to_csv())],
         BlockKind::Diagram(spec) if spec.tables.is_empty() => {
             vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
         }

@@ -2,7 +2,8 @@
 //! statistics tools `stats_describe`, `stats_test`, `stats_regress` and
 //! `stats_correlate`, and the unit tools `calc` (a calc sheet) and
 //! `convert` (one unit conversion), whose input is the port request as is,
-//! and the card tools of [`cards`] (distribution, ...).
+//! and the card tools of [`cards`] (distribution, ...) and [`engineering`]
+//! (Bode, ...).
 //! [`register_compute_tools`] adds them and [`COMPUTE_TOOLS_PROMPT`] tells
 //! the model to compute with them and to cite numbers through slots.
 //!
@@ -45,12 +46,16 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 mod cards;
+mod engineering;
 
 pub use self::cards::{
     AbTest, Bootstrap, CashFlow, CashFlowTool, Contingency, Decide, DecisionMatrixTool,
     Distribution, Equations, ForecastKind, Lp, Power, Simulate, SimulateTool, SolveEquationsTool,
     SolveLpTool, StatsAbTestTool, StatsBootstrapTool, StatsContingencyTool, StatsDistributionTool,
     StatsForecastTool, StatsPowerTool,
+};
+pub use self::engineering::{
+    Beam, BeamTool, Bode, BodeTool, Bom, BomTool, Karnaugh, KarnaughTool, Tolerance, ToleranceTool,
 };
 
 use super::registry::{
@@ -761,6 +766,11 @@ quantity built from uncertain inputs (a business case, a Fermi estimate), call `
 For NPV, IRR or payback of a series of cash flows, call `cash_flow`; to compare options \
 against weighted criteria, `decision_matrix`.
 
+For engineering: the frequency response, margins and crossovers of a transfer function come \
+from `bode`; minimise a Boolean function (a Karnaugh map, SOP and POS) with `karnaugh`; reactions, shear, moment and \
+deflection of a beam come from `beam`; worst-case, RSS and Monte Carlo tolerance stacks \
+from `tolerance_stack`; the cost of a bill of materials (a CSV/JSON BOM) from `bom_cost`.
+
 For any arithmetic with units, or anything beyond trivial arithmetic, call `calc` with the \
 steps as named lines (`v = 100 km/h`, `t = 90 min`, `d = v * t -> km`) instead of working it \
 out yourself; for a unit conversion call `convert`. Quote results through their slots.
@@ -772,7 +782,7 @@ fails, fix the input and call it again.";
 
 /// Registers `stats_describe`, `stats_test`, `stats_regress`,
 /// `stats_correlate`, `calc`, `convert` and the phase-2 card tools
-/// ([`cards`]) over `ports`.
+/// ([`cards`]) and the engineering tools ([`engineering`]) over `ports`.
 ///
 /// # Errors
 ///
@@ -797,7 +807,12 @@ pub fn register_compute_tools(
     registry.register_typed(SolveEquationsTool::new(ports.clone()))?;
     registry.register_typed(SimulateTool::new(ports.clone()))?;
     registry.register_typed(CashFlowTool::new(ports.clone()))?;
-    registry.register_typed(DecisionMatrixTool::new(ports.clone()))
+    registry.register_typed(DecisionMatrixTool::new(ports.clone()))?;
+    registry.register_typed(BodeTool::new(ports.clone()))?;
+    registry.register_typed(KarnaughTool::new(ports.clone()))?;
+    registry.register_typed(BeamTool::new(ports.clone()))?;
+    registry.register_typed(ToleranceTool::new(ports.clone()))?;
+    registry.register_typed(BomTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -909,8 +924,19 @@ mod tests {
         );
         insta::assert_json_snapshot!(
             "decision_matrix_definition",
-            definition(DecisionMatrixTool::new(ports))
+            definition(DecisionMatrixTool::new(ports.clone()))
         );
+        insta::assert_json_snapshot!("bode_definition", definition(BodeTool::new(ports.clone())));
+        insta::assert_json_snapshot!(
+            "karnaugh_definition",
+            definition(KarnaughTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!("beam_definition", definition(BeamTool::new(ports.clone())));
+        insta::assert_json_snapshot!(
+            "tolerance_stack_definition",
+            definition(ToleranceTool::new(ports.clone()))
+        );
+        insta::assert_json_snapshot!("bom_cost_definition", definition(BomTool::new(ports)));
     }
 
     #[tokio::test]
@@ -1195,10 +1221,14 @@ mod tests {
         assert_eq!(
             registry.names(),
             [
+                "beam",
+                "bode",
+                "bom_cost",
                 "calc",
                 "cash_flow",
                 "convert",
                 "decision_matrix",
+                "karnaugh",
                 "monte_carlo",
                 "solve_equations",
                 "solve_lp",
@@ -1211,7 +1241,8 @@ mod tests {
                 "stats_forecast",
                 "stats_power",
                 "stats_regress",
-                "stats_test"
+                "stats_test",
+                "tolerance_stack"
             ]
         );
         for name in registry.names() {

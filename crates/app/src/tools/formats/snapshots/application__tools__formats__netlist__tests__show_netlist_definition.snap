@@ -1,0 +1,70 @@
+---
+source: crates/app/src/tools/formats/netlist.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_netlist",
+  "description": "Shows a circuit netlist (a SPICE deck or a KiCad `.net` export, in `path` or `source`) as connectivity in the user's timeline: a component–net graph (pins as edges, ground and single-pin nets marked) and a component table with each pin's net. Returns the counts per component kind, the largest nets, the nets with only one pin, each component's nets and the subcircuits, read from the file: trust these over your own reading of the text.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A netlist of the workspace: a SPICE deck (`.cir`, `.sp`, `.spice`,\n`.net` from LTspice or ngspice) or a KiCad netlist export\n(`.net`, s-expressions). Give this or `source`.",
+        "default": null
+      },
+      "source": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Netlist text inline (a SPICE deck you wrote). Give this or `path`.",
+        "default": null
+      },
+      "format": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NetlistFormat"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "`spice` or `kicad`; guessed from the text when absent.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above; defaults to the file name or the deck's title.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_netlist`.",
+    "title": "ShowNetlist",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "NetlistFormat": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "spice",
+            "description": "A SPICE deck (`.cir`, `.sp`, `.net` from a simulator)."
+          },
+          {
+            "type": "string",
+            "const": "kicad",
+            "description": "A KiCad netlist export (`.net`, s-expressions)."
+          }
+        ],
+        "description": "Where the netlist came from."
+      }
+    }
+  }
+}

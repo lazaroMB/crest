@@ -1,0 +1,129 @@
+---
+source: crates/app/src/tools/compute.rs
+expression: "definition(BodeTool::new(ports))"
+---
+{
+  "name": "bode",
+  "description": "Computes the frequency response of a transfer function with crest's deterministic engine: G(s) as `numerator`/`denominator` coefficients in s (highest power first) or as `zeros`, `poles` and `gain`, with an optional dead time `delay` (seconds). The user sees Bode magnitude and phase plots on log-frequency axes with the crossovers marked, the Nyquist curve around −1, the poles and zeros, and the closed-loop poles under unity negative feedback. You get the gain and phase margins, the crossover frequencies, the DC gain and the −3 dB bandwidth as slots to cite.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "numerator": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "double"
+        },
+        "description": "Numerator coefficients, highest power of s first: `[10]` for 10,\n`[1, 2]` for s + 2. Give `numerator` and `denominator`, or\n`zeros`, `poles` and `gain`.",
+        "default": []
+      },
+      "denominator": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "double"
+        },
+        "description": "Denominator coefficients, highest power of s first: `[1, 3, 2]`\nfor s² + 3s + 2.",
+        "default": []
+      },
+      "zeros": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Complex"
+        },
+        "description": "Zeros as `{re, im}`; complex ones in conjugate pairs.",
+        "default": []
+      },
+      "poles": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Complex"
+        },
+        "description": "Poles as `{re, im}`; complex ones in conjugate pairs.",
+        "default": []
+      },
+      "gain": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Gain k of k·Π(s − z)/Π(s − p) (default 1)."
+      },
+      "delay": {
+        "type": "number",
+        "format": "double",
+        "description": "Dead time in seconds: G(s)·e^(−s·delay).",
+        "default": 0.0
+      },
+      "w_min": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Lowest frequency of the sweep, in `unit`; chosen from the poles\nand zeros when absent."
+      },
+      "w_max": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "Highest frequency of the sweep, in `unit`."
+      },
+      "points": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0,
+        "description": "Points of the sweep, log-spaced (default 400).",
+        "default": 400
+      },
+      "unit": {
+        "$ref": "#/$defs/FrequencyUnit",
+        "description": "`rad_per_s` (default) or `hz`, for `w_min`/`w_max` and the card.",
+        "default": "rad_per_s"
+      }
+    },
+    "description": "Input of `bode`: a transfer function as polynomials in s, or as\nzeros, poles and a gain, with an optional dead time.",
+    "title": "BodeRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "Complex": {
+        "type": "object",
+        "properties": {
+          "re": {
+            "type": "number",
+            "format": "double",
+            "description": "Real part."
+          },
+          "im": {
+            "type": "number",
+            "format": "double",
+            "description": "Imaginary part.",
+            "default": 0.0
+          }
+        },
+        "required": [
+          "re"
+        ],
+        "description": "A complex number (a pole or zero)."
+      },
+      "FrequencyUnit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "rad_per_s",
+            "description": "Radians per second."
+          },
+          {
+            "type": "string",
+            "const": "hz",
+            "description": "Hertz (ω / 2π)."
+          }
+        ],
+        "description": "How frequencies are shown."
+      }
+    }
+  }
+}

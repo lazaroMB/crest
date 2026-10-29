@@ -131,7 +131,7 @@ fn gamma(rng: &mut Rng, shape: f64) -> f64 {
 }
 
 /// One draw of a distribution.
-fn draw(d: &SimDistribution, rng: &mut Rng) -> f64 {
+pub(crate) fn draw(d: &SimDistribution, rng: &mut Rng) -> f64 {
     match *d {
         SimDistribution::Fixed { value } => value,
         SimDistribution::Normal { mean, sd } => mean + sd * rng.normal(),

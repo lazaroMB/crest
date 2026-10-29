@@ -30,6 +30,11 @@
 //! | `simulate{ inputs = { { name, distribution = { type = 'normal', mean, sd }, source, unit } }, model, output, unit, samples, seed }` | Monte Carlo, tornado, Fermi |
 //! | `cash_flow{ flows, rate, finance_rate, reinvest_rate, currency, period }` | NPV, IRR, MIRR, payback |
 //! | `decide{ criteria = { { name, weight, direction } }, options = { { name, scores } }, normalization }` | decision matrix |
+//! | `bode{ numerator, denominator, zeros, poles, gain, delay, w_min, w_max, points, unit }` | Bode / Nyquist, margins |
+//! | `karnaugh{ variables, minterms, maxterms, dont_cares, expression }` | Karnaugh map, minimal SOP and POS |
+//! | `beam{ length, length_unit, force_unit, supports = { { at, kind } }, loads = { { kind, at, end, value, end_value } }, e, e_unit, i, i_unit, segments }` | beam reactions, shear, moment, deflection |
+//! | `tolerance{ dimensions = { { name, nominal, tolerance, plus, minus, direction, distribution } }, lower_limit, upper_limit, unit, sigmas, samples, seed }` | tolerance stack-up |
+//! | `bom{ data, items = { { part, quantity, unit_cost, category, reference, mpn } }, part, quantity, unit_cost, category, reference, mpn, builds, currency }` | BOM costing (`data` may be a `.json` array of records) |
 //!
 //! `data` is a CSV/TSV path of the workspace (read through the same guard
 //! as the model's `read_file`; `delimiter` picks the separator) or a table
@@ -38,7 +43,8 @@
 //! padded with missing values, so a trailing `nil` is not lost when
 //! another column has that row. The other fields are those of the tools.
 //! `calc`, `convert`, `power`, `ab_test`, `optimize`, `solve`, `simulate`,
-//! `cash_flow` and `decide` read no data.
+//! `cash_flow`, `decide`, `bode`, `karnaugh`, `beam` and `tolerance` read
+//! no data.
 //! The envelope is in `result["$crest_block"].envelope` (its `values`,
 //! `method`, `warnings`...). A request the engine rejects raises a Lua
 //! error with the reason. The calls block the VM while the engine runs.
@@ -228,6 +234,10 @@ fn run(lua: &Lua, origin: &Origin, kind: &str, args: &Table) -> mlua::Result<Val
             | "simulate"
             | "cash_flow"
             | "decide"
+            | "bode"
+            | "karnaugh"
+            | "beam"
+            | "tolerance"
     );
     let data = match args.get::<Value>("data")? {
         _ if !reads_data => Json::Null,
@@ -297,6 +307,11 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
         "simulate",
         "cash_flow",
         "decide",
+        "bode",
+        "karnaugh",
+        "beam",
+        "tolerance",
+        "bom",
     ] {
         let origin = Arc::clone(origin);
         compute.set(
@@ -466,6 +481,66 @@ mod tests {
             panic!("not a distribution");
         };
         assert_eq!(d.data.source.path.as_deref(), Some("cars.tsv"));
+    }
+
+    #[test]
+    fn the_engineering_card_requests_take_their_tables() {
+        let engine = Arc::new(FakeCompute::new());
+        let out = run_code(
+            "return app.compute.bode{ numerator = { 1 }, denominator = { 1, 1, 0 }, delay = 0.1 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        assert_eq!(envelope(out).kind, "solve.bode");
+        let requests = engine.requests();
+        let ComputeRequest::Bode(bode) = &requests[0] else {
+            panic!("not a Bode request");
+        };
+        assert_eq!(bode.denominator, [1.0, 1.0, 0.0]);
+        assert_eq!(bode.points, 400);
+        run_code(
+            "return app.compute.karnaugh{ expression = \"AB' + C\", dont_cares = { 0 } }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Karnaugh(k) = &engine.requests()[1] else {
+            panic!("not a Karnaugh request");
+        };
+        assert_eq!(k.dont_cares, [0]);
+        run_code(
+            "return app.compute.beam{ length = 6, supports = { { at = 0 }, { at = 6, kind = 'roller' } },
+               loads = { { kind = 'distributed', at = 0, value = 10 } }, force_unit = 'kN' }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Beam(b) = &engine.requests()[2] else {
+            panic!("not a beam request");
+        };
+        assert_eq!(b.supports[1].kind, domain::computed::SupportKind::Roller);
+        assert_eq!(b.segments, 200);
+        run_code(
+            "return app.compute.tolerance{ dimensions = { { name = 'a', nominal = 10, tolerance = 0.1 },
+               { name = 'b', nominal = 9.8, tolerance = 0.05, direction = 'subtract' } }, lower_limit = 0 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Tolerance(t) = &engine.requests()[3] else {
+            panic!("not a tolerance request");
+        };
+        assert_eq!(t.samples, 100_000);
+        assert_eq!(
+            t.dimensions[1].direction,
+            domain::computed::StackDirection::Subtract
+        );
+        run_code(
+            "return app.compute.bom{ items = { { part = 'case', quantity = 1, unit_cost = 2.2 } }, builds = 10 }",
+            Arc::clone(&engine),
+        )
+        .unwrap();
+        let ComputeRequest::Bom(b) = &engine.requests()[4] else {
+            panic!("not a BOM request");
+        };
+        assert_eq!((b.items.len(), b.builds), (1, 10.0));
     }
 
     #[test]

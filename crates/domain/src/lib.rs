@@ -9,6 +9,7 @@ pub mod conversation;
 pub mod dataset;
 pub mod decision;
 pub mod devops;
+pub mod engineering;
 pub mod form;
 pub mod git;
 pub mod math;

@@ -1,0 +1,26 @@
+Common-emitter amplifier with an RC filter
+* supply and input
+.include models/2n3904.lib
+V1 vcc 0 DC 12
+Vin in 0 SIN(0 10m 1k) ; small signal
+C1 in b 10u
+R1 vcc b 47k
+R2 b 0 10k
+Q1 c b e 2N3904
+RC vcc c 4.7k
+RE e 0 1k
+CE e 0
++ 100u
+X1 c out 0 rcfilt R=1k
+M1 d g 0 0 NMOS W=1u L=180n
+Rg g 0 1meg
+Rd vcc d 2k
+Rx c float 1k
+
+.subckt rcfilt a y gnd params: R=1k
+R1 a y {R}
+C1 y gnd 1n
+.ends rcfilt
+.model NMOS nmos level=1
+.tran 1u 5m
+.end

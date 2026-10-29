@@ -211,6 +211,11 @@ fn builtin_effect(name: &str) -> &'static str {
         | "monte_carlo"
         | "cash_flow"
         | "decision_matrix"
+        | "bode"
+        | "karnaugh"
+        | "beam"
+        | "tolerance_stack"
+        | "bom_cost"
         | "show_trace"
         | "show_flamegraph"
         | "show_logs"
@@ -219,7 +224,10 @@ fn builtin_effect(name: &str) -> &'static str {
         | "show_terraform_plan"
         | "show_dot"
         | "show_er"
-        | "show_benchmarks" => "read",
+        | "show_benchmarks"
+        | "show_waveform"
+        | "show_netlist"
+        | "show_material" => "read",
         "web_search" | "web_fetch" => "network (no approval)",
         _ => "",
     }

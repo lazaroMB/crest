@@ -572,6 +572,31 @@ fn phase_two_cards() -> Vec<(Computed, ComputedBody, &'static [&'static str])> {
             ComputedBody::DecisionMatrix(super::decision_matrix::tests::body()),
             &[],
         ),
+        (
+            card("solve.bode", "Frequency response"),
+            ComputedBody::Bode(super::bode::tests::body()),
+            &["magnitude", "phase", "nyquist"],
+        ),
+        (
+            card("solve.karnaugh", "Karnaugh map"),
+            ComputedBody::Karnaugh(super::karnaugh::tests::body()),
+            &[],
+        ),
+        (
+            card("solve.beam", "Beam analysis"),
+            ComputedBody::Beam(super::beam::tests::body()),
+            &["shear", "moment", "deflection"],
+        ),
+        (
+            card("solve.tolerance", "Tolerance stack-up"),
+            ComputedBody::Tolerance(super::tolerance::tests::body()),
+            &["stack"],
+        ),
+        (
+            card("solve.bom", "BOM cost"),
+            ComputedBody::Bom(super::bom::tests::body()),
+            &[],
+        ),
     ]
 }
 
