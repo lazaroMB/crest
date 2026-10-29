@@ -46,6 +46,7 @@ declare -A scenes=(
     [modal]="showcase --scene modal"
     [blocks]="showcase --scene blocks"
     [routing]="showcase --scene routing"
+    [technical]="showcase --scene technical"
     [board]="sysboard"
 )
 # Crop of the capture, for examples whose window has placeholders around
@@ -54,12 +55,13 @@ declare -A crop=(
     [board]="1240x760+20+20"
     [blocks]="1280x870+0+0"
     [routing]="1280x690+0+0"
+    [technical]="1280x900+0+0"
 )
 # What each example prints once it is worth capturing (empty: a delay).
 declare -A ready=(
     [showcase]="showcase: ready"
 )
-order=(hero research approval help model3d modal blocks routing board)
+order=(hero research approval help model3d modal blocks routing technical board)
 [ "$#" -gt 0 ] && order=("$@")
 
 cd "$root"

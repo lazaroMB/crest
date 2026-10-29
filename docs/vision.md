@@ -12,14 +12,18 @@ crest is the workspace where a coding agent **shows its work, verifies it, and l
 4. **Open and portable.** crest reads the `AGENTS.md` and `CLAUDE.md` your project already has, talks to any model provider (cloud or local), and is free software. Leaving costs nothing.
 5. **Programmable.** Tools, commands, hooks, blocks, modals and whole **pipelines** are Lua, in a sandbox, with capabilities you approve.
 
-## Where we are (v0.6)
+## Where we are (v0.17)
 
-- A native GPUI window: a timeline of rich blocks, a prompt with history, a status bar with model, permission mode, cost and git.
+- A native GPUI window: a timeline of rich blocks, a prompt with history, a status bar with model, permission mode, cost and git; a Chats panel that lists every project's chats and a rail of the questions asked.
+- Blocks for technical work: test reports, findings, datasets, traces, flame graphs, logs, query plans, waveforms, CAD parts, molecules, sequences, spectra, maps, Gantt charts and more, computed from the file and summarised to the model.
+- Numbers you can verify: statistics, calc sheets with units, solvers and engineering cards computed by deterministic engines, with provenance, Recompute, number slots in the reply and reproduce lines for Python and R; TeX math in replies; `ask_user` forms answered in the chat.
 - Guided workflows: research (from a problem to a Spec and a plan: five stages by default, with the independent work in parallel and gates only where you decide, or the full fourteen with `--deep`), implementation (task by task, one commit each, a report) and simulation (a Spec's scenarios on a 3D board).
 - Approvals with the exact diff, `ask` / `auto-edit` / `plan` modes and "allow always" rules.
-- Lua config and plugins (tools, commands, hooks, keymaps, blocks, modals) with capabilities; MCP servers with explicit trust.
+- Lua config and plugins (tools, commands, hooks, keymaps, blocks, computed cards, format readers, forms, modals) with capabilities; MCP servers with explicit trust; web search and fetch through `curl`.
 - An optional decision model (Cloudflare Clef) that routes each prompt's tools and model and reads answers at the gates.
-- `/open` for code, documents, images and 3D models.
+- `/open` for code, documents, images and 3D models (OBJ, STL, PLY, STEP).
+- Two model accounts, Anthropic and OpenCode (Go and Zen), with prefixed ids and fallback chains across them.
+- Installers for the three platforms: a Homebrew cask with signed and notarized builds, winget and a PowerShell script, and `install.sh` for Linux.
 
 What has not been verified and what is missing is in [status.md](status.md).
 
@@ -110,7 +114,7 @@ Before loading a new repository's `.crest/init.lua` and its MCP servers, crest a
 - **A worktree per tab**, optional, so parallel tasks on one repository never step on each other; pipelines and implementation flows running side by side.
 - **GitHub**: `/issue <n>` straight into research or implementation, opening pull requests and answering review comments (through `gh`).
 - **Sharing**: export a session or a pipeline run as a self-contained HTML page, as `board.html` does for simulations.
-- **Distribution**: signed and notarized macOS builds, a signed Windows installer (MSI), packages for Linux distributions.
+- **Distribution**: a signed Windows installer (MSI) and packages for Linux distributions (macOS builds are signed and notarized since v0.14).
 
 ## Out of scope
 
