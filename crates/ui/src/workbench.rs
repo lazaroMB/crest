@@ -606,7 +606,9 @@ impl Workbench {
         true
     }
 
-    /// Saves `title` on the chat `id` and refreshes the list.
+    /// Saves `title` on the chat `id` and refreshes the list. The list
+    /// already shows the title and the prompt has the focus back: the save
+    /// of a chat with a turn running waits for the turn.
     fn rename_chat(
         &mut self,
         id: String,
@@ -617,6 +619,13 @@ impl Workbench {
         let Some(session) = self.session().cloned() else {
             return;
         };
+        // The field is gone: a focus left nowhere (or in the list) goes
+        // back to the prompt; a click elsewhere keeps its target.
+        let lost = window.focused(cx).is_none()
+            || self.chats.focus_handle(cx).contains_focused(window, cx);
+        if lost {
+            session.update(cx, |session, cx| session.focus_input(window, cx));
+        }
         let current = self.open_id().as_deref() == Some(id.as_str());
         let opener = Arc::clone(&self.opener);
         // The session of the chat, shown or parked, saves the title itself:
@@ -629,6 +638,7 @@ impl Workbench {
                 .get(&id)
                 .map(|live| live.session.read(cx).retitle(title.clone()))
         };
+        let renamed = id.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = if let Some(primary) = primary {
                 match primary.await {
@@ -638,29 +648,19 @@ impl Workbench {
             } else {
                 opener.rename_chat(id, title).await
             };
-            this.update_in(cx, |this, window, cx| {
-                this.finish_rename(result, window, cx);
-            })
-            .ok();
+            this.update(cx, |this, cx| this.finish_rename(&renamed, result, cx))
+                .ok();
         })
         .detach();
     }
 
-    fn finish_rename(
-        &mut self,
-        result: Result<(), String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_rename(&mut self, id: &str, result: Result<(), String>, cx: &mut Context<Self>) {
         if let Err(err) = &result {
             self.notify(format!("could not rename the chat: {err}"), cx);
+            self.chats
+                .update(cx, |chats, cx| chats.forget_title(id, cx));
         }
         self.reload_chats(cx);
-        if result.is_ok()
-            && let Some(session) = self.session().cloned()
-        {
-            session.update(cx, |session, cx| session.focus_input(window, cx));
-        }
     }
 
     /// Shows `message` as a warning in the shown session, if any.
@@ -860,6 +860,11 @@ mod tests {
         fn new_session(&self) -> BoxFuture<'static, ()> {
             futures::future::ready(()).boxed()
         }
+
+        /// As a running turn holding the app: the title never saves.
+        fn set_chat_title(&self, _title: String) -> BoxFuture<'static, Result<(), String>> {
+            futures::future::pending().boxed()
+        }
     }
 
     /// Opens every directory but `/home/u/bad`; records what it opened.
@@ -867,6 +872,8 @@ mod tests {
     struct Opener {
         opened: Mutex<Vec<PathBuf>>,
         news: Mutex<usize>,
+        /// Titles saved by `rename_chat`, by id.
+        titles: Mutex<HashMap<String, String>>,
     }
 
     impl ProjectOpener for Opener {
@@ -915,9 +922,10 @@ mod tests {
         }
 
         fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
+            let titles = self.titles.lock().unwrap_or_else(PoisonError::into_inner);
             let chat = |id: &str| crate::chats::ChatEntry {
                 id: id.to_owned(),
-                title: id.to_owned(),
+                title: titles.get(id).cloned().unwrap_or_else(|| id.to_owned()),
             };
             futures::future::ready(vec![ProjectChats {
                 name: "proj".into(),
@@ -925,6 +933,14 @@ mod tests {
                 chats: vec![chat("latest"), chat("second")],
             }])
             .boxed()
+        }
+
+        fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
+            self.titles
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(id, title);
+            futures::future::ready(Ok(())).boxed()
         }
 
         fn browser(&self) -> Arc<dyn ProjectBrowserPort> {
@@ -941,6 +957,7 @@ mod tests {
         let opener = Arc::new(Opener {
             opened: Mutex::new(Vec::new()),
             news: Mutex::new(0),
+            titles: Mutex::new(HashMap::new()),
         });
         let (view, cx) =
             cx.add_window_view(|window, cx| Workbench::picker(opener, None, window, cx));
@@ -1179,6 +1196,57 @@ mod tests {
             !chats.read_with(cx, |c, _| c.menu_open()),
             "a click outside closes it"
         );
+    }
+
+    #[gpui::test]
+    fn a_renamed_chat_shows_its_name_even_while_its_save_waits(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let rename =
+            |row: &'static str, menu: &'static str, name: &str, cx: &mut VisualTestContext| {
+                redraw(cx);
+                let at = cx.debug_bounds(row).expect("the chat row").center();
+                cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+                cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+                redraw(cx);
+                let item = cx.debug_bounds(menu).expect("Rename").center();
+                cx.simulate_click(item, gpui::Modifiers::none());
+                redraw(cx);
+                assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+                cx.simulate_keystrokes("ctrl-a backspace");
+                cx.simulate_input(name);
+                cx.simulate_keystrokes("enter");
+                cx.run_until_parked();
+            };
+        let title = |id: &str, cx: &mut VisualTestContext| {
+            chats.read_with(cx, |c, _| c.title_of(id)).expect("listed")
+        };
+        // The open chat: its session saves the title, here never (a turn
+        // holds it). The list shows it at once and the prompt is back.
+        rename("chats-session-0-0", "chats-rename-0-0", "Mi chat", cx);
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()), "Enter saved");
+        assert_eq!(title("latest", cx), "Mi chat");
+        cx.update(|window, cx| {
+            let input = session.read(cx).input().focus_handle(cx);
+            assert!(
+                input.contains_focused(window, cx),
+                "the prompt has the focus"
+            );
+        });
+        // Another chat: the store saves it and the catalog lists it.
+        rename("chats-session-0-1", "chats-rename-0-1", "Otro", cx);
+        assert_eq!(title("second", cx), "Otro");
+        view.update(cx, |view, cx| view.reload_chats(cx));
+        cx.run_until_parked();
+        assert_eq!(title("second", cx), "Otro", "saved");
+        assert_eq!(title("latest", cx), "Mi chat", "still waiting");
     }
 
     #[gpui::test]
