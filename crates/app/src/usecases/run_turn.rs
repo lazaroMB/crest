@@ -438,6 +438,12 @@ impl AgentService {
         self.gate.permissions()
     }
 
+    /// Where the "always in project" rules are written, if anywhere.
+    #[must_use]
+    pub fn project_rules(&self) -> Option<&ProjectRules> {
+        self.gate.project_rules()
+    }
+
     /// The tools offered to the model.
     #[must_use]
     pub fn tools(&self) -> &ToolRegistry {
