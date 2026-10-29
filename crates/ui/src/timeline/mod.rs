@@ -3,6 +3,7 @@
 
 mod column;
 pub mod numbers;
+mod outline;
 mod render;
 mod selection;
 mod state;
