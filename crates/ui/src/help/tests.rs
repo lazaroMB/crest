@@ -149,7 +149,8 @@ fn filter_keeps_matching_rows_in_every_section() {
         ("ECHO", &[(Section::Tools, 1), (Section::Mcp, 1)]),
         ("issue fetches", &[(Section::Tools, 1)]),
         ("issue nope", &[(Section::Tools, 0)]),
-        ("help", &[(Section::Commands, 1), (Section::Keys, 2)]),
+        // Keys: F1 and <leader>h, then the help's own seven.
+        ("help", &[(Section::Commands, 1), (Section::Keys, 9)]),
         ("model", &[(Section::Cli, 1)]),
         ("unexpected", &[(Section::Files, 1)]),
         ("pending", &[(Section::Plugins, 1)]),
@@ -244,4 +245,34 @@ fn commands_of_builtin_actions_say_their_keys() {
     assert!(row("picker.files").description.ends_with("(Ctrl+G ff)"));
     assert!(row("picker.grep").description.ends_with("(Ctrl+G fg)"));
     assert_eq!(row("review").description, "Review the changes");
+}
+
+#[test]
+fn the_keys_list_each_panel_after_the_keymap_once() {
+    let keymap = default_keymap();
+    let full = snapshot().complete(&local(&keymap, &[]));
+    let fixed = full.keys.iter().filter(|r| r.panel.is_some()).count();
+    assert_eq!(fixed, panel_keys::PANEL_KEYS.len());
+    // The panels come after the keymap, and completing again adds nothing.
+    let first_fixed = full.keys.iter().position(|r| r.panel.is_some()).unwrap();
+    assert!(full.keys[first_fixed..].iter().all(|r| r.panel.is_some()));
+    let again = full.clone().complete(&local(&keymap, &[]));
+    assert_eq!(again.keys.len(), full.keys.len());
+
+    let rows = section_rows(&full, Section::Keys);
+    let groups: Vec<&str> = rows.iter().filter_map(|r| r.group.as_deref()).collect();
+    assert!(groups[0].starts_with("Shortcuts"));
+    assert!(groups.contains(&"Chats sidebar (fixed keys)"), "{groups:?}");
+    assert!(groups.contains(&"Approval dialog (fixed keys)"));
+    // A fixed row has no action tag; the search finds a panel by name.
+    assert!(rows[first_fixed].tags.is_empty());
+    let sidebar = filter(&full, "chats sidebar rename");
+    assert_eq!(
+        sidebar
+            .keys
+            .iter()
+            .map(|r| r.keys.as_str())
+            .collect::<Vec<_>>(),
+        ["F2, r"]
+    );
 }

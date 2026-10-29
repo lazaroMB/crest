@@ -10,6 +10,9 @@
 //!
 //! [`filter`] is the search box: a pure function over the snapshot.
 //!
+//! The Keys section lists the keymap, then the keys each panel handles by
+//! itself ([`panel_keys::PANEL_KEYS`], a static table).
+//!
 //! [`SessionController::help`]: crate::session::SessionController::help
 
 use std::fmt;
@@ -23,8 +26,10 @@ use domain::permission::PermissionMode;
 use crate::commands::BUILTIN_COMMANDS;
 use crate::session::ModelChoice;
 
+pub mod panel_keys;
 mod view;
 
+pub use panel_keys::panel_key_rows;
 pub use view::HelpView;
 
 /// Builtin action that opens the help.
@@ -64,6 +69,8 @@ pub struct KeyRow {
     pub source: String,
     /// Whether it replaces a builtin mapping of the same keys.
     pub overridden: bool,
+    /// The panel that handles the keys by itself; `None` for the keymap.
+    pub panel: Option<String>,
 }
 
 /// Where a tool comes from.
@@ -221,6 +228,9 @@ impl HelpSnapshot {
         self.commands = commands;
         if self.keys.is_empty() {
             self.keys = key_rows(local.keymap, |_| None);
+        }
+        if !self.keys.iter().any(|row| row.panel.is_some()) {
+            self.keys.extend(panel_key_rows());
         }
         if self.models.is_empty() {
             self.models = local
@@ -383,6 +393,7 @@ pub fn key_rows(
                 description,
                 source,
                 overridden,
+                panel: None,
             }
         })
         .collect()
@@ -501,7 +512,10 @@ pub fn filter(snapshot: &HelpSnapshot, query: &str) -> HelpSnapshot {
         keys: snapshot
             .keys
             .iter()
-            .filter(|r| keep(&[&r.keys, &r.action, &r.description, &r.source]))
+            .filter(|r| {
+                let panel = r.panel.as_deref().unwrap_or_default();
+                keep(&[&r.keys, &r.action, &r.description, &r.source, panel])
+            })
             .cloned()
             .collect(),
         tools: snapshot
@@ -620,6 +634,9 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                 .map(|ix| {
                     let r = &rows[ix];
                     let mut tags = vec![r.action.clone()];
+                    if r.panel.is_some() {
+                        tags.clear();
+                    }
                     if r.source != BUILTIN_SOURCE {
                         tags.push(r.source.clone());
                     }
@@ -627,8 +644,11 @@ pub fn section_rows(snapshot: &HelpSnapshot, section: Section) -> Vec<RowView> {
                         tags.push("overrides default".into());
                     }
                     RowView {
-                        group: group_of(rows, ix, |_| {
-                            "Shortcuts (they work wherever the focus is)".to_owned()
+                        group: group_of(rows, ix, |r| match &r.panel {
+                            Some(panel) => format!("{panel} (fixed keys)"),
+                            None => "Shortcuts (the keymap; dialogs, pickers and forms keep \
+                                     their own keys)"
+                                .to_owned(),
                         }),
                         primary: r.keys.clone(),
                         secondary: r.description.clone(),
