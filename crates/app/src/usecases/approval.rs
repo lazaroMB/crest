@@ -302,7 +302,7 @@ mod tests {
             UserVerdict::Approved
         );
         assert_eq!(gate.decide(&action), Decision::Allow);
-        assert_eq!(store.rules(Path::new("/w")), [rule.clone()]);
+        assert_eq!(store.rules(Path::new("/w")), std::slice::from_ref(&rule));
         // Asked again (another session's rule), nothing is duplicated.
         gate.ask(pending("cargo build"), &sink).await;
         assert_eq!(store.rules(Path::new("/w")), [rule]);

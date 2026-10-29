@@ -259,7 +259,10 @@ mod tests {
             lock_permissions(&permissions).rules,
             [rule("ls"), promoted.clone()]
         );
-        assert_eq!(store.rules(Path::new("/w")), [promoted.clone()]);
+        assert_eq!(
+            store.rules(Path::new("/w")),
+            std::slice::from_ref(&promoted)
+        );
         // Promoting again does not duplicate the entry.
         lock_permissions(&permissions).remember(session.clone());
         promote_rule(&permissions, Some(&project), &session)
@@ -281,7 +284,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.0.contains("disk full"), "{err}");
-        assert_eq!(lock_permissions(&permissions).rules, [session.clone()]);
+        assert_eq!(
+            lock_permissions(&permissions).rules,
+            std::slice::from_ref(&session)
+        );
         assert!(
             promote_rule(&permissions, None, &session).await.is_err(),
             "no project file"
@@ -300,7 +306,10 @@ mod tests {
         remove_rule(&permissions, Some(&project), &denied)
             .await
             .unwrap();
-        assert_eq!(lock_permissions(&permissions).rules, [session.clone()]);
+        assert_eq!(
+            lock_permissions(&permissions).rules,
+            std::slice::from_ref(&session)
+        );
         assert_eq!(
             store.rules(Path::new("/w")),
             [rule("edit_file(src/*)").with_scope(RuleScope::Project)]
