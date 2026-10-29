@@ -12,7 +12,7 @@ use application::ports::store::{SessionStorePort, SessionSummary, StoreError, St
 use async_trait::async_trait;
 use domain::block::Block;
 use domain::conversation::{Session, SessionId};
-use domain::permission::PermissionRule;
+use domain::permission::{PermissionRule, RuleScope};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 
@@ -190,6 +190,8 @@ fn replace_blocks(tx: &Transaction<'_>, id: &str, blocks: &[Block]) -> Result<()
     Ok(())
 }
 
+/// Replaces the rules of session `id` with its session rules: project
+/// rules live in the workspace's permissions file, not with a session.
 fn replace_rules(
     tx: &Transaction<'_>,
     id: &str,
@@ -200,7 +202,8 @@ fn replace_rules(
     let mut insert = tx
         .prepare("INSERT INTO permission_rules (session_id, seq, rule_json) VALUES (?1, ?2, ?3)")
         .map_err(sql_error)?;
-    for (seq, rule) in (0_i64..).zip(rules) {
+    let session_rules = rules.iter().filter(|rule| rule.scope == RuleScope::Session);
+    for (seq, rule) in (0_i64..).zip(session_rules) {
         insert
             .execute(params![id, seq, to_json(rule)?])
             .map_err(sql_error)?;
@@ -442,6 +445,23 @@ pub(crate) mod tests {
         let stored = sample("/ws", 10, 100);
         save(&mut conn, &stored).unwrap();
         assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+    }
+
+    #[test]
+    fn only_session_rules_are_saved() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut stored = sample("/ws", 1, 1);
+        let session_rule = stored.permission_rules[0].clone();
+        stored.permission_rules.insert(
+            0,
+            PermissionRule::new("run_command", RuleMatcher::Any, RuleDecision::Deny)
+                .with_scope(RuleScope::Project),
+        );
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(
+            load(&mut conn, stored.session.id).unwrap().permission_rules,
+            [session_rule]
+        );
     }
 
     #[test]
