@@ -13,7 +13,9 @@
 //! enters it (opens a recent one).
 //!
 //! All disk access goes through the [`ProjectBrowserPort`]; choosing emits
-//! [`ProjectPickerEvent::Chosen`] and the owner opens the project.
+//! [`ProjectPickerEvent::Chosen`] and the owner opens the project. Opened
+//! from a project (`/project`), `Esc` or **Back** emits
+//! [`ProjectPickerEvent::Back`] to return to it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,6 +37,8 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 pub enum ProjectPickerEvent {
     /// Open this directory as the project.
     Chosen(PathBuf),
+    /// Go back to the project the picker was opened from.
+    Back,
 }
 
 /// A recent project and whether it still exists.
@@ -81,6 +85,8 @@ pub struct ProjectPickerView {
     selected: usize,
     error: Option<String>,
     notice: Option<String>,
+    /// Whether there is a project to go back to.
+    can_go_back: bool,
     listing_task: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -125,6 +131,7 @@ impl ProjectPickerView {
             selected: 0,
             error: None,
             notice: None,
+            can_go_back: false,
             listing_task: None,
             _tasks: Vec::new(),
             _subscriptions: vec![changed, keys],
@@ -152,6 +159,12 @@ impl ProjectPickerView {
             })
             .ok();
         }));
+    }
+
+    /// Offers `Esc` and a **Back** button to return to the open project.
+    pub fn set_can_go_back(&mut self, can_go_back: bool, cx: &mut Context<Self>) {
+        self.can_go_back = can_go_back;
+        cx.notify();
     }
 
     /// A message under the path field (why a project did not open).
@@ -265,6 +278,7 @@ impl ProjectPickerView {
         let text = self.text(cx);
         let no_filter = split_typed_path(&text).filter.is_empty();
         match keystroke.key.as_str() {
+            "escape" if self.can_go_back => cx.emit(ProjectPickerEvent::Back),
             "enter" if ctrl => self.open_listed(cx),
             "enter" => self.open_selected(&rows, cx),
             "up" if !rows.is_empty() => {
@@ -502,7 +516,26 @@ impl Render for ProjectPickerView {
                 .border_1()
                 .border_color(theme.border)
                 .rounded_md()
-                .child(div().text_lg().child("Open a project"))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(div().text_lg().child("Open a project"))
+                        .children(self.can_go_back.then(|| {
+                            div()
+                                .id("project-back")
+                                .debug_selector(|| "project-back".to_owned())
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .cursor_pointer()
+                                .child("Back (Esc)")
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(ProjectPickerEvent::Back)),
+                                )
+                        })),
+                )
                 .child(Input::new(&self.input))
                 .children(
                     self.notice
@@ -567,8 +600,9 @@ mod tests {
         let seen = chosen.clone();
         cx.update(|window, cx| {
             cx.subscribe(&view, move |_, event: &ProjectPickerEvent, _| {
-                let ProjectPickerEvent::Chosen(path) = event;
-                seen.borrow_mut().push(path.clone());
+                if let ProjectPickerEvent::Chosen(path) = event {
+                    seen.borrow_mut().push(path.clone());
+                }
             })
             .detach();
             view.update(cx, |view, cx| view.focus(window, cx));

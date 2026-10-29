@@ -106,7 +106,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
-| `/project` | Closes this project and goes back to the [project picker](#opening-a-project). Not while a turn or command runs. |
+| `/project` | Goes back to the [project picker](#opening-a-project); this project closes once you choose another one, and `Esc` or **Back** returns to it. Not while a turn or command runs. |
 | `/login [anthropic\|opencode]` | Asks for the API key of Anthropic or OpenCode (`Tab` switches) in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). `Esc` or **Cancel** closes it, also while the key is being checked; a check with no answer in 30 s fails with a message. See [configuration.md](configuration.md#model-providers-and-api-keys). |
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
@@ -419,7 +419,7 @@ Without a directory (`crest`, or the desktop launcher), or with `--pick`, the wi
 
 A directory that cannot be read says why under the field; a project that fails to open brings the picker back with the reason. While a project opens the window says `Opening <dir>…`.
 
-`/project` closes the open project (once no turn or command runs) and goes back to the picker, at the project's parent; the session is already saved. Everything the project started (MCP servers, plugins) stops with it.
+`/project` (once no turn or command runs) goes back to the picker, at the project's parent; the session is already saved. `Esc` or **Back** in the picker returns to the project as it was. Choosing another project closes this one, and everything it started (MCP servers, plugins) stops with it.
 
 ## Command line
 

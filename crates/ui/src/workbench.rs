@@ -4,11 +4,13 @@
 //! The UI does not know how to build a session: the binary passes a
 //! [`ProjectOpener`] that turns a directory into [`SessionParts`]. While it
 //! works the window says so; when it fails the picker comes back with the
-//! reason. `/project` dispatches [`SwitchProject`], which drops the open
-//! session (and with it everything the binary started for it) and shows
-//! the picker again. [`SessionEvent::Reopen`] (after `/login` or
-//! `/logout`) builds the session of the same directory again, so the agent
-//! starts with the new API key.
+//! reason. `/project` dispatches [`SwitchProject`], which shows the picker
+//! again; the open session (and with it everything the binary started for
+//! it) is dropped once another project is chosen. Until then it is kept out
+//! of sight, and `Esc` or **Back** in the picker returns to it.
+//! [`SessionEvent::Reopen`] (after `/login` or `/logout`) builds the
+//! session of the same directory again, so the agent starts with the new
+//! API key.
 //!
 //! Switching chats while a turn runs (a form waiting for an answer, a long
 //! reply) parks the busy session instead of dropping it: it keeps running
@@ -102,6 +104,8 @@ pub struct Workbench {
     content: Content,
     /// Busy sessions whose chat was left, by session id.
     parked: HashMap<String, Live>,
+    /// The session `/project` left, until a project is chosen.
+    back: Option<Live>,
     chats: Entity<ChatsPanel>,
     focus_handle: FocusHandle,
     _chats: Subscription,
@@ -120,6 +124,7 @@ impl Workbench {
             opener,
             content: Content::Opening(dir),
             parked: HashMap::new(),
+            back: None,
             chats,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
@@ -220,9 +225,9 @@ impl Workbench {
         cx.subscribe_in(
             &picker,
             window,
-            |this, _, event: &ProjectPickerEvent, window, cx| {
-                let ProjectPickerEvent::Chosen(dir) = event;
-                this.open(dir.clone(), window, cx);
+            |this, _, event: &ProjectPickerEvent, window, cx| match event {
+                ProjectPickerEvent::Chosen(dir) => this.open(dir.clone(), window, cx),
+                ProjectPickerEvent::Back => this.go_back(window, cx),
             },
         )
         .detach();
@@ -254,6 +259,8 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let opening = self.opener.open_as(dir.clone(), which);
+        // Dropping the session `/project` left drops its controller.
+        self.back = None;
         self.content = Content::Opening(dir.clone());
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
@@ -613,8 +620,27 @@ impl Workbench {
             return;
         }
         let at = live.dir.parent().map(Path::to_path_buf);
-        // Dropping the session drops its controller and what it started.
+        let Content::Session(live) =
+            std::mem::replace(&mut self.content, Content::Opening(PathBuf::new()))
+        else {
+            return;
+        };
+        // Kept, out of sight and without the keyboard, until a project is
+        // chosen: `Esc` or Back returns to it.
+        live.session
+            .update(cx, |session, cx| session.set_shown(false, window, cx));
+        self.back = Some(live);
         self.show_picker(at.as_deref(), None, window, cx);
+        if let Content::Picker(picker) = &self.content {
+            picker.update(cx, |picker, cx| picker.set_can_go_back(true, cx));
+        }
+    }
+
+    /// Back from the picker `/project` opened to the session it left.
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(live) = self.back.take() {
+            self.show_live(live, window, cx);
+        }
     }
 }
 
@@ -950,5 +976,50 @@ mod tests {
         });
         cx.update(|_, _| {});
         assert!(weak.upgrade().is_none(), "the first session was dropped");
+    }
+
+    #[gpui::test]
+    fn esc_or_back_returns_from_slash_project_to_the_session(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let to_picker = |cx: &mut VisualTestContext| {
+            session.update_in(cx, |session, window, cx| {
+                session.command("project", window, cx)
+            });
+            cx.run_until_parked();
+            view.read_with(cx, |view, _| assert!(view.project_picker().is_some()));
+        };
+        to_picker(cx);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(
+            shown(&view, cx) == session,
+            "Esc goes back to the same session"
+        );
+        cx.update(|window, cx| {
+            let input = session.read(cx).input().focus_handle(cx);
+            assert!(
+                input.contains_focused(window, cx),
+                "with the prompt focused"
+            );
+        });
+
+        to_picker(cx);
+        let back = cx.debug_bounds("project-back").expect("Back drawn");
+        cx.simulate_click(back.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(shown(&view, cx) == session, "so does Back");
+
+        // Choosing a project drops it.
+        to_picker(cx);
+        let weak = session.downgrade();
+        drop(session);
+        view.update_in(cx, |view, window, cx| {
+            view.open(PathBuf::from("/home/u/other"), window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|_, _| {});
+        assert!(weak.upgrade().is_none(), "the left session was dropped");
     }
 }
