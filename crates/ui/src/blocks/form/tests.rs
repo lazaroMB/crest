@@ -206,6 +206,35 @@ fn a_click_on_the_form_keeps_the_focus_in_it(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn escape_with_answers_asks_before_discarding_them(cx: &mut TestAppContext) {
+    let (cx, view, block) = window(cx);
+    let mut answer = ask(cx, &view, &block);
+    assert!(cx.debug_bounds("form-note").is_none(), "Label is missing");
+    // The focus is in the first field (Label): type into it.
+    cx.simulate_input("x");
+    draw(cx, &view);
+    assert!(
+        cx.debug_bounds("form-note").is_some(),
+        "the keys are shown once nothing is missing"
+    );
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(answer.try_recv().ok().flatten(), None, "not cancelled yet");
+    let form = cx.update(|window, cx| super::view(block.id, &spec(), window, cx));
+    assert!(form.read_with(cx, |f, _| f.confirming_cancel()));
+    // Another key disarms it.
+    cx.simulate_input("y");
+    assert!(!form.read_with(cx, |f, _| f.confirming_cancel()));
+    cx.simulate_keystrokes("escape escape");
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never(),
+        Some(Ok(FormResponse::Cancelled { reason: None })),
+        "the second Esc cancels"
+    );
+}
+
+#[gpui::test]
 fn escape_and_the_cancel_button_cancel(cx: &mut TestAppContext) {
     let (cx, view, block) = window(cx);
     let answer = ask(cx, &view, &block);

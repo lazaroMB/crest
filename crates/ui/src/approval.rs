@@ -543,6 +543,14 @@ impl ApprovalView {
             .gap_2()
             .justify_end()
             .child(
+                div()
+                    .debug_selector(|| "approval-keys".to_owned())
+                    .flex_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Esc rejects without a reason"),
+            )
+            .child(
                 Button::new("approval-approve")
                     .primary()
                     .label("Approve (y)")
@@ -853,6 +861,11 @@ mod tests {
     fn escape_rejects_and_backs_out_of_the_reason(cx: &mut TestAppContext) {
         let (port, view, cx) = dialog(cx);
         let first = ask(&port, command_request(1), cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("approval-keys").is_some(),
+            "the dialog says what Esc does"
+        );
         cx.simulate_keystrokes("escape");
         assert_eq!(
             answered(first, cx),

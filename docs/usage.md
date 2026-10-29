@@ -249,7 +249,7 @@ When approval is needed, a dialog opens with the colored diff (for edits) or wit
 | `y` | Approve this once. |
 | `a` | Always approve: creates a rule for **that same tool and that exact subject** (the same path or the same command line, nothing broader). |
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
-| `Esc` | Reject without a reason. |
+| `Esc` | Reject without a reason (the dialog's footer reminds you). |
 | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Scroll a long preview. |
 
 There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
@@ -334,7 +334,7 @@ TeX math in replies and markdown blocks is typeset with RaTeX: inline `$..$`, `\
 
 ### Forms (`ask_user`)
 
-When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
+When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels (once you have typed or chosen something, the first `Esc` only asks and a second one discards the answers; the footer says so) and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
 
 ### Plots, reports, data, lab and operations blocks
 
