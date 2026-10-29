@@ -44,7 +44,7 @@ There are no modes: the prompt is always ready to type (a multi-line editor, up 
 
 - `Enter` sends the prompt; `Shift+Enter` adds a line.
 - A line that starts with `/` is a **command** (`/model opus`, `/research …`). To send a prompt that starts with a slash, double it: `//etc/hosts` sends `/etc/hosts`.
-- Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it. The palette and the `@`, `/model` and `/theme` popups also hide when you click outside the prompt or move the focus away from it; typing shows them again.
+- Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it. The palette and the `@`, `/model` and `/theme` popups also hide when you click outside the prompt or move the focus away from it; typing shows them again. They show eight rows at a time: `↑`/`↓` reach every entry (the rows scroll with the choice, wrapping around at the ends), the wheel scrolls them too, and the footer says which rows are shown and how many more there are (`1–8 of 20 · 12 more`).
 - **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+G` is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt. They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
 
 ### Focus
@@ -54,7 +54,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 - `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
 - `Esc` goes back to the prompt from anywhere. In the timeline it first closes what is open there: the questions menu, the "Copy" hint, or the state of the focused block (a zoom, a cursor, a selection, a measurement); the next `Esc` goes back to the prompt.
 - Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below and the keys of the focused block (`+`, `-`, `0`, `w`/`a`/`s`/`d`...).
-- The rail of marks at the right of the timeline opens the menu of your questions; a click on the rail again, on a question, on its `✕` or anywhere else closes it.
+- The rail of marks at the right of the timeline opens the menu of your questions, scrolled to the current one; a click on the rail again, on a question, on its `✕` or anywhere else closes it.
 
 | Panel | Keys while it has the focus |
 | --- | --- |
@@ -63,6 +63,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | Help | See [Help](#help). |
 | Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
 | Approval dialog | `y`, `a`, `n`, `Esc`; `↑` / `↓`, `PageUp` / `PageDown` scroll the preview. |
+| Filterable list (logs, `app.ui.list`) | After a click on a row, or `↓` from its filter: `↑` / `↓`, `Home` / `End` move the selection (kept in view), `Enter` opens or closes the selected item's fields. |
 | Simulation board | See [Simulation board](#simulation-board). |
 
 ### Default key bindings
@@ -220,7 +221,8 @@ A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` m
 
 - Clicking a directory opens or closes it.
 - Clicking a file inserts `@path`.
-- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
+- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce), keeping the selected file selected (when it is gone, the row that took its place). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
+- Until the first listing arrives it says `Loading the files…`; a workspace with nothing to list says so.
 
 ### Model popup (`Ctrl+G m`, `/model`)
 
