@@ -63,6 +63,13 @@ pub fn ensure_visible(handle: &ScrollHandle, ix: usize) {
     handle.scroll_to_item(ix);
 }
 
+/// Whether the [`list`] of `handle` has been laid out once. Before that
+/// GPUI drops an [`ensure_visible`] request (it does not know yet that the
+/// element scrolls): a list that opens on a row asks again next frame.
+pub fn laid_out(handle: &ScrollHandle) -> bool {
+    handle.bounds().size.height > px(0.)
+}
+
 /// Whether row `ix` of the [`list`] of `handle` was laid out inside the
 /// visible area (allowing a pixel of rounding). For tests.
 pub fn is_visible(handle: &ScrollHandle, ix: usize) -> bool {

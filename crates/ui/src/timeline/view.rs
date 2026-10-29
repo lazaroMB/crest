@@ -25,7 +25,7 @@ use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
     InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, SharedString,
+    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, list,
     prelude::FluentBuilder as _, px,
 };
@@ -73,6 +73,10 @@ pub struct TimelineView {
     copied_reply: Option<usize>,
     /// The menu of the user's questions is open.
     outline_open: bool,
+    /// The scroll of the menu's rows.
+    outline_scroll: ScrollHandle,
+    /// The menu just opened: scroll its current question into view.
+    outline_reveal: bool,
     /// The key being dispatched, when the session deferred it.
     deferred: Option<DeferredKey>,
     _reply_expiry: Option<Task<()>>,
@@ -92,6 +96,8 @@ impl TimelineView {
             _hint_expiry: None,
             copied_reply: None,
             outline_open: false,
+            outline_scroll: ScrollHandle::new(),
+            outline_reveal: false,
             deferred: None,
             _reply_expiry: None,
             _events: None,
@@ -410,6 +416,7 @@ impl TimelineView {
     pub fn toggle_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.outline_open = !self.outline_open;
         if self.outline_open {
+            self.outline_reveal = true;
             window.focus(&self.focus_handle, cx);
         }
         cx.notify();
@@ -485,12 +492,63 @@ impl TimelineView {
                     )
             }));
         let menu = self.outline_open.then(|| {
-            let mut card = v_flex()
+            let mut rows = Vec::new();
+            let mut active_row = None;
+            for (group_ix, group) in outline.groups.iter().enumerate() {
+                if !group.title.is_empty() {
+                    rows.push(
+                        div()
+                            .id(("chat-outline-group", group_ix))
+                            .pt(if group_ix == 0 { px(0.) } else { px(6.) })
+                            .text_sm()
+                            .text_color(muted)
+                            .child(group.title.clone())
+                            .into_any_element(),
+                    );
+                }
+                for item in &group.items {
+                    let block = item.block;
+                    let color = if item.active { link } else { foreground };
+                    if item.active {
+                        active_row = Some(rows.len());
+                    }
+                    rows.push(
+                        div()
+                            .id(("chat-outline-item", item.block))
+                            .debug_selector(move || format!("chat-outline-item-{block}"))
+                            .w_full()
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(color)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.choose_outline(block, cx);
+                                    this.close_outline(cx);
+                                }),
+                            )
+                            .child(format!("{}. {}", item.number, item.label))
+                            .into_any_element(),
+                    );
+                }
+            }
+            if self.outline_reveal {
+                if let Some(row) = active_row {
+                    crate::keyscroll::ensure_visible(&self.outline_scroll, row);
+                }
+                // Asked again until the menu has been laid out once.
+                self.outline_reveal = active_row.is_some()
+                    && !crate::keyscroll::laid_out(&self.outline_scroll);
+                if self.outline_reveal {
+                    cx.notify();
+                }
+            }
+            v_flex()
                 .id("chat-outline")
                 .w(px(220.))
                 .max_h(px(320.))
                 .flex_none()
-                .overflow_y_scroll()
                 .py_2()
                 .px_3()
                 .gap_1()
@@ -501,6 +559,7 @@ impl TimelineView {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     h_flex()
+                        .flex_none()
                         .justify_between()
                         .text_xs()
                         .text_color(muted)
@@ -520,42 +579,12 @@ impl TimelineView {
                                         })),
                                 ),
                         ),
-                );
-            for (group_ix, group) in outline.groups.iter().enumerate() {
-                if !group.title.is_empty() {
-                    card = card.child(
-                        div()
-                            .id(("chat-outline-group", group_ix))
-                            .pt(if group_ix == 0 { px(0.) } else { px(6.) })
-                            .text_sm()
-                            .text_color(muted)
-                            .child(group.title.clone()),
-                    );
-                }
-                for item in &group.items {
-                    let block = item.block;
-                    let color = if item.active { link } else { foreground };
-                    card = card.child(
-                        div()
-                            .id(("chat-outline-item", item.block))
-                            .debug_selector(move || format!("chat-outline-item-{block}"))
-                            .w_full()
-                            .cursor_pointer()
-                            .text_sm()
-                            .text_color(color)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    this.choose_outline(block, cx);
-                                    this.close_outline(cx);
-                                }),
-                            )
-                            .child(format!("{}. {}", item.number, item.label)),
-                    );
-                }
-            }
-            card
+                )
+                .child(
+                    crate::keyscroll::list("chat-outline-rows", &self.outline_scroll, rows)
+                        .flex_shrink(1.)
+                        .gap_1(),
+                )
         });
         Some(
             h_flex()
@@ -926,6 +955,34 @@ mod tests {
         cx.simulate_click(gpui::point(px(40.), px(600.)), gpui::Modifiers::none());
         cx.run_until_parked();
         assert!(!open(cx), "a click outside closes it");
+    }
+
+    #[gpui::test]
+    fn the_outline_scrolls_to_the_current_question(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        view.update(cx, |view, cx| {
+            let blocks: Vec<_> = (0..40)
+                .flat_map(|n| [text(&format!("> question {n}")), text("reply")])
+                .map(|block| DomainEvent::BlockAdded { block })
+                .collect();
+            view.apply_all(blocks, cx);
+        });
+        // The last question is the current one.
+        view.update(cx, |view, cx| {
+            view.choose_outline(78, cx);
+        });
+        view.update_in(cx, |view, window, cx| view.toggle_outline(window, cx));
+        for _ in 0..2 {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+        view.read_with(cx, |view, _| {
+            let scroll = &view.outline_scroll;
+            assert!(scroll.max_offset().y > px(0.), "the menu scrolls");
+            assert!(scroll.offset().y < px(0.), "down to the current question");
+            assert!(crate::keyscroll::is_visible(scroll, 39), "which is in view");
+        });
     }
 
     #[gpui::test]
