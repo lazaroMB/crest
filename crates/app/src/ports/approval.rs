@@ -96,6 +96,12 @@ pub enum ApprovalResponse {
         /// Rule to store with the workspace's permission rules.
         rule: PermissionRule,
     },
+    /// Run this call and stop asking about edits for the rest of the
+    /// session: the permission mode becomes
+    /// [`AutoEdit`](domain::permission::PermissionMode::AutoEdit). Only
+    /// offered for [`Write`](ToolEffect::Write) requests; elsewhere it
+    /// counts as [`Approve`](Self::Approve).
+    ApproveAllEdits,
     /// Do not run the call.
     Deny {
         /// Optional explanation, passed back to the model.
@@ -143,6 +149,7 @@ mod tests {
                     RuleDecision::AllowAlways,
                 ),
             },
+            ApprovalResponse::ApproveAllEdits,
             ApprovalResponse::Deny { reason: None },
         ];
         for response in responses {
@@ -150,6 +157,10 @@ mod tests {
             let back: ApprovalResponse = serde_json::from_str(&json).unwrap();
             assert_eq!(back, response);
         }
+        assert_eq!(
+            serde_json::to_string(&ApprovalResponse::ApproveAllEdits).unwrap(),
+            r#"{"decision":"approve_all_edits"}"#
+        );
     }
 
     #[test]

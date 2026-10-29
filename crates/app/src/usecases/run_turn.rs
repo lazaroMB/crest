@@ -1132,7 +1132,10 @@ impl TurnRun<'_> {
             return false;
         };
         match answer {
-            Ok(ApprovalResponse::Approve) => tracker.raise_cap(session),
+            // "All edits" is about writes; here it is a plain yes.
+            Ok(ApprovalResponse::Approve | ApprovalResponse::ApproveAllEdits) => {
+                tracker.raise_cap(session);
+            }
             Ok(ApprovalResponse::ApproveAlways { .. }) => tracker.lift_cap(session),
             Ok(ApprovalResponse::Deny { .. }) | Err(_) => {
                 self.emit(DomainEvent::Notice {

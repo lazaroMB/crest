@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use domain::block::{BlockId, ToolStatus};
 use domain::conversation::ToolUseId;
-use domain::permission::{ActionRequest, Decision, PermissionPolicy, PermissionRule, RuleScope};
+use domain::permission::{
+    ActionRequest, Decision, PermissionMode, PermissionPolicy, PermissionRule, RuleScope, ToolEffect,
+};
 
 use crate::ports::approval::{
     ApprovalPort, ApprovalPreview, ApprovalRequest, ApprovalRequestId, ApprovalResponse,
@@ -129,6 +131,7 @@ impl ApprovalGate {
             block_id: pending.shown_in,
         });
         let action = pending.action;
+        let effect = action.effect;
         let preview = pending.preview.unwrap_or_else(|| ApprovalPreview::Text {
             text: action.subject.clone(),
         });
@@ -149,6 +152,12 @@ impl ApprovalGate {
                 }
                 UserVerdict::Approved
             }
+            Ok(ApprovalResponse::ApproveAllEdits) => {
+                if effect == ToolEffect::Write {
+                    self.allow_all_edits(events);
+                }
+                UserVerdict::Approved
+            }
             Ok(ApprovalResponse::Deny { reason }) => UserVerdict::Rejected(match reason {
                 Some(reason) => format!("denied by user: {reason}"),
                 None => "denied by user".to_owned(),
@@ -159,6 +168,21 @@ impl ApprovalGate {
 }
 
 impl ApprovalGate {
+    /// "Allow all edits this session": `ask` becomes `auto-edit`, and the
+    /// status bar hears of it. Other modes are left alone (the user may
+    /// have changed it while the dialog was open).
+    fn allow_all_edits(&self, events: &dyn EventSink) {
+        let mut policy = lock_permissions(&self.permissions);
+        if policy.mode != PermissionMode::Ask {
+            return;
+        }
+        policy.mode = PermissionMode::AutoEdit;
+        drop(policy);
+        events.emit(DomainEvent::ModeChanged {
+            mode: PermissionMode::AutoEdit,
+        });
+    }
+
     /// Writes `rule` to the project file, warning when it cannot.
     async fn save_project_rule(&self, rule: &PermissionRule, events: &dyn EventSink) {
         let failure = match &self.project {
@@ -186,7 +210,7 @@ pub fn policy_denial(reason: &domain::permission::DenyReason) -> String {
 #[cfg(test)]
 mod tests {
     use domain::permission::PermissionRule;
-    use domain::permission::{DenyReason, PermissionMode, RuleDecision, RuleMatcher, ToolEffect};
+    use domain::permission::{DenyReason, RuleDecision, RuleMatcher};
 
     use super::*;
     use crate::testing::system::{RecordingSink, ScriptedApproval};
@@ -370,5 +394,45 @@ mod tests {
         gate.ask(pending("cargo test"), &sink).await;
         assert_eq!(store.saves(), 0);
         assert_eq!(sink.events().len(), 2, "no notice");
+    }
+
+    #[tokio::test]
+    async fn approve_all_edits_turns_on_auto_edit_for_writes_only() {
+        let write = |path: &str| PendingApproval {
+            action: ActionRequest::new("edit_file", ToolEffect::Write, path),
+            ..pending(path)
+        };
+        let gate = gate(ScriptedApproval::always(ApprovalResponse::ApproveAllEdits));
+        let sink = RecordingSink::new();
+        // A command answered so is approved once; the mode stays.
+        assert_eq!(
+            gate.ask(pending("cargo test"), &sink).await,
+            UserVerdict::Approved
+        );
+        assert_eq!(lock_permissions(gate.permissions()).mode, PermissionMode::Ask);
+        assert_eq!(gate.decide(&pending("cargo test").action), Decision::Ask);
+        assert_eq!(gate.decide(&write("b.rs").action), Decision::Ask);
+        assert_eq!(gate.ask(write("a.rs"), &sink).await, UserVerdict::Approved);
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::AutoEdit
+        );
+        assert_eq!(gate.decide(&write("b.rs").action), Decision::Allow);
+        assert_eq!(gate.decide(&pending("cargo test").action), Decision::Ask);
+        let modes: Vec<_> = sink
+            .events()
+            .into_iter()
+            .filter(|event| matches!(event, DomainEvent::ModeChanged { .. }))
+            .collect();
+        assert_eq!(
+            modes,
+            [DomainEvent::ModeChanged {
+                mode: PermissionMode::AutoEdit
+            }]
+        );
+        // From plan mode (changed while the dialog was open) nothing moves.
+        lock_permissions(gate.permissions()).mode = PermissionMode::Plan;
+        gate.ask(write("c.rs"), &sink).await;
+        assert_eq!(lock_permissions(gate.permissions()).mode, PermissionMode::Plan);
     }
 }

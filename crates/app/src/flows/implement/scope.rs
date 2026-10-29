@@ -136,7 +136,9 @@ impl TaskScope {
             }),
         };
         let verdict = match self.approval.request(request).await {
-            Ok(ApprovalResponse::Approve) => Ok(()),
+            // "All edits" turns off the mode's questions, not the task's
+            // scope: this file only.
+            Ok(ApprovalResponse::Approve | ApprovalResponse::ApproveAllEdits) => Ok(()),
             Ok(ApprovalResponse::ApproveAlways { .. }) => {
                 lock(&self.allowed).insert(normalized(path));
                 Ok(())
