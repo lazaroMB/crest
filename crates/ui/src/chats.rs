@@ -4,15 +4,17 @@
 //! The binary fills the list ([`crate::workbench::ProjectOpener::catalog`]).
 //! Choosing a row emits [`ChatsEvent`]; the workbench opens that session.
 //! A right click renames or deletes the chat; `Esc`, **Cancel** or a click
-//! elsewhere closes that menu. The file tree stays the other side panel.
+//! elsewhere closes that menu. The list scrolls with a scrollbar; a
+//! project without chats says so. The file tree stays the other side
+//! panel.
 
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, Global,
     InteractiveElement as _, IntoElement, KeystrokeEvent, MouseButton, MouseDownEvent,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, WeakEntity, Window, div, px,
+    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, WeakEntity, Window, div, px,
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -127,6 +129,8 @@ pub struct ChatsPanel {
     activity: HashMap<String, bool>,
     action: Option<ChatAction>,
     rename_input: Option<Entity<InputState>>,
+    /// The scroll of the list: one item per project.
+    scroll: ScrollHandle,
     _keys: Subscription,
 }
 
@@ -153,6 +157,7 @@ impl ChatsPanel {
             activity: HashMap::new(),
             action: None,
             rename_input: None,
+            scroll: ScrollHandle::new(),
             _keys: keys,
         }
     }
@@ -174,6 +179,11 @@ impl ChatsPanel {
             self.activity.remove(id);
         }
         cx.notify();
+    }
+
+    /// The scroll of the list, one item per project.
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
     }
 
     /// Another chat of `root` to open after deleting `id`, if one remains.
@@ -342,6 +352,9 @@ impl ChatsPanel {
     }
 
     fn projects(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.projects.is_empty() {
+            return vec![no_chats(px(8.), cx)];
+        }
         self.projects
             .iter()
             .enumerate()
@@ -373,6 +386,9 @@ impl ChatsPanel {
                 .child(div().w(px(12.)).text_color(muted).child(marker))
                 .child(label(&project.name)),
         );
+        if expanded && project.chats.is_empty() {
+            block = block.child(no_chats(px(22.), cx));
+        }
         if expanded {
             for (row, chat) in project.chats.iter().enumerate() {
                 let selected = self.current_id.as_deref() == Some(chat.id.as_str());
@@ -606,15 +622,21 @@ impl Render for ChatsPanel {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::New)))
                     .child(label("New chat")),
             )
-            .child(
-                div()
-                    .id("chats-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .children(self.projects(cx)),
-            )
+            .child(crate::keyscroll::list("chats-list", &self.scroll, self.projects(cx)).flex_1())
     }
+}
+
+/// The muted "No chats yet" line, indented by `indent`.
+fn no_chats(indent: gpui::Pixels, cx: &App) -> AnyElement {
+    div()
+        .debug_selector(|| "chats-empty".to_owned())
+        .pl(indent)
+        .pr_2()
+        .py_1()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child("No chats yet")
+        .into_any_element()
 }
 
 fn label(text: &str) -> impl IntoElement {
@@ -724,7 +746,46 @@ pub fn same_workspace(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{TestAppContext, VisualTestContext};
+
     use super::*;
+
+    fn panel<'a>(
+        projects: Vec<ProjectChats>,
+        current_id: Option<&str>,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<ChatsPanel>, &'a mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let current_id = current_id.map(str::to_owned);
+        let (view, cx) = cx.add_window_view(move |_, cx| {
+            let mut panel = ChatsPanel::new("/work/crest".into(), current_id, cx);
+            panel.set_projects(projects, cx);
+            panel
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn a_project_without_chats_says_so(cx: &mut TestAppContext) {
+        let (_view, cx) = panel(Vec::new(), None, cx);
+        assert!(cx.debug_bounds("chats-empty").is_some());
+    }
+
+    #[gpui::test]
+    fn a_long_list_scrolls(cx: &mut TestAppContext) {
+        let ids: Vec<String> = (0..80).map(|n| format!("chat-{n}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let (view, cx) = panel(vec![project("/work/crest", &ids)], Some("chat-0"), cx);
+        assert!(cx.debug_bounds("chats-empty").is_none());
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.scroll_handle().max_offset().y > px(0.),
+                "the rows overflow the panel and the list tracks it"
+            );
+        });
+    }
 
     fn project(root: &str, chats: &[&str]) -> ProjectChats {
         ProjectChats {
