@@ -22,7 +22,7 @@ use futures::channel::{mpsc, oneshot};
 use gpui::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
+    SharedString, Styled as _, Task, WeakEntity, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -612,12 +612,12 @@ impl Render for ApprovalView {
                     ),
             )
             .child(
-                div()
-                    .id("approval-preview")
-                    .max_h(px(420.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.preview_scroll)
-                    .child(Self::render_preview(&request.preview, cx)),
+                crate::keyscroll::list(
+                    "approval-preview",
+                    &self.preview_scroll,
+                    [Self::render_preview(&request.preview, cx)],
+                )
+                .max_h(px(420.)),
             );
         if !self.queue.is_empty() {
             card = card.child(
@@ -969,6 +969,36 @@ mod tests {
                 |_, _| div().relative().size_full().child(view.clone()),
             );
         }
+    }
+
+    #[gpui::test]
+    fn a_long_preview_scrolls_with_the_keys(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let text = (0..200)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _answer = ask(
+            &port,
+            ApprovalRequest {
+                preview: ApprovalPreview::Text { text },
+                ..command_request(1)
+            },
+            cx,
+        );
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        draw(cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.preview_scroll.max_offset().y > px(0.), "it overflows");
+        });
+        cx.simulate_keystrokes("pagedown");
+        draw(cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.preview_scroll.offset().y < px(0.), "PageDown scrolls");
+        });
     }
 
     #[gpui::test]
