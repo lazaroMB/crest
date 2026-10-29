@@ -20,7 +20,7 @@ mod read;
 mod write;
 
 use application::ports::fs::{
-    EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
+    DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
     ReadFileRequest, WriteFileRequest,
 };
 use async_trait::async_trait;
@@ -71,6 +71,10 @@ impl FileSystemPort for LocalFs {
             Err(FsError::NotFound { .. }) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+
+    async fn list_dir(&self, path: &WorkspacePath) -> Result<Vec<DirEntry>, FsError> {
+        read::list_dir(&self.guard, path).await
     }
 
     async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
@@ -138,6 +142,33 @@ mod tests {
             .unwrap();
         let content = fs.read_file(ReadFileRequest::new(path)).await.unwrap();
         assert_eq!(content.render_numbered(), "     1\tone\n     2\t2\n");
+    }
+
+    #[tokio::test]
+    async fn list_dir_sorts_entries_and_hides_sensitive_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        std::fs::create_dir_all(ws.join("target/criterion/fib")).unwrap();
+        std::fs::write(ws.join("target/criterion/b.json"), "{}").unwrap();
+        std::fs::write(ws.join(".env"), "SECRET=1").unwrap();
+        symlink(ws.join("target"), ws.join("link")).unwrap();
+        let fs = LocalFs::new(WorkspaceGuard::open(&ws).unwrap());
+        let path = |p: &str| WorkspacePath::parse(p).unwrap();
+
+        let root = fs.list_dir(&WorkspacePath::root()).await.unwrap();
+        let names: Vec<_> = root.iter().map(|e| (e.name.as_str(), e.is_dir)).collect();
+        assert_eq!(names, [("link", true), ("target", true)]);
+        let inner = fs.list_dir(&path("target/criterion")).await.unwrap();
+        let names: Vec<_> = inner.iter().map(|e| (e.name.as_str(), e.is_dir)).collect();
+        assert_eq!(names, [("b.json", false), ("fib", true)]);
+        assert!(matches!(
+            fs.list_dir(&path("nope")).await,
+            Err(FsError::NotFound { .. })
+        ));
+        assert!(matches!(
+            fs.list_dir(&path("target/criterion/b.json")).await,
+            Err(FsError::Io(_))
+        ));
     }
 
     #[test]

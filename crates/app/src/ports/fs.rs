@@ -308,6 +308,18 @@ impl PendingChange {
     }
 }
 
+/// Most entries [`FileSystemPort::list_dir`] returns.
+pub const MAX_DIR_ENTRIES: usize = 10_000;
+
+/// One entry of [`FileSystemPort::list_dir`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirEntry {
+    /// File or directory name (one path component).
+    pub name: String,
+    /// Whether it is a directory (a symlink to one counts).
+    pub is_dir: bool,
+}
+
 /// Reads and writes files inside one workspace, enforcing its guards.
 #[async_trait]
 pub trait FileSystemPort: Send + Sync {
@@ -334,6 +346,14 @@ pub trait FileSystemPort: Send + Sync {
     /// Whether `path` exists (as a file or directory) inside the workspace.
     /// Paths that resolve outside the root fail instead of returning false.
     async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError>;
+
+    /// The entries of directory `path` (the root when it is empty), sorted
+    /// by name, at most [`MAX_DIR_ENTRIES`]. Ignore files do not apply
+    /// (`target/` is listed); entries the sensitive-path rules deny are
+    /// left out. Fails with [`FsError::NotFound`] for a missing
+    /// directory, [`FsError::SensitivePath`] for a denied one and
+    /// [`FsError::Io`] for a file.
+    async fn list_dir(&self, path: &WorkspacePath) -> Result<Vec<DirEntry>, FsError>;
 
     /// Computes the edit described by `request` (see [`replace_unique`])
     /// without writing it. Fails with [`FsError::NotFound`] when the file

@@ -1,0 +1,32 @@
+---
+source: crates/app/src/tools/formats/terraform.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_terraform_plan",
+  "description": "Shows a Terraform or OpenTofu plan in JSON (`terraform show -json tfplan`) as a tree table in the user's timeline: counts to add, change, replace and destroy, then each resource badged with its action and its attribute diff (before and after; sensitive values masked, unknown ones shown as known after apply, replacement causes flagged). Returns the counts and the resources per action with the changed attribute paths, drift and outputs, but no values: do not repeat the plan in your reply.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "A plan in JSON in the workspace: `terraform show -json tfplan >\nplan.json` (after `terraform plan -out=tfplan`; OpenTofu's `tofu\nshow -json` too), or the JSON lines of `terraform plan -json`\n(actions only, no attribute diffs)."
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the plan; defaults to the file name.",
+        "default": null
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "description": "Input of `show_terraform_plan`.",
+    "title": "ShowTerraformPlan",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  }
+}

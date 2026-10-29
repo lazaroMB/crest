@@ -531,6 +531,76 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "A SQL query plan on a tree table (tool `show_query_plan`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "query_plan"
+        }
+      },
+      "$ref": "#/$defs/QueryPlanSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "An HTTP archive as a waterfall, request list and inspector (tool\n`show_har`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "har"
+        }
+      },
+      "$ref": "#/$defs/HarSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A Terraform plan's resource changes on a tree table (tool\n`show_terraform_plan`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "terraform_plan"
+        }
+      },
+      "$ref": "#/$defs/TerraformPlanSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A DOT graph or an ER diagram from SQL DDL on the graph widget\n(tools `show_dot`, `show_er`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "diagram"
+        }
+      },
+      "$ref": "#/$defs/DiagramSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "Criterion benchmarks, baseline against new (tool\n`show_benchmarks`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "benchmarks"
+        }
+      },
+      "$ref": "#/$defs/BenchSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -7641,6 +7711,1394 @@ expression: "schemars::schema_for!(Block)"
         "format",
         "total_lines",
         "list"
+      ]
+    },
+    "PlanEngine": {
+      "description": "The database that wrote the plan.",
+      "oneOf": [
+        {
+          "description": "PostgreSQL `EXPLAIN (FORMAT JSON)`.",
+          "type": "string",
+          "const": "postgres"
+        }
+      ]
+    },
+    "PlanNode": {
+      "description": "One node of the plan.",
+      "type": "object",
+      "properties": {
+        "node_type": {
+          "description": "`Node Type`: `Seq Scan`, `Hash Join`, `Sort`...",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Nesting level, 0 for the root.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "relation": {
+          "description": "Table, view, function or CTE scanned (`schema.name` when the schema\nwas given).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alias": {
+          "description": "Alias of the relation, when it differs from its name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "description": "Index used.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "join_type": {
+          "description": "`Inner`, `Left`, `Semi`... of a join.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent_relationship": {
+          "description": "How the node feeds its parent: `Outer`, `Inner`, `InitPlan`,\n`SubPlan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subplan_name": {
+          "description": "Name of an `InitPlan` / `SubPlan`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "condition": {
+          "description": "The main condition or key (index, hash, merge or join condition,\nfilter, sort or group key).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startup_cost": {
+          "description": "Planner cost to the first row.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "total_cost": {
+          "description": "Planner cost to the last row.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "plan_rows": {
+          "description": "Rows the planner expected, per loop.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "actual_time": {
+          "description": "Time to the last row, per loop, in ms (`ANALYZE`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "actual_rows": {
+          "description": "Rows produced, per loop (`ANALYZE`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "loops": {
+          "description": "Times the node ran (`ANALYZE`); 0 means it never ran.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "rows_removed": {
+          "description": "Rows removed by the filter, join filter and index recheck, per\nloop.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "workers": {
+          "description": "Workers launched (`Gather`, `Gather Merge`).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "buffers": {
+          "description": "Buffer counts (`BUFFERS`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanBuffers"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sort_space_type": {
+          "description": "`Sort Space Type` (`Memory`, `Disk`) of a sort.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sort_space_kb": {
+          "description": "`Sort Space Used`, in kB.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "hash_batches": {
+          "description": "`Hash Batches` of a hash; more than one means it spilled.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "inclusive_time": {
+          "description": "Time over all loops (per process of a parallel plan), in ms; set\nby [`QueryPlanSpec::analyse`].",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "self_time": {
+          "description": "[`Self::inclusive_time`] minus the children's, in ms; set by\n[`QueryPlanSpec::analyse`].",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "warnings": {
+          "description": "What looks wrong with the node; set by [`QueryPlanSpec::analyse`].",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attrs": {
+          "description": "The node's other scalar properties, as written.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "node_type"
+      ]
+    },
+    "PlanBuffers": {
+      "description": "Buffer counts of a node (`BUFFERS`), in blocks.",
+      "type": "object",
+      "properties": {
+        "shared_hit": {
+          "description": "Shared blocks found in the cache.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_read": {
+          "description": "Shared blocks read from disk (or the OS cache).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_dirtied": {
+          "description": "Shared blocks dirtied.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "shared_written": {
+          "description": "Shared blocks written.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "local": {
+          "description": "Local (temporary table) blocks hit or read.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "temp_read": {
+          "description": "Temporary file blocks read.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "temp_written": {
+          "description": "Temporary file blocks written (a spill).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "QueryPlanSpec": {
+      "description": "A plan, its timings and its nodes.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file, when the plan came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "engine": {
+          "description": "Who wrote the plan.",
+          "$ref": "#/$defs/PlanEngine",
+          "default": "postgres"
+        },
+        "analyzed": {
+          "description": "The plan has actual times and rows (`ANALYZE`).",
+          "type": "boolean",
+          "default": false
+        },
+        "buffers": {
+          "description": "The plan has buffer counts (`BUFFERS`).",
+          "type": "boolean",
+          "default": false
+        },
+        "planning_time": {
+          "description": "`Planning Time`, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "execution_time": {
+          "description": "`Execution Time`, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "trigger_time": {
+          "description": "Time in triggers, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "jit_time": {
+          "description": "JIT compilation time, in ms.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "nodes": {
+          "description": "Nodes in preorder, the root first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlanNode"
+          }
+        }
+      },
+      "required": [
+        "nodes"
+      ]
+    },
+    "HarPage": {
+      "description": "A page load the requests belong to.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Id the entries refer to.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Title (often the URL).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Start, in ms from the first request.",
+          "type": "number",
+          "format": "double"
+        },
+        "on_content_load": {
+          "description": "`DOMContentLoaded`, in ms from the page start.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "on_load": {
+          "description": "`load`, in ms from the page start.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "start"
+      ]
+    },
+    "HarEntry": {
+      "description": "One request and its response.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "`GET`, `POST`...",
+          "type": "string"
+        },
+        "url": {
+          "description": "The full URL as requested.",
+          "type": "string"
+        },
+        "http_version": {
+          "description": "`HTTP/1.1`, `h2`...",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Response status; 0 when there was no response (blocked, aborted,\nfailed).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "status_text": {
+          "description": "Reason phrase.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resource_type": {
+          "description": "`document`, `script`, `stylesheet`, `image`, `font`, `xhr`,\n`fetch`, `media`, `websocket` or `other`.",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "Media type of the response.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Start, in ms from the start of the first request.",
+          "type": "number",
+          "format": "double"
+        },
+        "time": {
+          "description": "Total time, in ms.",
+          "type": "number",
+          "format": "double"
+        },
+        "timings": {
+          "description": "Where the time went.",
+          "$ref": "#/$defs/HarTimings",
+          "default": {}
+        },
+        "request_headers": {
+          "description": "Request headers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "response_headers": {
+          "description": "Response headers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "query": {
+          "description": "Query string parameters.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarHeader"
+          }
+        },
+        "request_body": {
+          "description": "The posted body.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_body": {
+          "description": "The response body.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transfer_size": {
+          "description": "Bytes on the wire (headers and compressed body).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "content_size": {
+          "description": "Size of the decoded response body.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "server_ip": {
+          "description": "IP address of the server.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redirect_url": {
+          "description": "Target of a redirect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Why the request failed (`net::ERR_...`), when the file says.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page": {
+          "description": "Id of the page it belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "url",
+        "resource_type",
+        "start",
+        "time"
+      ]
+    },
+    "HarTimings": {
+      "description": "Where a request's time went, in ms (`None` when the phase did not\napply, `-1` in the file).",
+      "type": "object",
+      "properties": {
+        "blocked": {
+          "description": "Queued, waiting for a connection.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "dns": {
+          "description": "DNS lookup.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "connect": {
+          "description": "TCP connect, without the TLS handshake (the file's `connect`\nincludes `ssl`; the adapter takes it out).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "ssl": {
+          "description": "TLS handshake.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "send": {
+          "description": "Sending the request.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wait": {
+          "description": "Waiting for the first byte (server time plus a round trip).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "receive": {
+          "description": "Reading the response.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "HarHeader": {
+      "description": "A header, query parameter or form field.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Name as written.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value as written.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "HarBody": {
+      "description": "A request or response body.",
+      "type": "object",
+      "properties": {
+        "mime_type": {
+          "description": "Its media type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "description": "Size in bytes, when the file gave it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "text": {
+          "description": "The first [`MAX_BODY_PREVIEW`] bytes of the text; `None` when the\nfile did not keep it or it is binary.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncated": {
+          "description": "The text was cut to the preview size.",
+          "type": "boolean"
+        },
+        "base64": {
+          "description": "The file stored it base64-encoded (binary); no preview is kept.",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarSpec": {
+      "description": "The requests of a HAR file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "creator": {
+          "description": "What wrote it (`WebInspector 537.36`, `Firefox 131.0`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at": {
+          "description": "Wall clock of the first request, in seconds since the epoch.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "pages": {
+          "description": "Page loads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarPage"
+          }
+        },
+        "entries": {
+          "description": "Requests in start order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HarEntry"
+          }
+        },
+        "total_entries": {
+          "description": "Requests in the file; more than `entries` when it was cut at\n[`MAX_ENTRIES`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "entries",
+        "total_entries"
+      ]
+    },
+    "PlanSource": {
+      "description": "Where the plan came from.",
+      "oneOf": [
+        {
+          "description": "`terraform show -json <planfile>`: attribute values included.",
+          "type": "string",
+          "const": "show"
+        },
+        {
+          "description": "The `planned_change` lines of `terraform plan -json`: actions only.",
+          "type": "string",
+          "const": "stream"
+        }
+      ]
+    },
+    "ResourceChange": {
+      "description": "One resource with a planned change.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Full address (`module.net.aws_subnet.private[1]`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Resource type (`aws_instance`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data": {
+          "description": "`data` for a data source.",
+          "type": "boolean"
+        },
+        "provider": {
+          "description": "The provider (`registry.terraform.io/hashicorp/aws`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "description": "What happens to it.",
+          "$ref": "#/$defs/PlanAction"
+        },
+        "reason": {
+          "description": "Why (`replace_because_cannot_update`, `delete_because_no_resource_config`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_address": {
+          "description": "The resource moves from this address.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attributes": {
+          "description": "The attributes that change (all set ones for a create or\ndestroy), at most [`MAX_ATTRS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AttrChange"
+          }
+        },
+        "attributes_total": {
+          "description": "Attribute changes before the cap at [`MAX_ATTRS`].",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "address",
+        "action"
+      ]
+    },
+    "PlanAction": {
+      "description": "What happens to a resource or output.",
+      "oneOf": [
+        {
+          "description": "Destroyed.",
+          "type": "string",
+          "const": "delete"
+        },
+        {
+          "description": "Destroyed and created again (in either order).",
+          "type": "string",
+          "const": "replace"
+        },
+        {
+          "description": "Changed in place.",
+          "type": "string",
+          "const": "update"
+        },
+        {
+          "description": "Created.",
+          "type": "string",
+          "const": "create"
+        },
+        {
+          "description": "A data source read during apply.",
+          "type": "string",
+          "const": "read"
+        },
+        {
+          "description": "Removed from the state without being destroyed (`removed` block).",
+          "type": "string",
+          "const": "forget"
+        },
+        {
+          "description": "Nothing to do.",
+          "type": "string",
+          "const": "no_op"
+        }
+      ]
+    },
+    "AttrChange": {
+      "description": "One attribute that differs (or, for a create or destroy, is set).",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Flattened path: `tags.Name`, `ingress[0].port`, `tags[\"a.b\"]`.",
+          "type": "string"
+        },
+        "before": {
+          "description": "The value before.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "after": {
+          "description": "The value after.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "forces_replacement": {
+          "description": "Changing it forces the resource to be replaced.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "AttrValue": {
+      "description": "One side of an attribute change.",
+      "oneOf": [
+        {
+          "description": "Not set on this side.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "absent"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A value (a scalar, or an empty list or map).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "known"
+            },
+            "value": true
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "description": "Marked sensitive: the value is not kept.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sensitive"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Known only after apply.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "OutputChange": {
+      "description": "A root module output that changes.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Output name.",
+          "type": "string"
+        },
+        "action": {
+          "description": "What happens to it.",
+          "$ref": "#/$defs/PlanAction"
+        },
+        "before": {
+          "description": "The value before.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        },
+        "after": {
+          "description": "The value after.",
+          "$ref": "#/$defs/AttrValue",
+          "default": {
+            "kind": "absent"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "action"
+      ]
+    },
+    "TerraformPlanSpec": {
+      "description": "A Terraform plan.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Which JSON it was.",
+          "$ref": "#/$defs/PlanSource",
+          "default": "show"
+        },
+        "terraform_version": {
+          "description": "Terraform (or OpenTofu) version that wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resources": {
+          "description": "Resources that change, in the plan's order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceChange"
+          }
+        },
+        "unchanged": {
+          "description": "Resources with nothing to do.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "drift": {
+          "description": "Addresses changed outside Terraform since the last apply.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputs": {
+          "description": "Outputs that change.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OutputChange"
+          }
+        },
+        "errored": {
+          "description": "Planning failed part way (the plan is incomplete).",
+          "type": "boolean"
+        },
+        "applyable": {
+          "description": "Whether the plan can be applied, when the file says.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "resources"
+      ]
+    },
+    "DiagramSource": {
+      "description": "What the diagram was drawn from.",
+      "oneOf": [
+        {
+          "description": "A Graphviz DOT file.",
+          "type": "string",
+          "const": "dot"
+        },
+        {
+          "description": "SQL `CREATE TABLE` / `ALTER TABLE` statements.",
+          "type": "string",
+          "const": "sql_ddl"
+        }
+      ]
+    },
+    "ErTable": {
+      "description": "A table and its columns.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Table name (schema-qualified when the DDL was).",
+          "type": "string"
+        },
+        "columns": {
+          "description": "Columns in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ErColumn"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "ErColumn": {
+      "description": "A column of a table.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "data_type": {
+          "description": "Its type as written (`varchar(80)`, `bigint`).",
+          "type": "string"
+        },
+        "primary_key": {
+          "description": "Part of the primary key.",
+          "type": "boolean"
+        },
+        "nullable": {
+          "description": "May hold NULL.",
+          "type": "boolean",
+          "default": true
+        },
+        "unique": {
+          "description": "Has a unique constraint of its own.",
+          "type": "boolean"
+        },
+        "references": {
+          "description": "`table.column` it references.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "data_type"
+      ]
+    },
+    "DiagramSpec": {
+      "description": "A diagram, its graph and (for DDL) its tables.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the graph's own name or the file name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the file, when it came from one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "What it was drawn from.",
+          "$ref": "#/$defs/DiagramSource"
+        },
+        "dialect": {
+          "description": "The SQL dialect the DDL was read in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "graph": {
+          "description": "What the block draws.",
+          "$ref": "#/$defs/GraphSpec"
+        },
+        "tables": {
+          "description": "Tables of an ER diagram, in DDL order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ErTable"
+          }
+        },
+        "warnings": {
+          "description": "What was skipped (statements that did not parse, DOT features not\ndrawn).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "graph"
+      ]
+    },
+    "Bench": {
+      "description": "One benchmark.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Criterion's id (`group/function/value`).",
+          "type": "string"
+        },
+        "dir": {
+          "description": "Directory under the criterion root.",
+          "type": "string"
+        },
+        "new": {
+          "description": "The new run.",
+          "$ref": "#/$defs/RunEstimates"
+        },
+        "base": {
+          "description": "The baseline run, when there is one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunEstimates"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "change": {
+          "description": "Relative change of the mean (fractions), from the change file.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_change": {
+          "description": "Relative change of the median, from the change file.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "The verdict on [`Self::change`].",
+          "$ref": "#/$defs/Verdict"
+        },
+        "ratio": {
+          "description": "`new mean / base mean − 1` when there is a baseline but no change\nfile (no interval).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "dir",
+        "new",
+        "verdict"
+      ]
+    },
+    "RunEstimates": {
+      "description": "The estimates of one run, in nanoseconds per iteration.",
+      "type": "object",
+      "properties": {
+        "mean": {
+          "description": "Mean time.",
+          "$ref": "#/$defs/Estimate"
+        },
+        "median": {
+          "description": "Median time.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std_dev": {
+          "description": "Standard deviation.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slope": {
+          "description": "Slope of the linear regression (iteration count against time), when\ncriterion used linear sampling.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Estimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mean"
+      ]
+    },
+    "Estimate": {
+      "description": "A point estimate with its confidence interval.",
+      "type": "object",
+      "properties": {
+        "point": {
+          "description": "The point estimate.",
+          "type": "number",
+          "format": "double"
+        },
+        "lo": {
+          "description": "Lower bound of the interval.",
+          "type": "number",
+          "format": "double"
+        },
+        "hi": {
+          "description": "Upper bound of the interval.",
+          "type": "number",
+          "format": "double"
+        },
+        "confidence": {
+          "description": "Confidence level of the interval (0.95).",
+          "type": "number",
+          "format": "double"
+        },
+        "standard_error": {
+          "description": "Standard error, when the file gives it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "point",
+        "lo",
+        "hi",
+        "confidence"
+      ]
+    },
+    "Verdict": {
+      "description": "What the change of the mean says.",
+      "oneOf": [
+        {
+          "description": "The whole interval is above +noise: slower.",
+          "type": "string",
+          "const": "regressed"
+        },
+        {
+          "description": "The whole interval is below −noise: faster.",
+          "type": "string",
+          "const": "improved"
+        },
+        {
+          "description": "The interval excludes 0 but not the noise band.",
+          "type": "string",
+          "const": "within_noise"
+        },
+        {
+          "description": "The interval includes 0.",
+          "type": "string",
+          "const": "no_change"
+        },
+        {
+          "description": "No change file: nothing to judge.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "BenchSpec": {
+      "description": "The benchmarks of a criterion directory.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Caption; the directory when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Workspace path of the criterion directory.",
+          "type": "string"
+        },
+        "baseline": {
+          "description": "Name of the baseline compared against (`base`, or a\n`--save-baseline` name).",
+          "type": "string"
+        },
+        "noise_threshold": {
+          "description": "Noise threshold of the verdicts.",
+          "type": "number",
+          "format": "double"
+        },
+        "benches": {
+          "description": "Benchmarks, by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bench"
+          }
+        },
+        "skipped": {
+          "description": "Directories that had estimates for neither run, or did not parse.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "baseline",
+        "noise_threshold",
+        "benches"
       ]
     }
   }

@@ -16,8 +16,13 @@ use uuid::Uuid;
 
 use crate::computed::{Computed, ComputedBody, ComputedError};
 use crate::dataset::DatasetSpec;
+use crate::devops::bench::BenchSpec;
+use crate::devops::diagram::DiagramSpec;
 use crate::devops::flame::FlameSpec;
+use crate::devops::har::HarSpec;
 use crate::devops::logs::LogSpec;
+use crate::devops::query_plan::QueryPlanSpec;
+use crate::devops::terraform::TerraformPlanSpec;
 use crate::devops::trace::TraceSpec;
 use crate::form::FormSpec;
 use crate::model3d::{MeshError, ModelSpec};
@@ -133,6 +138,11 @@ impl Block {
             BlockKind::Trace(spec) => spec.validate(),
             BlockKind::FlameGraph(spec) => spec.validate(),
             BlockKind::Logs(spec) => spec.validate(),
+            BlockKind::QueryPlan(spec) => spec.validate(),
+            BlockKind::Har(spec) => spec.validate(),
+            BlockKind::TerraformPlan(spec) => spec.validate(),
+            BlockKind::Diagram(spec) => spec.validate(),
+            BlockKind::Benchmarks(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -288,6 +298,20 @@ pub enum BlockKind {
     FlameGraph(Box<FlameSpec>),
     /// A log file on a filterable list (tool `show_logs`).
     Logs(Box<LogSpec>),
+    /// A SQL query plan on a tree table (tool `show_query_plan`).
+    QueryPlan(Box<QueryPlanSpec>),
+    /// An HTTP archive as a waterfall, request list and inspector (tool
+    /// `show_har`).
+    Har(Box<HarSpec>),
+    /// A Terraform plan's resource changes on a tree table (tool
+    /// `show_terraform_plan`).
+    TerraformPlan(Box<TerraformPlanSpec>),
+    /// A DOT graph or an ER diagram from SQL DDL on the graph widget
+    /// (tools `show_dot`, `show_er`).
+    Diagram(Box<DiagramSpec>),
+    /// Criterion benchmarks, baseline against new (tool
+    /// `show_benchmarks`).
+    Benchmarks(Box<BenchSpec>),
 }
 
 /// Lifecycle of a tool call.

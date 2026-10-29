@@ -2,8 +2,10 @@
 //! blocks: test reports (JUnit XML, libtest JSON), static-analysis findings (SARIF),
 //! timing diagrams (WaveDrom WaveJSON), dataset previews (CSV, TSV, JSON
 //! lines, Parquet), 2D molecules (SMILES), distributed traces (OTLP,
-//! Jaeger, Zipkin JSON), profiles (folded stacks, pprof) and log files
-//! (JSON lines, logfmt, text).
+//! Jaeger, Zipkin JSON), profiles (folded stacks, pprof), log files
+//! (JSON lines, logfmt, text), SQL query plans (PostgreSQL `EXPLAIN
+//! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
+//! (Graphviz DOT, ER from SQL DDL) and criterion benchmark results.
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -12,8 +14,13 @@
 //! CPU-bound and synchronous: async callers run it on a blocking thread.
 
 use domain::dataset::{DatasetFormat, DatasetSpec};
+use domain::devops::bench::BenchSpec;
+use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
+use domain::devops::har::HarSpec;
 use domain::devops::logs::{LogFormat, LogSpec};
+use domain::devops::query_plan::QueryPlanSpec;
+use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -53,6 +60,33 @@ pub struct LogRequest {
     /// The bytes are only the head of a larger file (the last line may be
     /// cut).
     pub truncated: bool,
+}
+
+/// The criterion files of one benchmark, for
+/// [`FormatsPort::parse_benchmarks`]; a file that is missing is `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BenchFiles {
+    /// The benchmark's directory, relative to the criterion root.
+    pub dir: String,
+    /// `new/benchmark.json` (the benchmark's id).
+    pub benchmark: Option<Vec<u8>>,
+    /// `new/estimates.json`: the last run.
+    pub new: Option<Vec<u8>>,
+    /// `<baseline>/estimates.json`.
+    pub base: Option<Vec<u8>>,
+    /// `change/estimates.json`: the relative change against the baseline.
+    pub change: Option<Vec<u8>>,
+}
+
+/// What [`FormatsPort::parse_benchmarks`] reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BenchRequest {
+    /// Workspace path of the criterion directory (`target/criterion`).
+    pub path: String,
+    /// The baseline compared against (`base`).
+    pub baseline: String,
+    /// The benchmarks found under it.
+    pub benches: Vec<BenchFiles>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -144,6 +178,82 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for a file that is not text or has no
     /// line.
     fn parse_logs(&self, bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError>;
+
+    /// A SQL query plan: PostgreSQL `EXPLAIN (FORMAT JSON)`, with
+    /// `ANALYZE` and `BUFFERS` when given (also pasted from `psql`), with
+    /// self times, misestimates and warnings derived
+    /// ([`QueryPlanSpec::analyse`]). `path` names the file, when there is
+    /// one.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for a text plan, malformed JSON or JSON
+    /// without a `Plan`.
+    fn parse_query_plan(
+        &self,
+        bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError>;
+
+    /// An HTTP archive (HAR 1.2, as DevTools, proxies and clients export
+    /// it): requests in start order with timing phases, headers and body
+    /// previews. At most [`domain::devops::har::MAX_ENTRIES`] requests are
+    /// kept.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed JSON or a file without
+    /// `log.entries`.
+    fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError>;
+
+    /// A Terraform or OpenTofu plan: `terraform show -json <planfile>`
+    /// (resource changes with attribute diffs, sensitive values masked),
+    /// or the JSON lines of `terraform plan -json` (actions only).
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed JSON or JSON that is not a
+    /// plan.
+    fn parse_terraform_plan(
+        &self,
+        bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError>;
+
+    /// A Graphviz DOT graph (the first of the text) on the graph widget:
+    /// nodes, edges, clusters as groups, `label`, `color` (as the node
+    /// kind) and `rankdir`. `path` names the file, when there is one.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for text that is not DOT or breaks its
+    /// grammar.
+    fn parse_dot(&self, text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError>;
+
+    /// An ER diagram from SQL DDL: a node per `CREATE TABLE` (columns in
+    /// its attributes and in [`DiagramSpec::tables`]), an edge per foreign
+    /// key. `dialect` is a `sqlparser` dialect name (generic when
+    /// absent); statements that do not parse are skipped with a warning.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unknown dialect or SQL without a
+    /// table.
+    fn parse_ddl(
+        &self,
+        sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError>;
+
+    /// Criterion results: each benchmark's estimates for the new run and
+    /// the baseline and its change, as criterion wrote them, with a
+    /// verdict from the change's interval against the noise threshold.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] when no benchmark has a readable new run.
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError>;
 }
 
 #[cfg(test)]

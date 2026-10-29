@@ -10,7 +10,18 @@
 //! is `GET /checkout` (api, 100 ms) calling a failed `charge` (payments,
 //! 10–90 ms, "card declined") that calls `SELECT cards` (db, 20–40 ms);
 //! every profile is `main;work 70` and `main;idle 30` samples; every log
-//! is an info line and two `db down` errors of service `db`.
+//! is an info line and two `db down` errors of service `db`; every query
+//! plan is a `Hash Join` (100 ms, 5000 rows for 50 planned) over a hot
+//! `Seq Scan on orders` (70 ms) and a `Hash`; every HAR is a `GET /` of
+//! `app.test` (200, 120 ms, 2 kB, with an `Authorization` header) and a
+//! failed `POST /api/pay?token=...` (503, 300 ms); every Terraform plan
+//! replaces `aws_instance.web` (forced by `ami`), updates a sensitive
+//! `password` of `aws_db_instance.main`, creates `aws_s3_bucket.logs`
+//! and leaves 4 resources unchanged; every DOT graph is `build -> test ->
+//! deploy` plus `lint -> test` with `build` and `test` in cluster `ci`;
+//! every DDL is `users` and `orders` (`orders.user_id` → `users.id`);
+//! benchmarks are `fib/20` regressed (+14%) and `sort/1k` unchanged, plus
+//! one per directory of the request beyond those two, without baseline.
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -19,19 +30,29 @@ use std::sync::{Mutex, PoisonError};
 use domain::block::{Cell, Column, SourceRef, TableSpec};
 use domain::computed::Histogram;
 use domain::dataset::{DatasetColumn, DatasetSpec};
+use domain::devops::bench::{Bench, BenchSpec, Estimate, NOISE_THRESHOLD, RunEstimates, Verdict};
+use domain::devops::diagram::{DiagramSource, DiagramSpec, ErColumn, ErTable};
 use domain::devops::flame::{FlameSpec, FlameTree, ProfileFormat};
+use domain::devops::har::{HarEntry, HarHeader, HarSpec, HarTimings};
 use domain::devops::logs::{LogFormat, LogSpec};
+use domain::devops::query_plan::{PlanEngine, PlanNode, QueryPlanSpec};
+use domain::devops::terraform::{
+    AttrChange, AttrValue, PlanAction, PlanSource, ResourceChange, TerraformPlanSpec,
+};
 use domain::devops::trace::{SERVICE, STATUS_MESSAGE, TraceFormat, TraceSpec, critical_path};
 use domain::report::{
     Finding, FindingSeverity, FindingsSpec, TestCase, TestOutcome, TestReportSpec, TestSuite,
 };
+use domain::widget::graph::GraphSpec;
 use domain::widget::list::{ListItem, ListSpec};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use serde_json::Map;
 
 use domain::science::{MoleculeSpec, formulas_match};
 
-use crate::ports::formats::{DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest};
+use crate::ports::formats::{
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+};
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -314,6 +335,267 @@ impl FormatsPort for FakeFormats {
                 follow: false,
             },
             histogram: None,
+        })
+    }
+
+    fn parse_query_plan(
+        &self,
+        _bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError> {
+        self.record("parse_query_plan", path.unwrap_or("-"))?;
+        let node = |node_type: &str, depth, time, rows, planned| PlanNode {
+            node_type: node_type.to_owned(),
+            depth,
+            actual_time: Some(time),
+            actual_rows: Some(rows),
+            plan_rows: Some(planned),
+            loops: Some(1.0),
+            ..PlanNode::default()
+        };
+        let mut scan = node("Seq Scan", 1, 70.0, 10_000.0, 9_000.0);
+        scan.relation = Some("orders".into());
+        let mut spec = QueryPlanSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            engine: PlanEngine::Postgres,
+            analyzed: true,
+            buffers: false,
+            planning_time: Some(0.5),
+            execution_time: Some(100.0),
+            trigger_time: None,
+            jit_time: None,
+            nodes: vec![
+                node("Hash Join", 0, 100.0, 5_000.0, 50.0),
+                scan,
+                node("Hash", 1, 20.0, 10.0, 10.0),
+            ],
+        };
+        spec.analyse();
+        Ok(spec)
+    }
+
+    fn parse_har(&self, _bytes: &[u8], path: &str) -> Result<HarSpec, FormatError> {
+        self.record("parse_har", path)?;
+        let entry = |method: &str, url: &str, status, start, wait: f64| HarEntry {
+            method: method.to_owned(),
+            url: url.to_owned(),
+            status,
+            resource_type: "fetch".into(),
+            start,
+            time: 20.0 + wait,
+            timings: HarTimings {
+                connect: Some(10.0),
+                send: Some(10.0),
+                wait: Some(wait),
+                ..HarTimings::default()
+            },
+            transfer_size: Some(2_000),
+            ..HarEntry::default()
+        };
+        let mut home = entry("GET", "https://app.test/", 200, 0.0, 100.0);
+        home.resource_type = "document".into();
+        home.request_headers = vec![HarHeader {
+            name: "Authorization".into(),
+            value: "Bearer s3cret".into(),
+        }];
+        Ok(HarSpec {
+            title: None,
+            path: Some(path.to_owned()),
+            creator: Some("WebInspector 537.36".into()),
+            started_at: Some(1_792_847_107.0),
+            pages: Vec::new(),
+            entries: vec![
+                home,
+                entry(
+                    "POST",
+                    "https://app.test/api/pay?token=abc",
+                    503,
+                    150.0,
+                    280.0,
+                ),
+            ],
+            total_entries: 2,
+        })
+    }
+
+    fn parse_terraform_plan(
+        &self,
+        _bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError> {
+        self.record("parse_terraform_plan", path)?;
+        let known = |v: &str| AttrValue::Known(v.into());
+        let change = |path: &str, before, after, forces| AttrChange {
+            path: path.to_owned(),
+            before,
+            after,
+            forces_replacement: forces,
+        };
+        let resource = |address: &str, action, attributes: Vec<AttrChange>| ResourceChange {
+            address: address.to_owned(),
+            kind: address.split('.').next().map(str::to_owned),
+            data: false,
+            provider: None,
+            action,
+            reason: None,
+            previous_address: None,
+            attributes_total: attributes.len(),
+            attributes,
+        };
+        Ok(TerraformPlanSpec {
+            title: None,
+            path: Some(path.to_owned()),
+            source: PlanSource::Show,
+            terraform_version: Some("1.9.0".into()),
+            resources: vec![
+                resource(
+                    "aws_instance.web",
+                    PlanAction::Replace,
+                    vec![change("ami", known("ami-1"), known("ami-2"), true)],
+                ),
+                resource(
+                    "aws_db_instance.main",
+                    PlanAction::Update,
+                    vec![change(
+                        "password",
+                        AttrValue::Sensitive,
+                        AttrValue::Sensitive,
+                        false,
+                    )],
+                ),
+                resource(
+                    "aws_s3_bucket.logs",
+                    PlanAction::Create,
+                    vec![change("bucket", AttrValue::Absent, known("logs"), false)],
+                ),
+            ],
+            unchanged: 4,
+            drift: Vec::new(),
+            outputs: Vec::new(),
+            errored: false,
+            applyable: Some(true),
+        })
+    }
+
+    fn parse_dot(&self, _text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError> {
+        self.record("parse_dot", path.unwrap_or("-"))?;
+        let graph: GraphSpec = serde_json::from_value(serde_json::json!({
+            "title": "pipeline",
+            "nodes": [
+                {"id": "build", "group": "ci"}, {"id": "test", "group": "ci"},
+                {"id": "deploy"}, {"id": "lint"}
+            ],
+            "edges": [
+                {"from": "build", "to": "test"}, {"from": "test", "to": "deploy"},
+                {"from": "lint", "to": "test"}
+            ],
+            "groups": [{"id": "ci", "label": "CI"}]
+        }))
+        .map_err(|e| FormatError::Invalid(e.to_string()))?;
+        Ok(DiagramSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            source: DiagramSource::Dot,
+            dialect: None,
+            graph,
+            tables: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_ddl(
+        &self,
+        _sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError> {
+        self.record("parse_ddl", path.unwrap_or("-"))?;
+        let col = |name: &str, pk, references: Option<&str>| ErColumn {
+            name: name.to_owned(),
+            data_type: "bigint".into(),
+            primary_key: pk,
+            nullable: !pk,
+            unique: false,
+            references: references.map(str::to_owned),
+        };
+        let graph: GraphSpec = serde_json::from_value(serde_json::json!({
+            "nodes": [{"id": "users", "kind": "table"}, {"id": "orders", "kind": "table"}],
+            "edges": [{"from": "orders", "to": "users", "label": "user_id → id"}]
+        }))
+        .map_err(|e| FormatError::Invalid(e.to_string()))?;
+        Ok(DiagramSpec {
+            title: None,
+            path: path.map(str::to_owned),
+            source: DiagramSource::SqlDdl,
+            dialect: Some(dialect.unwrap_or("generic").to_owned()),
+            graph,
+            tables: vec![
+                ErTable {
+                    name: "users".into(),
+                    columns: vec![col("id", true, None)],
+                },
+                ErTable {
+                    name: "orders".into(),
+                    columns: vec![
+                        col("id", true, None),
+                        col("user_id", false, Some("users.id")),
+                    ],
+                },
+            ],
+            warnings: Vec::new(),
+        })
+    }
+
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError> {
+        self.record("parse_benchmarks", &request.path)?;
+        let est = |point: f64, lo: f64, hi: f64| Estimate {
+            point,
+            lo,
+            hi,
+            confidence: 0.95,
+            standard_error: None,
+        };
+        let run = |mean: Estimate| RunEstimates {
+            mean,
+            median: None,
+            std_dev: None,
+            slope: None,
+        };
+        let bench = |id: &str, new, base: Option<Estimate>, change: Option<Estimate>| Bench {
+            id: id.to_owned(),
+            dir: id.to_owned(),
+            new: run(new),
+            base: base.map(run),
+            verdict: change.map_or(Verdict::Unknown, |c| Verdict::of(&c, NOISE_THRESHOLD)),
+            change,
+            median_change: None,
+            ratio: None,
+        };
+        let mut benches = vec![
+            bench(
+                "fib/20",
+                est(25_100.0, 24_900.0, 25_300.0),
+                Some(est(22_000.0, 21_800.0, 22_200.0)),
+                Some(est(0.142, 0.129, 0.156)),
+            ),
+            bench(
+                "sort/1k",
+                est(1_000_000.0, 990_000.0, 1_010_000.0),
+                Some(est(1_000_000.0, 990_000.0, 1_010_000.0)),
+                Some(est(0.002, -0.01, 0.014)),
+            ),
+        ];
+        for files in request.benches.iter().skip(2) {
+            benches.push(bench(&files.dir, est(10.0, 9.0, 11.0), None, None));
+        }
+        Ok(BenchSpec {
+            title: None,
+            path: request.path.clone(),
+            baseline: request.baseline.clone(),
+            noise_threshold: NOISE_THRESHOLD,
+            benches,
+            skipped: Vec::new(),
         })
     }
 }

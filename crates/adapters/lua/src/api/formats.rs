@@ -1,6 +1,7 @@
 //! `app.formats`: the file-format blocks of the `show_dataset`,
-//! `show_molecule`, `show_trace`, `show_flamegraph` and `show_logs` tools
-//! from Lua. Each returns a block (wrapped like
+//! `show_molecule`, `show_trace`, `show_flamegraph`, `show_logs`,
+//! `show_query_plan`, `show_har`, `show_terraform_plan`, `show_dot`,
+//! `show_er` and `show_benchmarks` tools from Lua. Each returns a block (wrapped like
 //! `app.ui.block`), so a tool or command handler that returns it shows it.
 //!
 //! ```lua
@@ -9,6 +10,12 @@
 //! return app.formats.trace{ path = 'traces/checkout.json' }
 //! return app.formats.flamegraph{ path = 'cpu.pb.gz', sample_type = 'cpu' }
 //! return app.formats.logs{ path = 'logs/app.log', format = 'logfmt' }
+//! return app.formats.query_plan{ path = 'plans/slow.json' }
+//! return app.formats.har{ path = 'net/checkout.har' }
+//! return app.formats.terraform_plan{ path = 'infra/plan.json' }
+//! return app.formats.dot{ source = 'digraph { a -> b }' }
+//! return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }
+//! return app.formats.benchmarks{ path = 'target/criterion', baseline = 'base' }
 //! ```
 //!
 //! | Function | Block |
@@ -18,6 +25,12 @@
 //! | `trace{ path, title }` | a trace waterfall (OTLP, Jaeger or Zipkin JSON) |
 //! | `flamegraph{ path, sample_type, title }` | a flame graph (folded stacks or pprof) |
 //! | `logs{ path, format }` | a log file on a filterable list (`json`, `logfmt` or `text`; guessed when absent) |
+//! | `query_plan{ path or plan, title }` | a PostgreSQL `EXPLAIN (FORMAT JSON)` plan on a tree table |
+//! | `har{ path, title }` | an HTTP archive as a waterfall with a request inspector |
+//! | `terraform_plan{ path, title }` | a Terraform plan (`terraform show -json`) as a tree of resource changes |
+//! | `dot{ path or source, title }` | a Graphviz DOT graph on the graph widget |
+//! | `er{ path or sql, dialect, title }` | an ER diagram from SQL DDL (tables, foreign keys) |
+//! | `benchmarks{ path, baseline, filter, title }` | criterion results, baseline against new (`target/criterion`, `base` by default) |
 //!
 //! The path is read through the same guard as the model's `read_file`.
 //! The block is in `result["$crest_block"]` (e.g. its `formula`). A file
@@ -30,7 +43,8 @@ use std::sync::Arc;
 use application::ports::formats::{DatasetRequest, FormatsPort, LogRequest, ProfileRequest};
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::{
-    DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS, dataset_format, read_dataset, read_log, read_report,
+    DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
+    collect_benchmarks, dataset_format, read_dataset, read_har, read_log, read_report,
 };
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
@@ -207,6 +221,139 @@ fn logs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Logs(Box::new(spec)))
 }
 
+fn query_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "query_plan";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?;
+    let bytes = match (&path, text(args, F, "plan")?) {
+        (Some(_), Some(_)) => return Err(error(F, "give `path` or `plan`, not both")),
+        (None, None) => return Err(error(F, "`path` or `plan` is required")),
+        (Some(path), None) => context(lua)?
+            .block_on(read_report(services.fs.as_ref(), path))?
+            .map_err(|e| error(F, e))?,
+        (None, Some(plan)) => plan.into_bytes(),
+    };
+    let mut spec = services
+        .formats
+        .parse_query_plan(&bytes, path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::QueryPlan(Box::new(spec)))
+}
+
+fn har(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "har";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_har(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_har(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Har(Box::new(spec)))
+}
+
+fn terraform_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "terraform_plan";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
+    let bytes = context(lua)?
+        .block_on(read_report(services.fs.as_ref(), &path))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_terraform_plan(&bytes, &path)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::TerraformPlan(Box::new(spec)))
+}
+
+/// The text of `path` (through the guard) or of the inline `inline`
+/// argument; exactly one must be given.
+fn path_or_inline(
+    lua: &Lua,
+    args: &Table,
+    function: &str,
+    inline: &str,
+) -> mlua::Result<(Option<String>, String)> {
+    let services = services(lua, function)?;
+    match (text(args, function, "path")?, text(args, function, inline)?) {
+        (Some(_), Some(_)) => Err(error(
+            function,
+            format!("give `path` or `{inline}`, not both"),
+        )),
+        (None, None) => Err(error(function, format!("`path` or `{inline}` is required"))),
+        (Some(path), None) => {
+            let bytes = context(lua)?
+                .block_on(read_report(services.fs.as_ref(), &path))?
+                .map_err(|e| error(function, e))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| error(function, format!("`{path}` is not UTF-8 text")))?;
+            Ok((Some(path), text))
+        }
+        (None, Some(source)) => Ok((None, source)),
+    }
+}
+
+fn dot(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "dot";
+    let services = services(lua, F)?;
+    let (path, source) = path_or_inline(lua, args, F, "source")?;
+    let mut spec = services
+        .formats
+        .parse_dot(&source, path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
+}
+
+fn er(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "er";
+    let services = services(lua, F)?;
+    let (path, sql) = path_or_inline(lua, args, F, "sql")?;
+    let dialect = text(args, F, "dialect")?;
+    let mut spec = services
+        .formats
+        .parse_ddl(&sql, dialect.as_deref(), path.as_deref())
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
+}
+
+fn benchmarks(lua: &Lua, args: &Table) -> mlua::Result<Value> {
+    const F: &str = "benchmarks";
+    let services = services(lua, F)?;
+    let path = text(args, F, "path")?.unwrap_or_else(|| DEFAULT_CRITERION_DIR.to_owned());
+    let baseline = text(args, F, "baseline")?.unwrap_or_else(|| DEFAULT_BASELINE.to_owned());
+    let filter = text(args, F, "filter")?;
+    let request = context(lua)?
+        .block_on(collect_benchmarks(
+            services.fs.as_ref(),
+            &path,
+            &baseline,
+            filter.as_deref(),
+        ))?
+        .map_err(|e| error(F, e))?;
+    let mut spec = services
+        .formats
+        .parse_benchmarks(&request)
+        .map_err(|e| error(F, e))?;
+    spec.title = text(args, F, "title")?;
+    spec.validate()
+        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
+    block_value(lua, &BlockKind::Benchmarks(Box::new(spec)))
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
@@ -239,6 +386,48 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
     formats.set(
+        "benchmarks",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => benchmarks(lua, &args),
+            _ => Err(error("benchmarks", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "dot",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => dot(lua, &args),
+            _ => Err(error("dot", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "er",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => er(lua, &args),
+            _ => Err(error("er", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "terraform_plan",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => terraform_plan(lua, &args),
+            _ => Err(error("terraform_plan", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "har",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => har(lua, &args),
+            _ => Err(error("har", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
+        "query_plan",
+        lua.create_function(|lua, args: Value| match args {
+            Value::Table(args) => query_plan(lua, &args),
+            _ => Err(error("query_plan", "expected a table of arguments")),
+        })?,
+    )?;
+    formats.set(
         "logs",
         lua.create_function(|lua, args: Value| match args {
             Value::Table(args) => logs(lua, &args),
@@ -268,6 +457,11 @@ mod tests {
             .with_file("traces/t.json", "{}")
             .with_file("cpu.folded", "main 1\n")
             .with_file("logs/app.log", "info hi\n")
+            .with_file("plans/q.json", "[]")
+            .with_file("net/app.har", "{}")
+            .with_file("infra/plan.json", "{}")
+            .with_file("db/schema.sql", "create table a (id int);")
+            .with_file("target/criterion/fib/new/estimates.json", "{}")
             .with_file(".env", "a\n1\n");
         let ctx = Context::new(None, false, Some(Vec::new()));
         if let Some(formats) = formats {
@@ -307,6 +501,91 @@ mod tests {
             panic!("not a molecule: {out:?}");
         };
         assert_eq!(spec.name.as_deref(), Some("ethanol"));
+    }
+
+    #[test]
+    fn query_plans_come_from_a_file_or_inline() {
+        let formats = Arc::new(FakeFormats::new());
+        let out = run_code(
+            "return app.formats.query_plan{ path = 'plans/q.json', title = 'slow' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::QueryPlan(spec)) = out else {
+            panic!("not a plan: {out:?}");
+        };
+        assert_eq!(spec.title.as_deref(), Some("slow"));
+        let out = run_code(
+            "return app.formats.query_plan{ plan = '[]' }",
+            Some(Arc::clone(&formats)),
+        )
+        .unwrap();
+        assert!(
+            matches!(out, PluginOutput::Block(BlockKind::QueryPlan(_))),
+            "{out:?}"
+        );
+        let both = run_code(
+            "return app.formats.query_plan{ plan = '[]', path = 'x' }",
+            Some(formats),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("not both"), "{both}");
+        let out = run_code(
+            "return app.formats.har{ path = 'net/app.har' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Har(spec)) = out else {
+            panic!("not a HAR: {out:?}");
+        };
+        assert_eq!(spec.entries.len(), 2);
+        let out = run_code(
+            "return app.formats.terraform_plan{ path = 'infra/plan.json' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::TerraformPlan(spec)) = out else {
+            panic!("not a plan: {out:?}");
+        };
+        assert_eq!(spec.resources.len(), 3);
+        let out = run_code(
+            "return app.formats.dot{ source = 'digraph { a -> b }', title = 'g' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Diagram(spec)) = out else {
+            panic!("not a diagram: {out:?}");
+        };
+        assert_eq!(spec.title.as_deref(), Some("g"));
+        let out = run_code(
+            "return app.formats.er{ path = 'db/schema.sql', dialect = 'postgresql' }",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Diagram(spec)) = out else {
+            panic!("not a diagram: {out:?}");
+        };
+        assert_eq!(spec.tables.len(), 2);
+        let bad = run_code(
+            "return app.formats.er{}",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(bad.contains("`path` or `sql`"), "{bad}");
+        let out = run_code(
+            "return app.formats.benchmarks{}",
+            Some(Arc::new(FakeFormats::new())),
+        )
+        .unwrap();
+        let PluginOutput::Block(BlockKind::Benchmarks(spec)) = out else {
+            panic!("not benchmarks: {out:?}");
+        };
+        assert_eq!(
+            (spec.path.as_str(), spec.baseline.as_str()),
+            ("target/criterion", "base")
+        );
     }
 
     #[test]

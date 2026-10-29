@@ -43,6 +43,11 @@ pub fn kind_name(kind: &BlockKind) -> &'static str {
         BlockKind::Trace(_) => "trace",
         BlockKind::FlameGraph(_) => "flame_graph",
         BlockKind::Logs(_) => "logs",
+        BlockKind::QueryPlan(_) => "query_plan",
+        BlockKind::Har(_) => "har",
+        BlockKind::TerraformPlan(_) => "terraform_plan",
+        BlockKind::Diagram(_) => "diagram",
+        BlockKind::Benchmarks(_) => "benchmarks",
     }
 }
 

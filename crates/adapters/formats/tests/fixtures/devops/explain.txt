@@ -1,0 +1,1 @@
+Seq Scan on users  (cost=0.00..18.50 rows=850 width=72)

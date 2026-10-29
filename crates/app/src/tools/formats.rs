@@ -5,8 +5,11 @@
 //! column statistics and first rows of a CSV, TSV, JSON lines or Parquet
 //! file), `show_molecule` (a SMILES as a 2D structure with its computed
 //! formula and mass) and `show_plate` (a 96/384-well plate map, pure),
-//! plus the developer/ops viewers of [`devops`]: `show_trace`,
-//! `show_flamegraph` and `show_logs`. [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
+//! plus the developer/ops viewers of [`devops`] (`show_trace`,
+//! `show_flamegraph`, `show_logs`), [`query_plan`] (`show_query_plan`),
+//! [`har`] (`show_har`), [`terraform`] (`show_terraform_plan`),
+//! [`diagram`] (`show_dot`, `show_er`) and [`bench`] (`show_benchmarks`).
+//! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
 //! Files are read through the file port, with the workspace and
@@ -42,12 +45,25 @@ use crate::ports::formats::{DatasetRequest, FormatsPort};
 use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
+pub mod bench;
 pub mod devops;
+pub mod diagram;
+pub mod har;
+pub mod query_plan;
+pub mod terraform;
 
+pub use bench::{
+    DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
+    collect_benchmarks,
+};
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
     flame_summary, logs_summary, read_log, trace_summary,
 };
+pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
+pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
+pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
+pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
@@ -1086,13 +1102,33 @@ graph; reason from the hottest path and self times it returns.
 - `show_logs`: show a log file (JSON lines, logfmt, text) as a filterable \
 list instead of pasting lines; it returns the level counts and the error \
 messages grouped by shape.
+- `show_query_plan`: show a PostgreSQL `EXPLAIN (FORMAT JSON)` plan as a \
+tree table when a query is slow; ask for `EXPLAIN (ANALYZE, BUFFERS, FORMAT \
+JSON)` to get actual times. Explain from the slowest nodes, misestimates \
+and warnings it returns.
+- `show_har`: show an HTTP archive (HAR) as a waterfall with a request \
+inspector when the question is why a page is slow or which request \
+failed. Its summary hides cookies and tokens; never ask the user to paste \
+them.
+- `show_terraform_plan`: before an apply, show the plan (`terraform show \
+-json tfplan > plan.json`) instead of reading the text output; point out \
+destroys and replacements and what forces them.
+- `show_dot`: draw an existing Graphviz DOT file or output (dependency \
+graphs, `terraform graph`, build graphs) as an interactive graph.
+- `show_er`: draw the entity-relationship diagram of a schema from its \
+SQL DDL (schema dump or migrations) so it matches the real tables. Use \
+`show_mermaid` only for diagrams you compose yourself.
+- `show_benchmarks`: after `cargo bench`, show criterion's results \
+(baseline against new) instead of pasting its output; cite its numbers and \
+verdicts, never your own estimates.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
 
 /// Registers `show_test_report`, `show_findings`, `show_wavedrom`,
 /// `show_dataset`, `show_molecule`, `show_plate`, `show_trace`,
-/// `show_flamegraph` and `show_logs`.
+/// `show_flamegraph`, `show_logs`, `show_query_plan`, `show_har`,
+/// `show_terraform_plan`, `show_dot`, `show_er` and `show_benchmarks`.
 ///
 /// # Errors
 ///
@@ -1109,7 +1145,13 @@ pub fn register_format_tools(
     registry.register_typed(ShowPlateTool)?;
     registry.register_typed(ShowTraceTool::new(ports.clone()))?;
     registry.register_typed(ShowFlamegraphTool::new(ports.clone()))?;
-    registry.register_typed(ShowLogsTool::new(ports.clone()))
+    registry.register_typed(ShowLogsTool::new(ports.clone()))?;
+    registry.register_typed(ShowQueryPlanTool::new(ports.clone()))?;
+    registry.register_typed(ShowHarTool::new(ports.clone()))?;
+    registry.register_typed(ShowTerraformPlanTool::new(ports.clone()))?;
+    registry.register_typed(ShowDotTool::new(ports.clone()))?;
+    registry.register_typed(ShowErTool::new(ports.clone()))?;
+    registry.register_typed(ShowBenchmarksTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1227,7 +1269,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 9);
+        assert_eq!(registry.names().len(), 15);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

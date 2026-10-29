@@ -7,15 +7,18 @@
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod ansi;
+pub mod bench;
 pub mod chart;
 pub mod computed;
 pub mod copy;
 pub mod custom;
 pub mod dataset;
+pub mod diagram;
 pub mod diff;
 pub mod findings;
 pub mod flame;
 pub mod form;
+pub mod har;
 pub mod image;
 pub mod image_view;
 pub mod json;
@@ -28,11 +31,13 @@ pub mod model_view;
 pub mod molecule;
 pub mod plate;
 pub mod plot;
+pub mod query_plan;
 pub mod shell;
 pub mod sources;
 pub mod stage;
 pub mod svg;
 pub mod table;
+pub mod terraform;
 pub mod test_report;
 pub mod thinking;
 pub mod trace;
@@ -77,6 +82,11 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Trace(_) => trace::render(entry, window, cx),
         BlockKind::FlameGraph(_) => flame::render(entry, window, cx),
         BlockKind::Logs(_) => logs::render(entry, window, cx),
+        BlockKind::QueryPlan(_) => query_plan::render(entry, window, cx),
+        BlockKind::Har(_) => har::render(entry, window, cx),
+        BlockKind::TerraformPlan(_) => terraform::render(entry, window, cx),
+        BlockKind::Diagram(_) => diagram::render(entry, window, cx),
+        BlockKind::Benchmarks(_) => bench::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

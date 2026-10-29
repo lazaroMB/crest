@@ -1,0 +1,5 @@
+{"@level":"info","@message":"Terraform 1.9.5","@module":"terraform.ui","terraform":"1.9.5","type":"version","ui":"1.2"}
+{"@level":"info","@message":"aws_instance.web: Plan to replace","change":{"resource":{"addr":"aws_instance.web","resource_type":"aws_instance","resource_name":"web"},"action":"replace","reason":"cannot_update"},"type":"planned_change"}
+{"@level":"info","@message":"data.aws_ami.ubuntu: Plan to read","change":{"resource":{"addr":"data.aws_ami.ubuntu","resource_type":"aws_ami"},"action":"read"},"type":"planned_change"}
+{"@level":"info","@message":"aws_security_group.web: Drift detected (update)","change":{"resource":{"addr":"aws_security_group.web"},"action":"update"},"type":"resource_drift"}
+{"@level":"info","@message":"Plan: 1 to add, 0 to change, 1 to destroy.","changes":{"add":1,"change":0,"remove":1,"operation":"plan"},"type":"change_summary"}

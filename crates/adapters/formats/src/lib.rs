@@ -12,24 +12,41 @@
 //! - distributed traces from OTLP, Jaeger and Zipkin JSON ([`trace`],
 //!   serde);
 //! - profiles from folded stacks and pprof ([`flame`], prost + flate2);
-//! - log files in JSON lines, logfmt or text ([`logs`]).
+//! - log files in JSON lines, logfmt or text ([`logs`]);
+//! - PostgreSQL `EXPLAIN (FORMAT JSON)` plans ([`query_plan`], serde_json);
+//! - HTTP archives ([`har`], own serde);
+//! - Terraform / OpenTofu plans ([`terraform`], serde_json);
+//! - Graphviz DOT ([`dot`], own reduced parser) and ER diagrams from SQL
+//!   DDL ([`er`], sqlparser);
+//! - criterion benchmark estimates ([`bench`], serde).
 
+pub mod bench;
 pub mod dataset;
+pub mod dot;
+pub mod er;
 pub mod flame;
+pub mod har;
 pub mod junit;
 pub mod libtest;
 pub mod logs;
 pub mod molecule;
+pub mod query_plan;
 pub mod sarif;
+pub mod terraform;
 pub mod trace;
 pub mod wave;
 
 use application::ports::formats::{
-    DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
+    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, ProfileRequest,
 };
 use domain::dataset::DatasetSpec;
+use domain::devops::bench::BenchSpec;
+use domain::devops::diagram::DiagramSpec;
 use domain::devops::flame::FlameSpec;
+use domain::devops::har::HarSpec;
 use domain::devops::logs::LogSpec;
+use domain::devops::query_plan::QueryPlanSpec;
+use domain::devops::terraform::TerraformPlanSpec;
 use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
@@ -91,5 +108,42 @@ impl FormatsPort for Formats {
 
     fn parse_logs(&self, bytes: &[u8], request: &LogRequest) -> Result<LogSpec, FormatError> {
         logs::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn parse_query_plan(
+        &self,
+        bytes: &[u8],
+        path: Option<&str>,
+    ) -> Result<QueryPlanSpec, FormatError> {
+        query_plan::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_har(&self, bytes: &[u8], path: &str) -> Result<HarSpec, FormatError> {
+        har::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_terraform_plan(
+        &self,
+        bytes: &[u8],
+        path: &str,
+    ) -> Result<TerraformPlanSpec, FormatError> {
+        terraform::parse(bytes, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_dot(&self, text: &str, path: Option<&str>) -> Result<DiagramSpec, FormatError> {
+        dot::parse(text, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_ddl(
+        &self,
+        sql: &str,
+        dialect: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<DiagramSpec, FormatError> {
+        er::parse(sql, dialect, path).map_err(FormatError::Invalid)
+    }
+
+    fn parse_benchmarks(&self, request: &BenchRequest) -> Result<BenchSpec, FormatError> {
+        bench::parse(request).map_err(FormatError::Invalid)
     }
 }

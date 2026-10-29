@@ -228,6 +228,46 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[logs: {} lines]", logs.total_lines),
         ),
+        BlockKind::Benchmarks(bench) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[benchmarks: {}, {} regressed, {} improved]",
+                bench.benches.len(),
+                bench
+                    .with_verdict(domain::devops::bench::Verdict::Regressed)
+                    .len(),
+                bench
+                    .with_verdict(domain::devops::bench::Verdict::Improved)
+                    .len()
+            ),
+        ),
+        BlockKind::Diagram(diagram) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[diagram: {} nodes, {} edges]",
+                diagram.graph.nodes.len(),
+                diagram.graph.edges.len()
+            ),
+        ),
+        BlockKind::TerraformPlan(plan) => w.line(
+            Some(Style::Dim),
+            &format!("[terraform plan: {}]", plan.counts_text()),
+        ),
+        BlockKind::Har(har) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[har: {} requests, {} failed]",
+                har.entries.len(),
+                har.failed().len()
+            ),
+        ),
+        BlockKind::QueryPlan(plan) => w.line(
+            Some(Style::Dim),
+            &match plan.execution_time {
+                Some(t) => format!("[query plan: {} nodes, {t} ms]", plan.nodes.len()),
+                None => format!("[query plan: {} nodes]", plan.nodes.len()),
+            },
+        ),
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
     }
 }
