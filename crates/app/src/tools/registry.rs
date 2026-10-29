@@ -287,11 +287,69 @@ pub struct Typed<T>(pub T);
 
 impl<T: TypedTool> Typed<T> {
     fn parse(&self, input: Value) -> Result<T::Input, ToolError> {
-        serde_json::from_value(input).map_err(|err| ToolError::InvalidInput {
-            tool: self.0.name().to_owned(),
-            message: err.to_string(),
+        <T::Input as serde::Deserialize>::deserialize(&input).map_err(|err| {
+            ToolError::InvalidInput {
+                tool: self.0.name().to_owned(),
+                message: input_hint(
+                    &err.to_string(),
+                    &schemars::schema_for!(T::Input).to_value(),
+                    &input,
+                ),
+            }
         })
     }
+}
+
+/// The deserializer's `error` plus what the model needs to retry: the
+/// required keys it left out, the keys it sent and the allowed ones (from
+/// `schema`, the tool's input schema).
+#[must_use]
+pub fn input_hint(error: &str, schema: &Value, input: &Value) -> String {
+    let names = |value: Option<&Value>| -> Vec<String> {
+        match value {
+            Some(Value::Object(map)) => map.keys().cloned().collect(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let list = |keys: &[String]| {
+        keys.iter()
+            .map(|key| format!("`{key}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let allowed = names(schema.get("properties"));
+    let required = names(schema.get("required"));
+    let mut parts = vec![error.to_owned()];
+    let Value::Object(map) = input else {
+        parts.push(format!(
+            "The input must be a JSON object with {}",
+            list(&allowed)
+        ));
+        return parts.join(". ");
+    };
+    let received: Vec<String> = map.keys().cloned().collect();
+    let missing: Vec<String> = required
+        .iter()
+        .filter(|key| !map.contains_key(*key))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        parts.push(format!("Missing required: {}", list(&missing)));
+    }
+    parts.push(if received.is_empty() {
+        "Received no keys".to_owned()
+    } else {
+        format!("Received: {}", list(&received))
+    });
+    if !allowed.is_empty() {
+        parts.push(format!("Allowed: {}", list(&allowed)));
+    }
+    parts.join(". ")
 }
 
 #[async_trait]
@@ -617,6 +675,30 @@ mod tests {
         };
         assert_eq!(tool, "echo");
         assert!(message.contains("invalid type"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn invalid_input_names_the_missing_received_and_allowed_keys() {
+        let err = registry()
+            .dispatch("echo", json!({ "txt": "hola" }), &ctx())
+            .await
+            .unwrap_err();
+        let ToolError::InvalidInput { message, .. } = err else {
+            panic!("unexpected {err:?}");
+        };
+        assert_eq!(
+            message,
+            "missing field `text`. Missing required: `text`. Received: `txt`. Allowed: `text`"
+        );
+        let schema = json!({ "properties": { "a": {}, "b": {} }, "required": ["a"] });
+        assert_eq!(
+            input_hint("bad", &schema, &json!([])),
+            "bad. The input must be a JSON object with `a`, `b`"
+        );
+        assert_eq!(
+            input_hint("bad", &schema, &json!({})),
+            "bad. Missing required: `a`. Received no keys. Allowed: `a`, `b`"
+        );
     }
 
     #[test]
