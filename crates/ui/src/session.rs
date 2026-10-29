@@ -396,6 +396,9 @@ pub fn file_reference(path: &WorkspacePath, line: Option<u64>) -> String {
     }
 }
 
+/// How long `/login` waits for the provider to check a key.
+pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Everything the session needs from the binary.
 pub struct SessionParts {
     /// The agent.
@@ -525,6 +528,8 @@ pub struct Session {
     /// The themes the `/theme` popup lists, for its previews.
     theme_choices: Vec<ThemeChoice>,
     git: Option<Task<()>>,
+    /// The `/login` key being checked; dropping it cancels the check.
+    login_check: Option<Task<()>>,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -721,6 +726,7 @@ impl Session {
             theme,
             theme_choices: Vec::new(),
             git: None,
+            login_check: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -1104,23 +1110,39 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LoginEvent::Cancelled => self.focus_input(window, cx),
+            LoginEvent::Cancelled => {
+                // A check in flight is dropped, which cancels it.
+                self.login_check = None;
+                self.focus_input(window, cx);
+            }
             LoginEvent::Submit { account, key } => {
                 let login = self.controller.login(*account, key.clone());
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = login.await;
-                    this.update_in(cx, |this, window, cx| match result {
-                        Ok(message) => {
-                            this.login.update(cx, |login, cx| login.close(window, cx));
-                            cx.emit(SessionEvent::Reopen {
-                                notice: Some((NoticeLevel::Info, message)),
-                            });
+                let timeout = cx.background_executor().timer(LOGIN_TIMEOUT);
+                let name = account.display_name();
+                self.login_check = Some(cx.spawn_in(window, async move |this, cx| {
+                    let result = match futures::future::select(login, timeout).await {
+                        futures::future::Either::Left((result, _)) => result,
+                        futures::future::Either::Right(_) => Err(format!(
+                            "{name} did not answer in {} s; check the network and try again",
+                            LOGIN_TIMEOUT.as_secs()
+                        )),
+                    };
+                    this.update_in(cx, |this, window, cx| {
+                        this.login_check = None;
+                        match result {
+                            Ok(message) => {
+                                this.login.update(cx, |login, cx| login.close(window, cx));
+                                cx.emit(SessionEvent::Reopen {
+                                    notice: Some((NoticeLevel::Info, message)),
+                                });
+                            }
+                            Err(error) => {
+                                this.login.update(cx, |login, cx| login.fail(error, cx));
+                            }
                         }
-                        Err(error) => this.login.update(cx, |login, cx| login.fail(error, cx)),
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
@@ -2218,13 +2240,16 @@ mod tests {
             futures::future::ready(reply).boxed()
         }
 
-        /// Only `sk-ant-good` is accepted.
+        /// Only `sk-ant-good` is accepted; `sk-ant-slow` never answers.
         fn login(
             &self,
             _account: Account,
             key: String,
         ) -> BoxFuture<'static, Result<String, String>> {
             self.logins.lock().unwrap().push(key.clone());
+            if key == "sk-ant-slow" {
+                return futures::future::pending().boxed();
+            }
             let result = if key == "sk-ant-good" {
                 Ok("stored".to_owned())
             } else {
@@ -2516,6 +2541,50 @@ mod tests {
         send("/login openai", cx);
         cx.run_until_parked();
         assert!(!login.read_with(cx, |l, _| l.is_open()), "unknown account");
+    }
+
+    #[gpui::test]
+    fn a_login_check_can_be_cancelled_and_times_out(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/login", cx);
+        cx.run_until_parked();
+        let login = login_view(&h, cx);
+        login.update_in(cx, |l, window, cx| {
+            l.set_key("sk-ant-slow", window, cx);
+            l.submit(cx);
+        });
+        cx.run_until_parked();
+        assert!(login.read_with(cx, |l, _| l.is_busy()));
+        cx.simulate_keystrokes("escape");
+        assert!(
+            !login.read_with(cx, |l, _| l.is_open()),
+            "Esc cancels the check"
+        );
+        h.session.read_with(cx, |s, _| {
+            assert!(s.login_check.is_none(), "the check is dropped")
+        });
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "back in the prompt");
+        });
+
+        // The Cancel button works as well, and an unanswered check times out.
+        send("/login", cx);
+        cx.run_until_parked();
+        login.update_in(cx, |l, window, cx| {
+            l.set_key("sk-ant-slow", window, cx);
+            l.submit(cx);
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(LOGIN_TIMEOUT);
+        cx.run_until_parked();
+        login.read_with(cx, |l, _| {
+            assert!(l.is_open() && !l.is_busy());
+            assert!(l.error().is_some_and(|e| e.contains("did not answer")));
+        });
+        let cancel = cx.debug_bounds("login-cancel").expect("Cancel drawn");
+        cx.simulate_click(cancel.center(), gpui::Modifiers::none());
+        assert!(!login.read_with(cx, |l, _| l.is_open()), "Cancel closes it");
     }
 
     #[gpui::test]

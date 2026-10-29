@@ -4,9 +4,10 @@
 //! The key goes straight from this field to the controller
 //! ([`SessionController::login`](crate::session::SessionController::login)):
 //! it never passes through the prompt, so it is not added to the prompt
-//! history nor shown in the timeline. `Enter` submits, `Esc` closes; while
-//! the controller checks the key the field is read-only, and an error keeps
-//! the dialog open with the reason.
+//! history nor shown in the timeline. `Enter` submits, `Esc` or **Cancel**
+//! closes, also while the controller checks the key (the check is then
+//! dropped); meanwhile the field is read-only, and an error (a refused key,
+//! no answer in time) keeps the dialog open with the reason.
 
 use domain::model::Account;
 use gpui::{
@@ -15,8 +16,9 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
     prelude::FluentBuilder as _, px,
 };
+use gpui_component::button::Button;
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 /// What the dialog asks the session to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +139,15 @@ impl LoginView {
         cx.notify();
     }
 
+    /// Closes without a key, dropping a check in flight.
+    pub fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open {
+            return;
+        }
+        self.close(window, cx);
+        cx.emit(LoginEvent::Cancelled);
+    }
+
     /// The controller refused the key: show why and let the user retry.
     pub fn fail(&mut self, error: String, cx: &mut Context<Self>) {
         self.busy = false;
@@ -190,16 +201,15 @@ impl LoginView {
         // dialog may be open out of sight (parked).
         let focused = self.focus_handle.contains_focused(window, cx)
             || self.input.read(cx).focus_handle(cx).is_focused(window);
-        if !self.open || self.busy || !focused {
+        if !self.open || !focused {
             return;
         }
         match event.keystroke.key.as_str() {
             "escape" => {
-                self.close(window, cx);
-                cx.emit(LoginEvent::Cancelled);
+                self.cancel(window, cx);
                 cx.stop_propagation();
             }
-            "tab" => {
+            "tab" if !self.busy => {
                 let next = match self.account {
                     Account::Anthropic => Account::OpenCode,
                     Account::OpenCode => Account::Anthropic,
@@ -227,7 +237,7 @@ impl Render for LoginView {
         let name = self.account.display_name();
         let status = match (&self.error, self.busy) {
             (_, true) => Some((
-                SharedString::from(format!("Checking the key with {name}…")),
+                SharedString::from(format!("Checking the key with {name}… (Esc cancels)")),
                 theme.muted_foreground,
             )),
             (Some(error), false) => Some((SharedString::from(error.clone()), theme.danger)),
@@ -284,9 +294,22 @@ impl Render for LoginView {
         if let Some((text, color)) = status {
             card = card.child(div().text_color(color).child(text));
         }
-        card = card.child(div().text_color(theme.muted_foreground).child(
-            "Enter saves · Tab or click switches account · Esc closes · /logout deletes it",
-        ));
+        card = card.child(
+            h_flex()
+                .gap_3()
+                .justify_between()
+                .child(div().text_color(theme.muted_foreground).child(
+                    "Enter saves · Tab or click switches account · Esc closes · /logout deletes it",
+                ))
+                .child(
+                    div().debug_selector(|| "login-cancel".to_owned()).child(
+                        Button::new("login-cancel")
+                            .small()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))),
+                    ),
+                ),
+        );
         div()
             .id("login")
             .track_focus(&self.focus_handle)

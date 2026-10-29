@@ -1541,8 +1541,23 @@ fn login_on(
             Err(err) => format!("{stored} (it could not be made the default: {err})"),
         })
     });
-    task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
-        .boxed()
+    // The dialog drops the future when the user cancels or the check
+    // times out: the check stops then instead of storing the key later.
+    let abort = AbortOnDrop(task.abort_handle());
+    task.map(move |joined| {
+        drop(abort);
+        joined.unwrap_or_else(|err| Err(err.to_string()))
+    })
+    .boxed()
+}
+
+/// Aborts a runtime task when dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// `/logout` on the runtime of `handle`.
