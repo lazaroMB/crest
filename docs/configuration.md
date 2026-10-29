@@ -143,7 +143,7 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 
 | Option | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
+| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`, `"<P-,>"`: `<P-…>` is Cmd on macOS and Ctrl elsewhere) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the status bar shows the session's tokens instead of the cost. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
@@ -557,7 +557,7 @@ app.mcp.add("docs", {
 app.plugins = { "~/src/mis-plugins/revisor" }
 
 -- Mappings and commands --------------------------------------------------
-app.keymap.set("<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<leader>X", function() app.cmd("clear") end)
 app.keymap.set("<C-p>", "picker.files")
 
 app.commands.register("review", function(args)

@@ -90,12 +90,12 @@ app.keymap.set("<leader>r", "picker.grep")               -- builtin action
 app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear the session" })
 ```
 
-crest has no modes: the prompt is always ready to type and a mapping works wherever the focus is. The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
+crest has no modes: the prompt is always ready to type and a mapping works in the prompt, the timeline, the tree and the chats sidebar (pickers, dialogs, forms and the help keep their own keys; the help's Keys section lists them). The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
 
 - **`keys`**: the sequence in Neovim notation. It must **start with a chord or `<leader>`** (`<C-x>`, `<leader>r`, `<F5>`): a mapping that starts with a plain key (`j`, `gg`, `?`) would steal typing, so it is ignored with a warning at startup.
   - single characters after the first key (`<leader>gg`);
   - `<leader>` (`Ctrl+G` unless `app.opt.leader` says otherwise);
-  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd);
+  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd), `<P-x>` (the platform's primary modifier: Cmd on macOS, Ctrl elsewhere; the builtin `<P-q>` quits on both);
   - key names `<CR>`/`<Enter>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, `<Space>`, `<lt>`, `<gt>`, `<Bar>`, `<Bslash>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<Home>`, `<End>`, `<PageUp>`, `<PageDown>` and `<F1>`–`<F24>`.
 
   `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
@@ -120,7 +120,17 @@ A keymap replaces any other with the same keys, builtin ones included. These are
 | `input.cancel` | In the prompt, copies its selection, else clears the prompt, else interrupts (`Ctrl+C`). With the chat focused and text selected in it, copies that text. |
 | `selection.copy` | Copies the selected text, from the prompt or else the chat (`Ctrl+Shift+C`, `Ctrl+Insert`). Never interrupts. |
 | `turn.interrupt` | Interrupts the turn or the running command. |
+| `queue.edit` | Takes the last queued prompt back into the prompt. |
 | `help.open` | Opens the help modal. |
+| `app.quit` | Quits crest (while a turn runs, asks for a second press within 3 s). |
+| `window.fullscreen` | Enters or leaves full screen. |
+| `theme.pick`, `mode.pick` | Puts `/theme ` / `/mode ` in the prompt, whose popup lists the choices. |
+| `project.switch` | Goes back to the project picker (`/project`). |
+| `panel.chats` | Shows or hides the chats sidebar. |
+| `chat.new`, `chat.next`, `chat.prev` | A new chat in this project / the next (older) / the previous (newer) one. |
+| `chat.rename`, `chat.delete` | Renames / asks to delete the open chat, in the sidebar. |
+| `timeline.outline` | Opens or closes the menu of your questions. |
+| `block.focus_widget` | Gives the keys to the widget of the selected block (`Esc` gives them back). |
 
 Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
 
@@ -812,7 +822,7 @@ local app = require("app")
 app.opt.leader = "<C-,>"
 
 -- Ctrl+, x: new session
-app.keymap.set("<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<leader>X", function() app.cmd("clear") end)
 
 -- Ctrl+P: file picker
 app.keymap.set("<C-p>", "picker.files")

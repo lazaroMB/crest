@@ -10,7 +10,7 @@ crest .               # workspace = current directory
 crest                 # no project yet: the project picker (also --pick)
 ```
 
-The window opens full screen (maximized on Windows); `app.opt.window` in the global `init.lua` makes it open maximized or as a window of a given size ([themes.md](themes.md#window-mode)), and `F11` toggles full screen at any time. On X11 it opens as a normal window and requests full screen (or maximized) after the first frame; if the compositor refuses, it stays centered at 1280×800 (or the size you set). The title is `crest — <directory>`. The colors come from a **theme**: TwoCrest (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber) dark by default, TwoCrest light, or any theme in the `themes/` folder of your config, such as the Neovim favourites the installers put there. `/theme` previews them as you move through the list and saves your pick; `app.opt.theme` fixes one ([themes.md](themes.md)). The window uses a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
+The window opens full screen (maximized on Windows); `app.opt.window` in the global `init.lua` makes it open maximized or as a window of a given size ([themes.md](themes.md#window-mode)), and `F11` (`Ctrl+Cmd+F` on macOS; action `window.fullscreen`) toggles full screen at any time. On X11 it opens as a normal window and requests full screen (or maximized) after the first frame; if the compositor refuses, it stays centered at 1280×800 (or the size you set). The title is `crest — <directory>`. The colors come from a **theme**: TwoCrest (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber) dark by default, TwoCrest light, or any theme in the `themes/` folder of your config, such as the Neovim favourites the installers put there. `/theme` previews them as you move through the list and saves your pick; `app.opt.theme` fixes one ([themes.md](themes.md)). The window uses a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
 
 ```text
 ┌──────────────┬───────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest; `F11` toggles full screen.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+G Ctrl+C` interrupts too, without touching the prompt, and `Ctrl+G u` takes the last queued prompt back like `Up`. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest; while a turn runs the first one only warns, and a second one within 3 s quits. `F11` (`Ctrl+Cmd+F` on macOS) toggles full screen. Both keys are in the keymap (`app.quit`, `window.fullscreen`), so they can be remapped, and they also work over the pickers, dialogs and the project picker.
 
 ### Typing, commands and shortcuts
 
@@ -45,14 +45,15 @@ There are no modes: the prompt is always ready to type (a multi-line editor, up 
 - `Enter` sends the prompt; `Shift+Enter` adds a line.
 - A line that starts with `/` is a **command** (`/model opus`, `/research …`). To send a prompt that starts with a slash, double it: `//etc/hosts` sends `/etc/hosts`.
 - Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it. The palette and the `@`, `/model` and `/theme` popups also hide when you click outside the prompt or move the focus away from it; typing shows them again. They show eight rows at a time: `↑`/`↓` reach every entry (the rows scroll with the choice, wrapping around at the ends), the wheel scrolls them too, and the footer says which rows are shown and how many more there are (`1–8 of 20 · 12 more`).
-- **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+G` is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt. They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
+- **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+G` is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt; the few that follow the platform (`Ctrl+Q`/`Cmd+Q`) are written `<P-…>` in the keymap ([plugins.md](plugins.md#appkeymapsetkeys-action)). They work in the prompt, the timeline, the tree and the chats sidebar. While a picker, a dialog, a form or the help has the focus, its own keys win: there `Ctrl+C` interrupts, the quit and full-screen keys still work, and only some chords reach the keymap (`Ctrl+Tab` leaves a waiting form, `Ctrl+G ff` closes the file picker it opened). While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
 
 ### Focus
 
 The prompt has the focus at start and gets it back by itself after a picker, a menu, a dialog or a modal closes.
 
-- `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
-- `Esc` goes back to the prompt from anywhere. In the timeline it first closes what is open there: the questions menu, the "Copy" hint, or the state of the focused block (a zoom, a cursor, a selection, a measurement); the next `Esc` goes back to the prompt.
+- `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → chats sidebar (when shown) → prompt. The focused panel has an accent edge.
+- `Esc` goes back to the prompt from anywhere. In the timeline it first closes what is open there: the questions menu, the "Copy" hint, or the state of the focused block (a zoom, a cursor, a selection, a measurement). An `Esc` the focused block does not need gives the focus back to the timeline, and the next one goes back to the prompt.
+- `Ctrl+G Enter` (`block.focus_widget`) gives the keys to the widget of the selected block (the last one when none is selected), as a click on it would: a map, a drawing, a diagram, an image, a graph, a 3D model, a waveform, a timeline, a flame graph or a list. A block without keys of its own says so.
 - Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below and the keys of the focused block (`+`, `-`, `0`, `w`/`a`/`s`/`d`...).
 - The rail of marks at the right of the timeline opens the menu of your questions, scrolled to the current one; a click on the rail again, on a question, on its `✕` or anywhere else closes it.
 
@@ -60,11 +61,16 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | --- | --- |
 | Timeline | `k` / `j` or `↑` / `↓` select blocks, `g` / `G` or `Home` / `End` the first and last, `o` or `Enter` expands or collapses, `t` switches the view, `y` copies the block, `PageUp` / `PageDown` scroll. |
 | Tree | `↑` / `↓` move, `→` / `←` open and close directories, `Enter` on a file inserts `@path`. |
+| Chats sidebar | `↑` / `↓` or `k` / `j` move (kept in view), `Home` / `End` the first and last row, `Enter` opens the chat or folds the project, `←` / `→` fold and unfold (`←` on a chat goes to its project), `F2` or `r` renames, `Delete` asks to delete and `Enter` (or `y`) confirms, `Esc` cancels or goes back to the prompt. |
+| Block widget (after a click or `Ctrl+G Enter`) | `+` / `-` / `0` zoom and fit, `Ctrl`/`Cmd` + wheel zooms, drag or `Shift` + wheel pans, `Esc` clears what is selected, then gives the keys back to the timeline; a list moves with `↑` / `↓`, `Home` / `End`, `Enter`. |
+| File and text pickers | `↑` / `↓`, `Enter` inserts the reference, `Esc` closes, `Alt+P` preview, `Alt+C` / `Alt+R` / `Alt+W` case, regex, whole word. |
 | Help | See [Help](#help). |
 | Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
 | Approval dialog | `y`, `a`, `n`, `Esc`; `↑` / `↓`, `PageUp` / `PageDown` scroll the preview. |
 | Filterable list (logs, `app.ui.list`) | After a click on a row, or `↓` from its filter: `↑` / `↓`, `Home` / `End` move the selection (kept in view), `Enter` opens or closes the selected item's fields. |
 | Simulation board | See [Simulation board](#simulation-board). |
+
+The help's Keys section (`F1`, then `2`) lists these fixed keys too, panel by panel, under the keymap; its search finds them (`/help sidebar`).
 
 ### Default key bindings
 
@@ -87,10 +93,23 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Ctrl+G e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
 | `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
+| `Ctrl+G P` | `mode.pick` | Puts `/mode ` in the prompt, whose palette lists the permission modes. |
+| `Ctrl+G T` | `theme.pick` | Puts `/theme ` in the prompt, which opens the theme popup. |
+| `Ctrl+G W` | `project.switch` | Goes back to the project picker (the same as `/project`). |
+| `Ctrl+G s` | `panel.chats` | Shows or hides the chats sidebar (hidden, `Ctrl+Tab` skips it). |
+| `Ctrl+G c` | `chat.new` | Starts a new chat in this project. |
+| `Ctrl+G n` / `Ctrl+G b` | `chat.next` / `chat.prev` | Opens the next (older) / previous (newer) chat of this project, wrapping around. |
+| `Ctrl+G ,` | `chat.rename` | Opens the name field of the open chat in the sidebar. |
+| `Ctrl+G x` | `chat.delete` | Asks to delete the open chat (`Enter` confirms, `Esc` cancels). |
+| `Ctrl+G O` | `timeline.outline` | Opens or closes the menu of your questions in this chat. |
+| `Ctrl+G Enter` | `block.focus_widget` | Gives the keys to the widget of the selected block; `Esc` gives them back. |
+| `Ctrl+G Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command (the prompt keeps its text). |
+| `Ctrl+G u` | `queue.edit` | Takes the last queued prompt back into the prompt (also `Up` in an empty prompt). |
 | `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
 | `Ctrl+C` | `input.cancel` | In the prompt, as in a terminal: copies the text selected in the prompt; else clears the prompt (`Up` brings the text back); else interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. With the focus on the chat and text selected in it, it copies that text; without a selection it interrupts. While a picker or a dialog is open it only interrupts. |
 | `Ctrl+Shift+C`, `Ctrl+Insert` | `selection.copy` | Copies the selected text, from the prompt or else from the chat. Never interrupts. (On macOS, `Cmd+C`.) Selecting text with the mouse in the chat gives it the focus and shows a **Copy** hint next to the selection. |
-| `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
+| `Ctrl+Q` (`Cmd+Q` on macOS) | `app.quit` | Quits crest; while a turn runs the first press only warns and a second one within 3 s quits. |
+| `F11` (`Ctrl+Cmd+F` on macOS) | `window.fullscreen` | Enters or leaves full screen. |
 
 You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetkeys-action)). A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning.
 
@@ -104,7 +123,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/model` | Opens the model popup over the models your providers let you use. |
 | `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. `/model clear` goes back to the default model. |
 | `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the popup) and reopens the session. |
-| `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
+| `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. `/mode ` (with the space) lists the three in the palette. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
 | `/project` | Goes back to the [project picker](#opening-a-project); this project closes once you choose another one, and `Esc` or **Back** returns to it. Not while a turn or command runs. |
@@ -536,7 +555,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 - Each session (the history sent to the model, the timeline and the "always" rules) is saved in SQLite (`~/.local/share/crest/sessions.db`) **after every turn**.
 - **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows "previous session resumed (N turns); `crest --new` starts a new one". With `--new` it starts blank, and `/clear` does the same without closing.
 - **Headless**: each run is a new session unless you pass `--continue`, which picks up the workspace's last session (the same one the window would open).
-- Old sessions are never deleted, and there is no command to list them or to pick one other than the last.
+- Old sessions are never deleted. The **chats sidebar** at the left of the window lists the projects and their saved chats: a click (or `Enter` with the sidebar focused, `Ctrl+Tab` until it has the focus) opens one, `Ctrl+G n` / `Ctrl+G b` go to the next or previous chat of the project, `Ctrl+G c` starts a new one, a right-click (or `F2`, `Delete`, `Ctrl+G ,`, `Ctrl+G x`) renames or deletes one, and `Ctrl+G s` hides or shows the sidebar.
 - The accumulated cost is not saved: a resumed session starts at `$0.00`.
 - **Compaction**: when the estimated context exceeds 80 % of 200,000 tokens, crest summarizes the old turns with the `compact` role, keeps the 2 most recent ones and shows `history compacted: N turns → summary`. If the API replies that the context is too long, it compacts and retries once. The threshold is not configurable.
 - A turn can make at most 50 model calls. Beyond that, it fails.
