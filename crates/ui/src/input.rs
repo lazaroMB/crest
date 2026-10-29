@@ -233,14 +233,29 @@ pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a Co
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
     };
-    if typed.starts_with('/') || typed.contains(char::is_whitespace) {
+    if typed.starts_with('/') {
         return Vec::new();
     }
     let typed = typed.to_lowercase();
+    if typed.contains(char::is_whitespace) {
+        // After a space only the rows named with their argument match
+        // (`/mode ` lists `mode plan`...).
+        return commands
+            .iter()
+            .filter(|row| {
+                let name = row.name.to_lowercase();
+                name.contains(' ') && name.starts_with(&typed)
+            })
+            .collect();
+    }
     let mut starts: Vec<&CommandRow> = Vec::new();
     let mut contains: Vec<&CommandRow> = Vec::new();
     for row in commands {
         let name = row.name.to_lowercase();
+        // A row named with its argument (`mode plan`) waits for the space.
+        if name.contains(' ') {
+            continue;
+        }
         if name.starts_with(&typed) {
             starts.push(row);
         } else if name.contains(&typed) {
