@@ -3435,6 +3435,47 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_focused_list_widget_gets_the_arrows_and_enter(cx: &mut TestAppContext) {
+        use domain::devops::logs::{LogFormat, LogSpec};
+        let list: domain::widget::list::ListSpec = serde_json::from_value(serde_json::json!({
+            "items": [
+                { "text": "one", "fields": { "k": "v" } },
+                { "text": "two", "fields": { "k": "v" } },
+                { "text": "three" },
+            ]
+        }))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let spec = LogSpec {
+            path: None,
+            format: LogFormat::Json,
+            total_lines: 3,
+            truncated: false,
+            list: list.clone(),
+            histogram: None,
+        };
+        let block = Block::new(BlockKind::Logs(Box::new(spec)));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let list = cx.update(|window, cx| {
+            crate::widgets::list::view(crate::blocks::custom::node_id(id, 0), &list, window, cx)
+        });
+        list.update_in(cx, |l, window, cx| {
+            window.focus(&l.focus_handle().clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down down enter");
+        list.read_with(cx, |l, _| {
+            assert_eq!(l.selected(), Some(1), "the arrows reach the list");
+            assert!(l.is_open(1), "and so does Enter");
+        });
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.input().read(cx).text(cx), "", "nothing reached the prompt");
+        });
+    }
+
+    #[gpui::test]
     fn the_picker_closes_by_shortcut_click_outside_and_esc(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         let mode =
