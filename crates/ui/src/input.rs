@@ -1155,6 +1155,73 @@ impl InputView {
                 ),
         )
     }
+
+    /// The keys that can follow the pending prefix (the leader), for the
+    /// which-key popup. Empty when nothing is pending.
+    pub fn which_key(&self) -> Vec<crate::help::NextKey> {
+        let pending = self.sequencer.pending();
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        crate::help::next_keys(self.keymap(), pending)
+    }
+
+    /// The which-key popup: while a prefix waits for its next key, what
+    /// each next key does. It goes away with the prefix (a key, `Esc`, or
+    /// `timeoutlen`).
+    fn render_which_key(&self, cx: &App) -> Option<gpui::AnyElement> {
+        let next = self.which_key();
+        if next.is_empty() {
+            return None;
+        }
+        let theme = cx.theme();
+        let pending = crate::help::keys_label(self.sequencer.pending());
+        let cells = next.into_iter().map(|next| {
+            h_flex()
+                .w(px(300.))
+                .gap_2()
+                .px_2()
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .text_color(theme.primary)
+                        .child(SharedString::from(next.key)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(next.what)),
+                )
+        });
+        Some(
+            v_flex()
+                .id("which-key")
+                .debug_selector(|| "which-key".to_owned())
+                .mb_1()
+                .py_1()
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .bg(theme.popover)
+                .text_sm()
+                .child(h_flex().flex_wrap().children(cells))
+                .child(
+                    div()
+                        .px_2()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(format!(
+                            "{pending} … · a key runs it · Esc or a pause cancels"
+                        ))),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl Focusable for InputView {
@@ -1165,7 +1232,9 @@ impl Focusable for InputView {
 
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tray = self.tray.render(cx);
+        let mode_keys = crate::help::action_keys(self.keymap(), IMAGE_MODE_ACTION);
+        let tray = self.tray.render(mode_keys.as_deref(), cx);
+        let which_key = self.render_which_key(cx);
         let paths = self.path_popup(cx).map(|popup| {
             if let PathPopup::Entries(entries) = &popup {
                 let selected = self.palette_selected.min(entries.len() - 1);
@@ -1286,7 +1355,8 @@ impl Render for InputView {
                     .children(paths)
                     .children(models)
                     .children(themes)
-                    .children(palette),
+                    .children(palette)
+                    .children(which_key),
             )
             .children(tray)
             .child(prompt)

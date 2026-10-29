@@ -20,7 +20,7 @@
 //! block widget leaves gives the focus back to the timeline first
 //! ([`TimelineView::focus_widget`] is the way in).
 
-use application::keymap::{Action, Key, KeyCode};
+use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap, parse_keys};
 use application::ports::events::DomainEvent;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -81,6 +81,8 @@ pub struct TimelineView {
     outline_reveal: bool,
     /// The key being dispatched, when the session deferred it.
     deferred: Option<DeferredKey>,
+    /// The keys the welcome screen suggests, from the keymap in use.
+    welcome: Vec<(String, String)>,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -101,9 +103,22 @@ impl TimelineView {
             outline_scroll: ScrollHandle::new(),
             outline_reveal: false,
             deferred: None,
+            welcome: welcome_keys(&default_keymap()),
             _reply_expiry: None,
             _events: None,
         }
+    }
+
+    /// The keys the welcome screen suggests: keys and what they do.
+    pub fn welcome_keys(&self) -> &[(String, String)] {
+        &self.welcome
+    }
+
+    /// Makes the welcome screen suggest the keys of `keymap` (the one the
+    /// prompt runs, with the person's mappings).
+    pub fn set_welcome_keys(&mut self, keymap: &Keymap<Action>, cx: &mut Context<Self>) {
+        self.welcome = welcome_keys(keymap);
+        cx.notify();
     }
 
     /// The hint offering to copy the selected text, if shown.
@@ -754,38 +769,103 @@ impl Focusable for TimelineView {
     }
 }
 
-/// The keys the welcome screen suggests.
-const WELCOME_KEYS: &[(&str, &str)] = &[
-    ("/", "commands: /research, /implement, /!cmd, /help…"),
-    (
-        "Ctrl+G",
-        "shortcuts: e tree · ff files · fg grep · m model · j/k blocks · h help",
-    ),
-    ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
-    ("Esc", "back to the prompt"),
-    ("Ctrl+C", "clear the prompt or interrupt the turn"),
-    (
-        "Ctrl+Shift+C",
-        "copy the selected text, from the prompt or the chat",
-    ),
-];
+/// The keys of `action` in `keymap`: `preferred` (notation) when it is one
+/// of them, else the shortest.
+fn keys_of(keymap: &Keymap<Action>, action: &str, preferred: Option<&str>) -> Option<String> {
+    let wanted = Action::builtin(action);
+    preferred
+        .and_then(|notation| parse_keys(notation, keymap.leader()).ok())
+        .filter(|keys| keymap.lookup(keys).exact == Some(&wanted))
+        .map(|keys| crate::help::keys_label(&keys))
+        .or_else(|| crate::help::action_keys(keymap, action))
+}
+
+/// The keys the welcome screen suggests, from `keymap`: the leader with
+/// what follows it, then the focus, the prompt, cancelling and copying.
+/// An action without keys is left out.
+pub fn welcome_keys(keymap: &Keymap<Action>) -> Vec<(String, String)> {
+    let mut rows = vec![(
+        "/".to_owned(),
+        "commands: /research, /implement, /!cmd, /help…".to_owned(),
+    )];
+    let leader = parse_keys("<leader>", keymap.leader()).unwrap_or_default();
+    let entries = keymap.entries();
+    // What follows the leader for `action`, if it is under the leader.
+    let after_leader = |action: &str| {
+        entries
+            .iter()
+            .filter(|e| matches!(&e.action, Action::Builtin(name) if name == action))
+            .filter_map(|e| e.keys.strip_prefix(leader.as_slice()))
+            .filter(|rest| !rest.is_empty())
+            .min_by_key(|rest| rest.len())
+            .map(crate::help::keys_label)
+    };
+    let mut shortcuts: Vec<String> = Vec::new();
+    for (action, what) in [
+        ("panel.tree", "tree"),
+        ("picker.files", "files"),
+        ("picker.grep", "grep"),
+        ("model.pick", "model"),
+    ] {
+        if let Some(keys) = after_leader(action) {
+            shortcuts.push(format!("{keys} {what}"));
+        }
+    }
+    match (after_leader("block.next"), after_leader("block.prev")) {
+        (Some(next), Some(prev)) => shortcuts.push(format!("{next}/{prev} blocks")),
+        (Some(keys), None) | (None, Some(keys)) => shortcuts.push(format!("{keys} blocks")),
+        (None, None) => {}
+    }
+    if let Some(keys) = after_leader("help.open") {
+        shortcuts.push(format!("{keys} help"));
+    }
+    if !leader.is_empty() && !shortcuts.is_empty() {
+        rows.push((
+            crate::help::keys_label(&leader),
+            format!("shortcuts: {}", shortcuts.join(" · ")),
+        ));
+    }
+    for (action, preferred, what) in [
+        (
+            "focus.next",
+            Some("<C-Tab>"),
+            "move the focus: prompt → timeline → tree",
+        ),
+        ("focus.input", None, "back to the prompt"),
+        (
+            "input.cancel",
+            None,
+            "clear the prompt or interrupt the turn",
+        ),
+        (
+            "selection.copy",
+            Some("<C-S-c>"),
+            "copy the selected text, from the prompt or the chat",
+        ),
+    ] {
+        if let Some(keys) = keys_of(keymap, action, preferred) {
+            rows.push((keys, what.to_owned()));
+        }
+    }
+    rows
+}
 
 /// The empty timeline: the crest mark and the keys to start with.
-fn welcome(cx: &App) -> impl IntoElement {
+fn welcome(keys: &[(String, String)], cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let rows = WELCOME_KEYS.iter().map(|(keys, what)| {
+    let rows = keys.iter().map(|(keys, what)| {
         h_flex()
             .gap_3()
             .child(
                 div()
                     .w(px(110.))
                     .text_color(theme.primary)
-                    .child(SharedString::from(*keys)),
+                    .child(SharedString::from(keys.clone())),
             )
             .child(
                 div()
                     .text_color(theme.muted_foreground)
-                    .child(SharedString::from(*what)),
+                    .child(SharedString::from(what.clone())),
             )
     });
     v_flex()
@@ -825,7 +905,7 @@ impl Render for TimelineView {
                 .size_full()
                 .border_t_1()
                 .border_color(edge)
-                .child(welcome(cx))
+                .child(welcome(&self.welcome, cx))
                 .into_any_element();
         }
         let view = cx.entity().downgrade();

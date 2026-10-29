@@ -109,7 +109,12 @@ impl ImageTray {
 
     /// Draws the tray, if it has images: thumbnails with `×`, the mode
     /// chips and a line saying what `Enter` does.
-    pub fn render(&self, cx: &mut Context<InputView>) -> Option<AnyElement> {
+    /// `mode_keys` are the keys of `image.mode` (`Ctrl+G i`), if bound.
+    pub fn render(
+        &self,
+        mode_keys: Option<&str>,
+        cx: &mut Context<InputView>,
+    ) -> Option<AnyElement> {
         if self.images.is_empty() {
             return None;
         }
@@ -139,12 +144,9 @@ impl ImageTray {
                         .child(h_flex().flex_1().flex_wrap().gap_2().children(thumbs))
                         .child(h_flex().gap_1().child(model).child(chat)),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(tray_hint(self.images.len(), self.mode))),
-                )
+                .child(div().text_xs().text_color(theme.muted_foreground).child(
+                    SharedString::from(tray_hint(self.images.len(), self.mode, mode_keys)),
+                ))
                 .into_any_element(),
         )
     }
@@ -244,19 +246,27 @@ fn thumbnail(ix: usize, image: &PendingImage, cx: &mut Context<InputView>) -> An
         .into_any_element()
 }
 
-/// What `Enter` will do with `count` images in `mode`, said under the tray.
-fn tray_hint(count: usize, mode: ImageMode) -> String {
+/// What `Enter` will do with `count` images in `mode`, said under the tray,
+/// with the keys that switch the mode (`mode_keys`, from the keymap; the
+/// chips are clicked when no key does it).
+fn tray_hint(count: usize, mode: ImageMode, mode_keys: Option<&str>) -> String {
     let images = if count == 1 {
         "1 image".to_owned()
     } else {
         format!("{count} images")
     };
+    let switch = |what: &str| match mode_keys {
+        Some(keys) => format!(" · {keys}: {what}"),
+        None => String::new(),
+    };
     match mode {
         ImageMode::Model => format!(
-            "Enter: send the text and {images} to the model · Ctrl+G i: chat only · × or Backspace removes"
+            "Enter: send the text and {images} to the model{} · × or Backspace removes",
+            switch("chat only")
         ),
         ImageMode::ChatOnly => format!(
-            "Enter: add {images} to the chat; the model is not called · Ctrl+G i: send to the model · × or Backspace removes"
+            "Enter: add {images} to the chat; the model is not called{} · × or Backspace removes",
+            switch("send to the model")
         ),
     }
 }
@@ -298,15 +308,19 @@ mod tests {
 
     #[test]
     fn the_tray_says_what_enter_does() {
+        let model = tray_hint(1, ImageMode::Model, Some("Ctrl+G i"));
         assert!(
-            tray_hint(1, ImageMode::Model)
-                .starts_with("Enter: send the text and 1 image to the model")
+            model
+                .starts_with("Enter: send the text and 1 image to the model · Ctrl+G i: chat only"),
+            "{model}"
         );
-        let chat = tray_hint(2, ImageMode::ChatOnly);
+        let chat = tray_hint(2, ImageMode::ChatOnly, Some("F9"));
         assert!(
-            chat.contains("add 2 images to the chat; the model is not called"),
+            chat.contains("add 2 images to the chat; the model is not called · F9: send"),
             "{chat}"
         );
+        let unbound = tray_hint(1, ImageMode::Model, None);
+        assert!(!unbound.contains("chat only"), "{unbound}");
     }
 
     #[test]
