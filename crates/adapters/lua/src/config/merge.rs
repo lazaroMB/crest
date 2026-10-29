@@ -8,7 +8,11 @@
 //! - options key by key (`extra` too);
 //! - model roles field by field, kept per layer (plugins fold into the
 //!   global layer) so the policy can tell where a spec came from;
-//! - keymaps by `lhs`, commands, tools and MCP servers by name;
+//! - keymaps are all kept, in precedence order (each layer in call
+//!   order), so a removal (`app.keymap.del`) and the checks for keys
+//!   mapped twice work on what was written; the keymap applies them in
+//!   turn, a later one winning;
+//! - commands, tools and MCP servers by name;
 //!   each server records whether the workspace declared it, so the app can
 //!   hold back servers that come with a cloned repository;
 //! - hooks are all kept, in the order the files ran (global, plugins,
@@ -127,9 +131,7 @@ pub(crate) fn merge(
                 base_sensitive = declared.sensitive_paths;
             }
         }
-        for km in collected.keymaps {
-            upsert(&mut config.keymaps, km, |k| k.lhs.clone());
-        }
+        config.keymaps.extend(collected.keymaps);
         for cmd in collected.commands {
             upsert(&mut config.commands, cmd, |c| c.name.clone());
         }
@@ -288,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn keymaps_commands_tools_and_servers_are_replaced_by_key() {
+    fn commands_tools_and_servers_are_replaced_by_key_and_keymaps_kept_in_order() {
         let global = layer(|d, c| {
             c.keymaps.push(keymap("<leader>r", "session.resume"));
             c.keymaps.push(keymap("gg", "timeline.first"));
@@ -331,6 +333,7 @@ mod tests {
         assert_eq!(
             c.keymaps,
             [
+                keymap("<leader>r", "session.resume"),
                 keymap("gg", "timeline.first"),
                 keymap("<leader>r", "session.new")
             ]

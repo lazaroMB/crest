@@ -611,6 +611,7 @@ end)
         assert_eq!(
             keys,
             [
+                ("<leader>r", KeyAction::Builtin("session.resume".into())),
                 ("<leader>m", KeyAction::Builtin("model.pick".into())),
                 ("<leader>r", KeyAction::Builtin("session.new".into())),
             ]
