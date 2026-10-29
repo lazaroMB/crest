@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "name": "crest synthetic map fixture (generated, public domain)",
+  "features": [
+    { "type": "Feature", "id": "cell",
+      "properties": { "name": "Equator cell", "kind": "survey", "visitors": 1200.5 },
+      "geometry": { "type": "Polygon", "coordinates": [
+        [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
+      ] } },
+    { "type": "Feature", "id": 7,
+      "properties": { "name": "Ring park", "kind": "park", "visitors": 300 },
+      "geometry": { "type": "Polygon", "coordinates": [
+        [[10, 50], [10.01, 50], [10.01, 50.01], [10, 50.01], [10, 50]],
+        [[10.004, 50.004], [10.004, 50.006], [10.006, 50.006], [10.006, 50.004], [10.004, 50.004]]
+      ] } },
+    { "type": "Feature",
+      "properties": { "name": "Ponds", "kind": "water", "visitors": null },
+      "geometry": { "type": "MultiPolygon", "coordinates": [
+        [[[10.02, 50], [10.025, 50], [10.025, 50.005], [10.02, 50.005], [10.02, 50]]],
+        [[[10.03, 50], [10.035, 50], [10.035, 50.005], [10.03, 50.005]]]
+      ] } },
+    { "type": "Feature",
+      "properties": { "name": "Equator trail", "kind": "path", "visitors": 42 },
+      "geometry": { "type": "LineString", "coordinates": [[0, -0.5], [1, -0.5]] } },
+    { "type": "Feature",
+      "properties": { "name": "Meridian walks", "kind": "path" },
+      "geometry": { "type": "MultiLineString", "coordinates": [
+        [[2, 0], [2, 1]], [[3, 0], [3, 0.5]]
+      ] } },
+    { "type": "Feature",
+      "properties": { "name": "Gate", "kind": "park", "visitors": 7 },
+      "geometry": { "type": "Point", "coordinates": [10.005, 50.0] } },
+    { "type": "Feature",
+      "properties": { "name": "Benches", "kind": "park" },
+      "geometry": { "type": "MultiPoint", "coordinates": [[10.001, 50.001], [10.002, 50.002, 120.0]] } },
+    { "type": "Feature",
+      "properties": { "name": "Unplaced note" },
+      "geometry": null }
+  ]
+}

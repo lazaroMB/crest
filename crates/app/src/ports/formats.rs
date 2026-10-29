@@ -7,7 +7,8 @@
 //! (FORMAT JSON)`), HTTP archives (HAR), Terraform plans, diagrams
 //! (Graphviz DOT, ER from SQL DDL), criterion benchmark results and
 //! engineering files (waveforms, netlists, STEP parts, DXF drawings, IFC
-//! room schedules).
+//! room schedules) and science files (sequences, spectra, molecules,
+//! GeoJSON maps).
 //!
 //! The tools read the files through the workspace guard and hand the
 //! bytes over; a [`FormatsPort`] only parses. Locations come back as the
@@ -29,13 +30,22 @@ use domain::engineering::drawing::DrawingSpec;
 use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::{Radix, WaveformSpec};
+use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::arrays::ArrayFileSpec;
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{ActivityDirection, MoleculeGridSpec};
 use domain::science::molecule3d::Molecule3dSpec;
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::{Alphabet, SequenceSpec, Topology};
 use domain::science::spectrum::SpectrumSpec;
+use domain::science::training::TrainingSpec;
+
+mod sciences;
+
+pub use sciences::*;
 
 /// What [`FormatsPort::preview_dataset`] reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +205,19 @@ pub enum Molecule3dSource {
         /// Its bytes.
         bytes: Vec<u8>,
     },
+}
+
+/// What [`FormatsPort::parse_geojson`] reads besides the bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MapRequest {
+    /// Workspace path of the file, for the block and messages; `None`
+    /// for inline GeoJSON.
+    pub path: Option<String>,
+    /// The coordinate reference system to read the coordinates in, over
+    /// the file's own: `EPSG:32632`, `32632` or a PROJ string.
+    pub crs: Option<String>,
+    /// Property to colour the features by at first.
+    pub color_by: Option<String>,
 }
 
 /// Why a file could not be parsed or a diagram rendered.
@@ -477,6 +500,64 @@ pub trait FormatsPort: Send + Sync {
     /// [`FormatError::Invalid`] for a SMILES that does not parse or embed,
     /// or a file without 3D coordinates.
     fn molecule_3d(&self, source: &Molecule3dSource) -> Result<Molecule3dSpec, FormatError>;
+
+    /// GeoJSON (a FeatureCollection, a Feature or a bare geometry):
+    /// reprojected from its CRS (the request's, the legacy `crs` member's
+    /// or WGS 84) to Web Mercator for display, with the box, geodesic
+    /// area and length of every feature and in total.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for malformed GeoJSON, an unknown CRS or
+    /// coordinates the CRS cannot reproject.
+    fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError>;
+
+    /// A project scheduled by the critical path method: tasks with
+    /// durations and FS/SS/FF/SF dependencies with lags, forward and
+    /// backward passes, early/late start and finish, total and free slack
+    /// and the critical path.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unreadable file, a repeated or
+    /// unknown task id, a bad duration or date, or a dependency cycle
+    /// (named).
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError>;
+
+    /// An HDF5 (and so NetCDF-4) or NetCDF-3 file's groups and variables
+    /// with types, shapes, chunking, filters and attributes, and bounded
+    /// previews of a few numeric variables with statistics of the preview
+    /// only. Only the preview's rows are decoded.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for a file that is neither, is damaged, or
+    /// does not have the variable asked for.
+    fn inspect_array_file(
+        &self,
+        bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError>;
+
+    /// A network from an edge list or node-link JSON with per-node degree,
+    /// betweenness, closeness and PageRank, connected components and
+    /// communities (seeded label propagation) with their modularity.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for an unreadable file, missing columns, no
+    /// edges or a network over the size limits.
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError>;
+
+    /// Training curves from CSV or JSON lines logs: a series per run and
+    /// metric with step, epoch and time, the engine's EMA and per-series
+    /// count, minimum, maximum, last and best value with where each was.
+    ///
+    /// # Errors
+    ///
+    /// [`FormatError::Invalid`] for unreadable logs, no numeric metric or
+    /// an unknown `metric`.
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError>;
 }
 
 #[cfg(test)]

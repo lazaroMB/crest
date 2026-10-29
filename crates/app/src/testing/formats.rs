@@ -38,7 +38,15 @@
 //! numbers (MW 46.07, logP -0.0014, TPSA 20.23) unless its SMILES is
 //! `bad`; every spectrum is an IR transmittance trace 4000–400 cm⁻¹ with
 //! one dip picked at 1715 cm⁻¹; every 3D molecule is water (O and two H
-//! 0.9572 Å from it) unless its SMILES is `bad`.
+//! 0.9572 Å from it) unless its SMILES is `bad`. The science B answers
+//! are in [`sciences`]: every map is one park polygon (12.5 ha) and one
+//! 1.2 km trail in WGS 84; every Gantt chart is `design` (3 d) then
+//! `build` (2 d, critical) with `docs` (1 d, 1 d of slack) beside it;
+//! every array file is HDF5 with `/temp` (2 × 3 f32, a 2 × 3 preview from
+//! 1 to 6, one missing); every network is the path `a – b – c` (b in
+//! the middle: betweenness 1, PageRank 0.486); every training log is one
+//! run `a` with `loss` 1.0, 0.5, 0.25, 0.4 at steps 10–40 (best 0.25 at
+//! step 30).
 //! [`FakeFormats::failing`] makes every fallible call fail. Calls are
 //! recorded as `(method, path, source or SMILES)`.
 
@@ -74,10 +82,14 @@ use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, Timeline
 use serde_json::Map;
 
 use domain::computed::{Computed, ComputedStatus, ComputedValue, Engine};
+use domain::gantt::GanttSpec;
+use domain::science::arrays::ArrayFileSpec;
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::{Descriptors, GridMolecule, MoleculeGridSpec};
 use domain::science::molecule3d::{
     Atom3d, Bond3d, CoordinateSource, Molecule3dSpec, StructureFormat,
 };
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::{
     ElementBalance, ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry,
 };
@@ -85,13 +97,16 @@ use domain::science::sequence::{
     Alphabet, CutSite, SeqFeature, SeqSpan, SequenceFormat, SequenceSpec, Strand, Topology,
 };
 use domain::science::spectrum::{Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec};
+use domain::science::training::TrainingSpec;
 use domain::science::{MoleculeSpec, formulas_match};
 
 use crate::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
-    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
-    WaveRequest,
+    ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, TrainingRequest, WaveRequest,
 };
+
+mod sciences;
 
 /// The SVG [`FakeFormats::render_wavedrom`] returns.
 pub const FAKE_SVG: &str =
@@ -1152,5 +1167,41 @@ impl FormatsPort for FakeFormats {
             bonds_inferred: false,
             warnings: Vec::new(),
         })
+    }
+
+    fn parse_geojson(&self, _bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
+        self.record("parse_geojson", request.path.as_deref().unwrap_or("inline"))?;
+        Ok(sciences::map(request))
+    }
+
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError> {
+        self.record(
+            "schedule_gantt",
+            request.path.as_deref().unwrap_or("inline"),
+        )?;
+        Ok(sciences::gantt(request))
+    }
+
+    fn inspect_array_file(
+        &self,
+        _bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError> {
+        self.record("inspect_array_file", &request.path)?;
+        Ok(sciences::arrays(request))
+    }
+
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError> {
+        self.record(
+            "analyse_network",
+            request.path.as_deref().unwrap_or("inline"),
+        )?;
+        Ok(sciences::network(request))
+    }
+
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError> {
+        let first = request.files.first().map_or("none", |f| f.path.as_str());
+        self.record("training_curves", first)?;
+        Ok(sciences::training(request))
     }
 }

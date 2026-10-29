@@ -1,0 +1,152 @@
+---
+source: crates/app/src/tools/formats/network.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_network",
+  "description": "Shows a network (an edge-list CSV or node-link JSON `path`, or inline `edges`) in the user's timeline on a force layout, nodes sized by a metric and coloured by community, with a metrics table. The engine computes per node the degree, betweenness (Brandes), closeness and PageRank, the connected components, and communities by seeded label propagation with their modularity. Returns the whole-graph numbers and the top nodes by each metric with the envelope id; cite these instead of judging centrality yourself.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "An edge list (CSV/TSV with a header: source, target and optional\nweight columns) or node-link JSON (`nodes`, `links`/`edges`) of the\nworkspace.",
+        "default": null
+      },
+      "edges": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "$ref": "#/$defs/EdgeInput"
+        },
+        "description": "The edges inline instead of `path`.",
+        "default": null
+      },
+      "directed": {
+        "type": [
+          "boolean",
+          "null"
+        ],
+        "description": "Whether edges have a direction (default: the JSON's `directed`, else\nfalse).",
+        "default": null
+      },
+      "source": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Source column of a CSV (default `source`/`from`/... or the first).",
+        "default": null
+      },
+      "target": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Target column of a CSV (default `target`/`to`/... or the second).",
+        "default": null
+      },
+      "weight": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Weight column of a CSV (default `weight` when present).",
+        "default": null
+      },
+      "size_by": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NetworkMetric"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Metric the nodes are sized by at first: `degree` (default),\n`betweenness`, `closeness` or `pagerank`.",
+        "default": null
+      },
+      "seed": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 0,
+        "description": "Seed of the community search, sampling and layout.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the graph.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_network`.",
+    "title": "ShowNetwork",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "EdgeInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source node id."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target node id."
+          },
+          "weight": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Weight (a count, a strength)."
+          }
+        },
+        "required": [
+          "source",
+          "target"
+        ],
+        "description": "One edge given inline."
+      },
+      "NetworkMetric": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "degree",
+            "description": "Number of edges (in + out when directed)."
+          },
+          {
+            "type": "string",
+            "const": "betweenness",
+            "description": "Share of shortest paths through the node (normalised)."
+          },
+          {
+            "type": "string",
+            "const": "closeness",
+            "description": "Inverse mean distance to the node (Wasserman–Faust scaled)."
+          },
+          {
+            "type": "string",
+            "const": "pagerank",
+            "description": "PageRank (damping 0.85)."
+          }
+        ],
+        "description": "A per-node metric."
+      }
+    }
+  }
+}

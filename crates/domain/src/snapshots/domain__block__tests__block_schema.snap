@@ -769,6 +769,76 @@ expression: "schemars::schema_for!(Block)"
       "required": [
         "type"
       ]
+    },
+    {
+      "description": "GeoJSON features on a map with their geodesic measures (tool\n`show_map`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "geo_map"
+        }
+      },
+      "$ref": "#/$defs/MapSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A project scheduled by the critical path method on a Gantt chart\n(tool `show_gantt`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "gantt"
+        }
+      },
+      "$ref": "#/$defs/GanttSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "An HDF5 or NetCDF file's groups and variables with bounded\npreviews (tool `show_array_file`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "array_file"
+        }
+      },
+      "$ref": "#/$defs/ArrayFileSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A network with degree, betweenness, closeness, PageRank and\ncommunities (tool `show_network`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "network"
+        }
+      },
+      "$ref": "#/$defs/NetworkSpec",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "Machine-learning training curves with smoothing and per-run\nsummaries (tool `show_training_curves`).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "training_curves"
+        }
+      },
+      "$ref": "#/$defs/TrainingSpec",
+      "required": [
+        "type"
+      ]
     }
   ],
   "$defs": {
@@ -1792,6 +1862,25 @@ expression: "schemars::schema_for!(Block)"
         }
       ]
     },
+    "SeriesLook": {
+      "description": "The colour and weight of one series.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Palette slot; the layer's position when absent (series sharing a\nslot share a colour, as a raw and a smoothed curve).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "faint": {
+          "description": "Drawn faint (and left out of the legend), as raw values under\ntheir smoothed curve.",
+          "type": "boolean"
+        }
+      }
+    },
     "PlotSpec": {
       "description": "A plot of functions and series.",
       "type": "object",
@@ -1878,6 +1967,13 @@ expression: "schemars::schema_for!(Block)"
         "x_reversed": {
           "description": "Whether the x axis runs right to left (IR wavenumbers, NMR\nchemical shifts).",
           "type": "boolean"
+        },
+        "looks": {
+          "description": "How each series looks, by index (missing entries: the default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesLook"
+          }
         }
       }
     },
@@ -2025,6 +2121,16 @@ expression: "schemars::schema_for!(Block)"
           "description": "Failed.",
           "type": "string",
           "const": "error"
+        },
+        {
+          "description": "On a critical path (a Gantt chart's critical tasks).",
+          "type": "string",
+          "const": "critical"
+        },
+        {
+          "description": "Room a task may slip (a Gantt chart's slack), drawn faint.",
+          "type": "string",
+          "const": "slack"
         }
       ]
     },
@@ -2256,6 +2362,14 @@ expression: "schemars::schema_for!(Block)"
           "description": "Extra fields shown when the node is focused.",
           "type": "object",
           "additionalProperties": true
+        },
+        "size": {
+          "description": "Relative size from 0 to 1 (a metric scaled to its maximum): the\nbox grows up to twice its width and height.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [
@@ -12902,6 +13016,1324 @@ expression: "schemars::schema_for!(Block)"
         "source_url",
         "fetched_url",
         "retrieved"
+      ]
+    },
+    "MapCrs": {
+      "description": "The coordinate reference system of the file.",
+      "type": "object",
+      "properties": {
+        "epsg": {
+          "description": "EPSG code, when known.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "Name to show (`WGS 84`, `WGS 84 / UTM zone 32N`, or the proj\nstring given).",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where it came from.",
+          "$ref": "#/$defs/CrsSource",
+          "default": "default"
+        },
+        "definition": {
+          "description": "The PROJ definition used to reproject it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "definition"
+      ]
+    },
+    "CrsSource": {
+      "description": "Where the coordinate reference system came from.",
+      "oneOf": [
+        {
+          "description": "None was named: WGS 84 longitude/latitude, as RFC 7946 requires.",
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "description": "The file's legacy (2008) `crs` member.",
+          "type": "string",
+          "const": "member"
+        },
+        {
+          "description": "The caller gave it.",
+          "type": "string",
+          "const": "given"
+        }
+      ]
+    },
+    "MapFeature": {
+      "description": "One feature, in display coordinates, with what the engine measured.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The feature's `id`, as text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Its geometry type.",
+          "$ref": "#/$defs/GeometryKind"
+        },
+        "points": {
+          "description": "Points (Web Mercator).",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "lines": {
+          "description": "Lines, each a vertex list.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        },
+        "polygons": {
+          "description": "Polygons, each a list of closed rings: the exterior, then holes.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "properties": {
+          "description": "The feature's properties as written.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "bbox": {
+          "description": "Box in degrees: west, south, east, north (WGS 84).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "area_m2": {
+          "description": "Geodesic area of its polygons, holes taken out, in m².",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "length_m": {
+          "description": "Geodesic length of its lines, in m.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "perimeter_m": {
+          "description": "Geodesic perimeter of its polygons (holes included), in m.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "GeometryKind": {
+      "description": "The GeoJSON geometry type of a feature.",
+      "oneOf": [
+        {
+          "description": "`Point`.",
+          "type": "string",
+          "const": "point"
+        },
+        {
+          "description": "`MultiPoint`.",
+          "type": "string",
+          "const": "multi_point"
+        },
+        {
+          "description": "`LineString`.",
+          "type": "string",
+          "const": "line_string"
+        },
+        {
+          "description": "`MultiLineString`.",
+          "type": "string",
+          "const": "multi_line_string"
+        },
+        {
+          "description": "`Polygon`.",
+          "type": "string",
+          "const": "polygon"
+        },
+        {
+          "description": "`MultiPolygon`.",
+          "type": "string",
+          "const": "multi_polygon"
+        },
+        {
+          "description": "`GeometryCollection`.",
+          "type": "string",
+          "const": "geometry_collection"
+        }
+      ]
+    },
+    "MapSpec": {
+      "description": "A map of features.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the map.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "crs": {
+          "description": "Coordinate reference system of the source.",
+          "$ref": "#/$defs/MapCrs"
+        },
+        "features": {
+          "description": "The features with geometry, in file order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MapFeature"
+          }
+        },
+        "total_features": {
+          "description": "Features in the file (more than `features` when capped or some had\nno geometry).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "without_geometry": {
+          "description": "Features without geometry, not drawn.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 0
+        },
+        "color_by": {
+          "description": "The property to colour by at first.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "measures": {
+          "description": "The measures (box, area, length) as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "crs",
+        "features",
+        "total_features",
+        "measures"
+      ]
+    },
+    "Calendar": {
+      "description": "Which days count as working days.",
+      "oneOf": [
+        {
+          "description": "Every day.",
+          "type": "string",
+          "const": "all_days"
+        },
+        {
+          "description": "Monday to Friday.",
+          "type": "string",
+          "const": "weekdays"
+        }
+      ]
+    },
+    "GanttTask": {
+      "description": "One task with what the engine computed for it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id, referenced by dependencies.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name shown; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
+          "description": "Phase or work package the task belongs to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration": {
+          "description": "Duration in working days (0 for a milestone).",
+          "type": "number",
+          "format": "double"
+        },
+        "milestone": {
+          "description": "Whether it is a milestone (zero duration).",
+          "type": "boolean",
+          "default": false
+        },
+        "depends_on": {
+          "description": "Its predecessors.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          }
+        },
+        "not_before": {
+          "description": "It may not start before this offset (from a start date).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "early_start": {
+          "description": "Early start (forward pass).",
+          "type": "number",
+          "format": "double"
+        },
+        "early_finish": {
+          "description": "Early finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "late_start": {
+          "description": "Late start (backward pass).",
+          "type": "number",
+          "format": "double"
+        },
+        "late_finish": {
+          "description": "Late finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "total_slack": {
+          "description": "How long it can slip without moving the project finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "free_slack": {
+          "description": "How long it can slip without moving any successor.",
+          "type": "number",
+          "format": "double"
+        },
+        "critical": {
+          "description": "On the critical path (no total slack).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "duration",
+        "early_start",
+        "early_finish",
+        "late_start",
+        "late_finish",
+        "total_slack",
+        "free_slack",
+        "critical"
+      ]
+    },
+    "Dependency": {
+      "description": "A link to a predecessor.",
+      "type": "object",
+      "properties": {
+        "task": {
+          "description": "Id of the predecessor.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "How this task waits on it.",
+          "$ref": "#/$defs/DependencyKind",
+          "default": "fs"
+        },
+        "lag": {
+          "description": "Days added to the link (negative for a lead).",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "task"
+      ]
+    },
+    "DependencyKind": {
+      "description": "How a task waits on another.",
+      "oneOf": [
+        {
+          "description": "It starts after the other finishes (`FS`, the default).",
+          "type": "string",
+          "const": "fs"
+        },
+        {
+          "description": "It starts after the other starts (`SS`).",
+          "type": "string",
+          "const": "ss"
+        },
+        {
+          "description": "It finishes after the other finishes (`FF`).",
+          "type": "string",
+          "const": "ff"
+        },
+        {
+          "description": "It finishes after the other starts (`SF`).",
+          "type": "string",
+          "const": "sf"
+        }
+      ]
+    },
+    "GanttSpec": {
+      "description": "A scheduled project.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the chart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "Project start as `YYYY-MM-DD`; offsets only when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "calendar": {
+          "description": "Which days are working days.",
+          "$ref": "#/$defs/Calendar",
+          "default": "all_days"
+        },
+        "tasks": {
+          "description": "The tasks in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GanttTask"
+          }
+        },
+        "project_duration": {
+          "description": "Working days from the start to the last finish.",
+          "type": "number",
+          "format": "double"
+        },
+        "critical_path": {
+          "description": "Ids of the critical tasks, by early start.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "schedule": {
+          "description": "The schedule as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader and scheduler notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "tasks",
+        "project_duration",
+        "schedule"
+      ]
+    },
+    "ArrayFormat": {
+      "description": "The container format.",
+      "oneOf": [
+        {
+          "description": "HDF5.",
+          "type": "string",
+          "const": "hdf5"
+        },
+        {
+          "description": "NetCDF-4 (HDF5 underneath).",
+          "type": "string",
+          "const": "netcdf4"
+        },
+        {
+          "description": "NetCDF-3 classic (CDF-1).",
+          "type": "string",
+          "const": "netcdf3_classic"
+        },
+        {
+          "description": "NetCDF-3 64-bit offset (CDF-2).",
+          "type": "string",
+          "const": "netcdf3_offset64"
+        },
+        {
+          "description": "NetCDF-3 64-bit data (CDF-5).",
+          "type": "string",
+          "const": "netcdf3_data64"
+        }
+      ]
+    },
+    "ArrayNode": {
+      "description": "One group or variable.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Full path (`/sim/field`; `/` for the root).",
+          "type": "string"
+        },
+        "depth": {
+          "description": "Nesting depth (root 0).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "description": "Group or variable.",
+          "$ref": "#/$defs/ArrayNodeKind"
+        },
+        "dtype": {
+          "description": "Element type (`f32`, `i16`, `string`, `compound{...}`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shape": {
+          "description": "Extent per dimension (empty for a scalar or a group).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "dims": {
+          "description": "Dimension names (NetCDF), one per extent.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chunks": {
+          "description": "Chunk shape, for a chunked variable.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "filters": {
+          "description": "Filters in pipeline order (`shuffle`, `deflate`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attrs": {
+          "description": "Attributes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayAttr"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "depth",
+        "kind"
+      ]
+    },
+    "ArrayNodeKind": {
+      "description": "A group or a variable.",
+      "oneOf": [
+        {
+          "description": "A group (the root is `/`).",
+          "type": "string",
+          "const": "group"
+        },
+        {
+          "description": "A dataset or variable.",
+          "type": "string",
+          "const": "variable"
+        }
+      ]
+    },
+    "ArrayAttr": {
+      "description": "An attribute, its value as text.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value, written out (arrays cut after a few values).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "ArrayPreview": {
+      "description": "A bounded preview of one variable.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The variable's path.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "How it is drawn.",
+          "$ref": "#/$defs/PreviewKind"
+        },
+        "selection": {
+          "description": "What was read, as index ranges (`[0:2000]`, `[0, 0:8, 0:6]`).",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Rows of a heatmap (1 otherwise).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cols": {
+          "description": "Columns of a heatmap, or the number of values.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "values": {
+          "description": "The values row by row; `None` for a fill or missing value.",
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "texts": {
+          "description": "The strings of a text preview.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decoding": {
+          "description": "How the stored numbers were turned into values (CF\n`scale_factor`/`add_offset`, the fill value left out).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stats": {
+          "description": "Statistics of this preview only.",
+          "$ref": "#/$defs/Computed"
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "selection",
+        "rows",
+        "cols",
+        "stats"
+      ]
+    },
+    "PreviewKind": {
+      "description": "How a preview is drawn.",
+      "oneOf": [
+        {
+          "description": "One value.",
+          "type": "string",
+          "const": "scalar"
+        },
+        {
+          "description": "The first values of a 1D variable, as a line.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "A 2D slice, as a heatmap.",
+          "type": "string",
+          "const": "heatmap"
+        },
+        {
+          "description": "Strings, as a list.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "ArrayFileSpec": {
+      "description": "An array file.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the inspector.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": "string"
+        },
+        "format": {
+          "description": "Its format.",
+          "$ref": "#/$defs/ArrayFormat"
+        },
+        "size": {
+          "description": "Its size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "nodes": {
+          "description": "Groups and variables, depth first (the root group first).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayNode"
+          }
+        },
+        "truncated": {
+          "description": "Whether the listing stopped at [`MAX_NODES`].",
+          "type": "boolean",
+          "default": false
+        },
+        "previews": {
+          "description": "Bounded previews, at most [`MAX_PREVIEWS`].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArrayPreview"
+          },
+          "default": []
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path",
+        "format",
+        "size",
+        "nodes"
+      ]
+    },
+    "NetworkNode": {
+      "description": "One node with its metrics.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique id.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Label shown; the id when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "degree": {
+          "description": "Edges at the node (in + out when directed).",
+          "type": "number",
+          "format": "double"
+        },
+        "in_degree": {
+          "description": "Incoming edges (directed only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "out_degree": {
+          "description": "Outgoing edges (directed only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "strength": {
+          "description": "Sum of the weights of its edges.",
+          "type": "number",
+          "format": "double"
+        },
+        "betweenness": {
+          "description": "Normalised betweenness.",
+          "type": "number",
+          "format": "double"
+        },
+        "closeness": {
+          "description": "Closeness (Wasserman–Faust scaled for disconnected graphs).",
+          "type": "number",
+          "format": "double"
+        },
+        "pagerank": {
+          "description": "PageRank.",
+          "type": "number",
+          "format": "double"
+        },
+        "component": {
+          "description": "Connected component (weak for directed graphs), largest first.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "community": {
+          "description": "Community (label propagation), largest first.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "degree",
+        "strength",
+        "betweenness",
+        "closeness",
+        "pagerank",
+        "component",
+        "community"
+      ]
+    },
+    "NetworkEdge": {
+      "description": "One edge (duplicates merged, weights summed).",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "Source node id.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Target node id.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Weight, when the input had weights.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "NetworkMetric": {
+      "description": "A per-node metric.",
+      "oneOf": [
+        {
+          "description": "Number of edges (in + out when directed).",
+          "type": "string",
+          "const": "degree"
+        },
+        {
+          "description": "Share of shortest paths through the node (normalised).",
+          "type": "string",
+          "const": "betweenness"
+        },
+        {
+          "description": "Inverse mean distance to the node (Wasserman–Faust scaled).",
+          "type": "string",
+          "const": "closeness"
+        },
+        {
+          "description": "PageRank (damping 0.85).",
+          "type": "string",
+          "const": "pagerank"
+        }
+      ]
+    },
+    "NetworkSpec": {
+      "description": "A network with its metrics.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the graph.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The workspace file read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directed": {
+          "description": "Whether edges have a direction.",
+          "type": "boolean"
+        },
+        "weighted": {
+          "description": "Whether edges carry weights (used by PageRank and communities).",
+          "type": "boolean"
+        },
+        "nodes": {
+          "description": "The nodes in input order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkNode"
+          }
+        },
+        "edges": {
+          "description": "The edges.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkEdge"
+          }
+        },
+        "components": {
+          "description": "Connected components (weak when directed).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "strong_components": {
+          "description": "Strongly connected components (directed only).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "communities": {
+          "description": "Communities found.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "modularity": {
+          "description": "Modularity of the communities.",
+          "type": "number",
+          "format": "double"
+        },
+        "betweenness_sources": {
+          "description": "Sources betweenness was sampled from, when not exact.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "seed": {
+          "description": "Seed of the community search (and sampling, and layout).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size_by": {
+          "description": "The metric nodes are sized by at first.",
+          "$ref": "#/$defs/NetworkMetric",
+          "default": "degree"
+        },
+        "metrics": {
+          "description": "The metrics as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "directed",
+        "weighted",
+        "nodes",
+        "edges",
+        "components",
+        "communities",
+        "modularity",
+        "seed",
+        "metrics"
+      ]
+    },
+    "TrainingRun": {
+      "description": "One run.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its name (the file, or the `run` column).",
+          "type": "string"
+        },
+        "axes": {
+          "description": "The x values of its rows.",
+          "$ref": "#/$defs/RunAxes"
+        },
+        "series": {
+          "description": "Its metrics.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetricSeries"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "axes",
+        "series"
+      ]
+    },
+    "RunAxes": {
+      "description": "The x values of a run's rows.",
+      "type": "object",
+      "properties": {
+        "step": {
+          "description": "Step per row.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "epoch": {
+          "description": "Epoch per row, when logged.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "time": {
+          "description": "Seconds since the first row, when a time was logged.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "step"
+      ]
+    },
+    "MetricSeries": {
+      "description": "One metric of one run.",
+      "type": "object",
+      "properties": {
+        "metric": {
+          "description": "The metric's name.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Rows of the run where it was logged.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "values": {
+          "description": "The values logged, one per row.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "smoothed": {
+          "description": "The engine's EMA of the values.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "metric",
+        "rows",
+        "values",
+        "smoothed"
+      ]
+    },
+    "TrainingAxis": {
+      "description": "What the x axis counts.",
+      "oneOf": [
+        {
+          "description": "Optimizer steps (or the row number when the log has none).",
+          "type": "string",
+          "const": "step"
+        },
+        {
+          "description": "Epochs.",
+          "type": "string",
+          "const": "epoch"
+        },
+        {
+          "description": "Seconds since the run's first logged row.",
+          "type": "string",
+          "const": "time"
+        }
+      ]
+    },
+    "SeriesSummary": {
+      "description": "The engine's summary of one series.",
+      "type": "object",
+      "properties": {
+        "run": {
+          "description": "Run name.",
+          "type": "string"
+        },
+        "metric": {
+          "description": "Metric name.",
+          "type": "string"
+        },
+        "n": {
+          "description": "Values logged.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "min": {
+          "description": "Lowest value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "max": {
+          "description": "Highest value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "last": {
+          "description": "Last value.",
+          "$ref": "#/$defs/AtRow"
+        },
+        "goal": {
+          "description": "Lower or higher is better.",
+          "$ref": "#/$defs/Goal"
+        },
+        "goal_given": {
+          "description": "Whether the goal was given rather than guessed from the name.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "run",
+        "metric",
+        "n",
+        "min",
+        "max",
+        "last",
+        "goal"
+      ]
+    },
+    "AtRow": {
+      "description": "A value with the row it was logged at.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "description": "The value.",
+          "type": "number",
+          "format": "double"
+        },
+        "row": {
+          "description": "Its row in the run.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "value",
+        "row"
+      ]
+    },
+    "Goal": {
+      "description": "Whether lower or higher is better.",
+      "oneOf": [
+        {
+          "description": "Lower is better (losses, errors).",
+          "type": "string",
+          "const": "minimize"
+        },
+        {
+          "description": "Higher is better (accuracy, F1, AUC).",
+          "type": "string",
+          "const": "maximize"
+        }
+      ]
+    },
+    "TrainingSpec": {
+      "description": "Training runs with their curves.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Title shown above the plot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paths": {
+          "description": "The workspace files read.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runs": {
+          "description": "The runs.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TrainingRun"
+          }
+        },
+        "metrics": {
+          "description": "Metric names in first-seen order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metric": {
+          "description": "The metric shown at first.",
+          "type": "string"
+        },
+        "axis": {
+          "description": "The x axis at first.",
+          "$ref": "#/$defs/TrainingAxis",
+          "default": "step"
+        },
+        "smoothing": {
+          "description": "EMA weight from 0 (none) to below 1.",
+          "type": "number",
+          "format": "double"
+        },
+        "log_y": {
+          "description": "Whether the y axis starts logarithmic.",
+          "type": "boolean",
+          "default": false
+        },
+        "summaries": {
+          "description": "The summaries, run by run, metric by metric.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesSummary"
+          }
+        },
+        "stats": {
+          "description": "The summaries as an envelope.",
+          "$ref": "#/$defs/Computed"
+        },
+        "warnings": {
+          "description": "Reader notes.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths",
+        "runs",
+        "metrics",
+        "metric",
+        "smoothing",
+        "summaries",
+        "stats"
       ]
     }
   }

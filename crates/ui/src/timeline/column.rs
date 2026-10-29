@@ -69,7 +69,12 @@ pub fn block_width(kind: &BlockKind) -> BlockWidth {
         | BlockKind::MoleculeGrid(_)
         | BlockKind::Spectrum(_)
         | BlockKind::Molecule3d(_)
-        | BlockKind::Ghs(_) => BlockWidth::Wide,
+        | BlockKind::Ghs(_)
+        | BlockKind::GeoMap(_)
+        | BlockKind::Gantt(_)
+        | BlockKind::ArrayFile(_)
+        | BlockKind::Network(_)
+        | BlockKind::TrainingCurves(_) => BlockWidth::Wide,
         BlockKind::Text { .. }
         | BlockKind::Thinking { .. }
         | BlockKind::ToolCall { .. }

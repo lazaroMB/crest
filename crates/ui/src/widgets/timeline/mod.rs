@@ -9,7 +9,8 @@
 //! it, outlines it, shows it in the detail line below and emits
 //! [`TimelineEvent::Selected`] for a parent with a detail pane of its own.
 //! Bars take a palette color by `color_key`, and the theme's danger or
-//! warning color by status.
+//! warning color by status (a Gantt chart's critical tasks take danger,
+//! its slack a faint muted bar).
 //!
 //! [`view`] gives the entity of an id (to subscribe or drive it) and
 //! [`render`] the whole widget with its header.
@@ -612,7 +613,8 @@ pub fn status_color(status: SpanStatus, cx: &App) -> Hsla {
     match status {
         SpanStatus::Ok => theme.success,
         SpanStatus::Warning => theme.warning,
-        SpanStatus::Error => theme.danger,
+        SpanStatus::Error | SpanStatus::Critical => theme.danger,
+        SpanStatus::Slack => theme.muted_foreground,
     }
 }
 
@@ -650,7 +652,8 @@ impl Colors {
 
     fn of_span(&self, span: &Span) -> Hsla {
         match span.status {
-            Some(SpanStatus::Error) => self.danger,
+            Some(SpanStatus::Error | SpanStatus::Critical) => self.danger,
+            Some(SpanStatus::Slack) => self.muted.opacity(0.35),
             Some(SpanStatus::Warning) => self.warning,
             _ => self.of_key(span.color_key.as_deref()),
         }
@@ -763,7 +766,7 @@ impl Frame {
         let failed = row
             .spans
             .iter()
-            .any(|s| s.status == Some(SpanStatus::Error));
+            .any(|s| matches!(s.status, Some(SpanStatus::Error | SpanStatus::Critical)));
         let label = Label {
             text: row.label.clone(),
             x: ox + 6.0 + row.depth as f32 * INDENT,

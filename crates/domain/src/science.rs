@@ -3,19 +3,26 @@
 //! [`sequence`] (`show_sequence`, with the restriction enzymes of
 //! [`enzymes`]), [`reaction`] (`show_reaction`), [`molecule_grid`]
 //! (`show_molecule_grid`), [`spectrum`] (`show_spectrum`),
-//! [`molecule3d`] (`show_molecule_3d`) and [`ghs`] (`show_ghs`).
+//! [`molecule3d`] (`show_molecule_3d`), [`ghs`] (`show_ghs`),
+//! [`geomap`] (`show_map`), [`arrays`] (`show_array_file`),
+//! [`network`] (`show_network`) and [`training`]
+//! (`show_training_curves`).
 //!
 //! A molecule's formula, mass and charge are computed from its SMILES by
 //! the chemistry adapter; when the model also stated a formula
 //! (`claimed_formula`), the block shows whether the two agree.
 
+pub mod arrays;
 pub mod enzymes;
+pub mod geomap;
 pub mod ghs;
 pub mod molecule3d;
 pub mod molecule_grid;
+pub mod network;
 pub mod reaction;
 pub mod sequence;
 pub mod spectrum;
+pub mod training;
 
 use std::collections::{BTreeMap, HashSet};
 

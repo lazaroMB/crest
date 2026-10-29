@@ -256,6 +256,49 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 part.failed_faces()
             ),
         ),
+        BlockKind::GeoMap(map) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[map: {} features, {}]",
+                map.features.len(),
+                map.crs.label()
+            ),
+        ),
+        BlockKind::Gantt(plan) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[gantt: {} tasks, {} d, critical {}]",
+                plan.tasks.len(),
+                domain::gantt::days(plan.project_duration),
+                plan.critical_path.join(" → ")
+            ),
+        ),
+        BlockKind::ArrayFile(file) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[array file: {}, {} variables, {} previews]",
+                file.format.name(),
+                file.variables().count(),
+                file.previews.len()
+            ),
+        ),
+        BlockKind::Network(net) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[network: {} nodes, {} edges, {} communities]",
+                net.nodes.len(),
+                net.edges.len(),
+                net.communities
+            ),
+        ),
+        BlockKind::TrainingCurves(curves) => w.line(
+            Some(Style::Dim),
+            &format!(
+                "[training curves: {} runs, {} metrics]",
+                curves.runs.len(),
+                curves.metrics.len()
+            ),
+        ),
         BlockKind::Ghs(card) => w.line(
             Some(Style::Dim),
             &format!(

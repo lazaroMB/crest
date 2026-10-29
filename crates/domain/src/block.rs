@@ -31,15 +31,20 @@ use crate::engineering::material::MaterialSpec;
 use crate::engineering::netlist::NetlistSpec;
 use crate::engineering::waveform::WaveformSpec;
 use crate::form::FormSpec;
+use crate::gantt::GanttSpec;
 use crate::model3d::{MeshError, ModelSpec};
 use crate::plot::PlotSpec;
 use crate::report::{FindingsSpec, TestReportSpec};
+use crate::science::arrays::ArrayFileSpec;
+use crate::science::geomap::MapSpec;
 use crate::science::ghs::GhsSpec;
 use crate::science::molecule_grid::MoleculeGridSpec;
 use crate::science::molecule3d::Molecule3dSpec;
+use crate::science::network::NetworkSpec;
 use crate::science::reaction::ReactionSpec;
 use crate::science::sequence::SequenceSpec;
 use crate::science::spectrum::SpectrumSpec;
+use crate::science::training::TrainingSpec;
 use crate::science::{MoleculeSpec, PlateSpec};
 
 /// Stable identifier of a block in the timeline.
@@ -167,6 +172,11 @@ impl Block {
             BlockKind::Spectrum(spec) => spec.validate(),
             BlockKind::Molecule3d(spec) => spec.validate(),
             BlockKind::Ghs(spec) => spec.validate(),
+            BlockKind::GeoMap(spec) => spec.validate(),
+            BlockKind::Gantt(spec) => spec.validate(),
+            BlockKind::ArrayFile(spec) => spec.validate(),
+            BlockKind::Network(spec) => spec.validate(),
+            BlockKind::TrainingCurves(spec) => spec.validate(),
             BlockKind::Text { .. }
             | BlockKind::Thinking { .. }
             | BlockKind::ToolCall { .. }
@@ -368,6 +378,21 @@ pub enum BlockKind {
     Molecule3d(Box<Molecule3dSpec>),
     /// A GHS hazard card fetched from PubChem (tool `show_ghs`).
     Ghs(Box<GhsSpec>),
+    /// GeoJSON features on a map with their geodesic measures (tool
+    /// `show_map`).
+    GeoMap(Box<MapSpec>),
+    /// A project scheduled by the critical path method on a Gantt chart
+    /// (tool `show_gantt`).
+    Gantt(Box<GanttSpec>),
+    /// An HDF5 or NetCDF file's groups and variables with bounded
+    /// previews (tool `show_array_file`).
+    ArrayFile(Box<ArrayFileSpec>),
+    /// A network with degree, betweenness, closeness, PageRank and
+    /// communities (tool `show_network`).
+    Network(Box<NetworkSpec>),
+    /// Machine-learning training curves with smoothing and per-run
+    /// summaries (tool `show_training_curves`).
+    TrainingCurves(Box<TrainingSpec>),
 }
 
 /// Lifecycle of a tool call.

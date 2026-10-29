@@ -1,0 +1,149 @@
+---
+source: crates/app/src/tools/formats/gantt.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_gantt",
+  "description": "Schedules a project with the critical path method and shows it in the user's timeline as a Gantt chart (critical tasks marked, slack drawn after each task, milestones as diamonds) with a schedule table. Tasks come from a CSV/JSON file (`path`) or `tasks`: each with an id, a duration in working days (or start and finish dates), and `depends_on` such as `A`, `A SS`, `A FS+2`, `A FF-1`. The engine computes early/late start and finish, total and free slack and the critical path, and rejects dependency cycles. Cite its dates, durations and slack; do not schedule by hand.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A task file of the workspace: CSV/TSV with a header (`id`, `name`,\n`duration`, `depends_on`, `start`, `finish`, `group`, `milestone`)\nor JSON (an array of tasks, or `{\"tasks\": [...]}`).",
+        "default": null
+      },
+      "tasks": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "$ref": "#/$defs/GanttTaskInput"
+        },
+        "description": "The tasks inline instead of `path`.",
+        "default": null
+      },
+      "start": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Project start as `YYYY-MM-DD`; the earliest task `start` when\nabsent, else the chart counts days from the start.",
+        "default": null
+      },
+      "calendar": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Calendar"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "`all_days` (default) or `weekdays` (Monday to Friday count).",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the chart.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_gantt`.",
+    "title": "ShowGantt",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "GanttTaskInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique id, used by `depends_on` (`design`, `T3`)."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name shown; the id when absent.",
+            "default": null
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Phase or work package (rows of a group share a color).",
+            "default": null
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Duration in working days; 0 (or `milestone`) for a milestone.\nFrom `start` and `finish` when absent.",
+            "default": null
+          },
+          "start": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Earliest start as `YYYY-MM-DD` (a \"start no earlier than\"\nconstraint).",
+            "default": null
+          },
+          "finish": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Finish as `YYYY-MM-DD`, with `start`, when there is no `duration`.",
+            "default": null
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Predecessors: `A` (finish-to-start), `A SS`, `A FS+2`, `A FF-1`,\n`A SF` (lags in working days).",
+            "default": []
+          },
+          "milestone": {
+            "type": "boolean",
+            "description": "A milestone (zero duration).",
+            "default": false
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "description": "One task of a [`GanttRequest`], as the model or a file gives it."
+      },
+      "Calendar": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "all_days",
+            "description": "Every day."
+          },
+          {
+            "type": "string",
+            "const": "weekdays",
+            "description": "Monday to Friday."
+          }
+        ],
+        "description": "Which days count as working days."
+      }
+    }
+  }
+}

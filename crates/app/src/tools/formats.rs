@@ -15,7 +15,10 @@
 //! (`show_ifc_schedule`), and the science viewers [`sequence`]
 //! (`show_sequence`), [`reaction`] (`show_reaction`),
 //! [`molecule_grid`] (`show_molecule_grid`), [`spectrum`]
-//! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`).
+//! (`show_spectrum`) and [`molecule3d`] (`show_molecule_3d`), and the
+//! science B viewers [`geomap`] (`show_map`), [`gantt`] (`show_gantt`),
+//! [`arrays`] (`show_array_file`), [`network`] (`show_network`) and
+//! [`training`] (`show_training_curves`).
 //! [`register_format_tools`] adds them and [`FORMAT_TOOLS_PROMPT`] tells
 //! the model when to use each.
 //!
@@ -52,24 +55,30 @@ use crate::ports::formats::{DatasetRequest, FormatsPort};
 use crate::ports::fs::{FileSystemPort, FsError, WriteFileRequest};
 use crate::usecases::compute::{Offload, offloaded};
 
+pub mod arrays;
 pub mod bench;
 pub mod devops;
 pub mod diagram;
 pub mod dxf;
+pub mod gantt;
+pub mod geomap;
 pub mod har;
 pub mod ifc;
 pub mod material;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod query_plan;
 pub mod reaction;
 pub mod sequence;
 pub mod spectrum;
 pub mod step;
 pub mod terraform;
+pub mod training;
 pub mod waveform;
 
+pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary, read_array};
 pub use bench::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
     collect_benchmarks,
@@ -80,12 +89,15 @@ pub use devops::{
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
 pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
+pub use gantt::{SHOW_GANTT, ShowGanttTool, gantt_summary};
+pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, inline_geojson, map_summary, read_map};
 pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
 pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
 pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_entries, grid_summary};
 pub use molecule3d::{SHOW_MOLECULE_3D, ShowMolecule3dTool, molecule3d_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
+pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, edges_json, network_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
@@ -94,6 +106,7 @@ pub use spectrum::{
 };
 pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
+pub use training::{SHOW_TRAINING_CURVES, ShowTrainingCurvesTool, training_summary};
 pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
 
 /// Largest report file the tools read, in bytes.
@@ -1185,6 +1198,20 @@ returns and cite their positions, not values you expect.
 - `show_molecule_3d`: show a molecule in 3D from a structure file (MOL/SDF, \
 XYZ, PDB) or a SMILES the engine embeds; say an embedded geometry is a \
 computed conformer, and quote no bond lengths or angles it did not give.
+- `show_map`: show GeoJSON (a file or inline) on a map; give `crs` when the \
+coordinates are not WGS 84 longitude/latitude. Cite the areas, lengths and \
+box it measures (geodesic), never your own estimates.
+- `show_gantt`: schedule a project (tasks with durations and dependencies, \
+from a file or inline) with the critical path method; quote its dates, \
+slack and critical path instead of working them out yourself.
+- `show_array_file`: inspect an HDF5, NetCDF-4 or NetCDF-3 file (structure, \
+attributes, previews); its statistics cover the preview slice only, so say \
+so and never present them as the whole variable's.
+- `show_network`: show a network (edge list or node-link JSON, or inline \
+edges) with degree, betweenness, closeness, PageRank and communities; \
+name central nodes from its rankings, not from impressions.
+- `show_training_curves`: plot ML training logs (CSV or JSON lines, one or \
+more runs); compare runs by the best, last and minimum values it returns.
 
 The test report and findings results list what failed with `file:line`, so \
 you can open the files and fix them; do not repeat the lists to the user.";
@@ -1195,7 +1222,9 @@ you can open the files and fix them; do not repeat the lists to the user.";
 /// `show_terraform_plan`, `show_dot`, `show_er`, `show_benchmarks`,
 /// `show_waveform`, `show_netlist`, `show_material`, `show_step`,
 /// `show_dxf`, `show_ifc_schedule`, `show_sequence`, `show_reaction`,
-/// `show_molecule_grid`, `show_spectrum` and `show_molecule_3d`.
+/// `show_molecule_grid`, `show_spectrum`, `show_molecule_3d` and
+/// `show_map`, `show_gantt`, `show_array_file`, `show_network` and
+/// `show_training_curves`.
 ///
 /// # Errors
 ///
@@ -1229,7 +1258,12 @@ pub fn register_format_tools(
     registry.register_typed(ShowReactionTool::new(ports.clone()))?;
     registry.register_typed(ShowMoleculeGridTool::new(ports.clone()))?;
     registry.register_typed(ShowSpectrumTool::new(ports.clone()))?;
-    registry.register_typed(ShowMolecule3dTool::new(ports.clone()))
+    registry.register_typed(ShowMolecule3dTool::new(ports.clone()))?;
+    registry.register_typed(ShowMapTool::new(ports.clone()))?;
+    registry.register_typed(ShowGanttTool::new(ports.clone()))?;
+    registry.register_typed(ShowArrayFileTool::new(ports.clone()))?;
+    registry.register_typed(ShowNetworkTool::new(ports.clone()))?;
+    registry.register_typed(ShowTrainingCurvesTool::new(ports.clone()))
 }
 
 #[cfg(test)]
@@ -1347,7 +1381,7 @@ mod tests {
     fn registers_every_format_tool_and_prompts_for_each() {
         let mut registry = ToolRegistry::new();
         register_format_tools(&mut registry, &ports(Arc::new(FakeFormats::new()))).unwrap();
-        assert_eq!(registry.names().len(), 26);
+        assert_eq!(registry.names().len(), 31);
         for name in registry.names() {
             assert!(FORMAT_TOOLS_PROMPT.contains(&format!("`{name}`")), "{name}");
         }

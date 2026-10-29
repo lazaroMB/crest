@@ -338,6 +338,7 @@ impl Parser {
             group: scope.cluster.clone(),
             kind: None,
             attrs: Map::new(),
+            size: None,
         });
         self.attrs.push(all);
         self.index.insert(id.to_owned(), ix);

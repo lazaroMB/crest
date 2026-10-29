@@ -32,8 +32,16 @@
 //! - spectra with picked peaks ([`spectrum`]: our own JCAMP-DX reader,
 //!   mzdata for mzML and MGF);
 //! - molecules in 3D ([`molecule3d`]: chematic's embedding, our own
-//!   V2000 reader, chematic's V3000, XYZ and PDB readers).
+//!   V2000 reader, chematic's V3000, XYZ and PDB readers);
+//! - GeoJSON maps with geodesic measures ([`geomap`]: geojson, proj4rs,
+//!   geo; engine records from [`sci`]);
+//! - Gantt charts scheduled by the critical path method ([`gantt`]);
+//! - HDF5, NetCDF-4 and NetCDF-3 structure with bounded previews
+//!   ([`arrays`]: hdf5-pure, our own NetCDF-3 reader);
+//! - networks with centralities and communities ([`network`], petgraph);
+//! - training curves from CSV and JSON lines logs ([`training`]).
 
+pub mod arrays;
 pub mod bench;
 pub mod chem;
 pub mod dataset;
@@ -41,6 +49,8 @@ pub mod dot;
 pub mod drawing;
 pub mod er;
 pub mod flame;
+pub mod gantt;
+pub mod geomap;
 pub mod har;
 pub mod ifc;
 pub mod junit;
@@ -50,21 +60,24 @@ pub mod molecule;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod query_plan;
 pub mod reaction;
 pub mod sarif;
+pub mod sci;
 pub mod sequence;
 pub mod spectrum;
 pub mod step;
 pub mod terraform;
 pub mod trace;
+pub mod training;
 pub mod wave;
 pub mod waveform;
 
 use application::ports::formats::{
-    BenchRequest, DatasetRequest, FormatError, FormatsPort, LogRequest, Molecule3dSource,
-    MoleculeGridRequest, ProfileRequest, SequenceRequest, SpectrumRequest, StepRequest,
-    WaveRequest,
+    ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
+    MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
+    SequenceRequest, SpectrumRequest, StepRequest, TrainingRequest, WaveRequest,
 };
 use domain::dataset::DatasetSpec;
 use domain::devops::bench::BenchSpec;
@@ -80,13 +93,18 @@ use domain::engineering::drawing::DrawingSpec;
 use domain::engineering::ifc::IfcScheduleSpec;
 use domain::engineering::netlist::{NetlistFormat, NetlistSpec};
 use domain::engineering::waveform::WaveformSpec;
+use domain::gantt::GanttSpec;
 use domain::report::{FindingsSpec, TestReportSpec};
 use domain::science::MoleculeSpec;
+use domain::science::arrays::ArrayFileSpec;
+use domain::science::geomap::MapSpec;
 use domain::science::molecule_grid::MoleculeGridSpec;
 use domain::science::molecule3d::Molecule3dSpec;
+use domain::science::network::NetworkSpec;
 use domain::science::reaction::ReactionSpec;
 use domain::science::sequence::SequenceSpec;
 use domain::science::spectrum::SpectrumSpec;
+use domain::science::training::TrainingSpec;
 
 /// The formats adapter. Stateless.
 #[derive(Debug, Clone, Copy, Default)]
@@ -246,5 +264,29 @@ impl FormatsPort for Formats {
             Molecule3dSource::File { path, bytes } => molecule3d::read(bytes, path),
         }
         .map_err(FormatError::Invalid)
+    }
+
+    fn parse_geojson(&self, bytes: &[u8], request: &MapRequest) -> Result<MapSpec, FormatError> {
+        geomap::parse(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn schedule_gantt(&self, request: &GanttRequest) -> Result<GanttSpec, FormatError> {
+        gantt::schedule(request).map_err(FormatError::Invalid)
+    }
+
+    fn inspect_array_file(
+        &self,
+        bytes: &[u8],
+        request: &ArrayRequest,
+    ) -> Result<ArrayFileSpec, FormatError> {
+        arrays::inspect(bytes, request).map_err(FormatError::Invalid)
+    }
+
+    fn analyse_network(&self, request: &NetworkRequest) -> Result<NetworkSpec, FormatError> {
+        network::analyse(request).map_err(FormatError::Invalid)
+    }
+
+    fn training_curves(&self, request: &TrainingRequest) -> Result<TrainingSpec, FormatError> {
+        training::curves(request).map_err(FormatError::Invalid)
     }
 }

@@ -1,0 +1,124 @@
+---
+source: crates/app/src/tools/formats/training.rs
+expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
+---
+{
+  "name": "show_training_curves",
+  "description": "Plots machine-learning training logs (CSV or JSON lines; `path` or `paths`, one run each or a `run` column) in the user's timeline: every run's curve of a metric (picked on the plot) against step, epoch or time, smoothed with TensorBoard's EMA over the raw values drawn faint, best values marked, linear or log y. The engine summarises every run and metric (count, min, max, last, best with its step). Returns the runs, metrics and summaries with their envelope id; compare runs from these numbers, not from the shape of the curves.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "A training log of the workspace: CSV/TSV with a header (Keras or\nLightning CSV loggers, wandb or TensorBoard scalar exports) or JSON\nlines.",
+        "default": null
+      },
+      "paths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Several logs, one run each (or several through a `run` column).",
+        "default": []
+      },
+      "metric": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The metric shown first (`val_loss`); the first loss-like one when\nabsent. Every metric can be picked on the plot.",
+        "default": null
+      },
+      "x": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TrainingAxis"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The x axis: `step` (default), `epoch` or `time`.",
+        "default": null
+      },
+      "smoothing": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "format": "double",
+        "description": "EMA smoothing weight from 0 (none) to below 1 (default 0.6, as\nTensorBoard).",
+        "default": null
+      },
+      "log_y": {
+        "type": "boolean",
+        "description": "Start with a logarithmic y axis.",
+        "default": false
+      },
+      "goal": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Goal"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Whether lower (`minimize`) or higher (`maximize`) is better for\nevery metric; guessed from each name when absent.",
+        "default": null
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Title shown above the plot.",
+        "default": null
+      }
+    },
+    "description": "Input of `show_training_curves`.",
+    "title": "ShowTrainingCurves",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+      "TrainingAxis": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "step",
+            "description": "Optimizer steps (or the row number when the log has none)."
+          },
+          {
+            "type": "string",
+            "const": "epoch",
+            "description": "Epochs."
+          },
+          {
+            "type": "string",
+            "const": "time",
+            "description": "Seconds since the run's first logged row."
+          }
+        ],
+        "description": "What the x axis counts."
+      },
+      "Goal": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "minimize",
+            "description": "Lower is better (losses, errors)."
+          },
+          {
+            "type": "string",
+            "const": "maximize",
+            "description": "Higher is better (accuracy, F1, AUC)."
+          }
+        ],
+        "description": "Whether lower or higher is better."
+      }
+    }
+  }
+}

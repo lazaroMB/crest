@@ -251,6 +251,7 @@ impl NetlistSpec {
                     group: None,
                     kind: Some(c.kind.clone()),
                     attrs,
+                    size: None,
                 }
             })
             .collect();
@@ -271,6 +272,7 @@ impl NetlistSpec {
                 group: None,
                 kind: Some(kind.into()),
                 attrs,
+                size: None,
             });
             for (ix, pin) in &net.pins {
                 edges.push(GraphEdge {

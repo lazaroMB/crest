@@ -26,6 +26,11 @@
 //! | spectrum | points CSV, peaks CSV |
 //! | molecule 3D | XYZ, the SMILES embedded |
 //! | GHS card | the card as text with its source and date, the PubChem URL |
+//! | training curves | per-run summaries CSV (min, max, last, best with steps) |
+//! | network | node metrics CSV, edges CSV |
+//! | array file | groups and variables CSV, the preview shown as CSV (first preview) |
+//! | Gantt chart | schedule CSV (ES, EF, LS, LF, slack, critical), the critical path |
+//! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
@@ -580,6 +585,34 @@ pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
             }
             formats
         }
+        BlockKind::TrainingCurves(spec) => vec![CopyFormat::new(
+            "summaries",
+            "summaries CSV",
+            spec.summary_csv(),
+        )],
+        BlockKind::Network(spec) => vec![
+            CopyFormat::new("metrics", "metrics CSV", spec.to_csv()),
+            CopyFormat::new("edges", "edges CSV", spec.edges_csv()),
+        ],
+        BlockKind::ArrayFile(spec) => {
+            let mut formats = vec![CopyFormat::new("nodes", "variables CSV", spec.nodes_csv())];
+            if let Some(p) = spec.previews.first() {
+                formats.push(CopyFormat::new("preview", "preview CSV", p.to_csv()));
+            }
+            formats
+        }
+        BlockKind::Gantt(spec) => vec![
+            CopyFormat::new("schedule", "schedule CSV", spec.to_csv()),
+            CopyFormat::new(
+                "critical",
+                "critical path",
+                super::gantt::critical_text(spec),
+            ),
+        ],
+        BlockKind::GeoMap(spec) => vec![
+            CopyFormat::new("features", "features CSV", spec.to_csv()),
+            CopyFormat::new("summary", "summary", super::geomap::summary_text(spec)),
+        ],
         BlockKind::Ghs(spec) => vec![
             CopyFormat::new("card", "card", spec.to_text()),
             CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),

@@ -7,6 +7,7 @@
 //! diagram's pan and zoom) that is created and updated while drawing.
 
 pub mod ansi;
+pub mod arrays;
 pub mod bench;
 pub mod cad;
 pub mod chart;
@@ -20,6 +21,8 @@ pub mod drawing;
 pub mod findings;
 pub mod flame;
 pub mod form;
+pub mod gantt;
+pub mod geomap;
 pub mod ghs;
 pub mod har;
 pub mod ifc;
@@ -37,6 +40,7 @@ pub mod molecule;
 pub mod molecule3d;
 pub mod molecule_grid;
 pub mod netlist;
+pub mod network;
 pub mod plate;
 pub mod plot;
 pub mod query_plan;
@@ -52,6 +56,7 @@ pub mod terraform;
 pub mod test_report;
 pub mod thinking;
 pub mod trace;
+pub mod training;
 pub mod waveform;
 
 use std::any::TypeId;
@@ -111,6 +116,11 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Optio
         BlockKind::Spectrum(_) => spectrum::render(entry, window, cx),
         BlockKind::Molecule3d(_) => molecule3d::render(entry, window, cx),
         BlockKind::Ghs(_) => ghs::render(entry, window, cx),
+        BlockKind::GeoMap(_) => geomap::render(entry, window, cx),
+        BlockKind::Gantt(_) => gantt::render(entry, window, cx),
+        BlockKind::ArrayFile(_) => arrays::render(entry, window, cx),
+        BlockKind::Network(_) => network::render(entry, window, cx),
+        BlockKind::TrainingCurves(_) => training::render(entry, window, cx),
         BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
             return None;
         }

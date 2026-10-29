@@ -1,0 +1,7 @@
+id,name,duration,depends_on,phase
+A,Survey,3,,plan
+B,Foundations,4,A,build
+C,Order steel,2,A,plan
+D,Frame,5,B,build
+E,Deliver steel,3,C,plan
+F,Roof,2,D;E,build
