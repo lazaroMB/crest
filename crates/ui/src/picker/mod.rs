@@ -39,7 +39,6 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_component::{ActiveTheme as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex};
 
 pub mod preview;
@@ -626,7 +625,7 @@ impl PickerView {
         }
         let len = len as isize;
         self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
-        self.scroll.scroll_to_item(self.selected);
+        crate::keyscroll::ensure_visible(&self.scroll, self.selected);
         self.schedule_preview(cx);
         cx.notify();
     }
@@ -1140,16 +1139,11 @@ impl Render for PickerView {
                     .into_any_element()
             })
             .collect();
-        let results = div()
-            .id("picker-results")
+        let results = crate::keyscroll::list("picker-results", &self.scroll, rows)
             .when(two_columns, |div| div.w(px(results_width)).flex_none())
             .when(!two_columns, |div| div.flex_1())
             .min_w_0()
-            .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .children(rows)
-            .scrollbar(&self.scroll, ScrollbarAxis::Vertical);
+            .h_full();
         let preview = two_columns.then(|| self.render_preview(preview_chars, cx));
         let chips = (mode == PickerMode::Grep).then(|| self.render_chips(cx));
         // The backdrop: a click outside the popup closes it.
@@ -1702,17 +1696,8 @@ mod tests {
         picker.read_with(cx, |picker, _| {
             assert_eq!(picker.selected(), 30);
             let scroll = picker.scroll_handle();
-            let row = scroll.bounds_for_item(30).expect("row laid out");
-            let view = scroll.bounds();
             assert!(scroll.offset().y < px(0.), "the list scrolled");
-            // Item bounds are where the rows were laid out, before the
-            // scroll moves them.
-            let (top, bottom) = (row.top() + scroll.offset().y, row.bottom() + scroll.offset().y);
-            assert!(
-                top >= view.top() - px(1.) && bottom <= view.bottom() + px(1.),
-                "row {row:?} out of {view:?} at {:?}",
-                scroll.offset()
-            );
+            assert!(crate::keyscroll::is_visible(scroll, 30), "row 30 in view");
         });
     }
 
