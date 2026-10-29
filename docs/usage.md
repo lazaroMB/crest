@@ -601,7 +601,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `decision_matrix` | `criteria[]` (`name`, `weight`, `direction`), `options[]` (`name`, `scores[]`), `normalization?` | read |
 | `calc` | `lines` (`name = expr`, in order), `significant_digits` (6) | read |
 | `convert` | `value?`, `from`, `to`, `uncertainty?`, `significant_digits` (6) | read |
-| `ask_user` | `title`, `description?`, `schema` (a JSON Schema object), `submit_label?`: waits for the answer | read |
+| `ask_user` | `schema` (a JSON Schema object), `title?`, `description?`, `submit_label?`: waits for the answer. A missing title comes from the description's first sentence or the first field; unknown keys are ignored, `questions` stands for `schema` and a flat schema (`properties` at the top level) is accepted | read |
 | `show_test_report`, `show_findings` | `path` of a JUnit XML or libtest/nextest JSON file / a SARIF file (32 MiB at most); `title?` for the report | read |
 | `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
 | `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |

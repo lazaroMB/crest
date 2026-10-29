@@ -315,7 +315,7 @@ app.tools.register{
 
 ### `app.ask`: forms
 
-`app.ask{ title, description, schema, order, submit_label }` shows the same form as the `ask_user` tool, in place in the timeline, and waits for the answer. The fields are those of `ask_user` plus `order`, the property names in display order (Lua tables have no order, so without it the fields are sorted by name); `schema` may also be a JSON string, which keeps its order. It returns the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer: the headless mode has no forms). A prompt sent while the form waits answers it in prose: `nil`, `"the user answered in the chat instead"` and the words as a third value. An answer that does not fit the fields is asked again with the reason, up to three times.
+`app.ask{ title, description, schema, order, submit_label }` shows the same form as the `ask_user` tool, in place in the timeline, and waits for the answer. The fields are those of `ask_user` plus `order` (but `title` is required here), the property names in display order (Lua tables have no order, so without it the fields are sorted by name); `schema` may also be a JSON string, which keeps its order. It returns the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer: the headless mode has no forms). A prompt sent while the form waits answers it in prose: `nil`, `"the user answered in the chat instead"` and the words as a third value. An answer that does not fit the fields is asked again with the reason, up to three times.
 
 ```lua
 local answer, why, reply = app.ask{
