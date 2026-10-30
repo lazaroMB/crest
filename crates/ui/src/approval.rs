@@ -15,28 +15,23 @@ use application::ports::approval::{
     ApprovalError, ApprovalPort, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
     ApprovalResponse,
 };
+use application::ports::permissions::PERMISSIONS_FILE;
 use async_trait::async_trait;
-use domain::permission::{PermissionRule, RuleDecision, RuleMatcher};
+use domain::permission::{
+    RUN_COMMAND_TOOL, RuleMatcher, RuleOption, RuleScope, RungKind, ToolEffect, default_rung,
+    is_exact_only, rule_ladder, split_command,
+};
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollHandle,
-    SharedString, Styled as _, Task, WeakEntity, Window, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::input::key_from_keystroke;
-
-/// The "allow always" rule for `request`: same tool, exactly this subject.
-pub fn allow_always_rule(request: &ApprovalRequest) -> PermissionRule {
-    PermissionRule::new(
-        request.tool.clone(),
-        RuleMatcher::Exact(request.subject.clone()),
-        RuleDecision::AllowAlways,
-    )
-}
 
 /// The command line as shown to the user: the program and its arguments,
 /// with arguments that need it in single quotes.
@@ -163,6 +158,87 @@ pub enum ApprovalEvent {
     Cancelled(ApprovalRequestId),
 }
 
+/// One answer the dialog offers: a row of its list, picked with the
+/// cursor, a click or its letter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    /// `y`: run the call once.
+    Once,
+    /// `s` (or `a`): run it and allow the pattern for this session.
+    Session,
+    /// `p`: run it and allow the pattern in every session of the project
+    /// (saved in `.crest/permissions.local.toml`).
+    Project,
+    /// `e`: run it and stop asking about edits this session (auto-edit).
+    /// Only offered for writes.
+    AllEdits,
+    /// `n`: reject, after an optional reason.
+    Reject,
+}
+
+impl Choice {
+    /// The letter that picks it.
+    pub fn key(self) -> char {
+        match self {
+            Self::Once => 'y',
+            Self::Session => 's',
+            Self::Project => 'p',
+            Self::AllEdits => 'e',
+            Self::Reject => 'n',
+        }
+    }
+
+    /// The choice a letter picks; `a` ("always") is kept as `s`.
+    fn from_key(c: char) -> Option<Self> {
+        match c {
+            'y' => Some(Self::Once),
+            's' | 'a' => Some(Self::Session),
+            'p' => Some(Self::Project),
+            'e' => Some(Self::AllEdits),
+            'n' => Some(Self::Reject),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Once => "Yes, once",
+            Self::Session => "Yes, this session for",
+            Self::Project => "Yes, always in project",
+            Self::AllEdits => "Yes, allow all edits this session",
+            Self::Reject => "No, tell crest why…",
+        }
+    }
+}
+
+/// Why the pattern of a command cannot be widened.
+const EXACT_ONLY_REASON: &str = "shells and interpreters are only allowed exactly";
+
+/// The text of the pattern chip: `cargo test *`, `src/*`, the exact
+/// subject, or "any input".
+fn pattern_text(rung: &RuleOption) -> String {
+    rung.rule
+        .matcher
+        .pattern()
+        .unwrap_or_else(|| "any input".to_owned())
+}
+
+/// What a pattern broader than the exact action lets through, in words.
+fn pattern_hint(rung: &RuleOption) -> Option<String> {
+    if rung.kind == RungKind::Exact {
+        return None;
+    }
+    match &rung.rule.matcher {
+        RuleMatcher::Command(tokens) => Some(format!(
+            "allows any `{} …`",
+            domain::permission::command_line(tokens)
+        )),
+        RuleMatcher::Prefix(prefix) => Some(format!("allows any file under `{prefix}`")),
+        RuleMatcher::Any => Some(format!("allows any input of `{}`", rung.rule.tool)),
+        RuleMatcher::Exact(_) => None,
+    }
+}
+
 /// The dialog the diff blocks' buttons answer: the last one created.
 struct ActiveDialog(WeakEntity<ApprovalView>);
 
@@ -213,17 +289,32 @@ struct Shown {
 /// the last child of a `relative` container): it is empty while nothing is
 /// pending and covers the window otherwise.
 ///
-/// Keys while open: `y` approve, `a` approve always, `n` reject with an
-/// optional reason (typed, then `Enter`; `Esc` goes back), `Esc` reject;
-/// `Up`/`Down`, `PageUp`/`PageDown` and `Home`/`End` scroll the preview.
-/// Requests that arrive while one is open wait in a queue.
+/// It shows the request and a list of answers ([`Choice`]): once, this
+/// session or always in the project for a pattern, all edits this session
+/// (writes only), or no. Keys while open: `Up`/`Down` move the cursor and
+/// `Enter` picks the row; the letters `y`, `s` (or `a`), `p`, `e` and `n`
+/// pick one directly. `Tab`/`Shift+Tab` widen and narrow the pattern of the
+/// session and project rows ([`rule_ladder`]). `n` opens a reason line
+/// (typed, then `Enter`; `Esc` goes back); `Esc` rejects without a reason.
+/// `PageUp`/`PageDown`, `Shift+Up`/`Shift+Down` and `Home`/`End` scroll
+/// the preview. Requests that arrive while one is open wait in a queue.
 pub struct ApprovalView {
     focus_handle: FocusHandle,
     current: Option<Shown>,
     queue: VecDeque<Shown>,
     /// The reason being typed after `n`, if any.
     reason: Option<String>,
-    /// Scroll of the preview (`Up`/`Down`, `PageUp`/`PageDown`).
+    /// Patterns the session and project rows offer for the current
+    /// request, narrowest first.
+    ladder: Vec<RuleOption>,
+    /// The rung of `ladder` chosen.
+    rung: usize,
+    /// Whether `ladder` holds only the exact command because the program
+    /// runs whatever its arguments say (a shell, `python -c`).
+    exact_only: bool,
+    /// Row of [`choices`](Self::choices) under the cursor.
+    cursor: usize,
+    /// Scroll of the preview.
     preview_scroll: ScrollHandle,
     restore_focus: Option<FocusHandle>,
     next_key: u64,
@@ -256,6 +347,10 @@ impl ApprovalView {
             current: None,
             queue: VecDeque::new(),
             reason: None,
+            ladder: Vec::new(),
+            rung: 0,
+            exact_only: false,
+            cursor: 0,
             preview_scroll: ScrollHandle::new(),
             restore_focus: None,
             next_key: 0,
@@ -299,6 +394,61 @@ impl ApprovalView {
         self.reason.as_deref()
     }
 
+    /// The rows offered for the request on screen, top to bottom; empty
+    /// when nothing is open. [`Choice::AllEdits`] only for writes.
+    pub fn choices(&self) -> Vec<Choice> {
+        let Some(request) = self.current() else {
+            return Vec::new();
+        };
+        let mut choices = vec![Choice::Once, Choice::Session, Choice::Project];
+        if request.effect == ToolEffect::Write {
+            choices.push(Choice::AllEdits);
+        }
+        choices.push(Choice::Reject);
+        choices
+    }
+
+    /// The row under the cursor.
+    pub fn selected(&self) -> Option<Choice> {
+        self.choices().get(self.cursor).copied()
+    }
+
+    /// The pattern the session and project rows grant, as a session rule.
+    pub fn pattern(&self) -> Option<&RuleOption> {
+        self.ladder.get(self.rung)
+    }
+
+    /// Whether the pattern holds only the exact command because shells and
+    /// interpreters are never widened.
+    pub fn is_exact_only(&self) -> bool {
+        self.exact_only
+    }
+
+    /// Moves the pattern one rung broader (`Tab`), if there is one.
+    pub fn widen(&mut self, cx: &mut Context<Self>) {
+        if self.rung + 1 < self.ladder.len() {
+            self.rung += 1;
+            cx.notify();
+        }
+    }
+
+    /// Moves the pattern one rung narrower (`Shift+Tab`), if there is one.
+    pub fn narrow(&mut self, cx: &mut Context<Self>) {
+        if self.rung > 0 {
+            self.rung -= 1;
+            cx.notify();
+        }
+    }
+
+    fn move_cursor(&mut self, down: bool) {
+        let last = self.choices().len().saturating_sub(1);
+        self.cursor = if down {
+            (self.cursor + 1).min(last)
+        } else {
+            self.cursor.saturating_sub(1)
+        };
+    }
+
     fn push(&mut self, mut pending: PendingApproval, window: &mut Window, cx: &mut Context<Self>) {
         if pending.is_cancelled() {
             return;
@@ -326,6 +476,18 @@ impl ApprovalView {
     }
 
     fn show(&mut self, shown: Shown, window: &mut Window, cx: &mut Context<Self>) {
+        let action = shown.pending.request().action();
+        self.ladder = rule_ladder(&action);
+        self.rung = default_rung(&self.ladder);
+        self.exact_only = action.tool == RUN_COMMAND_TOOL && self.ladder.len() == 1 && {
+            let argv = action
+                .argv
+                .clone()
+                .or_else(|| split_command(&action.subject).ok())
+                .unwrap_or_default();
+            !argv.is_empty() && is_exact_only(&argv)
+        };
+        self.cursor = 0;
         self.current = Some(shown);
         self.reason = None;
         if self.shown {
@@ -337,6 +499,7 @@ impl ApprovalView {
     fn advance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.current = None;
         self.reason = None;
+        self.ladder.clear();
         match self.queue.pop_front() {
             Some(next) => self.show(next, window, cx),
             None => {
@@ -367,17 +530,33 @@ impl ApprovalView {
         self.advance(window, cx);
     }
 
+    /// Answers with `choice`, as its row does; [`Choice::Reject`] opens the
+    /// reason line. A choice the request does not offer does nothing.
+    pub fn choose(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.choices().contains(&choice) {
+            return;
+        }
+        match choice {
+            Choice::Once => self.approve(window, cx),
+            Choice::Session => self.approve_pattern(RuleScope::Session, window, cx),
+            Choice::Project => self.approve_pattern(RuleScope::Project, window, cx),
+            Choice::AllEdits => self.answer(ApprovalResponse::ApproveAllEdits, window, cx),
+            Choice::Reject => self.begin_reason(window, cx),
+        }
+    }
+
     /// Approves the request on screen once.
     pub fn approve(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.answer(ApprovalResponse::Approve, window, cx);
     }
 
-    /// Approves the request on screen and remembers the rule.
-    pub fn approve_always(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(request) = self.current() else {
+    /// Approves the request on screen and remembers the chosen pattern in
+    /// `scope`.
+    fn approve_pattern(&mut self, scope: RuleScope, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(rung) = self.pattern() else {
             return;
         };
-        let rule = allow_always_rule(request);
+        let rule = rung.rule.clone().with_scope(scope);
         self.answer(ApprovalResponse::ApproveAlways { rule }, window, cx);
     }
 
@@ -406,9 +585,8 @@ impl ApprovalView {
     /// Opens the reason line and keeps the keyboard on this dialog.
     ///
     /// The reason is not a text field: keystrokes land here only while this
-    /// view is focused. The Reject button does not take focus, and neither
-    /// does the line that replaces it, so without this the prompt keeps the
-    /// keys.
+    /// view is focused. The rows do not take focus when clicked, so without
+    /// this the prompt keeps the keys.
     fn begin_reason(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reason = Some(String::new());
         window.focus(&self.focus_handle, cx);
@@ -422,7 +600,8 @@ impl ApprovalView {
     }
 
     /// Applies one key while a request is on screen. Returns whether the
-    /// dialog took it. `Ctrl+C` is left to the session, which interrupts.
+    /// dialog took it. Chords (`Ctrl`, `Alt`, `Cmd`) are left to the
+    /// session: `Ctrl+C` interrupts.
     pub fn handle_keystroke(
         &mut self,
         keystroke: &gpui::Keystroke,
@@ -459,24 +638,42 @@ impl ApprovalView {
                 }
                 _ => false,
             },
-            None if crate::keyscroll::scroll_key(&self.preview_scroll, &keystroke.key) => true,
             None => match key.code {
-                KeyCode::Char('y') => {
-                    self.approve(window, cx);
+                KeyCode::Up | KeyCode::Down if key.mods.shift => {
+                    crate::keyscroll::scroll_key(&self.preview_scroll, &keystroke.key)
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    self.move_cursor(key.code == KeyCode::Down);
                     true
                 }
-                KeyCode::Char('a') => {
-                    self.approve_always(window, cx);
+                KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
+                    crate::keyscroll::scroll_key(&self.preview_scroll, &keystroke.key)
+                }
+                KeyCode::Tab => {
+                    if key.mods.shift {
+                        self.narrow(cx);
+                    } else {
+                        self.widen(cx);
+                    }
                     true
                 }
-                KeyCode::Char('n') => {
-                    self.begin_reason(window, cx);
+                KeyCode::Enter => {
+                    if let Some(choice) = self.selected() {
+                        self.choose(choice, window, cx);
+                    }
                     true
                 }
                 KeyCode::Esc => {
                     self.reject(None, window, cx);
                     true
                 }
+                KeyCode::Char(c) => match Choice::from_key(c) {
+                    Some(choice) if self.choices().contains(&choice) => {
+                        self.choose(choice, window, cx);
+                        true
+                    }
+                    _ => false,
+                },
                 _ => false,
             },
         };
@@ -518,9 +715,153 @@ impl ApprovalView {
         }
     }
 
+    /// The `‹ pattern ›` chip of the session (`project` false) and project
+    /// rows. The arrows narrow and widen it; they are left out when there
+    /// is only one rung.
+    fn render_chip(&self, project: bool, cx: &mut Context<Self>) -> AnyElement {
+        let Some(rung) = self.pattern() else {
+            return div().into_any_element();
+        };
+        let suffix = if project { "-project" } else { "" };
+        let theme = cx.theme();
+        let adjustable = self.ladder.len() > 1;
+        let arrow = |text: &'static str, name: &str, enabled: bool, cx: &mut Context<Self>| {
+            let wider = name == "wider";
+            let id = format!("approval-pattern-{name}{suffix}");
+            let selector = id.clone();
+            div()
+                .id(SharedString::from(id))
+                .debug_selector(move || selector)
+                .px_1()
+                .cursor_pointer()
+                .text_color(if enabled {
+                    cx.theme().foreground
+                } else {
+                    cx.theme().muted_foreground
+                })
+                .child(text)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    // The row under the arrow must not answer.
+                    cx.stop_propagation();
+                    if wider {
+                        this.widen(cx);
+                    } else {
+                        this.narrow(cx);
+                    }
+                }))
+        };
+        let text = div()
+            .font_family(theme.mono_font_family.clone())
+            .px_1()
+            .bg(theme.secondary)
+            .rounded_sm()
+            .overflow_hidden()
+            .text_ellipsis()
+            .max_w(px(380.))
+            .child(SharedString::from(pattern_text(rung)));
+        let selector = format!("approval-pattern{suffix}");
+        let (narrower, wider) = (self.rung > 0, self.rung + 1 < self.ladder.len());
+        h_flex()
+            .debug_selector(move || selector)
+            .min_w_0()
+            .when(adjustable, |chip| {
+                chip.child(arrow("‹", "narrower", narrower, cx))
+            })
+            .child(text)
+            .when(adjustable, |chip| {
+                chip.child(arrow("›", "wider", wider, cx))
+            })
+            .into_any_element()
+    }
+
+    fn render_row(&self, ix: usize, choice: Choice, cx: &mut Context<Self>) -> AnyElement {
+        let selected = ix == self.cursor;
+        let extra = match choice {
+            Choice::Session => Some(self.render_chip(false, cx)),
+            Choice::Project => Some(self.render_chip(true, cx)),
+            Choice::AllEdits => Some(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("(auto-edit · <leader>p to undo)")
+                    .into_any_element(),
+            ),
+            Choice::Once | Choice::Reject => None,
+        };
+        let theme = cx.theme();
+        let id = format!("approval-row-{}", choice.key());
+        let selector = id.clone();
+        h_flex()
+            .id(SharedString::from(id))
+            .debug_selector(move || selector)
+            .gap_2()
+            .px_1()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(selected, |row| row.bg(theme.list_active))
+            .child(
+                div()
+                    .w(px(12.))
+                    .flex_none()
+                    .child(if selected { "›" } else { "" }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(theme.mono_font_family.clone())
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(if choice == Choice::Reject {
+                        theme.danger
+                    } else {
+                        theme.primary
+                    })
+                    .child(SharedString::from(choice.key().to_string())),
+            )
+            .child(div().flex_none().child(choice.label()))
+            .children(extra)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.cursor = ix;
+                this.choose(choice, window, cx);
+            }))
+            .into_any_element()
+    }
+
+    /// Lines under the rows: why the pattern is exact, or what a broader
+    /// one allows; where a project rule is saved while that row is under
+    /// the cursor.
+    fn render_hints(&self, cx: &App) -> Option<AnyElement> {
+        let mut lines: Vec<(&'static str, String)> = Vec::new();
+        if self.exact_only {
+            lines.push(("approval-pattern-reason", EXACT_ONLY_REASON.to_owned()));
+        } else if let Some(hint) = self.pattern().and_then(pattern_hint) {
+            lines.push(("approval-pattern-hint", hint));
+        }
+        if self.selected() == Some(Choice::Project) {
+            lines.push((
+                "approval-project-file",
+                format!("saved in .crest/{PERMISSIONS_FILE}"),
+            ));
+        }
+        if lines.is_empty() {
+            return None;
+        }
+        let color = cx.theme().muted_foreground;
+        Some(
+            v_flex()
+                .pl(px(20.))
+                .text_xs()
+                .text_color(color)
+                .children(lines.into_iter().map(|(selector, line)| {
+                    div()
+                        .debug_selector(move || selector.to_owned())
+                        .child(SharedString::from(line))
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
         if let Some(reason) = &self.reason {
-            let theme = cx.theme();
             return h_flex()
                 .gap_2()
                 .child(div().text_color(theme.muted_foreground).child("Reason:"))
@@ -539,34 +880,11 @@ impl ApprovalView {
                 )
                 .into_any_element();
         }
-        h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                div()
-                    .debug_selector(|| "approval-keys".to_owned())
-                    .flex_1()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Esc rejects without a reason"),
-            )
-            .child(
-                Button::new("approval-approve")
-                    .primary()
-                    .label("Approve (y)")
-                    .on_click(cx.listener(|this, _, window, cx| this.approve(window, cx))),
-            )
-            .child(
-                Button::new("approval-always")
-                    .label("Always (a)")
-                    .on_click(cx.listener(|this, _, window, cx| this.approve_always(window, cx))),
-            )
-            .child(
-                Button::new("approval-reject")
-                    .danger()
-                    .label("Reject (n)")
-                    .on_click(cx.listener(|this, _, window, cx| this.begin_reason(window, cx))),
-            )
+        div()
+            .debug_selector(|| "approval-keys".to_owned())
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child("↑↓ choose · Tab/⇧Tab pattern · Enter confirm · Esc reject")
             .into_any_element()
     }
 }
@@ -583,8 +901,18 @@ impl Render for ApprovalView {
             return div().id("approval").into_any_element();
         };
         let request = shown.pending.request();
-        let theme = cx.theme();
         let title = format!("Allow {}?", request.tool);
+        let subject = request.subject.clone();
+        let preview = Self::render_preview(&request.preview, cx);
+        let rows: Vec<_> = self
+            .choices()
+            .into_iter()
+            .enumerate()
+            .map(|(ix, choice)| self.render_row(ix, choice, cx))
+            .collect();
+        let hints = self.render_hints(cx);
+        let footer = self.render_footer(cx);
+        let theme = cx.theme();
         let mut card = v_flex()
             .w(px(760.))
             .max_w_full()
@@ -608,16 +936,12 @@ impl Render for ApprovalView {
                             .text_color(theme.muted_foreground)
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(SharedString::from(request.subject.clone())),
+                            .child(SharedString::from(subject)),
                     ),
             )
             .child(
-                crate::keyscroll::list(
-                    "approval-preview",
-                    &self.preview_scroll,
-                    [Self::render_preview(&request.preview, cx)],
-                )
-                .max_h(px(420.)),
+                crate::keyscroll::list("approval-preview", &self.preview_scroll, [preview])
+                    .max_h(px(380.)),
             );
         if !self.queue.is_empty() {
             card = card.child(
@@ -629,7 +953,12 @@ impl Render for ApprovalView {
                     ))),
             );
         }
-        let footer = self.render_footer(cx);
+        let options = v_flex()
+            .pt_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .children(rows)
+            .children(hints);
         div()
             .id("approval")
             .track_focus(&self.focus_handle)
@@ -640,7 +969,7 @@ impl Render for ApprovalView {
             .items_center()
             .justify_center()
             .bg(cx.theme().overlay)
-            .child(card.child(footer))
+            .child(card.child(options).child(footer))
             .into_any_element()
     }
 }
@@ -717,14 +1046,6 @@ mod tests {
     }
 
     #[test]
-    fn allow_always_matches_exactly_the_subject() {
-        let rule = allow_always_rule(&command_request(1));
-        assert_eq!(rule.tool, "run_command");
-        assert_eq!(rule.matcher, RuleMatcher::Exact("cargo test".into()));
-        assert_eq!(rule.decision, RuleDecision::AllowAlways);
-    }
-
-    #[test]
     fn command_line_quotes_only_when_needed() {
         let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         assert_eq!(
@@ -794,19 +1115,6 @@ mod tests {
         cx.simulate_keystrokes("y");
         assert_eq!(answered(answer, cx), Ok(ApprovalResponse::Approve));
         view.read_with(cx, |view, _| assert!(view.current().is_none()));
-    }
-
-    #[gpui::test]
-    fn a_approves_always_with_the_exact_rule(cx: &mut TestAppContext) {
-        let (port, _view, cx) = dialog(cx);
-        let answer = ask(&port, command_request(1), cx);
-        cx.simulate_keystrokes("a");
-        assert_eq!(
-            answered(answer, cx),
-            Ok(ApprovalResponse::ApproveAlways {
-                rule: allow_always_rule(&command_request(1)),
-            })
-        );
     }
 
     #[gpui::test]
@@ -994,10 +1302,30 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert!(view.preview_scroll.max_offset().y > px(0.), "it overflows");
         });
-        cx.simulate_keystrokes("pagedown");
+        cx.simulate_keystrokes("down");
         draw(cx);
         view.read_with(cx, |view, _| {
-            assert!(view.preview_scroll.offset().y < px(0.), "PageDown scrolls");
+            assert_eq!(
+                view.preview_scroll.offset().y,
+                px(0.),
+                "Down moves the cursor"
+            );
+            assert_eq!(view.selected(), Some(Choice::Session));
+        });
+        cx.simulate_keystrokes("pagedown");
+        draw(cx);
+        let paged = view.read_with(cx, |view, _| view.preview_scroll.offset().y);
+        assert!(paged < px(0.), "PageDown scrolls");
+        cx.simulate_keystrokes("shift-down");
+        draw(cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.preview_scroll.offset().y < paged, "Shift+Down scrolls");
+            assert_eq!(view.selected(), Some(Choice::Session), "not the cursor");
+        });
+        cx.simulate_keystrokes("home");
+        draw(cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.preview_scroll.offset().y, px(0.), "Home goes back");
         });
     }
 
@@ -1015,5 +1343,267 @@ mod tests {
         );
         let idle = cx.update(|window, cx| answer_diff("src/lib.rs", true, window, cx));
         assert!(!idle, "nothing is open");
+    }
+
+    // -- options and patterns -------------------------------------------------
+
+    /// A `run_command` request for the shell-split `line`.
+    fn run_request(id: u64, line: &str) -> ApprovalRequest {
+        let argv = split_command(line).unwrap();
+        ApprovalRequest {
+            subject: line.into(),
+            preview: ApprovalPreview::Command {
+                command: argv[0].clone(),
+                args: argv[1..].to_vec(),
+                cwd: ".".into(),
+            },
+            ..command_request(id)
+        }
+    }
+
+    fn command_rule(tokens: &[&str], scope: RuleScope) -> ApprovalResponse {
+        ApprovalResponse::ApproveAlways {
+            rule: domain::permission::PermissionRule::new(
+                "run_command",
+                RuleMatcher::Command(tokens.iter().map(|t| (*t).to_owned()).collect()),
+                domain::permission::RuleDecision::AllowAlways,
+            )
+            .with_scope(scope),
+        }
+    }
+
+    fn redraw(cx: &mut VisualTestContext) {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    fn click(selector: &'static str, cx: &mut VisualTestContext) {
+        redraw(cx);
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} drawn"));
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_pattern_starts_at_the_subcommand_and_tab_widens_it(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let answer = ask(&port, run_request(1, "cargo test -p ui --lib"), cx);
+        let pattern = |view: &Entity<ApprovalView>, cx: &mut VisualTestContext| {
+            view.read_with(cx, |view, _| view.pattern().map(pattern_text))
+        };
+        assert_eq!(pattern(&view, cx).as_deref(), Some("cargo test *"));
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.choices(),
+                [
+                    Choice::Once,
+                    Choice::Session,
+                    Choice::Project,
+                    Choice::Reject
+                ],
+                "no all-edits row for a command"
+            );
+        });
+        redraw(cx);
+        assert!(cx.debug_bounds("approval-pattern").is_some());
+        assert!(cx.debug_bounds("approval-pattern-hint").is_some());
+        assert!(cx.debug_bounds("approval-keys").is_some());
+
+        cx.simulate_keystrokes("tab");
+        assert_eq!(pattern(&view, cx).as_deref(), Some("cargo *"));
+        cx.simulate_keystrokes("tab");
+        assert_eq!(pattern(&view, cx).as_deref(), Some("cargo *"), "the widest");
+        cx.simulate_keystrokes("shift-tab shift-tab shift-tab");
+        assert_eq!(
+            pattern(&view, cx).as_deref(),
+            Some("cargo test -p ui --lib"),
+            "the exact command"
+        );
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("approval-pattern-hint").is_none(),
+            "exact needs no hint"
+        );
+        cx.simulate_keystrokes("tab tab s");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(command_rule(&["cargo"], RuleScope::Session))
+        );
+    }
+
+    #[gpui::test]
+    fn p_allows_the_pattern_in_the_project(cx: &mut TestAppContext) {
+        let (port, _view, cx) = dialog(cx);
+        let answer = ask(&port, run_request(1, "cargo test -p ui --lib"), cx);
+        cx.simulate_keystrokes("p");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(command_rule(&["cargo", "test"], RuleScope::Project))
+        );
+    }
+
+    #[gpui::test]
+    fn arrows_and_enter_pick_a_row(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let first = ask(&port, run_request(1, "cargo test -p ui"), cx);
+        cx.simulate_keystrokes("up down down");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.selected(), Some(Choice::Project));
+        });
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("approval-project-file").is_some(),
+            "the project row says where it saves"
+        );
+        cx.simulate_keystrokes("up enter");
+        assert_eq!(
+            answered(first, cx),
+            Ok(command_rule(&["cargo", "test"], RuleScope::Session))
+        );
+
+        let second = ask(&port, run_request(2, "cargo test -p ui"), cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.selected(),
+                Some(Choice::Once),
+                "a new request starts on top"
+            );
+        });
+        cx.simulate_keystrokes("down down down down down enter");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.reason(), Some(""), "the last row asks why");
+        });
+        cx.simulate_keystrokes("n o enter");
+        assert_eq!(
+            answered(second, cx),
+            Ok(ApprovalResponse::Deny {
+                reason: Some("no".into())
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn a_is_kept_as_this_session(cx: &mut TestAppContext) {
+        let (port, _view, cx) = dialog(cx);
+        let first = ask(&port, run_request(1, "cargo build --release"), cx);
+        cx.simulate_keystrokes("a");
+        let second = ask(&port, run_request(2, "cargo build --release"), cx);
+        cx.simulate_keystrokes("s");
+        let expected = Ok(command_rule(&["cargo", "build"], RuleScope::Session));
+        assert_eq!(answered(first, cx), expected);
+        assert_eq!(answered(second, cx), expected);
+    }
+
+    #[gpui::test]
+    fn all_edits_is_offered_only_for_writes(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let command = ask(&port, command_request(1), cx);
+        cx.simulate_keystrokes("e");
+        view.read_with(cx, |view, _| {
+            assert!(view.is_open(), "`e` does nothing for a command");
+        });
+        redraw(cx);
+        assert!(cx.debug_bounds("approval-row-e").is_none());
+        cx.simulate_keystrokes("y");
+        assert_eq!(answered(command, cx), Ok(ApprovalResponse::Approve));
+
+        let edit = ask(&port, diff_request(2), cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.choices(),
+                [
+                    Choice::Once,
+                    Choice::Session,
+                    Choice::Project,
+                    Choice::AllEdits,
+                    Choice::Reject
+                ]
+            );
+            assert_eq!(view.pattern().map(pattern_text).as_deref(), Some("src/*"));
+        });
+        redraw(cx);
+        assert!(cx.debug_bounds("approval-row-e").is_some());
+        cx.simulate_keystrokes("e");
+        assert_eq!(answered(edit, cx), Ok(ApprovalResponse::ApproveAllEdits));
+    }
+
+    #[gpui::test]
+    fn shells_are_only_allowed_exactly(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let line = "sh -c 'rm -rf target'";
+        let answer = ask(&port, run_request(1, line), cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.is_exact_only());
+            assert_eq!(view.pattern().map(pattern_text).as_deref(), Some(line));
+        });
+        redraw(cx);
+        assert!(cx.debug_bounds("approval-pattern-reason").is_some());
+        assert!(
+            cx.debug_bounds("approval-pattern-wider").is_none(),
+            "no arrows for a single rung"
+        );
+        cx.simulate_keystrokes("tab");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.pattern().map(pattern_text).as_deref(), Some(line));
+        });
+        cx.simulate_keystrokes("s");
+        assert_eq!(
+            answered(answer, cx),
+            Ok(ApprovalResponse::ApproveAlways {
+                rule: domain::permission::PermissionRule::new(
+                    "run_command",
+                    RuleMatcher::Exact(line.into()),
+                    domain::permission::RuleDecision::AllowAlways,
+                ),
+            })
+        );
+
+        let plain = ask(&port, run_request(2, "ls"), cx);
+        view.read_with(cx, |view, _| {
+            assert!(!view.is_exact_only(), "one rung, but not a shell");
+        });
+        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            answered(plain, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
+    }
+
+    #[gpui::test]
+    fn clicking_rows_and_arrows(cx: &mut TestAppContext) {
+        let (port, view, cx) = dialog(cx);
+        let first = ask(&port, run_request(1, "cargo test -p ui"), cx);
+        click("approval-pattern-wider-project", cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.is_open(), "the arrow does not answer");
+            assert_eq!(view.pattern().map(pattern_text).as_deref(), Some("cargo *"));
+        });
+        click("approval-pattern-narrower", cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.pattern().map(pattern_text).as_deref(),
+                Some("cargo test *")
+            );
+        });
+        click("approval-row-p", cx);
+        assert_eq!(
+            answered(first, cx),
+            Ok(command_rule(&["cargo", "test"], RuleScope::Project))
+        );
+
+        let second = ask(&port, command_request(2), cx);
+        click("approval-row-y", cx);
+        assert_eq!(answered(second, cx), Ok(ApprovalResponse::Approve));
+
+        let third = ask(&port, command_request(3), cx);
+        click("approval-row-n", cx);
+        view.read_with(cx, |view, _| assert_eq!(view.reason(), Some("")));
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            answered(third, cx),
+            Ok(ApprovalResponse::Deny { reason: None })
+        );
     }
 }
