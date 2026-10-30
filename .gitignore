@@ -4,6 +4,7 @@
 # Editors and OS
 .idea/
 .vscode/
+.crest/
 *.swp
 *.swo
 *~
