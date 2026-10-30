@@ -211,6 +211,14 @@ pub fn with_math(view: TextView) -> TextView {
     view.plugin(InlineMath).plugin(DisplayMath)
 }
 
+/// [`with_math`] for gpui-base's own `TextView`, which the modal uses
+/// for a document (it exposes the image resolver gpui-component's wrapper
+/// hides; the theme's style and highlighter reach it through the
+/// `TextViewDefaults` gpui-component installs).
+pub fn with_math_base(view: gpui_base::text::TextView) -> gpui_base::text::TextView {
+    view.plugin(InlineMath).plugin(DisplayMath)
+}
+
 /// The parsed document of a markdown block, kept across frames.
 ///
 /// A `TextView` built from text keeps its [`TextViewState`] (the parsed

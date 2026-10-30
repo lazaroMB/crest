@@ -23,18 +23,21 @@
 
 use domain::block::{BlockId, CustomNode};
 use domain::modal::{HorizontalAnchor, MODAL_MARGIN, ModalId, ModalSpec, VerticalAnchor};
+use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
-    px, relative,
+    ImageSource, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement as _, Render, ScrollHandle, SharedString, SharedUri,
+    StatefulInteractiveElement as _, Styled as _, Task, Window, div, px, relative,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
-use gpui_component::text::{TextView, TextViewState};
+use gpui_component::text::TextViewState;
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use application::ports::events::DomainEvent;
@@ -58,6 +61,32 @@ struct Open {
     /// file is not laid out again on every tick of the wheel. Owned here,
     /// not in `block_state`, so it goes with the modal.
     doc: Option<Entity<TextViewState>>,
+    /// Where the document's relative images are read from: the file's
+    /// directory under the workspace root, for a file `/open` showed.
+    images: Option<Arc<ImageResolver>>,
+}
+
+/// Maps the URI of a document image to what `img` loads.
+type ImageResolver = dyn Fn(&SharedUri) -> ImageSource + Send + Sync;
+
+/// The file a relative image `uri` of the document in `dir` (the
+/// workspace root when `None`) names under `root`: `None` for a URL, a
+/// data URI or a path that leaves the workspace, which keep GPUI's own
+/// handling.
+pub fn document_image(
+    root: &WorkspaceRoot,
+    dir: Option<&WorkspacePath>,
+    uri: &str,
+) -> Option<PathBuf> {
+    if uri.is_empty() || uri.contains("://") || uri.starts_with("data:") {
+        return None;
+    }
+    let joined = match dir.filter(|dir| !dir.is_root()) {
+        Some(dir) => format!("{}/{uri}", dir.as_str()),
+        None => uri.to_owned(),
+    };
+    let path = root.resolve(&joined).ok()?;
+    Some(root.join(&path))
 }
 
 /// Id of the stateful nodes of modal `id`: stable for the same id, so an
@@ -82,6 +111,8 @@ pub struct ModalHost {
     focus_handle: FocusHandle,
     stack: Vec<Open>,
     restore_focus: Option<FocusHandle>,
+    /// The session's workspace, for the images of `/open` documents.
+    root: Option<WorkspaceRoot>,
     inbox: mpsc::UnboundedSender<DomainEvent>,
     _inbox: Task<()>,
 }
@@ -104,6 +135,7 @@ impl ModalHost {
             focus_handle: cx.focus_handle(),
             stack: Vec::new(),
             restore_focus: None,
+            root: None,
             inbox: tx,
             _inbox: task,
         }
@@ -160,6 +192,21 @@ impl ModalHost {
             (Some(markdown), None) => Some(cx.new(|cx| TextViewState::markdown(&markdown, cx))),
             (None, _) => None,
         };
+        let images = match (&doc, &self.root) {
+            (Some(_), Some(root)) => {
+                let root = root.clone();
+                let dir = application::usecases::open_file::opened_path(&spec.id)
+                    .and_then(|path| path.parent());
+                let resolver: Arc<ImageResolver> = Arc::new(move |uri: &SharedUri| {
+                    match document_image(&root, dir.as_ref(), &uri.to_string()) {
+                        Some(path) => ImageSource::from(path),
+                        None => ImageSource::from(uri.clone()),
+                    }
+                });
+                Some(resolver)
+            }
+            _ => None,
+        };
         if self.stack.is_empty() {
             self.restore_focus = window.focused(cx);
         }
@@ -169,6 +216,7 @@ impl ModalHost {
             scroll,
             view,
             doc,
+            images,
         });
         window.focus(&self.focus_handle, cx);
         cx.notify();
@@ -269,6 +317,12 @@ impl ModalHost {
             .map(|open| &open.spec)
     }
 
+    /// Reads the relative images of the documents `/open` shows from
+    /// `root` (the session's workspace).
+    pub fn set_workspace_root(&mut self, root: Option<WorkspaceRoot>) {
+        self.root = root;
+    }
+
     /// The document of modal `id`, when its content is one markdown or
     /// code node drawn virtualized (see [`Open::doc`]).
     pub fn document(&self, id: &ModalId) -> Option<&Entity<TextViewState>> {
@@ -323,9 +377,15 @@ impl ModalHost {
             (Some(_), _) => None,
             (None, Some(doc)) => {
                 // The document scrolls itself, virtualized.
-                let text = crate::blocks::math::with_math(TextView::new(doc))
+                // gpui-base's `TextView`: gpui-component's wrapper hides the
+                // image resolver; the theme reaches it through the defaults.
+                let text = crate::blocks::math::with_math_base(gpui_base::text::TextView::new(doc))
                     .scrollable(true)
                     .on_link_click(crate::blocks::custom::open_link);
+                let text = match open.images.clone() {
+                    Some(images) => text.image_source(move |uri| images(uri)),
+                    None => text,
+                };
                 Some(div().size_full().p_3().child(text).into_any_element())
             }
             (None, None) => Some(crate::blocks::custom::render_node(

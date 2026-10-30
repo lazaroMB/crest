@@ -28,6 +28,16 @@ use crate::usecases::model3d::{self, MAX_MODEL_BYTES, MODEL_EXTENSIONS};
 pub const MAX_OPEN_LINES: usize = 20_000;
 /// Share of the window the modal takes, in percent.
 const OPEN_MODAL_PERCENT: f32 = 85.0;
+/// Prefix of the id of the modal `/open` opens for a path.
+pub const OPEN_MODAL_PREFIX: &str = "open:";
+
+/// The workspace path the modal `id` shows, when `/open` opened it.
+pub fn opened_path(id: &ModalId) -> Option<WorkspacePath> {
+    id.as_str()
+        .strip_prefix(OPEN_MODAL_PREFIX)
+        .and_then(|path| WorkspacePath::parse(path).ok())
+}
+
 /// Extensions shown as pictures.
 const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"];
 
@@ -199,7 +209,7 @@ pub async fn open_file_with(
     };
     let size = Percent::new(OPEN_MODAL_PERCENT).unwrap_or_default();
     Ok(ModalSpec {
-        id: ModalId::new(format!("open:{shown}")),
+        id: ModalId::new(format!("{OPEN_MODAL_PREFIX}{shown}")),
         plugin: "crest".into(),
         title,
         width: size,
@@ -400,6 +410,16 @@ mod tests {
 
     async fn open(fs: &InMemoryFs, arg: &str) -> Result<ModalSpec, OpenError> {
         open_file(fs, arg).await
+    }
+
+    #[tokio::test]
+    async fn the_modal_id_names_the_path() {
+        let spec = open(&fs(), "@README.md").await.unwrap();
+        assert_eq!(
+            opened_path(&spec.id),
+            Some(WorkspacePath::parse("README.md").unwrap())
+        );
+        assert_eq!(opened_path(&ModalId::new("cov/a")), None);
     }
 
     #[tokio::test]

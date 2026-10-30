@@ -703,6 +703,7 @@ impl Session {
         });
         let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
+        let workspace_root = fs.as_ref().map(|fs| fs.root().clone());
         let picker = cx.new(|cx| {
             let mut picker = PickerView::new(files, content, window, cx);
             picker.set_file_system(fs);
@@ -713,7 +714,11 @@ impl Session {
             approval.set_mode_keys(mode_keys);
             approval
         });
-        let modal = cx.new(|cx| ModalHost::new(window, cx));
+        let modal = cx.new(|cx| {
+            let mut modal = ModalHost::new(window, cx);
+            modal.set_workspace_root(workspace_root);
+            modal
+        });
         let login = cx.new(|cx| LoginView::new(window, cx));
 
         let mut watch_error = None;
