@@ -695,11 +695,20 @@ impl Render for FlameView {
     }
 }
 
+impl gpui::Focusable for FlameView {
+    /// The canvas: with the focus, `Esc` zooms back out.
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 /// The flame graph entity of block `id`, in sync with `spec`.
 pub fn view(id: BlockId, spec: &FlameSpec, window: &mut Window, cx: &mut App) -> Entity<FlameView> {
     let view = super::block_state(id, window, cx, |window, cx| {
         FlameView::new(spec, window, cx)
     });
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

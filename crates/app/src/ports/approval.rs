@@ -10,7 +10,7 @@ use std::fmt;
 use async_trait::async_trait;
 use domain::block::DiffSpec;
 use domain::conversation::ToolUseId;
-use domain::permission::{PermissionRule, ToolEffect};
+use domain::permission::{ActionRequest, PermissionRule, ToolEffect};
 use serde::{Deserialize, Serialize};
 
 /// Identifies one pending [`ApprovalRequest`].
@@ -67,6 +67,23 @@ pub struct ApprovalRequest {
     pub preview: ApprovalPreview,
 }
 
+impl ApprovalRequest {
+    /// The action asked about, as the permission policy sees it, to build
+    /// the options of the dialog with
+    /// [`rule_ladder`](domain::permission::rule_ladder). A
+    /// [`Command`](ApprovalPreview::Command) preview gives its `argv`.
+    #[must_use]
+    pub fn action(&self) -> ActionRequest {
+        let action = ActionRequest::new(self.tool.clone(), self.effect, self.subject.clone());
+        match &self.preview {
+            ApprovalPreview::Command { command, args, .. } => {
+                action.with_argv(std::iter::once(command).chain(args).cloned().collect())
+            }
+            _ => action,
+        }
+    }
+}
+
 /// The user's answer to an [`ApprovalRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
@@ -79,6 +96,12 @@ pub enum ApprovalResponse {
         /// Rule to store with the workspace's permission rules.
         rule: PermissionRule,
     },
+    /// Run this call and stop asking about edits for the rest of the
+    /// session: the permission mode becomes
+    /// [`AutoEdit`](domain::permission::PermissionMode::AutoEdit). Only
+    /// offered for [`Write`](ToolEffect::Write) requests; elsewhere it
+    /// counts as [`Approve`](Self::Approve).
+    ApproveAllEdits,
     /// Do not run the call.
     Deny {
         /// Optional explanation, passed back to the model.
@@ -126,6 +149,7 @@ mod tests {
                     RuleDecision::AllowAlways,
                 ),
             },
+            ApprovalResponse::ApproveAllEdits,
             ApprovalResponse::Deny { reason: None },
         ];
         for response in responses {
@@ -133,6 +157,10 @@ mod tests {
             let back: ApprovalResponse = serde_json::from_str(&json).unwrap();
             assert_eq!(back, response);
         }
+        assert_eq!(
+            serde_json::to_string(&ApprovalResponse::ApproveAllEdits).unwrap(),
+            r#"{"decision":"approve_all_edits"}"#
+        );
     }
 
     #[test]
@@ -152,6 +180,11 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let back: ApprovalRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back, req);
+        assert_eq!(
+            req.action(),
+            ActionRequest::new("run_command", ToolEffect::Execute, "cargo test")
+                .with_argv(vec!["cargo".into(), "test".into()])
+        );
     }
 
     #[test]

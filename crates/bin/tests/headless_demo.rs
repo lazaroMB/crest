@@ -11,16 +11,18 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use adapter_store::SqliteSessionStore;
+use application::ports::permissions::permissions_file;
 use application::ports::plugin::ConfigSources;
 use application::ports::store::SessionStorePort;
 use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};
 use crest::root::{App, Config, Overrides, build_app};
 use domain::block::BlockKind;
 use domain::model::ModelPolicy;
-use domain::permission::{PermissionMode, RuleDecision, RuleMatcher};
+use domain::permission::{PermissionMode, PermissionRule, RuleDecision, RuleScope};
 use serde_json::json;
 
 const LIB: &str = "pub fn add(a: i32, b: i32) -> i32 {\n    a - b\n}\n";
@@ -83,7 +85,26 @@ async fn demo_with(answers: &str, mode: PermissionMode, script: Vec<ScriptedResp
     std::fs::write(workspace.join("src/lib.rs"), LIB).unwrap();
     std::fs::write(workspace.join("README.md"), "demo\n").unwrap();
     let db = dir.path().join("sessions.db");
+    let (app, llm, output) = open_app(&workspace, &db, answers, mode, script).await;
+    Demo {
+        _dir: dir,
+        workspace,
+        db,
+        llm,
+        output,
+        app,
+    }
+}
 
+/// A new session over `workspace` and `db`, answering approvals with
+/// `answers`.
+async fn open_app(
+    workspace: &Path,
+    db: &Path,
+    answers: &str,
+    mode: PermissionMode,
+    script: Vec<ScriptedResponse>,
+) -> (App, Arc<ScriptedLlm>, Buffer) {
     let output = Buffer::default();
     let terminal = Terminal::new(Box::new(output.clone()), false);
     let input = Box::new(Cursor::new(answers.as_bytes().to_vec()));
@@ -92,11 +113,11 @@ async fn demo_with(answers: &str, mode: PermissionMode, script: Vec<ScriptedResp
     let overrides = Overrides {
         llm: Some(llm.clone()),
         config_sources: Some(ConfigSources::default()),
-        db_path: Some(db.clone()),
+        db_path: Some(db.to_path_buf()),
         ..Overrides::default()
     };
     let config = Config {
-        workspace: workspace.clone(),
+        workspace: workspace.to_path_buf(),
         mode,
         model: None,
         trust_mcp: Vec::new(),
@@ -107,14 +128,7 @@ async fn demo_with(answers: &str, mode: PermissionMode, script: Vec<ScriptedResp
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
         .unwrap();
-    Demo {
-        _dir: dir,
-        workspace,
-        db,
-        llm,
-        output,
-        app,
-    }
+    (app, llm, output)
 }
 
 fn lib(workspace: &Path) -> String {
@@ -134,7 +148,10 @@ async fn finds_edits_after_approval_and_explains() {
     assert!(out.contains("→ read_file src/lib.rs"), "{out}");
     assert!(out.contains("  -    a - b\n  +    a + b\n"), "{out}");
     assert!(
-        out.contains("Allow edit_file src/lib.rs? [y]es / [a]lways / [n]o: y\n"),
+        out.contains(
+            "Allow edit_file src/lib.rs? [y]es / [s]ession edit_file(src/*) / \
+             [p]roject edit_file(src/*) / [e]dits (writes only) / [n]o: y\n"
+        ),
         "{out}"
     );
     assert!(out.contains("✓ edit_file"), "{out}");
@@ -187,11 +204,118 @@ async fn always_is_saved_with_the_session() {
     let root = demo.app.workspace.as_path().display().to_string();
     let store = SqliteSessionStore::open(&demo.db).unwrap();
     let saved = store.latest_for_workspace(&root).await.unwrap().unwrap();
-    assert_eq!(saved.permission_rules.len(), 1);
-    let rule = &saved.permission_rules[0];
-    assert_eq!(rule.tool, "edit_file");
-    assert_eq!(rule.matcher, RuleMatcher::Exact("src/lib.rs".into()));
-    assert_eq!(rule.decision, RuleDecision::AllowAlways);
+    assert_eq!(saved.permission_rules, [rule("edit_file(src/*)")]);
+    assert_eq!(saved.permission_rules[0].scope, RuleScope::Session);
+    assert!(
+        !permissions_file(&demo.workspace).exists(),
+        "a session rule is not written to the project"
+    );
+}
+
+/// A session that edits `src/lib.rs` again (`a + b` → `a * b`).
+fn second_edit() -> Vec<ScriptedResponse> {
+    vec![
+        ScriptedResponse::tool_use(
+            "toolu_5",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "a + b", "new": "a * b" }),
+        ),
+        ScriptedResponse::text("Hecho."),
+    ]
+}
+
+#[tokio::test]
+async fn a_project_rule_is_written_and_kept_by_the_next_session() {
+    let mut demo = demo("p\n", PermissionMode::Ask).await;
+    let exit = run_turn(&mut demo.app, "arregla add", CancelToken::new()).await;
+    assert_eq!(exit, Exit::Success, "{}", demo.output.text());
+    let project = rule("edit_file(src/*)").with_scope(RuleScope::Project);
+
+    // The rule is in the project file and in force, but not in SQLite.
+    let text = std::fs::read_to_string(permissions_file(&demo.workspace)).unwrap();
+    assert!(
+        text.contains("allow = [\n    \"edit_file(src/*)\",\n]"),
+        "{text}"
+    );
+    assert!(
+        lock_permissions(demo.app.permissions())
+            .rules
+            .contains(&project)
+    );
+    let root = demo.app.workspace.as_path().display().to_string();
+    let store = SqliteSessionStore::open(&demo.db).unwrap();
+    let saved = store.latest_for_workspace(&root).await.unwrap().unwrap();
+    assert_eq!(saved.permission_rules, []);
+
+    // A new session in the same workspace edits without asking.
+    let (mut app, _llm, output) = open_app(
+        &demo.workspace,
+        &demo.db,
+        "",
+        PermissionMode::Ask,
+        second_edit(),
+    )
+    .await;
+    assert_eq!(lock_permissions(app.permissions()).rules, [project]);
+    assert!(app.service.project_rules().is_some());
+    let exit = run_turn(&mut app, "multiplica", CancelToken::new()).await;
+    let out = output.text();
+    assert_eq!(exit, Exit::Success, "{out}");
+    assert!(!out.contains("Allow"), "{out}");
+    assert_eq!(lib(&demo.workspace), LIB.replace("a - b", "a * b"));
+}
+
+#[tokio::test]
+async fn problems_of_the_project_file_are_startup_warnings() {
+    let demo = demo("", PermissionMode::Ask).await;
+    let file = permissions_file(&demo.workspace);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "allow = [\"edit_file(src/*)\", \"bad(\"]\n").unwrap();
+    let (app, _llm, _output) = open_app(
+        &demo.workspace,
+        &demo.db,
+        "",
+        PermissionMode::Ask,
+        Vec::new(),
+    )
+    .await;
+    assert!(
+        app.warnings
+            .iter()
+            .any(|warning| warning.contains("permissions.local.toml: allow #2")),
+        "{:?}",
+        app.warnings
+    );
+    assert_eq!(
+        lock_permissions(app.permissions()).rules,
+        [rule("edit_file(src/*)").with_scope(RuleScope::Project)],
+        "the good entry is kept"
+    );
+}
+
+#[tokio::test]
+async fn edits_turns_on_auto_edit_for_the_session() {
+    let mut script = demo_script();
+    script.pop();
+    script.extend(second_edit());
+    let mut demo = demo_with("e\n", PermissionMode::Ask, script).await;
+    let exit = run_turn(&mut demo.app, "arregla add", CancelToken::new()).await;
+    let out = demo.output.text();
+    assert_eq!(exit, Exit::Success, "{out}");
+    assert_eq!(
+        out.matches("Allow").count(),
+        1,
+        "the second edit is not asked: {out}"
+    );
+    assert_eq!(lib(&demo.workspace), LIB.replace("a - b", "a * b"));
+    let policy = lock_permissions(demo.app.permissions());
+    assert_eq!(policy.mode, PermissionMode::AutoEdit);
+    assert!(policy.rules.is_empty(), "no rule is saved");
+}
+
+/// `text` as a session "allow always" rule.
+fn rule(text: &str) -> PermissionRule {
+    PermissionRule::parse(text, RuleDecision::AllowAlways, RuleScope::Session).unwrap()
 }
 
 #[tokio::test]

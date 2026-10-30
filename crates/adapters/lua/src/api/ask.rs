@@ -78,6 +78,15 @@ fn spec(lua: &Lua, args: &Table) -> mlua::Result<FormSpec> {
         }
     };
     fields.insert("schema".into(), schema);
+    // A plugin names its form: the model's fallbacks of `ask_user` would
+    // hide a mistake here.
+    if !fields
+        .get("title")
+        .and_then(Json::as_str)
+        .is_some_and(|title| !title.trim().is_empty())
+    {
+        return Err(error("`title` is missing or empty"));
+    }
     let input: AskUser = serde_json::from_value(Json::Object(fields)).map_err(error)?;
     let mut spec = form_spec(input).map_err(error)?;
     if let Value::Table(order) = args.get::<Value>("order")? {

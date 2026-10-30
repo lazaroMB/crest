@@ -22,6 +22,7 @@ use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::fs::FileSystemPort;
 use crate::ports::shell::ShellPort;
 use crate::tools::registry::ToolRegistry;
+use crate::usecases::permissions::ProjectRules;
 use crate::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions};
 
 /// How a step run ended.
@@ -69,6 +70,9 @@ pub struct AgentKit {
     pub system_prompt: String,
     /// Limit of model calls per turn, if not the default.
     pub max_iterations: Option<u32>,
+    /// Where "always in project" answers are written, shared with the
+    /// chat.
+    pub project_rules: Option<ProjectRules>,
 }
 
 impl std::fmt::Debug for AgentKit {
@@ -95,6 +99,7 @@ impl AgentKit {
             permissions,
             system_prompt: String::new(),
             max_iterations: None,
+            project_rules: None,
         }
     }
 
@@ -114,6 +119,10 @@ impl AgentKit {
             Arc::clone(&self.permissions),
         )
         .with_system_prompt(prompt);
+        let service = match &self.project_rules {
+            Some(project) => service.with_project_rules(project.clone()),
+            None => service,
+        };
         match self.max_iterations {
             Some(limit) => service.with_max_iterations(limit),
             None => service,

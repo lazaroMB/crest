@@ -349,6 +349,10 @@ pub struct GrepRequest {
     /// Match case-insensitively.
     #[serde(default)]
     pub ignore_case: bool,
+    /// Only match whole words: the match must not be preceded or followed
+    /// by a letter, digit or underscore.
+    #[serde(default)]
+    pub word: bool,
     /// Lines of context to include before and after each match (default 2).
     #[serde(default = "default_grep_context")]
     pub context: u32,
@@ -366,6 +370,7 @@ impl GrepRequest {
             glob: None,
             fixed: false,
             ignore_case: false,
+            word: false,
             context: DEFAULT_GREP_CONTEXT,
             limit: DEFAULT_GREP_LIMIT,
         }
@@ -498,7 +503,7 @@ mod tests {
         let grep: GrepRequest = serde_json::from_str(r#"{"pattern":"fn main"}"#).unwrap();
         assert_eq!(grep, GrepRequest::new("fn main"));
         assert_eq!((grep.context, grep.limit), (2, 100));
-        assert!(!grep.fixed && !grep.ignore_case);
+        assert!(!grep.fixed && !grep.ignore_case && !grep.word);
     }
 
     #[test]

@@ -9,7 +9,10 @@
 //!   `Shift+Up`/`Shift+Down` and `Ctrl+D`/`Ctrl+U` scroll without moving
 //!   (to read a tall expanded row);
 //! - `Enter` expands the selected row (a tool's input schema, a plugin's
-//!   details), `y` copies its command or name;
+//!   details, a key's remap snippet), `y` copies its command or name;
+//! - in the Keys section, `c` copies a snippet that remaps the selected
+//!   key (`app.keymap.set` for `init.lua` and `[[bind]]` for
+//!   `keymap.toml`); the fixed keys of a panel have none;
 //! - `/` goes to the search box, where typing filters every section live;
 //!   there the arrows still move and `Enter` goes back to the list.
 //!
@@ -103,6 +106,11 @@ impl HelpView {
         self.selected
     }
 
+    /// The last line of the footer (`copied: …`), if any.
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
     /// The search text.
     pub fn query(&self, cx: &App) -> String {
         self.search.read(cx).value().to_string()
@@ -180,6 +188,31 @@ impl HelpView {
         cx.notify();
     }
 
+    /// Copies the remap snippet of the selected key row (Keys section);
+    /// a fixed key of a panel only says so.
+    pub fn copy_snippet(&mut self, cx: &mut Context<Self>) {
+        if self.section != Section::Keys {
+            return;
+        }
+        let Some(row) = self.rows().into_iter().nth(self.selected) else {
+            return;
+        };
+        self.status = Some(match row.snippet {
+            Some(snippet) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(snippet));
+                format!(
+                    "copied a remap snippet for {}: paste it in init.lua or keymap.toml",
+                    row.primary
+                )
+            }
+            None => format!(
+                "{} is a fixed key of its panel: it cannot be remapped",
+                row.primary
+            ),
+        });
+        cx.notify();
+    }
+
     fn toggle_expanded(&mut self, cx: &mut Context<Self>) {
         let Some(row) = self.rows().into_iter().nth(self.selected) else {
             return;
@@ -237,6 +270,7 @@ impl HelpView {
             "end" => self.move_selection(isize::MAX, cx),
             "enter" => self.toggle_expanded(cx),
             "y" => self.copy_selected(cx),
+            "c" if self.section == Section::Keys => self.copy_snippet(cx),
             "/" => {
                 let handle = self.search.read(cx).focus_handle(cx);
                 window.focus(&handle, cx);
@@ -304,10 +338,11 @@ impl HelpView {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let selected = ix == self.selected;
-        // Schemas are long: a tool shows its own only when expanded.
+        // Schemas and snippets are long: a tool and a key show theirs only
+        // when expanded.
         let show_details = !row.details.is_empty()
             && (self.expanded.contains(&(self.section, row.primary.clone()))
-                || (selected && self.section != Section::Tools));
+                || (selected && !matches!(self.section, Section::Tools | Section::Keys)));
         let mut line = h_flex()
             .id(("help-row", ix))
             .gap_3()
@@ -408,8 +443,13 @@ impl Render for HelpView {
                     "nothing matches the search"
                 })
         });
-        let hint = "/ search · 1–8 or Tab sections · ↑↓ move · Ctrl+D/U scroll · Enter expand · \
-                    y copy · Esc close";
+        let hint = if self.section == Section::Keys {
+            "/ search keys, actions, sources · ↑↓ move · Enter show snippet · c copy remap \
+             snippet · y copy keys · Esc close"
+        } else {
+            "/ search · 1–8 or Tab sections · ↑↓ move · Ctrl+D/U scroll · Enter expand · \
+             y copy · Esc close"
+        };
         let footer = h_flex()
             .gap_3()
             .px_3()
@@ -418,12 +458,17 @@ impl Render for HelpView {
             .border_color(theme.border)
             .text_xs()
             .text_color(muted)
-            .child(div().flex_1().child(hint))
-            .children(
-                self.status
-                    .clone()
-                    .map(|status| div().child(SharedString::from(status))),
-            );
+            .child(
+                div()
+                    .flex_1()
+                    .debug_selector(|| "help-keys-hint".to_owned())
+                    .child(hint),
+            )
+            .children(self.status.clone().map(|status| {
+                div()
+                    .debug_selector(|| "help-status".to_owned())
+                    .child(SharedString::from(status))
+            }));
         v_flex()
             .id("help")
             .debug_selector(|| "help-view".to_owned())

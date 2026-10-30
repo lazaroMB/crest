@@ -40,6 +40,12 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Change the permission mode",
     },
     CommandInfo {
+        name: "permissions",
+        usage: "/permissions",
+        description: "List the permission rules of this session and project: d removes one, p moves a \
+                      session rule to the project file",
+    },
+    CommandInfo {
         name: "clear",
         usage: "/clear",
         description: "Start a new, empty session (not while a turn runs)",
@@ -60,6 +66,17 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Delete the API key of one account (or of every account) from the system keyring",
     },
     CommandInfo {
+        name: "picker.files",
+        usage: "/picker.files",
+        description: "Find a file by name, with a preview; Enter inserts @path in the prompt",
+    },
+    CommandInfo {
+        name: "picker.grep",
+        usage: "/picker.grep",
+        description: "Search text in the workspace (ripgrep), with a preview; Enter inserts @path:line \
+                      in the prompt",
+    },
+    CommandInfo {
         name: "modal",
         usage: "/modal close",
         description: "Close the front modal window",
@@ -70,6 +87,10 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Quit crest (also /quit and /qa)",
     },
 ];
+
+/// Commands that run a builtin action of another name: the help names
+/// the action's keys after them.
+pub const COMMAND_ACTIONS: &[(&str, &str)] = &[("permissions", "permissions.open")];
 
 /// The status-bar hint for `/command`, which nothing runs.
 pub fn unknown_command_hint(command: &str) -> String {

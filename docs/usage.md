@@ -10,7 +10,7 @@ crest .               # workspace = current directory
 crest                 # no project yet: the project picker (also --pick)
 ```
 
-The window opens full screen (maximized on Windows); `app.opt.window` in the global `init.lua` makes it open maximized or as a window of a given size ([themes.md](themes.md#window-mode)), and `F11` toggles full screen at any time. On X11 it opens as a normal window and requests full screen (or maximized) after the first frame; if the compositor refuses, it stays centered at 1280×800 (or the size you set). The title is `crest — <directory>`. The colors come from a **theme**: TwoCrest (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber) dark by default, TwoCrest light, or any theme in the `themes/` folder of your config, such as the Neovim favourites the installers put there. `/theme` previews them as you move through the list and saves your pick; `app.opt.theme` fixes one ([themes.md](themes.md)). The window uses a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
+The window opens full screen (maximized on Windows); `app.opt.window` in the global `init.lua` makes it open maximized or as a window of a given size ([themes.md](themes.md#window-mode)), and `F11` (`Ctrl+Cmd+F` on macOS; action `window.fullscreen`) toggles full screen at any time. On X11 it opens as a normal window and requests full screen (or maximized) after the first frame; if the compositor refuses, it stays centered at 1280×800 (or the size you set). The title is `crest — <directory>`. The colors come from a **theme**: TwoCrest (the palette of [twocrest.mx](https://twocrest.mx): ink, paper, a coral accent and amber) dark by default, TwoCrest light, or any theme in the `themes/` folder of your config, such as the Neovim favourites the installers put there. `/theme` previews them as you move through the list and saves your pick; `app.opt.theme` fixes one ([themes.md](themes.md)). The window uses a single monospace font: JetBrains Mono if installed, otherwise the system monospace font. An empty session shows the TwoCrest mark and the keys to start with.
 
 ```text
 ┌──────────────┬───────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ From left to right, the status bar shows:
 
 Notices (for example `retrying in 2.0s (attempt 2)`, `opus failed, using sonnet` or a model fallback) stay for 6 s.
 
-Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest; `F11` toggles full screen.
+Each prompt runs as a **turn**, and only one turn runs at a time. While crest works (a turn, or a command such as `/research` or `/implement` running up to its next question) a line above the prompt says so: a spinner, the stage, what is going on now (the model a stage asks, a tool call, a check) and the elapsed time. If you send a prompt meanwhile, it is **queued**: the queued prompts are listed under that line and sent one by one when crest is free. `Up` in an empty prompt takes the last queued one back to edit it (empty the prompt to drop it). `Ctrl+C` in an empty prompt interrupts the turn, or the running command (`/research`, `/implement`, `/!cmd`...), and clears the queue. An interrupted flow stays saved at its last checkpoint: `/research resume` or `/implement resume` continues it. `Ctrl+G Ctrl+C` interrupts too, without touching the prompt, and `Ctrl+G u` takes the last queued prompt back like `Up`. `Ctrl+Q` (`Cmd+Q` on macOS) or `/q` quits crest; while a turn runs the first one only warns, and a second one within 3 s quits. `F11` (`Ctrl+Cmd+F` on macOS) toggles full screen. Both keys are in the keymap (`app.quit`, `window.fullscreen`), so they can be remapped, and they also work over the pickers, dialogs and the project picker.
 
 ### Typing, commands and shortcuts
 
@@ -44,29 +44,54 @@ There are no modes: the prompt is always ready to type (a multi-line editor, up 
 
 - `Enter` sends the prompt; `Shift+Enter` adds a line.
 - A line that starts with `/` is a **command** (`/model opus`, `/research …`). To send a prompt that starts with a slash, double it: `//etc/hosts` sends `/etc/hosts`.
-- Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it.
-- **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+G` is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt. They work wherever the focus is. While crest waits for the next key of a sequence, the line under the prompt shows what you have typed so far; after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
+- Typing `/` opens the **command palette** above the prompt, filtered as you type the name: `↑`/`↓` choose, `Tab` completes, `Enter` runs the chosen command (or, when it needs an argument, completes it up to there: `/implement ` waits for the Spec), `Esc` hides it. The palette and the `@`, `/model` and `/theme` popups also hide when you click outside the prompt or move the focus away from it; typing shows them again. They show eight rows at a time: `↑`/`↓` reach every entry (the rows scroll with the choice, wrapping around at the ends), the wheel scrolls them too, and the footer says which rows are shown and how many more there are (`1–8 of 20 · 12 more`).
+- **Shortcuts** are chords (`Ctrl+C`, `Ctrl+Tab`) or the **leader** chord, `Ctrl+G`, followed by vim-style keys (`Ctrl+G e`, `Ctrl+G j`). The leader is `Ctrl+G` on Linux and on macOS alike: `Ctrl+Space`, the other usual choice, is taken by macOS to switch the input source, and `Alt`/`Option` composes characters on a Mac, so no builtin shortcut uses Alt; the few that follow the platform (`Ctrl+Q`/`Cmd+Q`) are written `<P-…>` in the keymap ([plugins.md](plugins.md#appkeymapsetkeys-action)). `app.opt.leader` changes the leader of every `<leader>` mapping, the builtin ones included ([configuration.md](configuration.md#keymaptoml-and-the-leader)). They work in the prompt, the timeline, the tree and the chats sidebar. While a picker, a dialog, a form or the help has the focus, its own keys win: there `Ctrl+C` copies the text selected in the picker's field (with text selected in the `/login` key field it does nothing, as the key is never copied) and otherwise interrupts, the quit and full-screen keys still work, and only some chords reach the keymap (`Ctrl+Tab` leaves a waiting form, `Ctrl+G ff` closes the file picker it opened). While crest waits for the next key of a sequence, a **which-key** popup above the prompt lists the keys that can follow, with what each one does (`+2 more` when longer mappings start there, as `f` before `ff` and `fg`), and the line under the prompt shows what you have typed so far. The next key, `Esc` or a pause closes it: after `timeoutlen` (1 s by default) an exact mapping runs if there is one, otherwise the keys are dropped.
 
 ### Focus
 
 The prompt has the focus at start and gets it back by itself after a picker, a menu, a dialog or a modal closes.
 
-- `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → prompt. The focused panel has an accent edge.
-- `Esc` goes back to the prompt from anywhere.
-- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below.
+- `Ctrl+Tab` (or `Ctrl+G w`) moves the focus prompt → timeline → tree (when shown) → chats sidebar (when shown) → prompt. The focused panel has an accent edge.
+- `Esc` goes back to the prompt from anywhere. In the timeline it first closes what is open there: the questions menu, the "Copy" hint, or the state of the focused block (a zoom, a cursor, a selection, a measurement). An `Esc` the focused block does not need gives the focus back to the timeline, and the next one goes back to the prompt.
+- `Ctrl+G Enter` (`block.focus_widget`) gives the keys to the widget of the selected block (the last one when none is selected), as a click on it would: a map, a drawing, a diagram, an image, a graph, a 3D model, a waveform, a timeline, a flame graph or a list. A block without keys of its own says so.
+- Typing a letter while the timeline or the tree has the focus types it into the prompt and moves the focus there, except the vim keys of the timeline below and the keys of the focused block (`+`, `-`, `0`, `w`/`a`/`s`/`d`...).
+- The rail of marks at the right of the timeline opens the menu of your questions, scrolled to the current one; a click on the rail again, on a question, on its `✕` or anywhere else closes it.
 
 | Panel | Keys while it has the focus |
 | --- | --- |
 | Timeline | `k` / `j` or `↑` / `↓` select blocks, `g` / `G` or `Home` / `End` the first and last, `o` or `Enter` expands or collapses, `t` switches the view, `y` copies the block, `PageUp` / `PageDown` scroll. |
 | Tree | `↑` / `↓` move, `→` / `←` open and close directories, `Enter` on a file inserts `@path`. |
+| Chats sidebar | `↑` / `↓` or `k` / `j` move (kept in view), `Home` / `End` the first and last row, `Enter` opens the chat or folds the project, `←` / `→` fold and unfold (`←` on a chat goes to its project), `F2` or `r` renames, `Delete` asks to delete and `Enter` (or `y`) confirms, `Esc` cancels or goes back to the prompt. |
+| Block widget (after a click or `Ctrl+G Enter`) | `+` / `-` / `0` zoom and fit, `Ctrl`/`Cmd` + wheel zooms, drag or `Shift` + wheel pans, `Esc` clears what is selected, then gives the keys back to the timeline; a list moves with `↑` / `↓`, `Home` / `End`, `Enter`. Each widget's own keys are in [Widget keys](#widget-keys). |
+| File and text pickers | `↑` / `↓`, `Enter` inserts the reference, `Esc` closes, `Alt+P` preview, `Alt+C` / `Alt+R` / `Alt+W` case, regex, whole word. |
 | Help | See [Help](#help). |
 | Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
-| Approval dialog | `y`, `a`, `n`, `Esc`; `↑` / `↓`, `PageUp` / `PageDown` scroll the preview. |
+| Approval dialog | `↑` / `↓` + `Enter`, or `y`, `s` (`a`), `p`, `e`, `n`; `Tab` / `Shift+Tab` adjust the pattern; `Esc` rejects; `PageUp` / `PageDown`, `Shift+↑` / `Shift+↓` scroll the preview. |
+| Filterable list (logs, `app.ui.list`) | After a click on a row, or `↓` from its filter: `↑` / `↓`, `Home` / `End` move the selection (kept in view), `Enter` opens or closes the selected item's fields. |
 | Simulation board | See [Simulation board](#simulation-board). |
+
+The help's Keys section (`F1`, then `2`) lists these fixed keys too, panel by panel, under the keymap; its search finds them (`/help sidebar`).
+
+#### Widget keys
+
+A block widget has the keys once you click it or press `Ctrl+G Enter` on its block. `=` works as `+` everywhere. A plain wheel scrolls the chat; `Ctrl`/`Cmd` + wheel zooms around the pointer and a drag (or `Shift` + wheel) pans.
+
+| Widget | Keys |
+| --- | --- |
+| Waveform (`show_waveform`) | `+` / `-` zoom, `0` fits, `←` / `→` pan, a click in the waves puts the cursor there, `Esc` clears the cursor. |
+| Map (`show_map`) | `+` / `-` zoom, `0` fits, a click picks a feature, `Esc` clears the picked feature. |
+| Drawing (`show_dxf`) | `+` / `-` zoom, `0` fits; the layer list toggles layers. |
+| Graph | `+` / `-` zoom, `0` fits, arrows pan, a click on a node focuses its neighbourhood, `Esc` clears the focus. |
+| Timeline chart (spans, Gantt) | `+` / `-` zoom, `0` fits, `←` / `→` pan in time, a click selects a bar, `Esc` clears the selection. |
+| 3D model (`/open`, `show_step`) | `+` / `-` zoom, `0` fits, `i` isometric view, `u` swaps the up axis (Y or Z), `s` cycles the section plane (off → x → y → z), `f` flips the kept side, `[` / `]` move the plane, `m` turns measuring on or off (a click picks a point, two give the distance), `Esc` clears the measured points. Drag orbits; right, middle or `Shift` drag pans. |
+| Diagram (mermaid) and image | `+` / `-` zoom, `0` resets. |
+| Flame graph | A click zooms into a frame, `Esc` goes back to the root. |
+
+When a widget has nothing left for `Esc` to clear, `Esc` gives the keys back to the timeline, and the next one goes back to the prompt.
 
 ### Default key bindings
 
-`<leader>` is `Ctrl+G` in every builtin mapping. Changing `app.opt.leader` only affects mappings defined in Lua (see [plugins.md](plugins.md#4-keymaps)).
+`<leader>` is `Ctrl+G` by default. `app.opt.leader` moves every `<leader>` mapping, the builtin ones below included, and frees `Ctrl+G` (see [configuration.md](configuration.md#keymaptoml-and-the-leader)); the table shows the default leader.
 
 | Key | Action | What it does |
 | --- | --- | --- |
@@ -85,12 +110,26 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | `Ctrl+G e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
 | `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
+| `Ctrl+G P` | `mode.pick` | Puts `/mode ` in the prompt, whose palette lists the permission modes. |
+| `Ctrl+G A` | `permissions.open` | Opens the [permission rules](#permission-rules-permissions) (the same as `/permissions`). |
+| `Ctrl+G T` | `theme.pick` | Puts `/theme ` in the prompt, which opens the theme popup. |
+| `Ctrl+G W` | `project.switch` | Goes back to the project picker (the same as `/project`). |
+| `Ctrl+G s` | `panel.chats` | Shows or hides the chats sidebar (hidden, `Ctrl+Tab` skips it). |
+| `Ctrl+G c` | `chat.new` | Starts a new chat in this project. |
+| `Ctrl+G n` / `Ctrl+G b` | `chat.next` / `chat.prev` | Opens the next (older) / previous (newer) chat of this project, wrapping around. |
+| `Ctrl+G ,` | `chat.rename` | Opens the name field of the open chat in the sidebar. |
+| `Ctrl+G x` | `chat.delete` | Asks to delete the open chat (`Enter` confirms, `Esc` cancels). |
+| `Ctrl+G O` | `timeline.outline` | Opens or closes the menu of your questions in this chat. |
+| `Ctrl+G Enter` | `block.focus_widget` | Gives the keys to the widget of the selected block; `Esc` gives them back. |
+| `Ctrl+G Ctrl+C` | `turn.interrupt` | Interrupts the running turn or command (the prompt keeps its text). |
+| `Ctrl+G u` | `queue.edit` | Takes the last queued prompt back into the prompt (also `Up` in an empty prompt). |
 | `Ctrl+G h`, `F1` | `help.open` | Opens the [help](#help). |
-| `Ctrl+C` | `input.cancel` | In the prompt, as in a terminal: copies the text selected in the prompt; else clears the prompt (`Up` brings the text back); else interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. With the focus on the chat and text selected in it, it copies that text; without a selection it interrupts. While a picker or a dialog is open it only interrupts. |
+| `Ctrl+C` | `input.cancel` | In the prompt, as in a terminal: copies the text selected in the prompt; else clears the prompt (`Up` brings the text back); else interrupts the running turn or command. So with text in the prompt, `Ctrl+C Ctrl+C` clears and interrupts. With the focus on the chat and text selected in it, it copies that text; without a selection it interrupts. Over a picker it copies the text selected in its field and otherwise interrupts (with text selected in the `/login` key field it does nothing). |
 | `Ctrl+Shift+C`, `Ctrl+Insert` | `selection.copy` | Copies the selected text, from the prompt or else from the chat. Never interrupts. (On macOS, `Cmd+C`.) Selecting text with the mouse in the chat gives it the focus and shows a **Copy** hint next to the selection. |
-| `Ctrl+Q` / `Cmd+Q` | — | Quits crest. |
+| `Ctrl+Q` (`Cmd+Q` on macOS) | `app.quit` | Quits crest; while a turn runs the first press only warns and a second one within 3 s quits. |
+| `F11` (`Ctrl+Cmd+F` on macOS) | `window.fullscreen` | Enters or leaves full screen. |
 
-You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#appkeymapsetkeys-action)). A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning.
+You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.del` in `init.lua` ([plugins.md](plugins.md#appkeymapsetkeys-action)), or with `[[bind]]` and `[[unbind]]` in a `keymap.toml` ([configuration.md](configuration.md#keymaptoml-and-the-leader)). In the help's Keys section, `c` copies a snippet that remaps the selected key in both forms. A mapping must start with a chord or the leader: one that starts with a plain key (`j`, `?`) would steal typing, so it is ignored with a warning. crest also warns at startup about an unknown action, the same keys mapped twice in one file (or by two plugins), and a mapping that is the start of a longer one (it then waits for `timeoutlen` before it runs).
 
 ### `/` commands
 
@@ -102,11 +141,12 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/model` | Opens the model popup over the models your providers let you use. |
 | `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. `/model clear` goes back to the default model. |
 | `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the popup) and reopens the session. |
-| `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. |
+| `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. `/mode ` (with the space) lists the three in the palette. |
+| `/permissions` | Lists the [permission rules](#permission-rules-permissions) of this session and project, to remove them or move a session rule to the project. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
-| `/project` | Closes this project and goes back to the [project picker](#opening-a-project). Not while a turn or command runs. |
-| `/login [anthropic\|opencode]` | Asks for the API key of Anthropic or OpenCode (`Tab` switches) in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). See [configuration.md](configuration.md#model-providers-and-api-keys). |
+| `/project` | Goes back to the [project picker](#opening-a-project); this project closes once you choose another one, and `Esc` or **Back** returns to it. Not while a turn or command runs. |
+| `/login [anthropic\|opencode]` | Asks for the API key of Anthropic or OpenCode (`Tab` switches) in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). `Esc` or **Cancel** closes it, also while the key is being checked; a check with no answer in 30 s fails with a message. See [configuration.md](configuration.md#model-providers-and-api-keys). |
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
@@ -123,7 +163,7 @@ You can redefine or add mappings with `app.keymap.set` ([plugins.md](plugins.md#
 | `/<name> <args>` | A command registered with `app.commands.register`. |
 | `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /project, /login, /logout, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /theme, /mode, /permissions, /clear, /project, /login, /logout, /picker.files, /picker.grep, /modal, /q; /help lists every command)`.
 
 ### Shell commands (`/!`)
 
@@ -138,11 +178,11 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | # | Section | What it lists |
 | --- | --- | --- |
 | 1 | Commands | The builtin `/` commands with their usage, then the commands of your plugins (with the plugin and its `desc`). |
-| 2 | Keys | The effective keymap: the defaults plus your `app.keymap.set` mappings, with the leader resolved, the action, its description and `overrides default` where a mapping replaced a builtin one. |
+| 2 | Keys | The effective keymap: the defaults plus your `app.keymap.set` and `keymap.toml` mappings (minus the removed ones), with the leader resolved, the action, its description, its source (`default`, `global`, `workspace`, `global keymap.toml`, `workspace keymap.toml` or `plugin <name>`) and `overrides default` where a mapping replaced a builtin one; then the fixed keys of each panel, tagged with the panel and `fixed`. |
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
 | 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
 | 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). |
-| 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn and the permission mode. |
+| 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn, the permission mode and the keys of `/permissions`. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
 | 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
 
@@ -151,9 +191,10 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | `1`–`8`, `Tab` / `Shift+Tab`, click | Switches section. |
 | `j` / `k`, arrows, `PageUp` / `PageDown`, `Home` / `End` | Moves the selection. |
 | `Shift+↑` / `Shift+↓`, `Ctrl+D` / `Ctrl+U` | Scrolls without moving the selection (to read a tall expanded row). |
-| `Enter` | Expands the selected row (a tool's input schema). |
+| `Enter` | Expands the selected row (a tool's input schema, a key's remap snippet). |
 | `y` | Copies the selected row's command or name (`/plugin trust jira` for a pending plugin). |
-| `/` | Goes to the search box: what you type filters every section at once (each word must appear in the row, ignoring case). The arrows still move; `Enter` goes back to the list. |
+| `c` | In Keys: copies a snippet that remaps the selected key, `app.keymap.set("<leader>ff", "picker.files")` for `init.lua` and the `[[bind]]` entry for `keymap.toml` (a Lua function's key gets `app.keymap.del` and `[[unbind]]`); edit it and paste it in one of the two files. A fixed key of a panel has none. |
+| `/` | Goes to the search box: what you type filters every section at once (each word must appear in the row, ignoring case; in Keys that is the keys, the action, the description, the source or the panel: `/help keymap.toml` lists what the `keymap.toml` files map). The arrows still move; `Enter` goes back to the list. |
 | `Esc`, `✕` | Closes the help; the focus goes back where it was. |
 
 ### File references with `@`
@@ -168,7 +209,7 @@ A path with spaces is quoted: `@"My Docs/notes v2.md"`. Completion switches to t
 
 `/open @src/main.rs` shows the file in a modal (`Esc` closes it). The `@` is not part of the path, which is resolved from the workspace root whatever the directory of a command or subprocess. The viewer depends on the extension: Markdown is rendered, JSON is a collapsible tree (or source when it does not parse), `.mmd`/`.mermaid` a diagram, `.diff`/`.patch` a colored diff, png/jpeg/gif/webp/svg/bmp/ico a picture with zoom and pan, `.obj`/`.stl`/`.ply` a 3D model, and anything else highlighted source, HTML and CSV included. The file is only shown, never run or rendered as a page.
 
-A 3D model (OBJ, ASCII or binary STL, ASCII or binary PLY) opens in a viewer with an orbit camera, fitted to the model. Drag orbits; right-drag, middle-drag or `Shift`+drag pans; the wheel zooms. With the viewer focused (click it), `+`/`-` zoom, `0` fits the model again, `i` switches to the isometric view and `u` swaps the up axis (STL and PLY start with Z up, OBJ with Y up); the buttons in the corner do the same. Only the geometry is shown, flat shaded: materials, textures and colours are ignored. The line under the viewer gives the vertices, triangles and size in the file's units. Without a GPU (or with `CREST_RENDER3D=off`) the model is drawn with 2D paths, at most 20 000 triangles of it.
+A 3D model (OBJ, ASCII or binary STL, ASCII or binary PLY) opens in a viewer with an orbit camera, fitted to the model. Drag orbits; right-drag, middle-drag or `Shift`+drag pans; `Ctrl`/`Cmd` + wheel zooms (a plain wheel keeps scrolling the chat, as over maps and DXF drawings, which zoom the same way). With the viewer focused (click it), `+`/`-` zoom, `0` fits the model again, `i` switches to the isometric view and `u` swaps the up axis (STL and PLY start with Z up, OBJ with Y up); the buttons in the corner do the same. Only the geometry is shown, flat shaded: materials, textures and colours are ignored. The line under the viewer gives the vertices, triangles and size in the file's units. Without a GPU (or with `CREST_RENDER3D=off`) the model is drawn with 2D paths, at most 20 000 triangles of it.
 
 It follows the file tools' rules: a path outside the workspace (`..`, an absolute path elsewhere, a symlink pointing out) or matching the sensitive-path patterns is refused, and so are directories, binaries that are not pictures or models and files over 2 MiB (64 MiB and a million triangles for a model). Files longer than 20 000 lines are cut, and the title says so. The status bar says why a file did not open.
 
@@ -181,7 +222,7 @@ A chip in the tray says what `Enter` does with the images, and the line under it
 - **→ Model** (the default): the images go to the model with the prompt, in the same message after the text, and appear in the timeline under your prompt. If the model of the turn does not take images, nothing is sent and an error says so; an active research or implementation flow does not take them either.
 - **Chat only**: the images (and the text, if any) are added to the timeline as Image blocks and saved with the session; the model is **not** called, and the images are not sent with later prompts.
 
-A click on the chip or `Ctrl+G i` switches it; it goes back to **→ Model** after each send. A `/` command leaves the images in the tray.
+A click on the chip or `Ctrl+G i` (the keys of `image.mode`; the hint under the tray names the ones in use) switches it; it goes back to **→ Model** after each send. A `/` command leaves the images in the tray.
 
 Images go out as png, jpeg, gif or webp: bmp, tiff, ico and pnm are converted to png first, and svg is refused. An image larger than 8000 px on a side or 5 MB is refused with its size. Images are kept in memory until sent (nothing is written to disk); sent ones are stored in the session database with the conversation. Clicking an Image block in the timeline opens it in a modal with zoom and pan.
 
@@ -189,19 +230,30 @@ On Wayland, a copy that offers both text and an image may paste as text (GPUI re
 
 ### Pickers (`Ctrl+G ff`, `Ctrl+G fg`)
 
-They use the same ports and the same defaults as the agent's `find_file` and `grep` tools, so you see what the model would see:
+Open them with `Ctrl+G ff` (find a file) and `Ctrl+G fg` (search text), or from the `/` palette as `/picker.files` and `/picker.grep`; the prompt's placeholder recalls the keys. They use the same ports as the agent's `find_file` and `grep` tools, so you see what the model would see:
 
 - they respect `.gitignore`;
 - they exclude `.git/`;
 - they apply the sensitive paths.
 
-Results update as you type, with a 120 ms debounce. In `Ctrl+G fg` the text is a ripgrep regular expression.
+Results update as you type, with a 120 ms debounce. While a search runs the field shows a spinner and the previous results stay, dimmed. The line under the results gives the count, `100 of 2345 (truncated)` when the search returned only part of the matches. Long paths are cut from the left (`…/src/main.rs`).
+
+With an empty query, `Ctrl+G ff` lists the files you chose last (marked `recent`), then the first files of the workspace.
+
+`Ctrl+G fg` searches for the literal text, ignoring case, by default. The chips under the field, or their keys, change that: **Match case** (`Alt+C`), **Regex** (`Alt+R`, ripgrep syntax) and **Whole word** (`Alt+W`). The options stay as you left them for the next search. The match is highlighted in each row.
+
+On a window at least 860 px wide the popup has two columns: the results and a preview of the highlighted one, with line numbers and syntax colors. For a text match it starts 10 lines above the match, whose line and text are marked; it shows the lines grep returned at once and the file a moment later. `Alt+P` hides or shows the preview.
 
 | Key | Action |
 | --- | --- |
-| `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection. |
+| `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection; the list scrolls to keep it in view. |
 | `Enter` | Insert the `@...` reference into the prompt. |
-| `Esc` | Close. |
+| `Esc` | Close, even when the focus left the search field. |
+| `Alt+P` | Hide or show the preview. |
+| `Alt+C` / `Alt+R` / `Alt+W` | In `Ctrl+G fg`: match case, regex, whole word. |
+| `Ctrl+G ff` / `Ctrl+G fg` | Close the picker open in that mode, or switch to the other one. |
+
+A click outside the popup or on its `✕` closes it too. The footer lists these keys.
 
 ### Workspace tree (`Ctrl+G e`)
 
@@ -209,7 +261,8 @@ A 280 px side panel, hidden at startup; shown, it takes the focus (`↑`/`↓` m
 
 - Clicking a directory opens or closes it.
 - Clicking a file inserts `@path`.
-- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
+- The tree refreshes by itself when files change (it watches the directory, with a 200 ms debounce), keeping the selected file selected (when it is gone, the row that took its place). If the watcher cannot start, the notice `the tree will not refresh by itself: …` appears.
+- Until the first listing arrives it says `Loading the files…`; a workspace with nothing to list says so.
 
 ### Model popup (`Ctrl+G m`, `/model`)
 
@@ -235,23 +288,83 @@ Each tool declares its effect (`read`, `write`, `execute` or `network`), and the
 | `auto-edit` | yes | yes | asks |
 | `plan` | yes | no (denied) | no (denied) |
 
-To change mode: `Ctrl+G p`, `/mode <mode>` or `--mode` at startup.
+To change mode: `Ctrl+G p`, `/mode <mode>`, `m` in [`/permissions`](#permission-rules-permissions) or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
-When approval is needed, a dialog opens with the colored diff (for edits) or with the exact command and its directory (for `run_command`):
+When approval is needed, a dialog opens with the colored diff (for edits) or with the exact command and its directory (for `run_command`), and under it the answers as rows: `y`, `s`, `p`, `e` (edits only) and `n`.
+
+```
+ › y  Yes, once
+   s  Yes, this session for   ‹ cargo test * ›
+   p  Yes, always in project  ‹ cargo test * ›
+   n  No, tell crest why…
+```
 
 | Key | Answer |
 | --- | --- |
+| `↑` / `↓`, `Enter` | Move the cursor through the rows and pick the one under it. A click on a row picks it too. |
 | `y` | Approve this once. |
-| `a` | Always approve: creates a rule for **that same tool and that exact subject** (the same path or the same command line, nothing broader). |
+| `s` (or `a`) | Approve and allow the pattern in the chip for the rest of the session. |
+| `p` | Approve and allow the pattern in this workspace for good: it is written to `.crest/permissions.local.toml`. |
+| `e` | Only for edits (`edit_file`, `write_file`): approve and switch the session to `auto-edit`, so the next edits are not asked (`Ctrl+G p` or `/mode ask` undoes it; the row names the key of `permission.cycle` in your keymap). This is "allow all edits": no rule is stored and the mode is not saved, so the next run starts in `ask` again. Sensitive paths and files outside the workspace are still refused. |
+| `Tab` / `Shift+Tab` | Widen or narrow the pattern of the `s` and `p` rows (see [Patterns](#patterns)). The `‹` `›` arrows of the chip do the same with the mouse. A broader pattern shows what it allows (``allows any `cargo test …` ``). |
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
-| `Esc` | Reject without a reason. |
-| `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Scroll a long preview. |
+| `Esc` | Reject without a reason (the dialog's footer reminds you). |
+| `PageUp` / `PageDown`, `Shift+↑` / `Shift+↓`, `Home` / `End` | Scroll a long preview. |
 
-There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
+If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
-"Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `/clear` keeps those of the current run.
+#### Patterns
+
+The `s` and `p` rows allow a pattern, not only the call they answer. Tab widens it along a ladder; the middle rung is proposed first when there is one:
+
+| Tool | Ladder (narrowest first) |
+| --- | --- |
+| `run_command` | The exact command (`run_command(cargo test -p ui)`), the program and its subcommand (`run_command(cargo test *)`, proposed), the whole program (`run_command(cargo *)`). The subcommand is the first argument that does not start with `-`, so `ls -la` only offers the exact command and `ls *`. |
+| `edit_file`, `write_file` | The exact file (`edit_file(src/ui/view.rs)`), its folder (`edit_file(src/ui/*)`, proposed), the folder above (`edit_file(src/*)`). |
+| MCP and plugin tools | The exact input, or any input of that tool (`mcp__jira__search`, written without parentheses). |
+
+A command pattern compares the command's arguments one by one, not its text: `cargo test *` allows `cargo test -p ui` but not `cargo testx`, and `ls *` does not allow `lsof`. A path pattern stops at folder boundaries (`src/ui/*` does not allow `src/uikit/a.rs`).
+
+Some programs only get the **exact** command, because what they run is in their arguments; the chip shows the exact command and says why:
+
+- shells: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`, `tcsh`, `nu`, `pwsh`, `powershell`, `cmd`;
+- wrappers that run another command: `env`, `sudo`, `doas`, `xargs`, `nohup`, `time`, `nice`, `timeout`, `stdbuf`, `ionice`;
+- package runners: `npx`, `bunx`;
+- interpreters and runners given inline code or a package: `python… -c`, `node -e`/`--eval`/`-p`/`--print`, `perl -e`/`-E`, `ruby -e`, `php -r`, `lua -e`, `deno eval`, `bun -e`/`--eval`/`x`, `npm exec`, `pnpm dlx`/`exec`, `yarn dlx`.
+
+The program is compared by its base name, ignoring case and `.exe` (`/usr/bin/bash`, `python3.12`). The lists are `EXACT_ONLY_PROGRAMS` and `EXACT_ONLY_WHEN` in `crates/domain/src/permission.rs`.
+
+There is deliberately no "allow every command" answer, unlike "allow all edits" (`e`): a broad command rule (`bash *`, `npx *`, even `find *`) grants far more than it seems, so commands are allowed one pattern at a time.
+
+#### Session and project rules
+
+- **Session** (`s`): the rule lasts for this session. It is saved with the session and comes back when the session is resumed; `--new` and headless without `--continue` start without session rules, while `/clear` keeps those of the current run.
+- **Project** (`p`): the rule is written to `<workspace>/.crest/permissions.local.toml` and applies to every session in this workspace, now and later. The file is plain TOML ([configuration.md](configuration.md#project-permission-rules-permissionslocaltoml)) and can be edited by hand, also to add **deny** rules, which win over everything else: over allow rules, over `auto-edit` and over reads.
+
+crest only reads the `.local` file, never a shared `permissions.toml`: a cloned repository must not be able to grant itself permissions. Keep it out of version control; add this to your `.gitignore`:
+
+```gitignore
+.crest/*.local.toml
+```
+
+If crest cannot save a project rule (the file is not writable, or it has entries crest cannot read), the rule still applies to this session and a warning says why.
+
+#### Permission rules (`/permissions`)
+
+`/permissions` or `Ctrl+G A` opens a modal with the rules in force, grouped as **Session**, **Project** (with the path of the project file) and **Deny**, each row in the notation above with its scope. The current permission mode is shown on top with the key that cycles it. Changes apply at once: the next approval already sees them.
+
+| Key | Effect |
+| --- | --- |
+| `↑` / `↓`, `k` / `j`, `PageUp` / `PageDown`, `Home` / `End`, click | Selects a rule (it stays in view). |
+| `d`, `Delete` | Removes the selected rule. A project rule asks first: `y`, `d` or `Enter` confirm and any other key keeps it; it is then removed from the file too. |
+| `p` | Moves the selected session rule to the project file. |
+| `m` | Cycles the permission mode, like `Ctrl+G p`. |
+| `/` | Goes to the filter box: typing filters by the rule, its group or its scope. `Enter` or `↓` go back to the list. |
+| `Esc` | Closes the modal. |
+
+With no rules it says so (`No rules yet — answer s or p in an approval to add one`). If the project file has entries crest cannot read, the modal lists them and explains that crest will not rewrite the file until they are fixed: removing or promoting a project rule then fails with that reason, and the rules it could read still apply.
 
 The same dialog appears when the session reaches its spending cap (`app.opt.max_session_cost`). See [configuration.md](configuration.md#cost-and-spending-cap).
 
@@ -331,7 +444,7 @@ TeX math in replies and markdown blocks is typeset with RaTeX: inline `$..$`, `\
 
 ### Forms (`ask_user`)
 
-When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
+When the model needs structured answers it calls `ask_user` with a JSON Schema object instead of asking in prose, and the turn waits for you. Each property becomes a field: one-line or multi-line text, a number or integer with bounds, a checkbox, radio buttons for one choice and checkboxes for several; `*` marks the required ones. The form takes the focus: `Tab` / `Shift+Tab` move between the inputs, `Enter` in a one-line field submits, `Esc` cancels (once you have typed or chosen something, the first `Esc` only asks and a second one discards the answers; the footer says so) and `Space` toggles a checkbox or a radio button. **Submit** checks every field and shows the problems inline; the answer goes to the model as JSON and the block keeps it read-only. A cancelled form says so and the model goes on without it. A form left from an interrupted turn or a resumed session shows "Not waiting for an answer". In headless mode the form is asked on the terminal ([Headless mode](#headless-mode)).
 
 ### Plots, reports, data, lab and operations blocks
 
@@ -416,7 +529,7 @@ Without a directory (`crest`, or the desktop launcher), or with `--pick`, the wi
 
 A directory that cannot be read says why under the field; a project that fails to open brings the picker back with the reason. While a project opens the window says `Opening <dir>…`.
 
-`/project` closes the open project (once no turn or command runs) and goes back to the picker, at the project's parent; the session is already saved. Everything the project started (MCP servers, plugins) stops with it.
+`/project` (once no turn or command runs) goes back to the picker, at the project's parent; the session is already saved. `Esc` or **Back** in the picker returns to the project as it was. Choosing another project closes this one, and everything it started (MCP servers, plugins) stops with it.
 
 ## Command line
 
@@ -490,13 +603,17 @@ make run-headless PROMPT="list the project's TODOs" WORKSPACE=~/src/api
 Each approval shows the diff or the command and asks:
 
 ```text
-Allow edit_file src/lib.rs? [y]es / [a]lways / [n]o:
+Allow edit_file src/lib.rs? [y]es / [s]ession edit_file(src/*) / [p]roject edit_file(src/*) / [e]dits (writes only) / [n]o:
 ```
+
+The rule after `[s]ession` and `[p]roject` is the one crest proposes for that call, and it cannot be changed here: `cargo test *` for `cargo test -p ui`, the file's folder (`src/*`) for an edit, the exact command for shells and interpreters (`sh -c …`, `python -c …`, `npx …`), any input for an MCP or plugin tool. `[e]dits` only appears for writes.
 
 | Answer | Effect |
 | --- | --- |
-| `y`, `yes` (Spanish aliases: `s`, `si`, `sí`) | Approve. |
-| `a`, `always` (alias: `siempre`) | Always approve (for this exact subject). |
+| `y`, `yes` (Spanish aliases: `si`, `sí`) | Approve once. |
+| `s`, `session`, or `a`, `always` (aliases: `sesion`, `sesión`, `siempre`) | Approve and allow the shown rule for the rest of the session. |
+| `p`, `project` (alias: `proyecto`) | Approve and allow the shown rule in this workspace for good: it is written to `.crest/permissions.local.toml`. |
+| `e`, `edits` (alias: `ediciones`) | Approve and switch the session to `auto-edit` mode: the next edits are not asked. Commands still are. |
 | `n`, `no`, or an empty line | Reject. |
 
 Any other answer asks again. If stdin closes, the action is rejected. With `--yes` everything is approved and logged as `approved by --yes: <tool> <subject>`.
@@ -523,7 +640,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 - Each session (the history sent to the model, the timeline and the "always" rules) is saved in SQLite (`~/.local/share/crest/sessions.db`) **after every turn**.
 - **Window**: on startup it resumes the **workspace's last session** (identified by the directory's canonical path). It redraws its timeline and shows "previous session resumed (N turns); `crest --new` starts a new one". With `--new` it starts blank, and `/clear` does the same without closing.
 - **Headless**: each run is a new session unless you pass `--continue`, which picks up the workspace's last session (the same one the window would open).
-- Old sessions are never deleted, and there is no command to list them or to pick one other than the last.
+- Old sessions are never deleted. The **chats sidebar** at the left of the window lists the projects and their saved chats: a click (or `Enter` with the sidebar focused, `Ctrl+Tab` until it has the focus) opens one, `Ctrl+G n` / `Ctrl+G b` go to the next or previous chat of the project, `Ctrl+G c` starts a new one, a right-click (or `F2`, `Delete`, `Ctrl+G ,`, `Ctrl+G x`) renames or deletes one (in the name field `Enter` saves, as does leaving the field or clicking elsewhere after a change, and `Esc` cancels; the list shows the new name at once, even when a turn of that chat is still running and the save waits for it), and `Ctrl+G s` hides or shows the sidebar.
 - The accumulated cost is not saved: a resumed session starts at `$0.00`.
 - **Compaction**: when the estimated context exceeds 80 % of 200,000 tokens, crest summarizes the old turns with the `compact` role, keeps the 2 most recent ones and shows `history compacted: N turns → summary`. If the API replies that the context is too long, it compacts and retries once. The threshold is not configurable.
 - A turn can make at most 50 model calls. Beyond that, it fails.
@@ -535,7 +652,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `list_files` | `glob?`, `limit` (500) | read |
 | `find_file` | `query`, `limit` (20) | read |
 | `tree` | `path?`, `depth` (3) | read |
-| `grep` | `pattern`, `path?`, `glob?`, `fixed`, `ignore_case`, `context` (2), `limit` (100) | read |
+| `grep` | `pattern`, `path?`, `glob?`, `fixed`, `ignore_case`, `word`, `context` (2), `limit` (100) | read |
 | `read_file` | `path`, `offset?`, `limit?` (2000 lines; without a range it does not read binaries or files over 2 MiB) | read |
 | `edit_file` | `path`, `old`, `new` (`old` must appear exactly once) | write |
 | `write_file` | `path`, `content` | write |
@@ -551,7 +668,7 @@ Without an API key, headless mode exits with the key error and code 2. The windo
 | `decision_matrix` | `criteria[]` (`name`, `weight`, `direction`), `options[]` (`name`, `scores[]`), `normalization?` | read |
 | `calc` | `lines` (`name = expr`, in order), `significant_digits` (6) | read |
 | `convert` | `value?`, `from`, `to`, `uncertainty?`, `significant_digits` (6) | read |
-| `ask_user` | `title`, `description?`, `schema` (a JSON Schema object), `submit_label?`: waits for the answer | read |
+| `ask_user` | `schema` (a JSON Schema object), `title?`, `description?`, `submit_label?`: waits for the answer. A missing title comes from the description's first sentence or the first field; unknown keys are ignored, `questions` stands for `schema` and a flat schema (`properties` at the top level) is accepted | read |
 | `show_test_report`, `show_findings` | `path` of a JUnit XML or libtest/nextest JSON file / a SARIF file (32 MiB at most); `title?` for the report | read |
 | `show_wavedrom` | `source` (WaveJSON; JSON5 style accepted) | read |
 | `show_dataset` | `path` (CSV, TSV, JSON lines, Parquet), `rows` (20, at most 200) | read |

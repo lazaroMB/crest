@@ -3,18 +3,30 @@
 //!
 //! The binary fills the list ([`crate::workbench::ProjectOpener::catalog`]).
 //! Choosing a row emits [`ChatsEvent`]; the workbench opens that session.
-//! A right click renames or deletes the chat. The file tree stays the
-//! other side panel.
+//! A right click renames or deletes the chat; `Esc`, **Cancel** or a click
+//! elsewhere closes that menu. The list scrolls with a scrollbar; a
+//! project without chats says so. The file tree stays the other side
+//! panel.
+//!
+//! The list is in the `focus.next` cycle. With the focus, `Up`/`Down` (or
+//! `k`/`j`), `Home`/`End` move the selection, kept in view; `Enter` opens
+//! the chat (or folds the project), `Left`/`Right` fold and unfold,
+//! `F2` or `r` renames and `Delete` asks to delete, `Enter` confirming.
+//! In the name field `Enter` saves (the field's own event, not a key
+//! check), so does losing the focus or a click elsewhere after a change,
+//! and `Esc` cancels. The new name shows at once, before it is saved.
+//! The keymap's `chat.*` actions reach the window as [`ChatsCommand`].
 
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, Global,
-    InteractiveElement as _, IntoElement, KeystrokeEvent, MouseButton, MouseDownEvent,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, WeakEntity, Window, div, px,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Global, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, MouseButton,
+    MouseDownEvent, ParentElement as _, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity, WeakFocusHandle,
+    Window, div, px,
 };
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 /// Which session to open in a project.
@@ -74,6 +86,59 @@ pub enum ChatsEvent {
         /// Session id.
         id: String,
     },
+    /// The menu was cancelled (`Esc`, **Cancel**): the prompt takes the
+    /// focus back from the rename field.
+    Dismissed,
+}
+
+/// What a key asks the window to do with the chats (the keymap's `chat.*`
+/// and `panel.chats` actions, and `focus.next` into the list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatsCommand {
+    /// `chat.new`: an empty chat in the open project.
+    New,
+    /// `chat.next`: the chat below the open one (older), wrapping.
+    Next,
+    /// `chat.prev`: the chat above the open one (newer), wrapping.
+    Prev,
+    /// `chat.rename`: the name field of the open chat.
+    Rename,
+    /// `chat.delete`: asks to delete the open chat.
+    Delete,
+    /// `panel.chats`: shows or hides the sidebar.
+    TogglePanel,
+    /// `focus.next` reached the list.
+    Focus,
+}
+
+impl ChatsCommand {
+    /// The command of the builtin action `name`, if it is a chats one.
+    #[must_use]
+    pub fn for_action(name: &str) -> Option<Self> {
+        Some(match name {
+            "chat.new" => Self::New,
+            "chat.next" => Self::Next,
+            "chat.prev" => Self::Prev,
+            "chat.rename" => Self::Rename,
+            "chat.delete" => Self::Delete,
+            "panel.chats" => Self::TogglePanel,
+            _ => return None,
+        })
+    }
+}
+
+/// A row of the list, as the keyboard selects it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatRow {
+    /// The header of the project `root`.
+    Project(String),
+    /// The chat `id` of the project `root`.
+    Chat {
+        /// Workspace root.
+        root: String,
+        /// Session id.
+        id: String,
+    },
 }
 
 /// What the right-click menu is doing.
@@ -112,6 +177,24 @@ pub fn rename_has_focus(window: &Window, cx: &App) -> bool {
         .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
 }
 
+/// The focus handles of the chats lists (one per window). The prompt
+/// leaves the list's keys alone ([`list_has_focus`]).
+#[derive(Default)]
+struct ChatLists(Vec<WeakFocusHandle>);
+
+impl Global for ChatLists {}
+
+/// Whether a chats list has the focus (not its rename field).
+pub fn list_has_focus(window: &Window, cx: &App) -> bool {
+    cx.try_global::<ChatLists>().is_some_and(|lists| {
+        lists
+            .0
+            .iter()
+            .filter_map(WeakFocusHandle::upgrade)
+            .any(|handle| handle.is_focused(window))
+    })
+}
+
 /// The sidebar of projects and chats.
 pub struct ChatsPanel {
     /// The catalog as given; `projects` adds the open chat to it.
@@ -124,6 +207,16 @@ pub struct ChatsPanel {
     activity: HashMap<String, bool>,
     action: Option<ChatAction>,
     rename_input: Option<Entity<InputState>>,
+    /// The rename field's events (`Enter`, focus lost); dropped with it.
+    _rename_events: Option<Subscription>,
+    /// Titles saved from the rename field, by chat id, shown until the
+    /// catalog has them (the save may wait for a running turn).
+    pending_titles: HashMap<String, String>,
+    /// The scroll of the list: one item per row ([`Self::rows`]).
+    scroll: ScrollHandle,
+    /// The row the keyboard is on.
+    selected: Option<ChatRow>,
+    focus_handle: FocusHandle,
     _keys: Subscription,
 }
 
@@ -141,6 +234,10 @@ impl ChatsPanel {
             weak.update(cx, |this, cx| this.on_key(event, window, cx))
                 .ok();
         });
+        let focus_handle = cx.focus_handle();
+        let lists = cx.default_global::<ChatLists>();
+        lists.0.retain(|handle| handle.upgrade().is_some());
+        lists.0.push(focus_handle.downgrade());
         Self {
             catalog: Vec::new(),
             projects,
@@ -150,7 +247,242 @@ impl ChatsPanel {
             activity: HashMap::new(),
             action: None,
             rename_input: None,
+            _rename_events: None,
+            pending_titles: HashMap::new(),
+            scroll: ScrollHandle::new(),
+            selected: None,
+            focus_handle,
             _keys: keys,
+        }
+    }
+
+    /// The rows as the list shows them: each project, then its chats when
+    /// it is unfolded.
+    #[must_use]
+    pub fn rows(&self) -> Vec<ChatRow> {
+        let mut rows = Vec::new();
+        for project in &self.projects {
+            rows.push(ChatRow::Project(project.root.clone()));
+            if self.expanded.contains(&project.root) {
+                rows.extend(project.chats.iter().map(|chat| ChatRow::Chat {
+                    root: project.root.clone(),
+                    id: chat.id.clone(),
+                }));
+            }
+        }
+        rows
+    }
+
+    /// The row the keyboard is on, if any.
+    #[must_use]
+    pub fn selected(&self) -> Option<&ChatRow> {
+        self.selected.as_ref()
+    }
+
+    /// The index of the selected row in [`Self::rows`].
+    #[must_use]
+    pub fn selected_index(&self) -> Option<usize> {
+        let selected = self.selected.as_ref()?;
+        self.rows().iter().position(|row| row == selected)
+    }
+
+    /// The row of the open chat, if the list shows it.
+    fn current_row(&self) -> Option<ChatRow> {
+        let id = self.current_id.as_deref()?;
+        self.rows()
+            .into_iter()
+            .find(|row| matches!(row, ChatRow::Chat { id: row_id, .. } if row_id == id))
+    }
+
+    /// Gives the list the keyboard, on the open chat when nothing is
+    /// selected.
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_index().is_none() {
+            self.selected = self
+                .current_row()
+                .or_else(|| self.rows().into_iter().next());
+        }
+        self.reveal_selected();
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Moves the selection to row `ix` (clamped) and keeps it in view.
+    fn select_index(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let rows = self.rows();
+        let Some(last) = rows.len().checked_sub(1) else {
+            return;
+        };
+        self.selected = rows.into_iter().nth(ix.min(last));
+        self.reveal_selected();
+        cx.notify();
+    }
+
+    fn reveal_selected(&self) {
+        if let Some(ix) = self.selected_index() {
+            crate::keyscroll::ensure_visible(&self.scroll, ix);
+        }
+    }
+
+    /// The chat `step` rows away from the open one in its project
+    /// (positive: older), wrapping; `None` when it has no other chat.
+    #[must_use]
+    pub fn neighbor(&self, step: isize) -> Option<(String, String)> {
+        let id = self.current_id.as_deref()?;
+        let project = self
+            .projects
+            .iter()
+            .find(|project| same_workspace(&project.root, &self.current_root))?;
+        let len = project.chats.len();
+        let at = project.chats.iter().position(|chat| chat.id == id)?;
+        if len < 2 {
+            return None;
+        }
+        let len = isize::try_from(len).ok()?;
+        let at = isize::try_from(at).ok()?;
+        let next = usize::try_from((at + step).rem_euclid(len)).ok()?;
+        let chat = &project.chats[next];
+        Some((project.root.clone(), chat.id.clone()))
+    }
+
+    /// The title the list shows for the chat `id`, if listed.
+    #[must_use]
+    pub fn title_of(&self, id: &str) -> Option<String> {
+        self.projects
+            .iter()
+            .flat_map(|project| &project.chats)
+            .find(|chat| chat.id == id)
+            .map(|chat| chat.title.clone())
+    }
+
+    /// Opens the name field of the open chat (`chat.rename`).
+    pub fn rename_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ChatRow::Chat { root, id }) = self.current_row() {
+            self.selected = Some(ChatRow::Chat {
+                root: root.clone(),
+                id: id.clone(),
+            });
+            self.act_on(root, id, ChatActionKind::Rename, window, cx);
+        }
+    }
+
+    /// Asks to delete the open chat (`chat.delete`); the list takes the
+    /// focus so `Enter` confirms and `Esc` cancels.
+    pub fn delete_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ChatRow::Chat { root, id }) = self.current_row() {
+            self.selected = Some(ChatRow::Chat {
+                root: root.clone(),
+                id: id.clone(),
+            });
+            self.act_on(root, id, ChatActionKind::ConfirmDelete, window, cx);
+            window.focus(&self.focus_handle, cx);
+        }
+    }
+
+    /// Opens the menu of the chat `id` in `kind`.
+    fn act_on(
+        &mut self,
+        root: String,
+        id: String,
+        kind: ChatActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = self.title_of(&id).unwrap_or_else(|| chat_label(None));
+        self.drop_rename();
+        self.action = Some(ChatAction {
+            id,
+            root,
+            title,
+            kind: ChatActionKind::Menu,
+        });
+        match kind {
+            ChatActionKind::Rename => self.begin_rename(window, cx),
+            ChatActionKind::ConfirmDelete => self.ask_delete(cx),
+            ChatActionKind::Menu => {}
+        }
+        self.reveal_selected();
+        cx.notify();
+    }
+
+    /// Keys while the list has the focus.
+    fn on_list_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Keys typed in the rename field bubble up here: `r` or `Enter`
+        // there are text and the field's own.
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let m = &event.keystroke.modifiers;
+        if m.control || m.alt || m.platform {
+            return;
+        }
+        let confirming = self
+            .action
+            .as_ref()
+            .is_some_and(|action| action.kind == ChatActionKind::ConfirmDelete);
+        let key = event.keystroke.key.as_str();
+        let rows = self.rows();
+        let at = self.selected_index();
+        match key {
+            "enter" | "y" if confirming => self.commit_delete(cx),
+            "up" | "k" => self.select_index(at.map_or(0, |ix| ix.saturating_sub(1)), cx),
+            "down" | "j" => self.select_index(at.map_or(0, |ix| ix + 1), cx),
+            "home" => self.select_index(0, cx),
+            "end" => self.select_index(rows.len().saturating_sub(1), cx),
+            "enter" | "right" | "left" | "f2" | "r" | "delete" => {
+                let Some(row) = self.selected.clone() else {
+                    return;
+                };
+                self.row_key(key, row, window, cx);
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// What `key` does on `row`.
+    fn row_key(&mut self, key: &str, row: ChatRow, window: &mut Window, cx: &mut Context<Self>) {
+        match (key, row) {
+            ("enter", ChatRow::Project(root)) => self.toggle(&root, cx),
+            ("right", ChatRow::Project(root)) => {
+                if !self.expanded.contains(&root) {
+                    self.toggle(&root, cx);
+                }
+            }
+            ("left", ChatRow::Project(root)) => {
+                if self.expanded.contains(&root) {
+                    self.toggle(&root, cx);
+                }
+            }
+            ("left", ChatRow::Chat { root, .. }) => {
+                self.selected = Some(ChatRow::Project(root));
+                self.reveal_selected();
+                cx.notify();
+            }
+            ("enter", ChatRow::Chat { root, id }) => {
+                self.clear_action(cx);
+                if self.current_id.as_deref() == Some(id.as_str()) {
+                    cx.emit(ChatsEvent::Dismissed);
+                } else {
+                    cx.emit(ChatsEvent::Open { root, id });
+                }
+            }
+            ("f2" | "r", ChatRow::Chat { root, id }) => {
+                self.act_on(root, id, ChatActionKind::Rename, window, cx);
+            }
+            ("delete", ChatRow::Chat { root, id }) => {
+                self.act_on(root, id, ChatActionKind::ConfirmDelete, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Forgets the title being saved on the chat `id` (the save failed):
+    /// the list shows the catalog's again.
+    pub fn forget_title(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.pending_titles.remove(id).is_some() {
+            self.rebuild();
+            cx.notify();
         }
     }
 
@@ -173,6 +505,11 @@ impl ChatsPanel {
         cx.notify();
     }
 
+    /// The scroll of the list, one item per row ([`Self::rows`]).
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
     /// Another chat of `root` to open after deleting `id`, if one remains.
     #[must_use]
     pub fn next_chat(&self, root: &str, id: &str) -> Option<String> {
@@ -186,17 +523,29 @@ impl ChatsPanel {
     /// Replaces the list. The open project stays expanded, and the open
     /// chat stays visible even before it has been saved.
     pub fn set_projects(&mut self, projects: Vec<ProjectChats>, cx: &mut Context<Self>) {
+        // A saved title is the catalog's from now on.
+        self.pending_titles.retain(|id, title| {
+            !projects
+                .iter()
+                .flat_map(|project| &project.chats)
+                .any(|chat| &chat.id == id && &chat.title == title)
+        });
         self.catalog = projects;
         self.rebuild();
         cx.notify();
     }
 
     fn rebuild(&mut self) {
-        let projects = catalog_rows(
+        let mut projects = catalog_rows(
             self.catalog.clone(),
             &self.current_root,
             self.current_id.as_deref(),
         );
+        for chat in projects.iter_mut().flat_map(|project| &mut project.chats) {
+            if let Some(title) = self.pending_titles.get(&chat.id) {
+                chat.title.clone_from(title);
+            }
+        }
         if let Some(project) = projects
             .iter()
             .find(|project| same_workspace(&project.root, &self.current_root))
@@ -204,6 +553,9 @@ impl ChatsPanel {
             self.expanded.insert(project.root.clone());
         }
         self.projects = projects;
+        if self.selected_index().is_none() {
+            self.selected = None;
+        }
     }
 
     fn toggle(&mut self, root: &str, cx: &mut Context<Self>) {
@@ -213,22 +565,60 @@ impl ChatsPanel {
         cx.notify();
     }
 
-    fn on_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// `Esc` closes the menu (and the rename field) before the field or
+    /// the session take it. `Enter` in the field is not handled here: it
+    /// arrives as [`InputEvent::PressEnter`] ([`Self::on_rename_event`]),
+    /// which does not depend on a focus check made before the key reaches
+    /// the field.
+    fn on_key(&mut self, event: &KeystrokeEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key == "escape" && self.action.is_some() {
-            self.clear_action(cx);
-            return;
-        }
-        let Some(input) = &self.rename_input else {
-            return;
-        };
-        if !input.read(cx).focus_handle(cx).is_focused(window) {
-            return;
-        }
-        if event.keystroke.key == "enter" {
-            let title = input.read(cx).value().to_string();
-            self.commit_rename(title, cx);
+            self.cancel_action(cx);
             cx.stop_propagation();
         }
+    }
+
+    /// The rename field's `Enter` saves the name; losing the focus saves
+    /// it too when it changed (an unchanged name leaves the field open).
+    fn on_rename_event(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rename_input.as_ref() != Some(input) {
+            return;
+        }
+        let value = input.read(cx).value().to_string();
+        match event {
+            InputEvent::PressEnter { .. } => self.commit_rename(value, cx),
+            InputEvent::Blur if self.rename_changed(&value) => self.commit_rename(value, cx),
+            _ => {}
+        }
+    }
+
+    /// Whether `value` names the chat differently from its title.
+    fn rename_changed(&self, value: &str) -> bool {
+        let original = self.action.as_ref().map(|action| action.title.as_str());
+        clean_title(value).is_some_and(|title| Some(title.as_str()) != original)
+    }
+
+    /// A click outside the menu: the rename field saves a changed name,
+    /// anything else just closes.
+    fn click_outside(&mut self, cx: &mut Context<Self>) {
+        let value = self
+            .rename_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string());
+        match value {
+            Some(value) if self.rename_changed(&value) => self.commit_rename(value, cx),
+            _ => self.clear_action(cx),
+        }
+    }
+
+    /// Drops the rename field and its subscription (no `Blur` follows).
+    fn drop_rename(&mut self) {
+        self.rename_input = None;
+        self._rename_events = None;
     }
 
     fn open_menu(
@@ -247,7 +637,7 @@ impl ChatsPanel {
             self.clear_action(cx);
             return;
         }
-        self.rename_input = None;
+        self.drop_rename();
         self.action = Some(ChatAction {
             id,
             root,
@@ -275,6 +665,9 @@ impl ChatsPanel {
             move |window, cx| window.focus(&handle, cx)
         });
         cx.set_global(ChatRename(input.downgrade()));
+        self._rename_events = Some(cx.subscribe(&input, |this, input, event, cx| {
+            this.on_rename_event(&input, event, cx);
+        }));
         self.rename_input = Some(input);
         if let Some(action) = &mut self.action {
             action.kind = ChatActionKind::Rename;
@@ -283,7 +676,7 @@ impl ChatsPanel {
     }
 
     fn ask_delete(&mut self, cx: &mut Context<Self>) {
-        self.rename_input = None;
+        self.drop_rename();
         if let Some(action) = &mut self.action {
             action.kind = ChatActionKind::ConfirmDelete;
         }
@@ -294,14 +687,16 @@ impl ChatsPanel {
         let Some(action) = self.action.clone() else {
             return;
         };
-        let Some(title) = clean_title(&raw) else {
-            self.clear_action(cx);
+        self.clear_action(cx);
+        let title = clean_title(&raw).filter(|title| *title != action.title);
+        let Some(title) = title else {
+            // Nothing to save: the prompt takes the focus back.
+            cx.emit(ChatsEvent::Dismissed);
             return;
         };
-        self.clear_action(cx);
-        if title == action.title {
-            return;
-        }
+        // Shown at once: the save may wait for a turn of that chat.
+        self.pending_titles.insert(action.id.clone(), title.clone());
+        self.rebuild();
         cx.emit(ChatsEvent::Rename {
             id: action.id,
             title,
@@ -319,103 +714,162 @@ impl ChatsPanel {
         });
     }
 
+    /// Whether the right-click menu (or its rename field or delete
+    /// question) is open.
+    pub fn menu_open(&self) -> bool {
+        self.action.is_some()
+    }
+
+    /// Closes the menu without doing anything and gives the focus back.
+    fn cancel_action(&mut self, cx: &mut Context<Self>) {
+        self.clear_action(cx);
+        cx.emit(ChatsEvent::Dismissed);
+    }
+
     fn clear_action(&mut self, cx: &mut Context<Self>) {
         self.action = None;
-        self.rename_input = None;
+        self.drop_rename();
         cx.notify();
     }
 
-    fn projects(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        self.projects
-            .iter()
-            .enumerate()
-            .map(|(index, project)| self.project_block(index, project, cx))
-            .collect()
+    /// One element per row of [`Self::rows`]: a project header (with its
+    /// "No chats yet" line) or a chat (with its open menu), so the scroll
+    /// can keep the selected row in view.
+    fn row_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.projects.is_empty() {
+            return vec![no_chats(px(8.), cx)];
+        }
+        let mut out = Vec::new();
+        for (index, project) in self.projects.iter().enumerate() {
+            out.push(self.project_header(index, project, focused, cx));
+            if self.expanded.contains(&project.root) {
+                for (row, chat) in project.chats.iter().enumerate() {
+                    out.push(self.chat_row(index, row, project, chat, focused, cx));
+                }
+            }
+        }
+        out
     }
 
-    fn project_block(
+    fn project_header(
         &self,
         index: usize,
         project: &ProjectChats,
+        focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
-        let (muted, active) = (theme.muted_foreground, theme.list_active);
+        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
         let expanded = self.expanded.contains(&project.root);
         let marker = if expanded { "▾" } else { "▸" };
         let root = project.root.clone();
-        let mut block = v_flex().child(
-            h_flex()
-                .id(SharedString::from(format!("chats-project-{index}")))
-                .w_full()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .cursor_pointer()
-                .hover(move |style| style.bg(active).rounded_sm())
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle(&root, cx)))
-                .child(div().w(px(12.)).text_color(muted).child(marker))
-                .child(label(&project.name)),
-        );
-        if expanded {
-            for (row, chat) in project.chats.iter().enumerate() {
-                let selected = self.current_id.as_deref() == Some(chat.id.as_str());
-                // A turn running out of sight: waiting on the user, or busy.
-                let badge = match self.activity.get(&chat.id) {
-                    Some(true) => Some("⏳"),
-                    Some(false) => Some("●"),
-                    None => None,
-                };
-                let (root, id, title) = (project.root.clone(), chat.id.clone(), chat.title.clone());
-                let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
-                let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
-                let mut item = h_flex()
-                    .id(SharedString::from(format!("chats-session-{index}-{row}")))
-                    .w_full()
-                    .pl(px(22.))
-                    .pr_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(active).rounded_sm())
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.open_menu(
-                                menu_id.clone(),
-                                menu_root.clone(),
-                                menu_title.clone(),
-                                window,
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.clear_action(cx);
-                        if this.current_id.as_deref() == Some(id.as_str()) {
-                            return;
-                        }
-                        cx.emit(ChatsEvent::Open {
-                            root: root.clone(),
-                            id: id.clone(),
-                        });
-                    }))
-                    .child(label(&chat.title))
-                    .children(badge.map(|badge| {
-                        div()
-                            .debug_selector(|| "chats-activity".to_owned())
-                            .text_xs()
-                            .text_color(muted)
-                            .child(badge)
-                    }));
-                if selected {
-                    item = item.bg(active).rounded_sm();
+        let keyed = focused && self.selected == Some(ChatRow::Project(project.root.clone()));
+        let mut header = h_flex()
+            .id(SharedString::from(format!("chats-project-{index}")))
+            .w_full()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .cursor_pointer()
+            .hover(move |style| style.bg(active).rounded_sm())
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle(&root, cx)))
+            .child(div().w(px(12.)).text_color(muted).child(marker))
+            .child(label(&project.name));
+        if keyed {
+            header = header.border_color(ring).rounded_sm();
+        }
+        let mut block = v_flex().child(header);
+        if expanded && project.chats.is_empty() {
+            block = block.child(no_chats(px(22.), cx));
+        }
+        block.into_any_element()
+    }
+
+    fn chat_row(
+        &self,
+        index: usize,
+        row: usize,
+        project: &ProjectChats,
+        chat: &ChatEntry,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
+        let selected = self.current_id.as_deref() == Some(chat.id.as_str());
+        let keyed = focused
+            && self.selected
+                == Some(ChatRow::Chat {
+                    root: project.root.clone(),
+                    id: chat.id.clone(),
+                });
+        // A turn running out of sight: waiting on the user, or busy.
+        let badge = match self.activity.get(&chat.id) {
+            Some(true) => Some("⏳"),
+            Some(false) => Some("●"),
+            None => None,
+        };
+        let (root, id, title) = (project.root.clone(), chat.id.clone(), chat.title.clone());
+        let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
+        let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
+        let selector = format!("chats-session-{index}-{row}");
+        let mut item = h_flex()
+            .id(SharedString::from(selector.clone()))
+            .debug_selector(move || selector.clone())
+            .w_full()
+            .pl(px(22.))
+            .pr_2()
+            .py_1()
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .cursor_pointer()
+            .hover(move |style| style.bg(active).rounded_sm())
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(
+                        menu_id.clone(),
+                        menu_root.clone(),
+                        menu_title.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.clear_action(cx);
+                if this.current_id.as_deref() == Some(id.as_str()) {
+                    return;
                 }
-                block = block.child(item);
-                if menu_for_chat {
-                    block = block.child(self.menu(index, row, cx));
-                }
-            }
+                cx.emit(ChatsEvent::Open {
+                    root: root.clone(),
+                    id: id.clone(),
+                });
+            }))
+            .child(label(&chat.title))
+            .children(badge.map(|badge| {
+                div()
+                    .debug_selector(|| "chats-activity".to_owned())
+                    .text_xs()
+                    .text_color(muted)
+                    .child(badge)
+            }));
+        if selected {
+            item = item.bg(active).rounded_sm();
+        }
+        if keyed {
+            let selector = format!("chats-keyed-{index}-{row}");
+            item = item
+                .border_color(ring)
+                .rounded_sm()
+                .debug_selector(move || selector.clone());
+        }
+        let mut block = v_flex().child(item);
+        if menu_for_chat {
+            block = block.child(self.menu(index, row, cx));
         }
         block.into_any_element()
     }
@@ -433,6 +887,19 @@ impl ChatsPanel {
             theme.list_active,
         );
         let mut menu = v_flex()
+            .id("chats-menu")
+            .debug_selector(|| "chats-menu".to_owned())
+            // A click elsewhere closes it (a right click on another chat
+            // opens that one's).
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if event.button == MouseButton::Left {
+                    this.click_outside(cx);
+                }
+            }))
+            // A click inside keeps the focus where it is (the rename
+            // field), instead of the list taking it and the field
+            // losing it.
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .mx_2()
             .mb_1()
             .py_1()
@@ -459,6 +926,14 @@ impl ChatsPanel {
                         active,
                         danger,
                         cx.listener(|this, _, _, cx| this.ask_delete(cx)),
+                    ))
+                    .child(menu_row(
+                        format!("chats-cancel-{index}-{row}"),
+                        "Cancel",
+                        false,
+                        active,
+                        danger,
+                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
                     ));
             }
             ChatActionKind::Rename => {
@@ -471,7 +946,15 @@ impl ChatsPanel {
                                 .text_xs()
                                 .text_color(muted)
                                 .child("Enter saves · Esc cancels"),
-                        );
+                        )
+                        .child(menu_row(
+                            format!("chats-cancel-rename-{index}-{row}"),
+                            "Cancel",
+                            false,
+                            active,
+                            danger,
+                            cx.listener(|this, _, _, cx| this.cancel_action(cx)),
+                        ));
                 }
             }
             ChatActionKind::ConfirmDelete => {
@@ -497,7 +980,7 @@ impl ChatsPanel {
                         false,
                         active,
                         danger,
-                        cx.listener(|this, _, _, cx| this.clear_action(cx)),
+                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
                     ));
             }
         }
@@ -513,8 +996,10 @@ fn menu_row(
     danger_color: gpui::Hsla,
     click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
+    let selector = id.clone();
     let mut row = h_flex()
         .id(SharedString::from(id))
+        .debug_selector(move || selector.clone())
         .w_full()
         .px_2()
         .py_1()
@@ -530,8 +1015,16 @@ fn menu_row(
 
 impl EventEmitter<ChatsEvent> for ChatsPanel {}
 
+impl Focusable for ChatsPanel {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for ChatsPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self.focus_handle.is_focused(window);
+        let rows = self.row_elements(focused, cx);
         let theme = cx.theme();
         let (sidebar, foreground, muted, border, active) = (
             theme.sidebar,
@@ -542,6 +1035,8 @@ impl Render for ChatsPanel {
         );
         v_flex()
             .id("chats-panel")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_list_key))
             .w(px(PANEL_WIDTH))
             .h_full()
             .flex_none()
@@ -561,15 +1056,21 @@ impl Render for ChatsPanel {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::New)))
                     .child(label("New chat")),
             )
-            .child(
-                div()
-                    .id("chats-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .children(self.projects(cx)),
-            )
+            .child(crate::keyscroll::list("chats-list", &self.scroll, rows).flex_1())
     }
+}
+
+/// The muted "No chats yet" line, indented by `indent`.
+fn no_chats(indent: gpui::Pixels, cx: &App) -> AnyElement {
+    div()
+        .debug_selector(|| "chats-empty".to_owned())
+        .pl(indent)
+        .pr_2()
+        .py_1()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child("No chats yet")
+        .into_any_element()
 }
 
 fn label(text: &str) -> impl IntoElement {
@@ -679,7 +1180,227 @@ pub fn same_workspace(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{TestAppContext, VisualTestContext};
+
     use super::*;
+
+    fn panel<'a>(
+        projects: Vec<ProjectChats>,
+        current_id: Option<&str>,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<ChatsPanel>, &'a mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let current_id = current_id.map(str::to_owned);
+        let (view, cx) = cx.add_window_view(move |_, cx| {
+            let mut panel = ChatsPanel::new("/work/crest".into(), current_id, cx);
+            panel.set_projects(projects, cx);
+            panel
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn a_project_without_chats_says_so(cx: &mut TestAppContext) {
+        let (_view, cx) = panel(Vec::new(), None, cx);
+        assert!(cx.debug_bounds("chats-empty").is_some());
+    }
+
+    #[gpui::test]
+    fn a_long_list_scrolls(cx: &mut TestAppContext) {
+        let ids: Vec<String> = (0..80).map(|n| format!("chat-{n}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let (view, cx) = panel(vec![project("/work/crest", &ids)], Some("chat-0"), cx);
+        assert!(cx.debug_bounds("chats-empty").is_none());
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.scroll_handle().max_offset().y > px(0.),
+                "the rows overflow the panel and the list tracks it"
+            );
+        });
+    }
+
+    /// A panel on the chat `a` of `/work/crest` (also listing `b`), with
+    /// its events recorded.
+    fn renaming(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ChatsPanel>,
+        std::rc::Rc<std::cell::RefCell<Vec<ChatsEvent>>>,
+        &mut VisualTestContext,
+    ) {
+        let (view, cx) = panel(vec![project("/work/crest", &["a", "b"])], Some("a"), cx);
+        cx.update(|window, _| window.activate_window());
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        view.update_in(cx, |panel, window, cx| panel.rename_current(window, cx));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| rename_has_focus(window, cx)));
+        (view, events, cx)
+    }
+
+    fn field(view: &Entity<ChatsPanel>, cx: &mut VisualTestContext) -> Entity<InputState> {
+        view.read_with(cx, |panel, _| panel.rename_input.clone())
+            .expect("the rename field is open")
+    }
+
+    fn type_name(view: &Entity<ChatsPanel>, name: &str, cx: &mut VisualTestContext) {
+        let input = field(view, cx);
+        input.update_in(cx, |state, window, cx| state.set_value(name, window, cx));
+    }
+
+    fn renamed(events: &std::cell::RefCell<Vec<ChatsEvent>>) -> Vec<(String, String)> {
+        events
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                ChatsEvent::Rename { id, title } => Some((id.clone(), title.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn listed_title(view: &Entity<ChatsPanel>, id: &str, cx: &mut VisualTestContext) -> String {
+        view.read_with(cx, |panel, _| panel.title_of(id))
+            .expect("the chat is listed")
+    }
+
+    #[gpui::test]
+    fn the_fields_enter_event_saves_the_name(cx: &mut TestAppContext) {
+        let (view, events, cx) = renaming(cx);
+        type_name(&view, "  Nuevo nombre ", cx);
+        // The field's own event, whatever the key routing before it.
+        field(&view, cx).update(cx, |_, cx| {
+            cx.emit(InputEvent::PressEnter {
+                secondary: false,
+                shift: false,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(renamed(&events), [("a".into(), "Nuevo nombre".into())]);
+        assert!(!view.read_with(cx, |panel, _| panel.menu_open()));
+        assert_eq!(
+            listed_title(&view, "a", cx),
+            "Nuevo nombre",
+            "shown at once"
+        );
+        // The catalog catches up; a stale one does not undo it.
+        view.update(cx, |panel, cx| {
+            panel.set_projects(vec![project("/work/crest", &["a", "b"])], cx);
+        });
+        assert_eq!(listed_title(&view, "a", cx), "Nuevo nombre");
+        let mut saved = project("/work/crest", &["a", "b"]);
+        saved.chats[0].title = "Nuevo nombre".into();
+        view.update(cx, |panel, cx| panel.set_projects(vec![saved], cx));
+        view.read_with(cx, |panel, _| assert!(panel.pending_titles.is_empty()));
+        // A failed save shows the catalog's title again.
+        view.update(cx, |panel, cx| {
+            panel.pending_titles.insert("b".into(), "Otro".into());
+            panel.forget_title("b", cx);
+        });
+        assert_eq!(listed_title(&view, "b", cx), "b");
+    }
+
+    #[gpui::test]
+    fn the_enter_key_saves_the_name_and_typed_letters_stay_text(cx: &mut TestAppContext) {
+        let (view, events, cx) = renaming(cx);
+        let input = field(&view, cx);
+        type_name(&view, "", cx);
+        // `r` and `j` are list keys; in the field they are text.
+        cx.simulate_keystrokes("r j");
+        cx.run_until_parked();
+        assert_eq!(field(&view, cx), input, "the field was not reopened");
+        assert_eq!(
+            input.read_with(cx, |state, _| state.value().to_string()),
+            "rj"
+        );
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(renamed(&events), [("a".into(), "rj".into())]);
+        assert!(!view.read_with(cx, |panel, _| panel.menu_open()));
+        assert!(
+            !events
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, ChatsEvent::Open { .. })),
+            "Enter did not reach the list"
+        );
+    }
+
+    #[gpui::test]
+    fn losing_the_focus_saves_a_changed_name(cx: &mut TestAppContext) {
+        let (view, events, cx) = renaming(cx);
+        // Unchanged, the field stays open.
+        view.update_in(cx, |panel, window, cx| {
+            window.focus(&panel.focus_handle, cx)
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(renamed(&events).is_empty());
+        assert!(view.read_with(cx, |panel, _| panel.menu_open()));
+        let input = field(&view, cx);
+        input.update_in(cx, |state, window, cx| state.focus(window, cx));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        type_name(&view, "Por foco", cx);
+        view.update_in(cx, |panel, window, cx| {
+            window.focus(&panel.focus_handle, cx)
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(renamed(&events), [("a".into(), "Por foco".into())]);
+        assert!(!view.read_with(cx, |panel, _| panel.menu_open()));
+        assert_eq!(listed_title(&view, "a", cx), "Por foco");
+    }
+
+    #[gpui::test]
+    fn esc_in_the_field_cancels(cx: &mut TestAppContext) {
+        let (view, events, cx) = renaming(cx);
+        type_name(&view, "No se guarda", cx);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!view.read_with(cx, |panel, _| panel.menu_open()));
+        assert!(renamed(&events).is_empty());
+        assert!(matches!(
+            events.borrow().last(),
+            Some(ChatsEvent::Dismissed)
+        ));
+        assert_eq!(listed_title(&view, "a", cx), "a");
+    }
+
+    #[gpui::test]
+    fn the_rename_key_of_the_list_opens_a_working_field(cx: &mut TestAppContext) {
+        let (view, cx) = panel(vec![project("/work/crest", &["a", "b"])], Some("a"), cx);
+        cx.update(|window, _| window.activate_window());
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        view.update_in(cx, |panel, window, cx| panel.focus(window, cx));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("f2");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| rename_has_focus(window, cx)));
+        type_name(&view, "", cx);
+        cx.simulate_input("Por tecla");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(renamed(&events), [("a".into(), "Por tecla".into())]);
+    }
 
     fn project(root: &str, chats: &[&str]) -> ProjectChats {
         ProjectChats {

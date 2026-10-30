@@ -571,7 +571,7 @@ fn literal_pattern(request: &GrepRequest) -> Result<String, SearchError> {
 impl ContentSearchPort for InMemoryFs {
     /// Searches the listed text files (binary ones are skipped, as `rg`
     /// does) for a literal (see [`literal_pattern`]); `ignore_case` folds
-    /// ASCII letters only. Each hit carries its own neighbouring lines as
+    /// ASCII letters only, and `word` skips matches inside a longer word. Each hit carries its own neighbouring lines as
     /// context, even when they are matches themselves.
     async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
         let needle = literal_pattern(&request)?;
@@ -601,7 +601,7 @@ impl ContentSearchPort for InMemoryFs {
             };
             let lines: Vec<&str> = text.lines().collect();
             for (index, line) in lines.iter().enumerate() {
-                let Some(start) = fold(line).find(&needle) else {
+                let Some(start) = find_match(&fold(line), &needle, request.word) else {
                     continue;
                 };
                 result.total += 1;
@@ -628,6 +628,20 @@ impl ContentSearchPort for InMemoryFs {
         }
         Ok(result)
     }
+}
+
+/// Byte offset of the first `needle` in `line`; with `word`, of the first
+/// one not touching a letter, digit or underscore on either side.
+fn find_match(line: &str, needle: &str, word: bool) -> Option<usize> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    line.match_indices(needle).map(|(at, _)| at).find(|&at| {
+        !word
+            || (!line[..at].chars().next_back().is_some_and(is_word)
+                && !line[at + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word))
+    })
 }
 
 fn to_owned(lines: &[&str]) -> Vec<String> {
@@ -1250,6 +1264,21 @@ mod tests {
 
         let none = fs.grep(GrepRequest::new("absent")).await.unwrap();
         assert_eq!(none, GrepResult::default());
+    }
+
+    #[tokio::test]
+    async fn grep_word_skips_matches_inside_words() {
+        let fs = grep_fs();
+        let words = GrepRequest {
+            word: true,
+            ..GrepRequest::new("on")
+        };
+        assert_eq!(fs.grep(words).await.unwrap(), GrepResult::default());
+        let words = GrepRequest {
+            word: true,
+            ..GrepRequest::new("one")
+        };
+        assert_eq!(hits(&fs.grep(words).await.unwrap()), [("src/a.rs", 1)]);
     }
 
     #[tokio::test]

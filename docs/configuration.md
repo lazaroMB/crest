@@ -9,6 +9,7 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 | Global config | `$XDG_CONFIG_HOME/crest/init.lua`, or `~/.config/crest/init.lua` (Windows: `%APPDATA%\crest\init.lua`) | A relative `XDG_CONFIG_HOME` is ignored. macOS uses the same path (not `~/Library`). |
 | Plugins | `<global config dir>/plugins/<name>/init.lua` | Loaded in alphabetical order, followed by those listed in `app.plugins`. |
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
+| Key mappings without Lua | `<global config dir>/keymap.toml`, `<workspace>/.crest/keymap.toml` | Optional, next to each `init.lua`. See [`keymap.toml` and the leader](#keymaptoml-and-the-leader). |
 | Theme files | `<global config dir>/themes/<name>.lua` | One theme per file, picked with `app.opt.theme` or `/theme`. The installers copy the [example themes](../examples/themes/) and a commented `init.lua` here when they are missing. See [themes.md](themes.md). |
 | Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` (Windows: `%LOCALAPPDATA%\crest\sessions.db`) | SQLite. Stores the chat sessions and the workflow checkpoints. |
 | Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions (on Windows the folder's access list, private to the user, applies). |
@@ -32,7 +33,7 @@ When the layers are combined, precedence from lowest to highest is: plugins, glo
 | `app.opt.*` | Key by key. |
 | `app.models.roles` | Role by role and field by field. For example, if the workspace only sets `max_tokens`, it keeps the `id` and `thinking` of the global layer. `fallbacks` is replaced as a whole. |
 | `app.models.aliases` | Key by key. |
-| Keymaps | By keys: the last definition wins. |
+| Keymaps | All are kept and applied in order (plugins, global `keymap.toml`, global config, workspace `keymap.toml`, workspace config): for the same keys the last definition (or `app.keymap.del`) wins. See [`keymap.toml` and the leader](#keymaptoml-and-the-leader). |
 | Commands, tools and MCP servers | By name: the highest-precedence layer wins. |
 | Hooks | All are kept, in the order the files ran (global, plugins, workspace). |
 | `app.permissions.sensitive_paths` | The global config (or a plugin) can **replace** the default list. The workspace can only **add** patterns, so a cloned repository cannot remove the protection. |
@@ -143,7 +144,7 @@ The Anthropic API URL is fixed (`https://api.anthropic.com`): there is no variab
 
 | Option | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`) | `"<C-g>"` | The value of `<leader>` in keymaps **defined in Lua**. Builtin mappings always use `Ctrl+G` (see [usage.md](usage.md#default-key-bindings)). Use a chord: a plain key would be typed into the prompt. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
+| `leader` | string in key notation (`"<C-g>"`, `"<C-,>"`, `"<P-,>"`: `<P-…>` is Cmd on macOS and Ctrl elsewhere) | `"<C-g>"` | The value of `<leader>` in every keymap: the builtin ones (see [usage.md](usage.md#default-key-bindings)), yours in Lua and in `keymap.toml`. Changing it frees `Ctrl+G` ([below](#keymaptoml-and-the-leader)). Use a chord: a plain key would be typed into the prompt, so it is a warning and the leader stays `Ctrl+G`. Avoid `<C-Space>` (macOS takes it to switch the input source) and Alt chords (Option composes characters on a Mac). |
 | `timeoutlen` | integer, ms | `1000` | How long a prefix (`<leader>`, `<leader>f` of `<leader>ff`) waits for the next key. |
 | `pricing` | table `{ [model or prefix] = { input, output, cache_read, cache_write } }` | empty | Prices in USD per million tokens. Without prices, the status bar shows the session's tokens instead of the cost. |
 | `max_session_cost` | number > 0 (USD) | no cap | Spending cap per session: when it is reached, crest asks for confirmation before the next model call. |
@@ -173,6 +174,29 @@ app.opt.max_session_cost = 5
   - **always** removes the cap for the session;
   - **reject** ends the turn ("turn stopped by the spend cap ($X of $Y)").
 - The cost lives in memory: a resumed session counts from zero again.
+
+## `keymap.toml` and the leader
+
+To remap keys without writing Lua, put a `keymap.toml` next to an `init.lua`: `<global config dir>/keymap.toml` and `<workspace>/.crest/keymap.toml`. Both are optional.
+
+```toml
+# ~/.config/crest/keymap.toml
+[[bind]]
+keys = "<leader>r"          # Neovim notation, as app.keymap.set
+action = "picker.grep"      # a builtin action (plugins.md lists them)
+desc = "Search the text"    # optional: shown in the help's Keys section
+
+[[unbind]]
+keys = "<leader>x"          # removes a mapping, builtin ones included
+```
+
+- `keys` and `action` follow the rules of [`app.keymap.set`](plugins.md#appkeymapsetkeys-action) (an `action` can only be a builtin action; Lua functions need `init.lua`), and `[[unbind]]` those of [`app.keymap.del`](plugins.md#appkeymapdelkeys). A file's `[[unbind]]` entries apply before its `[[bind]]` ones, so it can free a builtin key and bind something else to it.
+- Precedence follows the layers: the workspace wins over the global config and, **within one layer, `init.lua` wins over `keymap.toml`** (Lua is applied after the file next to it). The order is: plugins, global `keymap.toml`, global `init.lua`, workspace `keymap.toml`, workspace `init.lua`.
+- The leader and `timeoutlen` are set in `init.lua` only (`app.opt.leader`, `app.opt.timeoutlen`); `<leader>` in `keymap.toml` uses that leader.
+- Problems never stop crest: a file that does not parse is ignored with a startup warning (the file and line), and an entry without `keys` or `action`, with a value that is not a string, or with unknown fields is reported (and skipped when it cannot apply). The checks of the keymap itself (unknown action, keys mapped twice, a mapping that starts a longer one) apply to these mappings too.
+- The help's Keys section shows each mapping's source (`global keymap.toml`, `workspace keymap.toml`, `global`, `workspace`, `plugin <name>`, `default`), and `c` there copies the `[[bind]]` entry (and the `app.keymap.set` line) of the selected key.
+
+**The leader.** `app.opt.leader` moves every `<leader>` mapping, the builtin ones included: with `app.opt.leader = "<C-,>"`, the file picker is `Ctrl+, ff`, the help `Ctrl+, h`, and `Ctrl+G` does nothing. Before, builtin mappings stayed on `Ctrl+G` whatever the leader was; a config that relied on that keeps its own mappings and can bring a builtin one back with the chord written out (`app.keymap.set("<C-g>ff", "picker.files")`). The welcome screen, the tray hint, the prompt's placeholder and the which-key popup name the keys in use.
 
 ## Web search
 
@@ -331,7 +355,42 @@ app.permissions.sensitive_paths = { "secrets/" }
 
 An invalid pattern (empty, or with a `/` in the middle) makes crest fall back to the default list and show a notice.
 
-The "always allow" rules you grant in an approval dialog are saved with the session and come back when the session is resumed. There is no Lua syntax to declare them.
+Rules granted in an approval dialog with `s` (session) are saved with the session and come back when it is resumed. Rules for the whole project live in a TOML file, described next; there is no Lua syntax for rules.
+
+### Project permission rules (`permissions.local.toml`)
+
+`<workspace>/.crest/permissions.local.toml` holds the rules of one workspace. crest writes it when you answer `p` in an approval or press `p` in [`/permissions`](usage.md#permission-rules-permissions), and you can edit it by hand (crest reads it when the workspace opens):
+
+```toml
+# <workspace>/.crest/permissions.local.toml
+allow = [
+  "run_command(cargo test *)",   # cargo test with any arguments
+  "run_command(cargo fmt)",      # exactly `cargo fmt`
+  "edit_file(src/*)",            # edits anywhere under src/
+  "mcp__jira__search",           # that MCP tool, with any input
+]
+deny = [
+  "run_command(git push *)",     # never, whatever the mode or the allow list says
+  "write_file(migrations/*)",
+]
+```
+
+- `allow` rules answer "yes" where the mode would ask. They do not override `plan` mode, which still denies writes and commands.
+- `deny` rules win over everything: over `allow` rules (of the project or the session), over `auto-edit`, and even over reads. A denied call is not asked; the model gets ``denied by the rule `run_command(git push *)` ``.
+- Each entry is `tool(pattern)`, or a bare tool name for any input (`tool(*)` is the same):
+  - `run_command(prog sub *)`: a command whose arguments start with those words (compared word by word, so `cargo test *` does not match `cargo testx`); words are split as in a shell, so quote an argument with spaces.
+  - `run_command(prog args)` without `*`: that exact command.
+  - `edit_file(dir/*)`, `write_file(dir/*)`: a path prefix, within folder boundaries; without `*`, that exact path (relative to the workspace).
+  - any other text inside the parentheses: that exact input.
+- Shells, wrappers and interpreters given inline code (see [usage.md](usage.md#patterns)) are never offered a wider pattern in the dialog. A pattern you write by hand for them (`run_command(bash *)`) is honoured, but allows any script.
+
+Problems never stop crest: a file that does not parse, an unknown key, an entry that is not a string or not a rule becomes a warning at startup (shown like the `keymap.toml` ones and in `/permissions`) and is skipped; the other entries still apply. While the file has problems crest does **not** rewrite it, so nothing you wrote is lost: saving a new project rule, removing or promoting one fails with that reason (the rule then applies to the session only). When crest rewrites the file it writes the two lists again, without comments.
+
+Only the `.local` file is read. A versioned `permissions.toml` is never loaded: a cloned repository must not be able to grant itself permissions (the same reason MCP servers and plugin capabilities of a workspace need trust). Keep the file out of version control:
+
+```gitignore
+.crest/*.local.toml
+```
 
 ## Privacy: secrets and personal data
 
@@ -513,7 +572,7 @@ A global config, checked against the current implementation (it loads without di
 local app = require("app")
 
 -- Keys -------------------------------------------------------------------
-app.opt.leader = "<C-g>" -- <leader> for the keymaps in this file
+app.opt.leader = "<C-g>" -- <leader> for every keymap, the builtin ones too
 app.opt.timeoutlen = 600    -- ms to wait between the keys of a sequence
 
 -- Look -------------------------------------------------------------------
@@ -558,7 +617,7 @@ app.mcp.add("docs", {
 app.plugins = { "~/src/mis-plugins/revisor" }
 
 -- Mappings and commands --------------------------------------------------
-app.keymap.set("<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<leader>X", function() app.cmd("clear") end)
 app.keymap.set("<C-p>", "picker.files")
 
 app.commands.register("review", function(args)

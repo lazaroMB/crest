@@ -3,7 +3,9 @@
 //!
 //! Opening it gives it the focus: `Up`/`Down` move, `Right`/`Left` open and
 //! close directories and `Enter` on a file references it in the prompt.
-//! Typing (or `Esc`) goes back to the prompt.
+//! Typing (or `Esc`) goes back to the prompt. The selection is kept, by
+//! path, when the tree reloads; until the first load ends the panel says
+//! it is loading, and an empty workspace says so.
 //!
 //! The tree comes from [`FileSearchPort::tree`], the same port the agent's
 //! `tree` tool uses, so it lists what the agent sees (`.gitignore`d files
@@ -25,8 +27,8 @@ use futures::channel::mpsc;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
+    SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::list::ListItem;
 use gpui_component::tree::{TreeEvent, TreeItem, TreeState, tree};
@@ -357,9 +359,32 @@ impl TreePanel {
             Some(root) => tree_items(root, &self.expanded),
             None => Vec::new(),
         };
-        self.state
-            .update(cx, |state, cx| state.set_items(items, cx));
+        self.state.update(cx, |state, cx| {
+            // `set_items` drops the selection: find the same path again,
+            // or the row that took its place when it is gone.
+            let selected = state.selected_item().map(|item| item.id.clone());
+            let before = state.selected_index();
+            state.set_items(items, cx);
+            let Some(before) = before else {
+                return;
+            };
+            let after = selected
+                .and_then(|id| state.index_of(&id))
+                .or_else(|| (0..=before).rev().find(|ix| state.entry(*ix).is_some()));
+            state.set_selected_index(after, cx);
+            if let Some(after) = after.filter(|after| *after != before) {
+                state.scroll_to_item(after, ScrollStrategy::Nearest);
+            }
+        });
         cx.notify();
+    }
+
+    /// The path of the selected row, if any.
+    pub fn selected_path(&self, cx: &App) -> Option<SharedString> {
+        self.state
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.clone())
     }
 }
 
@@ -406,6 +431,24 @@ impl Render for TreePanel {
                     .child(SharedString::from(error.clone())),
             );
         }
+        let note = match &self.root {
+            None if self.loading.is_some() => Some(("tree-loading", "Loading the files…")),
+            Some(root) if root.children.is_empty() => {
+                Some(("tree-empty", "No files here (ignored ones are not listed)"))
+            }
+            _ => None,
+        };
+        if let Some((selector, text)) = note {
+            panel = panel.child(
+                div()
+                    .debug_selector(move || selector.to_owned())
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(text),
+            );
+        }
         let weak = cx.entity().downgrade();
         let muted = theme.muted_foreground;
         panel
@@ -437,7 +480,9 @@ impl Render for TreePanel {
                     }
                     row
                 })
-                .flex_1(),
+                // Shrinks inside the panel so the last rows are not cut.
+                .flex_1()
+                .min_h_0(),
             )
             .into_any_element()
     }
@@ -616,6 +661,78 @@ mod tests {
                 "Cargo.toml"
             ]
         );
+    }
+
+    #[gpui::test]
+    fn reload_keeps_the_selected_path(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let (panel, cx) = panel(fs.clone(), cx);
+        panel.update(cx, |panel, cx| {
+            panel.set_expanded("src", true, cx);
+            panel.state.update(cx, |state, cx| {
+                let ix = state.index_of(&SharedString::from("src/lib.rs"));
+                state.set_selected_index(ix, cx);
+            });
+        });
+        // A file above it moves it down a row.
+        fs.set_file("src/a.rs", "");
+        panel.update(cx, |panel, cx| panel.reload(cx));
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(panel.selected_path(cx).as_deref(), Some("src/lib.rs"));
+            assert_eq!(panel.state.read(cx).selected_index(), Some(3));
+        });
+        // Gone: the row that took its place.
+        assert!(fs.remove_file("src/lib.rs"));
+        panel.update(cx, |panel, cx| panel.reload(cx));
+        cx.run_until_parked();
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(panel.selected_path(cx).as_deref(), Some("Cargo.toml"));
+        });
+    }
+
+    /// A port whose tree never comes.
+    struct Pending;
+
+    #[async_trait::async_trait]
+    impl FileSearchPort for Pending {
+        async fn list_files(
+            &self,
+            _: application::ports::search::ListFilesRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            futures::future::pending().await
+        }
+        async fn find_file(
+            &self,
+            _: application::ports::search::FindFileRequest,
+        ) -> Result<application::ports::search::FileList, SearchError> {
+            futures::future::pending().await
+        }
+        async fn tree(&self, _: TreeRequest) -> Result<TreeNode, SearchError> {
+            futures::future::pending().await
+        }
+    }
+
+    fn shown(panel: &Entity<TreePanel>, cx: &mut VisualTestContext) {
+        panel.update(cx, |panel, cx| panel.toggle(cx));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn says_while_loading(cx: &mut TestAppContext) {
+        let (loading, cx) = panel(Arc::new(Pending), cx);
+        shown(&loading, cx);
+        assert!(cx.debug_bounds("tree-loading").is_some());
+        assert!(cx.debug_bounds("tree-empty").is_none());
+    }
+
+    #[gpui::test]
+    fn says_when_the_workspace_is_empty(cx: &mut TestAppContext) {
+        let (empty, cx) = panel(Arc::new(InMemoryFs::new(test_root())), cx);
+        shown(&empty, cx);
+        assert!(cx.debug_bounds("tree-empty").is_some());
+        assert!(cx.debug_bounds("tree-loading").is_none());
     }
 
     struct Failing;

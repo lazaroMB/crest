@@ -7,12 +7,16 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use domain::block::{BlockId, ToolStatus};
 use domain::conversation::ToolUseId;
-use domain::permission::{ActionRequest, Decision, PermissionPolicy};
+use domain::permission::{
+    ActionRequest, Decision, PermissionMode, PermissionPolicy, PermissionRule, RuleScope,
+    ToolEffect,
+};
 
 use crate::ports::approval::{
     ApprovalPort, ApprovalPreview, ApprovalRequest, ApprovalRequestId, ApprovalResponse,
 };
-use crate::ports::events::{DomainEvent, EventSink};
+use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use crate::usecases::permissions::ProjectRules;
 
 /// Permission policy shared between the agent loop, which adds "allow
 /// always" rules, and the UI, which cycles the mode.
@@ -54,6 +58,9 @@ pub enum UserVerdict {
 pub struct ApprovalGate {
     port: Arc<dyn ApprovalPort>,
     permissions: SharedPermissions,
+    /// Where "always in project" rules are written, when the workspace has
+    /// a project permissions file.
+    project: Option<ProjectRules>,
     next_id: AtomicU64,
 }
 
@@ -61,6 +68,7 @@ impl std::fmt::Debug for ApprovalGate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApprovalGate")
             .field("permissions", &self.permissions)
+            .field("project", &self.project)
             .finish_non_exhaustive()
     }
 }
@@ -72,8 +80,23 @@ impl ApprovalGate {
         Self {
             port,
             permissions,
+            project: None,
             next_id: AtomicU64::new(1),
         }
+    }
+
+    /// Returns the same gate writing "always in project" rules to
+    /// `project`.
+    #[must_use]
+    pub fn with_project_rules(mut self, project: ProjectRules) -> Self {
+        self.project = Some(project);
+        self
+    }
+
+    /// Where project rules are written, if anywhere.
+    #[must_use]
+    pub fn project_rules(&self) -> Option<&ProjectRules> {
+        self.project.as_ref()
     }
 
     /// The shared policy.
@@ -91,8 +114,10 @@ impl ApprovalGate {
     /// Asks the user about `pending`, emitting `ToolStatusChanged`
     /// (`AwaitingApproval`) and `ApprovalRequested` first.
     ///
-    /// "Approve always" adds its rule to the shared policy (persisting it
-    /// per workspace is the caller's job). A failed request (no UI,
+    /// "Approve always" adds its rule to the shared policy; a project rule
+    /// is also written to the project file, and when that fails it stays
+    /// for the session and a warning notice says so. Session rules are
+    /// saved with the session by the caller. A failed request (no UI,
     /// cancelled dialog) counts as a rejection. Dropping the future
     /// cancels the request.
     pub async fn ask(&self, pending: PendingApproval, events: &dyn EventSink) -> UserVerdict {
@@ -107,6 +132,7 @@ impl ApprovalGate {
             block_id: pending.shown_in,
         });
         let action = pending.action;
+        let effect = action.effect;
         let preview = pending.preview.unwrap_or_else(|| ApprovalPreview::Text {
             text: action.subject.clone(),
         });
@@ -121,7 +147,16 @@ impl ApprovalGate {
         match self.port.request(request).await {
             Ok(ApprovalResponse::Approve) => UserVerdict::Approved,
             Ok(ApprovalResponse::ApproveAlways { rule }) => {
-                lock_permissions(&self.permissions).remember(rule);
+                lock_permissions(&self.permissions).remember(rule.clone());
+                if rule.scope == RuleScope::Project {
+                    self.save_project_rule(&rule, events).await;
+                }
+                UserVerdict::Approved
+            }
+            Ok(ApprovalResponse::ApproveAllEdits) => {
+                if effect == ToolEffect::Write {
+                    self.allow_all_edits(events);
+                }
                 UserVerdict::Approved
             }
             Ok(ApprovalResponse::Deny { reason }) => UserVerdict::Rejected(match reason {
@@ -129,6 +164,40 @@ impl ApprovalGate {
                 None => "denied by user".to_owned(),
             }),
             Err(err) => UserVerdict::Rejected(format!("not approved: {err}")),
+        }
+    }
+}
+
+impl ApprovalGate {
+    /// "Allow all edits this session": `ask` becomes `auto-edit`, and the
+    /// status bar hears of it. Other modes are left alone (the user may
+    /// have changed it while the dialog was open).
+    fn allow_all_edits(&self, events: &dyn EventSink) {
+        let mut policy = lock_permissions(&self.permissions);
+        if policy.mode != PermissionMode::Ask {
+            return;
+        }
+        policy.mode = PermissionMode::AutoEdit;
+        drop(policy);
+        events.emit(DomainEvent::ModeChanged {
+            mode: PermissionMode::AutoEdit,
+        });
+    }
+
+    /// Writes `rule` to the project file, warning when it cannot.
+    async fn save_project_rule(&self, rule: &PermissionRule, events: &dyn EventSink) {
+        let failure = match &self.project {
+            Some(project) => project.add(rule).await.err().map(|err| err.to_string()),
+            None => Some("this workspace has no project permissions file".to_owned()),
+        };
+        if let Some(reason) = failure {
+            events.emit(DomainEvent::Notice {
+                level: NoticeLevel::Warning,
+                message: format!(
+                    "`{rule}` applies to this session only: it could not be saved to the \
+                     project ({reason})"
+                ),
+            });
         }
     }
 }
@@ -142,7 +211,7 @@ pub fn policy_denial(reason: &domain::permission::DenyReason) -> String {
 #[cfg(test)]
 mod tests {
     use domain::permission::PermissionRule;
-    use domain::permission::{DenyReason, PermissionMode, RuleDecision, RuleMatcher, ToolEffect};
+    use domain::permission::{DenyReason, RuleDecision, RuleMatcher};
 
     use super::*;
     use crate::testing::system::{RecordingSink, ScriptedApproval};
@@ -232,6 +301,145 @@ mod tests {
         assert_eq!(
             policy_denial(&DenyReason::PlanMode),
             "denied by permission policy: plan mode is read-only"
+        );
+    }
+    #[tokio::test]
+    async fn approve_always_in_project_writes_the_project_file() {
+        use std::path::Path;
+
+        use crate::testing::permissions::MemoryPermissionStore;
+
+        let rule = PermissionRule::new(
+            "run",
+            RuleMatcher::Command(vec!["cargo".into()]),
+            RuleDecision::AllowAlways,
+        )
+        .with_scope(RuleScope::Project);
+        let store = Arc::new(MemoryPermissionStore::new());
+        let gate = gate(ScriptedApproval::always(ApprovalResponse::ApproveAlways {
+            rule: rule.clone(),
+        }))
+        .with_project_rules(ProjectRules::new(store.clone(), "/w"));
+        let sink = RecordingSink::new();
+        let action = pending("cargo test").action;
+        assert_eq!(
+            gate.ask(pending("cargo test"), &sink).await,
+            UserVerdict::Approved
+        );
+        assert_eq!(gate.decide(&action), Decision::Allow);
+        assert_eq!(store.rules(Path::new("/w")), std::slice::from_ref(&rule));
+        // Asked again (another session's rule), nothing is duplicated.
+        gate.ask(pending("cargo build"), &sink).await;
+        assert_eq!(store.rules(Path::new("/w")), [rule]);
+        assert_eq!(store.saves(), 1);
+        assert!(
+            !sink
+                .events()
+                .iter()
+                .any(|event| matches!(event, DomainEvent::Notice { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_project_rule_that_cannot_be_saved_stays_for_the_session() {
+        use crate::testing::permissions::MemoryPermissionStore;
+
+        let rule = PermissionRule::new(
+            "run",
+            RuleMatcher::Command(vec!["cargo".into()]),
+            RuleDecision::AllowAlways,
+        )
+        .with_scope(RuleScope::Project);
+        let store = Arc::new(MemoryPermissionStore::new());
+        store.fail_saves(true);
+        let answer = ApprovalResponse::ApproveAlways { rule: rule.clone() };
+        for gate in [
+            gate(ScriptedApproval::always(answer.clone()))
+                .with_project_rules(ProjectRules::new(store.clone(), "/w")),
+            gate(ScriptedApproval::always(answer)),
+        ] {
+            let sink = RecordingSink::new();
+            assert_eq!(
+                gate.ask(pending("cargo test"), &sink).await,
+                UserVerdict::Approved
+            );
+            assert_eq!(gate.decide(&pending("cargo test").action), Decision::Allow);
+            let notice = sink.events().into_iter().find_map(|event| match event {
+                DomainEvent::Notice { level, message } => Some((level, message)),
+                _ => None,
+            });
+            let (level, message) = notice.expect("a warning notice");
+            assert_eq!(level, NoticeLevel::Warning);
+            assert!(
+                message.starts_with("`run(cargo *)` applies to this session only"),
+                "{message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_always_for_the_session_never_writes_the_project_file() {
+        use crate::testing::permissions::MemoryPermissionStore;
+
+        let rule = PermissionRule::new(
+            "run",
+            RuleMatcher::Command(vec!["cargo".into()]),
+            RuleDecision::AllowAlways,
+        );
+        let store = Arc::new(MemoryPermissionStore::new());
+        let gate = gate(ScriptedApproval::always(ApprovalResponse::ApproveAlways {
+            rule,
+        }))
+        .with_project_rules(ProjectRules::new(store.clone(), "/w"));
+        let sink = RecordingSink::new();
+        gate.ask(pending("cargo test"), &sink).await;
+        assert_eq!(store.saves(), 0);
+        assert_eq!(sink.events().len(), 2, "no notice");
+    }
+
+    #[tokio::test]
+    async fn approve_all_edits_turns_on_auto_edit_for_writes_only() {
+        let write = |path: &str| PendingApproval {
+            action: ActionRequest::new("edit_file", ToolEffect::Write, path),
+            ..pending(path)
+        };
+        let gate = gate(ScriptedApproval::always(ApprovalResponse::ApproveAllEdits));
+        let sink = RecordingSink::new();
+        // A command answered so is approved once; the mode stays.
+        assert_eq!(
+            gate.ask(pending("cargo test"), &sink).await,
+            UserVerdict::Approved
+        );
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::Ask
+        );
+        assert_eq!(gate.decide(&pending("cargo test").action), Decision::Ask);
+        assert_eq!(gate.decide(&write("b.rs").action), Decision::Ask);
+        assert_eq!(gate.ask(write("a.rs"), &sink).await, UserVerdict::Approved);
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::AutoEdit
+        );
+        assert_eq!(gate.decide(&write("b.rs").action), Decision::Allow);
+        assert_eq!(gate.decide(&pending("cargo test").action), Decision::Ask);
+        let modes: Vec<_> = sink
+            .events()
+            .into_iter()
+            .filter(|event| matches!(event, DomainEvent::ModeChanged { .. }))
+            .collect();
+        assert_eq!(
+            modes,
+            [DomainEvent::ModeChanged {
+                mode: PermissionMode::AutoEdit
+            }]
+        );
+        // From plan mode (changed while the dialog was open) nothing moves.
+        lock_permissions(gate.permissions()).mode = PermissionMode::Plan;
+        gate.ask(write("c.rs"), &sink).await;
+        assert_eq!(
+            lock_permissions(gate.permissions()).mode,
+            PermissionMode::Plan
         );
     }
 }

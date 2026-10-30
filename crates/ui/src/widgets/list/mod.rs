@@ -11,6 +11,10 @@
 //! height. Follow keeps the last item in view when items arrive; scrolling
 //! up turns it off. Copy puts the visible items on the clipboard as lines.
 //!
+//! With the rows focused (a click on one, or `↓` from the filter), `↑`/`↓`
+//! and `Home`/`End` move the selection, keeping it in view, and `Enter`
+//! opens or closes the selected item.
+//!
 //! [`view`] gives the entity of an id (to subscribe to
 //! [`ListEvent::Selected`] or drive it) and [`render`] the widget.
 
@@ -23,12 +27,13 @@ use domain::block::BlockId;
 use domain::widget::list::{LevelClass, ListSpec, value_text};
 use gpui::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, ElementId, Entity, EventEmitter,
-    FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollStrategy, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, Render, ScrollStrategy, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window,
+    div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use self::filter::{Facet, LEVEL_FACET, Line, Query, Selection, facets, lines};
@@ -71,6 +76,8 @@ pub struct ListView {
     has_ts: bool,
     follow: bool,
     scroll: UniformListScrollHandle,
+    /// Focused, the arrows move the selection.
+    focus_handle: FocusHandle,
     _input_events: Subscription,
 }
 
@@ -101,6 +108,7 @@ impl ListView {
             has_ts: spec.items.iter().any(|i| i.ts.is_some()),
             follow: spec.follow,
             scroll: UniformListScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             _input_events: subscription,
         };
         view.refilter();
@@ -169,6 +177,64 @@ impl ListView {
     /// The scroll handle of the rows.
     pub fn scroll_handle(&self) -> &UniformListScrollHandle {
         &self.scroll
+    }
+
+    /// The focus of the rows: focused, the arrows move the selection.
+    pub fn focus_handle(&self) -> &FocusHandle {
+        &self.focus_handle
+    }
+
+    /// Selects visible item `ix` (an index into the spec's items), scrolls
+    /// it into view and tells the parent. Follow mode stops.
+    pub fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.follow = false;
+        if let Some(line) = self.lines.iter().position(|line| *line == Line::Item(ix)) {
+            self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
+        }
+        if self.selected != Some(ix) {
+            self.selected = Some(ix);
+            cx.emit(ListEvent::Selected(Some(ix)));
+        }
+        cx.notify();
+    }
+
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let m = &event.keystroke.modifiers;
+        if m.control || m.alt || m.platform || m.shift {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        if !self.focus_handle.is_focused(window) {
+            // `↓` in the filter goes down to the rows.
+            let in_filter =
+                gpui::Focusable::focus_handle(self.input.read(cx), cx).is_focused(window);
+            if in_filter && key == "down" {
+                window.focus(&self.focus_handle, cx);
+                if let Some(ix) = step(&self.visible, self.selected, Step::First) {
+                    self.select(ix, cx);
+                }
+                cx.stop_propagation();
+            }
+            return;
+        }
+        let step_by = match key {
+            "up" => Step::Prev,
+            "down" => Step::Next,
+            "home" => Step::First,
+            "end" => Step::Last,
+            "enter" => {
+                if let Some(ix) = self.selected.filter(|ix| self.visible.contains(ix)) {
+                    self.toggle_item(ix, cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
+            _ => return,
+        };
+        if let Some(ix) = step(&self.visible, self.selected, step_by) {
+            self.select(ix, cx);
+        }
+        cx.stop_propagation();
     }
 
     /// The visible items as lines, for the clipboard.
@@ -448,12 +514,39 @@ impl ListView {
                 .text_ellipsis()
                 .child(SharedString::from(first_line(&item.text))),
         )
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
+            window.focus(&this.focus_handle, cx);
             this.toggle_item(ix, cx);
         }))
         .into_any_element()
     }
+}
+
+/// A move of the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// The visible item before (the last one with none selected).
+    Prev,
+    /// The visible item after (the first one with none selected).
+    Next,
+    /// The first visible item.
+    First,
+    /// The last visible item.
+    Last,
+}
+
+/// The item `step` selects among the `visible` ones from `selected`. It
+/// stops at the ends; a selection the filter hid starts over.
+pub fn step(visible: &[usize], selected: Option<usize>, step: Step) -> Option<usize> {
+    let at = selected.and_then(|ix| visible.iter().position(|v| *v == ix));
+    let pos = match (step, at) {
+        (Step::First, _) | (Step::Next, None) => 0,
+        (Step::Last, _) | (Step::Prev, None) => visible.len().checked_sub(1)?,
+        (Step::Next, Some(at)) => (at + 1).min(visible.len().checked_sub(1)?),
+        (Step::Prev, Some(at)) => at.saturating_sub(1),
+    };
+    visible.get(pos).copied()
 }
 
 /// The first line of `text`, with a marker when there are more.
@@ -540,6 +633,7 @@ impl Render for ListView {
             .border_1()
             .border_color(border)
             .text_sm()
+            .track_focus(&self.focus_handle)
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .when(count == 0, |d| {
                 d.child(
@@ -553,7 +647,10 @@ impl Render for ListView {
                         }),
                 )
             })
-            .when(count > 0, |d| d.child(list));
+            .when(count > 0, |d| {
+                d.child(list)
+                    .scrollbar(&self.scroll, ScrollbarAxis::Vertical)
+            });
         let filter_row = h_flex()
             .gap_2()
             .child(
@@ -580,6 +677,7 @@ impl Render for ListView {
             // A press in the widget (the filter, a chip, a row) is not a
             // click on the timeline row, which would fold the block.
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(Self::on_key))
             .child(self.header(cx))
             .child(filter_row)
             .children(self.chips(cx))
@@ -591,6 +689,8 @@ impl Render for ListView {
 pub fn view(id: BlockId, spec: &ListSpec, window: &mut Window, cx: &mut App) -> Entity<ListView> {
     let view =
         crate::blocks::block_state(id, window, cx, |window, cx| ListView::new(spec, window, cx));
+    let focus = view.read(cx).focus_handle.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

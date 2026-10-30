@@ -1,7 +1,12 @@
 //! `ask_user`: the model asks the user structured questions as a form.
 //!
-//! The input is a title, an optional description and the questions as a
-//! JSON Schema subset (see [`domain::form::schema`]). Preparing the call
+//! The input is the questions as a JSON Schema subset (see
+//! [`domain::form::schema`]), an optional title and description. The
+//! input is read forgivingly, since models often get it slightly wrong:
+//! a missing title comes from the description or the first field, unknown
+//! keys are ignored, `questions` stands for `schema`, and a schema given
+//! flat (its `properties` at the top level) is taken as the schema.
+//! Preparing the call
 //! converts and validates the schema (a bad one comes back to the model as
 //! an input error naming the property) and adds a pending `Form` block;
 //! running it awaits the [`FormPort`] with that block's id. A submitted
@@ -57,7 +62,8 @@ same form again: go on without the answers or ask in prose.";
 
 const DESCRIPTION: &str = "Shows the user a form in the timeline and waits until they submit \
 or cancel it. Use it when you need structured answers (pick one or several options, numbers \
-with bounds, yes/no, short or long text) instead of asking in prose. `schema` is a JSON Schema \
+with bounds, yes/no, short or long text) instead of asking in prose. Only `schema` is required; \
+give a short `title` (the heading) and a `description` when useful. `schema` is a JSON Schema \
 object: `properties` are the fields in display order and `required` lists the mandatory ones. \
 Each property has `type` string, number, integer, boolean or array, plus optional `title` (the \
 label), `description` and `default`. Strings take `minLength`/`maxLength` (whole numbers) and \
@@ -73,12 +79,22 @@ such as `examples`, `pattern` or `readOnly` are accepted but not enforced; neste
 (empty optional fields are absent), the user's words when they answer in the chat instead, or \
 an error when the user cancels.";
 
+/// Heading of a form whose call gave none and nothing to take it from.
+pub const DEFAULT_TITLE: &str = "A few questions";
+
+/// Longest heading taken from the description.
+const MAX_DERIVED_TITLE: usize = 80;
+
+// Deserialized by hand (`AskUser::from_value`): unknown keys are ignored,
+// `questions` is an alias of `schema`, and an input with `properties` but
+// no `schema` is the schema itself. The doc comment below goes to the model.
 /// Input of `ask_user`.
-#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, JsonSchema)]
 pub struct AskUser {
-    /// Heading of the form: what you need to know.
-    pub title: String,
+    /// Heading of the form: what you need to know. Taken from the
+    /// description (or the first question) when absent.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Why you ask, shown under the heading.
     #[serde(default)]
     pub description: Option<String>,
@@ -89,6 +105,90 @@ pub struct AskUser {
     /// Text of the submit button; `Submit` when absent.
     #[serde(default)]
     pub submit_label: Option<String>,
+}
+
+impl AskUser {
+    /// Reads a call's input.
+    ///
+    /// # Errors
+    ///
+    /// The input is not an object, has no schema, or a key has the wrong
+    /// type (named in the message).
+    pub fn from_value(input: Value) -> Result<Self, String> {
+        let Value::Object(mut map) = input else {
+            return Err("invalid type: expected an object".into());
+        };
+        let text = |map: &mut serde_json::Map<String, Value>, key: &str| match map.remove(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) => Ok(Some(text)),
+            Some(other) => Err(format!(
+                "invalid type for `{key}`: expected a string, got {}",
+                json_type(&other)
+            )),
+        };
+        let title = text(&mut map, "title")?;
+        let description = text(&mut map, "description")?;
+        let submit_label = text(&mut map, "submit_label")?;
+        let schema = match map.remove("schema").or_else(|| map.remove("questions")) {
+            Some(schema) if !schema.is_null() => schema,
+            // The schema given flat: its keys are the input's.
+            _ if map.contains_key("properties") => {
+                let mut schema = serde_json::Map::new();
+                schema.insert("type".into(), Value::String("object".into()));
+                for key in ["properties", "required"] {
+                    if let Some(value) = map.remove(key) {
+                        schema.insert(key.into(), value);
+                    }
+                }
+                Value::Object(schema)
+            }
+            _ => return Err("missing field `schema`".into()),
+        };
+        Ok(Self {
+            title,
+            description,
+            schema,
+            submit_label,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for AskUser {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Self::from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The JSON type of `value`, for messages.
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// The first sentence of `text` (up to `.`, `?`, `!` or a line break),
+/// when it is short enough to be a heading.
+fn first_sentence(text: &str) -> Option<String> {
+    let text = text.trim();
+    let end = text
+        .char_indices()
+        .find(|&(at, c)| {
+            matches!(c, '\n' | '?' | '!')
+                || (c == '.' && text[at + 1..].starts_with(char::is_whitespace))
+        })
+        .map_or(
+            text.len(),
+            |(at, c)| if c == '\n' { at } else { at + c.len_utf8() },
+        );
+    let sentence = text[..end].trim().trim_end_matches('.').trim();
+    (!sentence.is_empty() && sentence.chars().count() <= MAX_DERIVED_TITLE)
+        .then(|| sentence.to_owned())
 }
 
 /// The `ask_user` tool.
@@ -128,13 +228,38 @@ fn invalid(message: impl Into<String>) -> ToolError {
 /// An input error naming the property the schema cannot express, or the
 /// field whose bounds or default are wrong.
 pub fn form_spec(input: AskUser) -> Result<FormSpec, ToolError> {
-    if input.title.trim().is_empty() {
-        return Err(invalid("`title` is empty"));
-    }
     let fields = fields_from_schema(&input.schema).map_err(|err| invalid(err.to_string()))?;
+    let mut description = input.description.filter(|d| !d.trim().is_empty());
+    let given = input
+        .title
+        .map(|title| title.trim().to_owned())
+        .filter(|title| !title.is_empty());
+    let title = match given {
+        Some(title) => title,
+        None => {
+            let from_description = description.as_deref().and_then(first_sentence);
+            // A description that is only that sentence is not shown twice.
+            if from_description.as_deref().is_some_and(|title| {
+                description
+                    .as_deref()
+                    .map(|d| d.trim().trim_end_matches('.'))
+                    == Some(title)
+            }) {
+                description = None;
+            }
+            from_description
+                .or_else(|| {
+                    fields
+                        .first()
+                        .and_then(|field| field.label.clone())
+                        .filter(|label| !label.trim().is_empty())
+                })
+                .unwrap_or_else(|| DEFAULT_TITLE.to_owned())
+        }
+    };
     let spec = FormSpec {
-        title: input.title,
-        description: input.description.filter(|d| !d.trim().is_empty()),
+        title,
+        description,
         fields,
         submit_label: input.submit_label.filter(|l| !l.trim().is_empty()),
         state: FormState::Pending,
@@ -432,12 +557,15 @@ mod tests {
         nested["schema"]["properties"]["alpha"] = json!({"type": "object"});
         let mut bad_default = input();
         bad_default["schema"]["properties"]["alpha"]["default"] = json!(2);
-        let mut no_title = input();
-        no_title["title"] = json!(" ");
+        let mut number_title = input();
+        number_title["title"] = json!(3);
+        let mut no_schema = input();
+        no_schema.as_object_mut().unwrap().remove("schema");
         for (bad, needle) in [
             (nested, "properties.alpha"),
             (bad_default, "\"alpha\""),
-            (no_title, "`title`"),
+            (number_title, "`title`"),
+            (no_schema, "Missing required: `schema`"),
         ] {
             let err = tool.prepare(bad, &ctx()).await.unwrap_err();
             let ToolError::InvalidInput { message, .. } = &err else {
@@ -446,5 +574,74 @@ mod tests {
             assert!(message.contains(needle), "{message}");
         }
         assert!(port.requests().is_empty());
+    }
+
+    /// The pending form a call shows.
+    async fn shown(input: Value) -> FormSpec {
+        let call = tool(&Arc::new(ScriptedForm::default()))
+            .prepare(input, &ctx())
+            .await
+            .unwrap();
+        match call.block {
+            Some(BlockKind::Form(spec)) => spec,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_title_comes_from_the_description_or_the_first_field() {
+        let mut no_title = input();
+        no_title.as_object_mut().unwrap().remove("title");
+        let spec = shown(no_title.clone()).await;
+        assert_eq!(spec.title, "Pick how to compare the groups");
+        assert_eq!(spec.description, None, "not shown twice");
+
+        no_title["description"] = json!("Which test? The groups differ in size.");
+        let spec = shown(no_title.clone()).await;
+        assert_eq!(spec.title, "Which test?");
+        assert_eq!(
+            spec.description.as_deref(),
+            Some("Which test? The groups differ in size.")
+        );
+
+        no_title["title"] = json!("  ");
+        no_title["description"] = json!(null);
+        assert_eq!(
+            shown(no_title.clone()).await.title,
+            "Test",
+            "the first field"
+        );
+
+        no_title["schema"] = json!({"properties": {"x": {"type": "string"}}});
+        assert_eq!(shown(no_title).await.title, DEFAULT_TITLE);
+    }
+
+    #[tokio::test]
+    async fn unknown_keys_are_ignored_and_a_flat_schema_or_questions_is_the_schema() {
+        let mut extra = input();
+        extra["urgency"] = json!("high");
+        assert_eq!(shown(extra).await.title, "Test settings");
+
+        let flat = json!({
+            "title": "Flat",
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "title": "Name"},
+                "age": {"type": "integer"}
+            },
+            "required": ["name"]
+        });
+        let spec = shown(flat).await;
+        let fields: Vec<(&str, bool)> = spec
+            .fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.required))
+            .collect();
+        assert_eq!(fields, [("name", true), ("age", false)]);
+
+        let mut questions = input();
+        let schema = questions.as_object_mut().unwrap().remove("schema").unwrap();
+        questions["questions"] = schema;
+        assert_eq!(shown(questions).await.fields.len(), 3);
     }
 }

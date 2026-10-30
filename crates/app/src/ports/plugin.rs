@@ -63,9 +63,14 @@ pub enum KeyAction {
     Builtin(String),
     /// A Lua function, run through [`PluginHostPort::invoke_callback`].
     Callback(CallbackId),
+    /// No action: `app.keymap.del(lhs)` (or `[[unbind]]` in
+    /// `keymap.toml`) removes what the keys did before, builtin mappings
+    /// included.
+    Unmap,
 }
 
-/// A keymap from `app.keymap.set(lhs, action, { desc = "..." })`.
+/// A keymap from `app.keymap.set(lhs, action, { desc = "..." })`, or its
+/// removal from `app.keymap.del(lhs)` ([`KeyAction::Unmap`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeymapSpec {
     /// Key sequence in Neovim notation (e.g. `<leader>ff`, `<C-k>`).
@@ -256,8 +261,9 @@ pub struct PluginDiagnostic {
 
 /// Result of loading the global and workspace configs and the plugins.
 ///
-/// Scalar options, keymaps and commands are already merged, the workspace
-/// overriding the global config field by field. Model roles are kept per
+/// Scalar options and commands are already merged, the workspace
+/// overriding the global config field by field; keymaps are all kept in
+/// precedence order. Model roles are kept per
 /// layer so the model policy can report where each spec came from.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -268,7 +274,10 @@ pub struct LoadedConfig {
     pub workspace_roles: RoleConfig,
     /// Options from `app.opt`.
     pub options: AppOptions,
-    /// Keymaps, in registration order (later ones win).
+    /// Keymaps and removals, every one kept, in precedence order: the
+    /// plugins, the global config, then the workspace config, each in
+    /// registration order (applied in turn, a later one wins). Each
+    /// spec's `plugin` says which layer it comes from.
     pub keymaps: Vec<KeymapSpec>,
     /// Chat commands.
     pub commands: Vec<CommandSpec>,

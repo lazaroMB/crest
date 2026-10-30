@@ -430,7 +430,7 @@ In addition, `/stage` (the position, for example "Step 3/6: Test and fix · task
 
 > Careful: an empty line (just `Enter`) counts as **continue** at every gate. At "Failing tests" that commits with the criteria failing, and at "Report" it closes the workflow.
 
-In headless mode, each gate shows `› ` and reads a line from stdin. Approvals for out-of-scope files use the same stdin (`[y]es / [a]lways / [n]o`). `--yes` approves those actions, but does **not** answer the gates. If stdin closes, the workflow stays at that gate ("no answer (stdin closed): the flow stays at this gate; the same command resumes it") and crest exits with 1.
+In headless mode, each gate shows `› ` and reads a line from stdin. Approvals for out-of-scope files use the same stdin (`[y]es / [s]ession / [p]roject / [e]dits / [n]o`; for those files, `s` and `p` approve that file for the rest of the run, `y` and `e` only this once). `--yes` approves those actions, but does **not** answer the gates. If stdin closes, the workflow stays at that gate ("no answer (stdin closed): the flow stays at this gate; the same command resumes it") and crest exits with 1.
 
 ### File restriction
 

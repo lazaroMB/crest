@@ -62,8 +62,8 @@ use application::keymap::{
 use gpui::canvas;
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, Window, div,
+    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render,
+    ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::input::{InputEvent as EditorEvent, Textarea, TextareaState};
 
@@ -114,6 +114,34 @@ fn palette_top(selected: usize, top: usize, len: usize) -> usize {
         top
     };
     top.min(len.saturating_sub(PALETTE_ROWS))
+}
+
+/// Pixels of wheel that move a popup by one row.
+const WHEEL_ROW: f32 = 20.0;
+
+/// The footer note of a popup of `total` entries showing
+/// [`PALETTE_ROWS`] from `top`: `· 1–8 of 20 · 12 more`, or nothing when
+/// they all fit.
+fn window_note(top: usize, total: usize) -> Option<String> {
+    if total <= PALETTE_ROWS {
+        return None;
+    }
+    let last = (top + PALETTE_ROWS).min(total);
+    let below = total - last;
+    Some(if below > 0 {
+        format!(" · {}–{last} of {total} · {below} more", top + 1)
+    } else {
+        format!(" · {}–{last} of {total}", top + 1)
+    })
+}
+
+/// The window of a popup of `len` entries moved by `rows` (down when
+/// positive) from `top`, and the chosen entry pulled into it.
+fn scroll_window(top: usize, selected: usize, rows: isize, len: usize) -> (usize, usize) {
+    let max_top = len.saturating_sub(PALETTE_ROWS);
+    let top = top.saturating_add_signed(rows).min(max_top);
+    let last = (top + PALETTE_ROWS).min(len).saturating_sub(1);
+    (top, selected.clamp(top, last.max(top)))
 }
 
 /// What the input asks the rest of the UI to do.
@@ -182,6 +210,22 @@ pub fn classify_line(text: &str) -> Option<Line> {
     }
 }
 
+/// The prompt's placeholder: what to type, with the keys of the pickers
+/// (`Ask crest…  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)`),
+/// so they can be found without the help.
+pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
+    let mut hints = vec!["/ for commands".to_owned()];
+    for (action, what) in [
+        (crate::picker::FILES_ACTION, "files"),
+        (crate::picker::GREP_ACTION, "text"),
+    ] {
+        if let Some(keys) = crate::help::action_keys(keymap, action) {
+            hints.push(format!("{keys} {what}"));
+        }
+    }
+    format!("Ask crest…  ({})", hints.join(" · "))
+}
+
 /// The commands the palette offers for `text`, best first: names starting
 /// with what follows the `/`, then names containing it. Empty unless
 /// `text` is a `/` and a partial name (no arguments yet).
@@ -189,14 +233,29 @@ pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a Co
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
     };
-    if typed.starts_with('/') || typed.contains(char::is_whitespace) {
+    if typed.starts_with('/') {
         return Vec::new();
     }
     let typed = typed.to_lowercase();
+    if typed.contains(char::is_whitespace) {
+        // After a space only the rows named with their argument match
+        // (`/mode ` lists `mode plan`...).
+        return commands
+            .iter()
+            .filter(|row| {
+                let name = row.name.to_lowercase();
+                name.contains(' ') && name.starts_with(&typed)
+            })
+            .collect();
+    }
     let mut starts: Vec<&CommandRow> = Vec::new();
     let mut contains: Vec<&CommandRow> = Vec::new();
     for row in commands {
         let name = row.name.to_lowercase();
+        // A row named with its argument (`mode plan`) waits for the space.
+        if name.contains(' ') {
+            continue;
+        }
         if name.starts_with(&typed) {
             starts.push(row);
         } else if name.contains(&typed) {
@@ -326,6 +385,8 @@ pub struct InputView {
     palette_selected: usize,
     /// First visible row of the `/model ` popup, which scrolls.
     palette_top: usize,
+    /// Wheel pixels over a popup not yet a whole row.
+    wheel_rest: f32,
     palette_hidden: bool,
     paths: PathCompletion,
     models: ModelCompletion,
@@ -357,10 +418,11 @@ impl InputView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let placeholder = prompt_placeholder(&keymap);
         let editor = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, MAX_ROWS)
-                .placeholder("Ask crest…  (/ for commands)")
+                .placeholder(placeholder)
         });
         let weak = cx.entity().downgrade();
         let intercept = cx.intercept_keystrokes(move |event, window, cx| {
@@ -388,15 +450,21 @@ impl InputView {
                 cx.notify();
             }
         });
+        let focus_handle = cx.focus_handle();
+        // The popups belong to the prompt: they go when it loses the focus.
+        let blur = cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
+            this.hide_popups(cx);
+        });
         Self {
             sequencer: KeySequencer::new(keymap),
             editor,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             timeout: None,
             queued: false,
             commands: Vec::new(),
             palette_selected: 0,
             palette_top: 0,
+            wheel_rest: 0.0,
             palette_hidden: false,
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
@@ -408,8 +476,19 @@ impl InputView {
             history: PromptHistory::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
-            _subscriptions: vec![intercept, changes],
+            _subscriptions: vec![intercept, changes, blur],
         }
+    }
+
+    /// Hides the `/`, `@`, `/model` and `/theme` popups (until the text
+    /// changes), ending a theme preview.
+    pub fn hide_popups(&mut self, cx: &mut Context<Self>) {
+        if self.palette_hidden {
+            return;
+        }
+        self.palette_hidden = true;
+        self.end_theme_preview(cx);
+        cx.notify();
     }
 
     /// Toggles the cursor every [`BLINK_INTERVAL`] while the window is
@@ -447,6 +526,11 @@ impl InputView {
     /// The keymap in use.
     pub fn keymap(&self) -> &Keymap<Action> {
         self.sequencer.keymap()
+    }
+
+    /// Whether a key sequence (the leader) waits for its next key.
+    pub fn has_pending_keys(&self) -> bool {
+        !self.sequencer.pending().is_empty()
     }
 
     /// The sequencer, e.g. to change `timeoutlen` or add mappings.
@@ -677,7 +761,12 @@ impl InputView {
         }
         if let Some(popup) = self.path_popup(cx) {
             match path_key(key, &popup, &self.text(cx), self.palette_selected) {
-                PathKey::Select(ix) => self.palette_selected = ix,
+                PathKey::Select(ix) => {
+                    if let PathPopup::Entries(entries) = &popup {
+                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                    }
+                    self.palette_selected = ix;
+                }
                 PathKey::Hide => self.palette_hidden = true,
                 PathKey::SetText(text) => self.set_text(&text, window, cx),
                 PathKey::Ignored => return false,
@@ -735,11 +824,18 @@ impl InputView {
         if choices.is_empty() {
             return false;
         }
-        let len = choices.len().min(PALETTE_ROWS);
+        let len = choices.len();
         let selected = self.palette_selected.min(len - 1);
         match (key.code, &choices[selected]) {
-            (KeyCode::Down, _) => self.palette_selected = (selected + 1) % len,
-            (KeyCode::Up, _) => self.palette_selected = (selected + len - 1) % len,
+            (KeyCode::Down | KeyCode::Up, _) => {
+                let ix = if key.code == KeyCode::Down {
+                    (selected + 1) % len
+                } else {
+                    (selected + len - 1) % len
+                };
+                self.palette_top = palette_top(ix, self.palette_top, len);
+                self.palette_selected = ix;
+            }
             (KeyCode::Esc, _) => self.palette_hidden = true,
             (KeyCode::Tab, Choice::Run(line)) => self.set_text(&format!("/{line} "), window, cx),
             (KeyCode::Tab | KeyCode::Enter, Choice::Complete(line)) => {
@@ -943,36 +1039,99 @@ impl InputView {
             .collect()
     }
 
+    /// Entries of the popup the input shows, the same one `render` picks.
+    fn popup_len(&self, cx: &App) -> usize {
+        if let Some(popup) = self.path_popup(cx) {
+            return match popup {
+                PathPopup::Entries(entries) => entries.len(),
+                PathPopup::Message(_) => 0,
+            };
+        }
+        if let Some(popup) = self.model_popup(cx) {
+            return match popup {
+                ModelPopup::Entries(entries) => entries.len(),
+                ModelPopup::Message(_) => 0,
+            };
+        }
+        if let Some(popup) = self.theme_popup(cx) {
+            return match popup {
+                ThemePopup::Entries(entries) => entries.len(),
+                ThemePopup::Message(_) => 0,
+            };
+        }
+        self.palette(cx).len()
+    }
+
+    /// The wheel over a popup scrolls its rows, carrying the chosen one
+    /// along when it would leave the window (the `/theme ` popup previews
+    /// it).
+    fn popup_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let len = self.popup_len(cx);
+        if len <= PALETTE_ROWS {
+            return;
+        }
+        cx.stop_propagation();
+        // Up is a positive delta; small touchpad deltas add up to a row.
+        self.wheel_rest -= f32::from(event.delta.pixel_delta(px(WHEEL_ROW)).y);
+        let rows = (self.wheel_rest / WHEEL_ROW).trunc();
+        if rows == 0.0 {
+            return;
+        }
+        self.wheel_rest -= rows * WHEEL_ROW;
+        let before = self.palette_selected.min(len - 1);
+        let (top, selected) = scroll_window(self.palette_top, before, rows as isize, len);
+        self.palette_top = top;
+        self.palette_selected = selected;
+        if selected != before
+            && let Some(ThemePopup::Entries(entries)) = self.theme_popup(cx)
+            && self.path_popup(cx).is_none()
+            && self.model_popup(cx).is_none()
+            && let Some(choice) = entries.get(selected)
+        {
+            self.theme_previewing = true;
+            cx.emit(InputEvent::ThemePreview(choice.name.clone()));
+        }
+        cx.notify();
+    }
+
     fn render_palette(&self, cx: &App) -> Option<impl IntoElement> {
         let rows = self.palette(cx);
         if rows.is_empty() {
             return None;
         }
         let theme = cx.theme();
-        let selected = self.palette_selected.min(rows.len().min(PALETTE_ROWS) - 1);
-        let items = rows.iter().take(PALETTE_ROWS).enumerate().map(|(ix, row)| {
-            let mut item = h_flex()
-                .id(("palette", ix))
-                .gap_3()
-                .px_2()
-                .child(
-                    div()
-                        .text_color(theme.primary)
-                        .child(SharedString::from(row.usage.clone())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(row.description.clone())),
-                );
-            if ix == selected {
-                item = item.bg(theme.list_active).rounded_sm();
-            }
-            item
-        });
+        let total = rows.len();
+        let selected = self.palette_selected.min(total - 1);
+        let top = self.palette_top;
+        let note = window_note(top, total).unwrap_or_default();
+        let items = rows
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(PALETTE_ROWS)
+            .map(|(ix, row)| {
+                let mut item = h_flex()
+                    .id(("palette", ix))
+                    .gap_3()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_color(theme.primary)
+                            .child(SharedString::from(row.usage.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(row.description.clone())),
+                    );
+                if ix == selected {
+                    item = item.bg(theme.list_active).rounded_sm();
+                }
+                item
+            });
         Some(
             v_flex()
                 .id("command-palette")
@@ -990,8 +1149,77 @@ impl InputView {
                         .pt_1()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child("↑↓ choose · Tab complete · Enter run · Esc hide"),
+                        .child(SharedString::from(format!(
+                            "↑↓ choose · Tab complete · Enter run · Esc hide{note}"
+                        ))),
                 ),
+        )
+    }
+
+    /// The keys that can follow the pending prefix (the leader), for the
+    /// which-key popup. Empty when nothing is pending.
+    pub fn which_key(&self) -> Vec<crate::help::NextKey> {
+        let pending = self.sequencer.pending();
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        crate::help::next_keys(self.keymap(), pending)
+    }
+
+    /// The which-key popup: while a prefix waits for its next key, what
+    /// each next key does. It goes away with the prefix (a key, `Esc`, or
+    /// `timeoutlen`).
+    fn render_which_key(&self, cx: &App) -> Option<gpui::AnyElement> {
+        let next = self.which_key();
+        if next.is_empty() {
+            return None;
+        }
+        let theme = cx.theme();
+        let pending = crate::help::keys_label(self.sequencer.pending());
+        let cells = next.into_iter().map(|next| {
+            h_flex()
+                .w(px(300.))
+                .gap_2()
+                .px_2()
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .text_color(theme.primary)
+                        .child(SharedString::from(next.key)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(next.what)),
+                )
+        });
+        Some(
+            v_flex()
+                .id("which-key")
+                .debug_selector(|| "which-key".to_owned())
+                .mb_1()
+                .py_1()
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .bg(theme.popover)
+                .text_sm()
+                .child(h_flex().flex_wrap().children(cells))
+                .child(
+                    div()
+                        .px_2()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(format!(
+                            "{pending} … · a key runs it · Esc or a pause cancels"
+                        ))),
+                )
+                .into_any_element(),
         )
     }
 }
@@ -1004,10 +1232,16 @@ impl Focusable for InputView {
 
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tray = self.tray.render(cx);
-        let paths = self
-            .path_popup(cx)
-            .map(|popup| path_popup::render(popup, self.palette_selected, cx));
+        let mode_keys = crate::help::action_keys(self.keymap(), IMAGE_MODE_ACTION);
+        let tray = self.tray.render(mode_keys.as_deref(), cx);
+        let which_key = self.render_which_key(cx);
+        let paths = self.path_popup(cx).map(|popup| {
+            if let PathPopup::Entries(entries) = &popup {
+                let selected = self.palette_selected.min(entries.len() - 1);
+                self.palette_top = palette_top(selected, self.palette_top, entries.len());
+            }
+            path_popup::render(popup, self.palette_selected, self.palette_top, cx)
+        });
         let models = if paths.is_none() {
             self.model_popup(cx).map(|popup| {
                 // The list may have arrived or shrunk since the last key.
@@ -1044,6 +1278,11 @@ impl Render for InputView {
             None
         };
         let palette = if paths.is_none() && models.is_none() && themes.is_none() {
+            let total = self.palette(cx).len();
+            if total > 0 {
+                let selected = self.palette_selected.min(total - 1);
+                self.palette_top = palette_top(selected, self.palette_top, total);
+            }
             self.render_palette(cx)
         } else {
             None
@@ -1102,11 +1341,23 @@ impl Render for InputView {
             .id("crest-input")
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
+            // A click anywhere else closes the popups.
+            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                this.hide_popups(cx);
+            }))
             .font_family(theme.mono_font_family.clone())
-            .children(paths)
-            .children(models)
-            .children(themes)
-            .children(palette)
+            .child(
+                // The wheel over a popup moves its window of rows.
+                v_flex()
+                    .id("input-popups")
+                    .debug_selector(|| "input-popups".to_owned())
+                    .on_scroll_wheel(cx.listener(Self::popup_wheel))
+                    .children(paths)
+                    .children(models)
+                    .children(themes)
+                    .children(palette)
+                    .children(which_key),
+            )
             .children(tray)
             .child(prompt)
             .children(status)
@@ -1137,6 +1388,39 @@ mod tests {
         });
         cx.run_until_parked();
         (view, cx, events)
+    }
+
+    #[gpui::test]
+    fn a_click_outside_hides_the_palette(cx: &mut TestAppContext) {
+        struct Wrapper(Entity<InputView>);
+        impl Render for Wrapper {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                v_flex()
+                    .size_full()
+                    .child(div().id("outside").h(gpui::px(200.)).w_full())
+                    .child(self.0.clone())
+            }
+        }
+        cx.update(gpui_component::init);
+        let (wrapper, cx) = cx.add_window_view(|window, cx| {
+            let input = cx.new(|cx| InputView::new(window, cx));
+            Wrapper(input)
+        });
+        let view = wrapper.read_with(cx, |w, _| w.0.clone());
+        view.update_in(cx, |view, window, cx| {
+            view.set_commands(vec![row("model", "/model")], cx);
+            view.focus(window, cx);
+        });
+        cx.simulate_input("/mo");
+        assert!(view.read_with(cx, |v, cx| !v.palette(cx).is_empty()));
+        cx.simulate_click(
+            gpui::point(gpui::px(10.), gpui::px(10.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(view.read_with(cx, |v, cx| v.palette(cx).is_empty()));
+        cx.update(|window, cx| {
+            assert!(view.read(cx).owns_focus(window, cx), "the focus stayed");
+        });
     }
 
     /// The events so far but the history's [`InputEvent::Recorded`].
@@ -1457,6 +1741,86 @@ mod tests {
         assert!(take(&events).is_empty());
     }
 
+    fn commands(n: usize) -> Vec<CommandRow> {
+        (0..n)
+            .map(|i| row(&format!("cmd{i:02}"), &format!("/cmd{i:02}")))
+            .collect()
+    }
+
+    #[test]
+    fn popup_windows_say_what_is_left_and_scroll_with_the_choice() {
+        assert_eq!(window_note(0, 8), None);
+        assert_eq!(
+            window_note(0, 20).as_deref(),
+            Some(" · 1–8 of 20 · 12 more")
+        );
+        assert_eq!(window_note(12, 20).as_deref(), Some(" · 13–20 of 20"));
+        // Down by 3: the choice at 1 is pulled to the window's first row.
+        assert_eq!(scroll_window(0, 1, 3, 20), (3, 3));
+        // Up past the top, and down past the end, stop there.
+        assert_eq!(scroll_window(2, 5, -9, 20), (0, 5));
+        assert_eq!(scroll_window(10, 15, 9, 20), (12, 15));
+    }
+
+    #[gpui::test]
+    fn arrows_reach_the_last_command_of_the_palette(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        view.update(cx, |view, cx| view.set_commands(commands(20), cx));
+        cx.simulate_input("/");
+        let total = view.read_with(cx, |view, cx| view.palette(cx).len());
+        assert!(total > PALETTE_ROWS, "more commands than rows: {total}");
+        let last = view.read_with(cx, |view, cx| view.palette(cx)[total - 1].name.clone());
+        cx.simulate_keystrokes(&vec!["down"; total - 1].join(" "));
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.palette_selected, total - 1);
+            assert_eq!(view.palette_top, total - PALETTE_ROWS, "scrolled");
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let drawn = cx.debug_bounds("input-popups").is_some();
+        assert!(drawn);
+        // Down wraps to the first.
+        cx.simulate_keystrokes("down");
+        view.read_with(cx, |view, _| {
+            assert_eq!((view.palette_selected, view.palette_top), (0, 0));
+        });
+        cx.simulate_keystrokes("up tab");
+        let text = view.read_with(cx, |view, cx| view.text(cx));
+        assert!(text.starts_with(&format!("/{last}")), "{text} for {last}");
+        assert!(take(&events).is_empty());
+    }
+
+    #[gpui::test]
+    fn the_wheel_scrolls_the_palette(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, ScrollDelta, TouchPhase, point};
+        let (view, cx, _) = input(cx);
+        view.update(cx, |view, cx| view.set_commands(commands(20), cx));
+        cx.simulate_input("/");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let at = cx
+            .debug_bounds("input-popups")
+            .expect("the palette is drawn")
+            .center();
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(point(px(0.), px(-3. * WHEEL_ROW))),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.palette_top, 3, "three rows down");
+            assert_eq!(view.palette_selected, 3, "the choice came along");
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Lines(point(0., 1.)),
+            modifiers: Modifiers::none(),
+            touch_phase: TouchPhase::Moved,
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.palette_top, 2, "a line up"));
+    }
+
     #[gpui::test]
     fn arrows_reach_every_model_without_typing(cx: &mut TestAppContext) {
         let (view, cx, events) = input(cx);
@@ -1594,6 +1958,18 @@ mod tests {
         cx.executor().advance_clock(BLINK_INTERVAL / 2);
         cx.run_until_parked();
         assert!(!visible(cx), "blinks again a whole interval after the key");
+    }
+
+    #[test]
+    fn the_placeholder_names_the_picker_keys() {
+        assert_eq!(
+            prompt_placeholder(&default_keymap()),
+            "Ask crest…  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)"
+        );
+        assert_eq!(
+            prompt_placeholder(&Keymap::new()),
+            "Ask crest…  (/ for commands)"
+        );
     }
 
     #[test]

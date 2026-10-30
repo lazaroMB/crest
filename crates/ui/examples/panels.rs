@@ -157,7 +157,8 @@ impl Fakes {
             let approved = matches!(
                 answer,
                 Ok(application::ports::approval::ApprovalResponse::Approve
-                    | application::ports::approval::ApprovalResponse::ApproveAlways { .. })
+                    | application::ports::approval::ApprovalResponse::ApproveAlways { .. }
+                    | application::ports::approval::ApprovalResponse::ApproveAllEdits)
             );
             if approved {
                 fakes.fs.set_file(path, new);

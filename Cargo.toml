@@ -58,6 +58,8 @@ schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
+# keymap.toml: the declarative keymap, parsed in the app layer.
+toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "time"] }
 tracing = "0.1.44"
 # v5: the block of a tool call derives its id from the call's id, so a call

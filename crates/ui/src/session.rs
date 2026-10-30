@@ -69,19 +69,21 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap};
 use application::ports::events::{DomainEvent, NoticeLevel};
+use application::ports::fs::FileSystemPort;
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
+use application::usecases::permissions::RuleListing;
 use domain::block::{Block, BlockId, BlockKind, CustomNode, ImageData, ImageFit};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::{Account, ModelId, ModelRole};
-use domain::permission::PermissionMode;
+use domain::permission::{PermissionMode, PermissionRule};
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
@@ -106,9 +108,10 @@ use crate::input::{
 };
 use crate::login::{LoginEvent, LoginView};
 use crate::modal::ModalHost;
+use crate::permissions::{PermissionsEvent, PermissionsView, permissions_modal_id};
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
-use crate::timeline::TimelineView;
+use crate::timeline::{DeferredKey, TimelineView};
 use crate::tree::{TreePanel, TreePanelEvent};
 
 /// Action of `Ctrl+C`.
@@ -119,6 +122,25 @@ pub const PERMISSION_ACTION: &str = "permission.cycle";
 pub const MODEL_ACTION: &str = "model.pick";
 /// Action of `<C-Tab>` and `<leader>w`.
 pub const FOCUS_NEXT_ACTION: &str = "focus.next";
+/// Action of `<P-q>` (Ctrl+Q, Cmd+Q on macOS).
+pub const QUIT_ACTION: &str = "app.quit";
+/// Action of `<F11>` (and Ctrl+Cmd+F on macOS).
+pub const FULLSCREEN_ACTION: &str = "window.fullscreen";
+/// Action of `<leader>T`.
+pub const THEME_ACTION: &str = "theme.pick";
+/// Action of `<leader>P`.
+pub const MODE_ACTION: &str = "mode.pick";
+/// Action of `<leader>A` and `/permissions`.
+pub const PERMISSIONS_ACTION: &str = "permissions.open";
+/// Action of `<leader>W`.
+pub const PROJECT_ACTION: &str = "project.switch";
+/// Action of `<leader>O`.
+pub const OUTLINE_ACTION: &str = "timeline.outline";
+/// Action of `<leader><CR>`.
+pub const FOCUS_WIDGET_ACTION: &str = "block.focus_widget";
+
+/// How long a second quit has to come while a turn runs.
+pub const QUIT_CONFIRM: Duration = Duration::from_secs(3);
 
 /// How often the git state of the status bar is refreshed while idle.
 const GIT_REFRESH: Duration = Duration::from_secs(5);
@@ -245,6 +267,32 @@ pub trait SessionController: Send + Sync {
 
     /// The models `<leader>m` offers.
     fn models(&self) -> Vec<ModelChoice>;
+
+    /// The permission rules in force, for `/permissions`, with the
+    /// problems of the project file. The default has none.
+    fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+        futures::future::ready(RuleListing::default()).boxed()
+    }
+
+    /// Removes `rule` from the policy (and from the project file, for a
+    /// project rule); `Err` says why it stays.
+    fn remove_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let _ = rule;
+        futures::future::ready(Err("this session cannot change its rules".to_owned())).boxed()
+    }
+
+    /// Makes the session rule `rule` a project rule, written to the
+    /// project file; `Err` says why it stays a session rule.
+    fn promote_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let _ = rule;
+        futures::future::ready(Err("this session cannot change its rules".to_owned())).boxed()
+    }
 
     /// Every model the providers with a key offer, for the `/model`
     /// picker; `Err` says why they could not be listed.
@@ -396,6 +444,9 @@ pub fn file_reference(path: &WorkspacePath, line: Option<u64>) -> String {
     }
 }
 
+/// How long `/login` waits for the provider to check a key.
+pub const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Everything the session needs from the binary.
 pub struct SessionParts {
     /// The agent.
@@ -411,6 +462,9 @@ pub struct SessionParts {
     pub files: Arc<dyn FileSearchPort>,
     /// Text search for `<leader>fg`.
     pub content: Arc<dyn ContentSearchPort>,
+    /// Reads the files the pickers preview; without it the text picker
+    /// previews the context lines of its matches only.
+    pub fs: Option<Arc<dyn FileSystemPort>>,
     /// Workspace name for the status bar.
     pub workspace_label: String,
     /// Workspace directory the tree watches, if any.
@@ -456,6 +510,7 @@ impl SessionParts {
             forms: None,
             files,
             content,
+            fs: None,
             workspace_label: String::new(),
             workspace_dir: None,
             model: None,
@@ -480,6 +535,9 @@ pub enum SessionEvent {
         /// What to tell once the new session shows.
         notice: Option<(NoticeLevel, String)>,
     },
+    /// A key or a command asks the window about the chats (the sidebar
+    /// lives beside the session): `chat.new`, `focus.next` into the list...
+    Chats(crate::chats::ChatsCommand),
     /// The session got busy or idle, or started or stopped waiting on the
     /// user (an approval, a form). Sent on each change.
     Activity {
@@ -525,6 +583,15 @@ pub struct Session {
     /// The themes the `/theme` popup lists, for its previews.
     theme_choices: Vec<ThemeChoice>,
     git: Option<Task<()>>,
+    /// The `/login` key being checked; dropping it cancels the check.
+    login_check: Option<Task<()>>,
+    /// The window shows the chats sidebar: `focus.next` goes through it.
+    chats_shown: bool,
+    /// When quitting was asked during a turn: a second ask within
+    /// [`QUIT_CONFIRM`] quits.
+    quit_asked_at: Option<Instant>,
+    /// `m` of the `/permissions` modal (replaced when it opens again).
+    permissions_events: Option<Subscription>,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -585,6 +652,7 @@ impl Session {
             forms,
             files,
             content,
+            fs,
             workspace_label,
             workspace_dir,
             model,
@@ -604,9 +672,13 @@ impl Session {
                 .into_iter()
                 .map(|block| DomainEvent::BlockAdded { block });
             timeline.apply_all(restored, cx);
+            // The welcome screen names the keys of this keymap.
+            timeline.set_welcome_keys(&keymap, cx);
             timeline
         });
         let status = cx.new(|_| StatusView::new(workspace_label));
+        // The approval dialog names the keys that undo "allow all edits".
+        let mode_keys = crate::help::action_keys(&keymap, PERMISSION_ACTION);
         let mode = controller.permission_mode();
         status.update(cx, |status, cx| {
             let state = status.state_mut(cx);
@@ -628,8 +700,16 @@ impl Session {
         });
         let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
-        let picker = cx.new(|cx| PickerView::new(files, content, window, cx));
-        let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
+        let picker = cx.new(|cx| {
+            let mut picker = PickerView::new(files, content, window, cx);
+            picker.set_file_system(fs);
+            picker
+        });
+        let approval = cx.new(|cx| {
+            let mut approval = ApprovalView::new(approvals, window, cx);
+            approval.set_mode_keys(mode_keys);
+            approval
+        });
         let modal = cx.new(|cx| ModalHost::new(window, cx));
         let login = cx.new(|cx| LoginView::new(window, cx));
 
@@ -721,6 +801,10 @@ impl Session {
             theme,
             theme_choices: Vec::new(),
             git: None,
+            login_check: None,
+            chats_shown: false,
+            quit_asked_at: None,
+            permissions_events: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -762,8 +846,10 @@ impl Session {
                     permission_mode: this.controller.permission_mode(),
                     turn_override: None,
                 });
+                let mut commands = full.commands;
+                commands.extend(mode_rows());
                 this.input
-                    .update(cx, |input, cx| input.set_commands(full.commands, cx));
+                    .update(cx, |input, cx| input.set_commands(commands, cx));
             })
             .ok();
         })
@@ -870,10 +956,13 @@ impl Session {
     }
 
     /// Keys typed while the focus is outside the prompt. In an overlay
-    /// (picker, dialog, menu, modal) only `Ctrl+C` is taken; elsewhere
-    /// (timeline, tree) the keys go through the input's keymap, a vim key of
-    /// the focused timeline acts on it, any other printable key is typed
-    /// into the prompt and the rest is left to the panel.
+    /// (picker, dialog, menu, modal) only `Ctrl+C` is taken. With the focus
+    /// in the timeline, `Esc` and printable keys go first to the focused
+    /// element (a block widget, the outline menu) and fall back to the
+    /// prompt only when nothing takes them ([`DeferredKey`]). Elsewhere
+    /// (the tree) the keys go through the input's keymap, any other
+    /// printable key is typed into the prompt and the rest is left to the
+    /// panel.
     fn intercept_keys(cx: &mut Context<Self>) -> Subscription {
         let weak = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
@@ -896,16 +985,24 @@ impl Session {
         if !self.shown {
             return;
         }
+        // A key deferred before was taken by an element of the timeline.
+        if self.timeline.read(cx).has_deferred_key() {
+            self.timeline
+                .update(cx, |timeline, _| timeline.clear_deferred_key());
+        }
         // The dialog may be up while the prompt still has focus (Reject does
         // not move it). Take the keys here, before the prompt sees them.
         if self.approval.read(cx).is_open() {
             let handled = self.approval.update(cx, |dialog, cx| {
                 dialog.handle_keystroke(&event.keystroke, window, cx)
             });
-            if !handled
-                && key_from_keystroke(&event.keystroke).is_some_and(|key| Self::is_ctrl_c(&key))
-            {
+            let key = key_from_keystroke(&event.keystroke);
+            if !handled && key.is_some_and(|key| Self::is_ctrl_c(&key)) {
                 self.interrupt(cx);
+            } else if !handled
+                && let Some(action) = key.and_then(|key| self.app_wide_action(&key, cx))
+            {
+                self.action(&action, window, cx);
             }
             cx.stop_propagation();
             return;
@@ -921,17 +1018,67 @@ impl Session {
         let Some(key) = key_from_keystroke(&event.keystroke) else {
             return;
         };
+        // The chats list takes its own keys (arrows, Enter, F2, `r`,
+        // Delete); chords, `Esc` and function keys still go through the
+        // keymap, and nothing it leaves is typed into the prompt.
+        if crate::chats::list_has_focus(window, cx) {
+            if self
+                .input
+                .update(cx, |input, cx| input.feed_key(key, window, cx))
+            {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.overlay_focused(window, cx) {
             let m = key.mods;
-            if key.code == KeyCode::Char('c') && m.ctrl && !m.alt && !m.cmd && !m.shift {
-                self.interrupt(cx);
+            if Self::is_ctrl_c(&key) {
+                // Text selected in the picker's query is copied, and in the
+                // (masked) key field left alone: copying never interrupts
+                // the turn. Without a selection Ctrl+C interrupts, as
+                // everywhere.
+                let picked = self.picker.read(cx).selected_text(cx);
+                let copied = picked.is_some() || self.login.read(cx).has_selection(cx);
+                if let Some(text) = picked {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                }
+                if copied {
+                    cx.stop_propagation();
+                } else {
+                    self.interrupt(cx);
+                }
+                return;
+            }
+            // Quitting and full screen work over any overlay.
+            if let Some(action) = self.app_wide_action(&key, cx) {
+                self.action(&action, window, cx);
+                cx.stop_propagation();
                 return;
             }
             // A waiting form keeps what is typed in it; a chord (`Ctrl+Tab`
             // to the prompt) still goes through the keymap, so the user can
-            // leave the form and answer in the chat without the mouse.
-            if (m.ctrl || m.alt || m.cmd)
-                && crate::blocks::form::owns_focus(window, cx)
+            // leave the form and answer in the chat without the mouse. In
+            // the picker too, minus its own `Ctrl+P`/`Ctrl+N` and `Alt+…`
+            // toggles, and with the
+            // keys after the leader: the shortcut that opened it closes it.
+            let chord = m.ctrl || m.alt || m.cmd;
+            let picker_keys = self.picker.read(cx).is_open()
+                && !self.login.read(cx).is_open()
+                && !self.modal.read(cx).is_open();
+            let picker_own =
+                (m.ctrl && !m.alt && !m.cmd && matches!(key.code, KeyCode::Char('p' | 'n')))
+                    || (m.alt
+                        && !m.ctrl
+                        && !m.cmd
+                        && crate::picker::PickerView::owns_alt_key(&key.code));
+            let to_keymap = if crate::blocks::form::owns_focus(window, cx) {
+                chord
+            } else if picker_keys {
+                (chord && !picker_own) || self.input.read(cx).has_pending_keys()
+            } else {
+                false
+            };
+            if to_keymap
                 && self
                     .input
                     .update(cx, |input, cx| input.feed_key(key, window, cx))
@@ -951,6 +1098,9 @@ impl Session {
             cx.stop_propagation();
             return;
         }
+        if self.defer_to_timeline(key, window, cx) {
+            return;
+        }
         let consumed = self
             .input
             .update(cx, |input, cx| input.feed_key(key, window, cx));
@@ -958,19 +1108,61 @@ impl Session {
             cx.stop_propagation();
             return;
         }
-        if let Some(action) = TimelineView::vim_action(&key)
-            && self.timeline.focus_handle(cx).contains_focused(window, cx)
-        {
-            self.timeline.update(cx, |timeline, cx| {
-                timeline.handle_action(&Action::builtin(action), cx)
-            });
-            cx.stop_propagation();
-            return;
-        }
         if let Some(text) = typed_text(&key) {
             self.input
                 .update(cx, |input, cx| input.insert_text(&text, window, cx));
             cx.stop_propagation();
+        }
+    }
+
+    /// With the focus in the timeline, lets a plain `Esc` or printable key
+    /// through to the focused element (it may close a menu, clear a
+    /// cursor, zoom). The timeline runs [`Self::fallback_key`] if the key
+    /// reaches it unhandled. A key after a pending prefix (the leader) is
+    /// the keymap's. Returns whether the key was deferred.
+    fn defer_to_timeline(&mut self, key: Key, window: &Window, cx: &mut Context<Self>) -> bool {
+        let plain_esc = key.code == KeyCode::Esc
+            && !(key.mods.ctrl || key.mods.alt || key.mods.cmd || key.mods.shift);
+        if !(plain_esc || typed_text(&key).is_some())
+            || self.input.read(cx).has_pending_keys()
+            || !self.timeline.focus_handle(cx).contains_focused(window, cx)
+        {
+            return false;
+        }
+        let session = cx.entity().downgrade();
+        let deferred = DeferredKey::new(key, move |window, cx| {
+            session
+                .update(cx, |this, cx| this.fallback_key(key, window, cx))
+                .ok();
+        });
+        self.timeline
+            .update(cx, |timeline, _| timeline.defer_key(deferred));
+        true
+    }
+
+    /// A deferred key nothing in the timeline took: it goes through the
+    /// keymap (`Esc` focuses the prompt) or is typed into the prompt.
+    fn fallback_key(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+        let consumed = self
+            .input
+            .update(cx, |input, cx| input.feed_key(key, window, cx));
+        if !consumed && let Some(text) = typed_text(&key) {
+            self.input
+                .update(cx, |input, cx| input.insert_text(&text, window, cx));
+        }
+    }
+
+    /// The action of `key` alone when it quits or switches full screen.
+    fn app_wide_action(&self, key: &Key, cx: &App) -> Option<Action> {
+        let input = self.input.read(cx);
+        if input.has_pending_keys() {
+            return None;
+        }
+        match input.keymap().lookup(std::slice::from_ref(key)).exact {
+            Some(Action::Builtin(name)) if name == QUIT_ACTION || name == FULLSCREEN_ACTION => {
+                Some(Action::Builtin(name.clone()))
+            }
+            _ => None,
         }
     }
 
@@ -1051,23 +1243,39 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LoginEvent::Cancelled => self.focus_input(window, cx),
+            LoginEvent::Cancelled => {
+                // A check in flight is dropped, which cancels it.
+                self.login_check = None;
+                self.focus_input(window, cx);
+            }
             LoginEvent::Submit { account, key } => {
                 let login = self.controller.login(*account, key.clone());
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = login.await;
-                    this.update_in(cx, |this, window, cx| match result {
-                        Ok(message) => {
-                            this.login.update(cx, |login, cx| login.close(window, cx));
-                            cx.emit(SessionEvent::Reopen {
-                                notice: Some((NoticeLevel::Info, message)),
-                            });
+                let timeout = cx.background_executor().timer(LOGIN_TIMEOUT);
+                let name = account.display_name();
+                self.login_check = Some(cx.spawn_in(window, async move |this, cx| {
+                    let result = match futures::future::select(login, timeout).await {
+                        futures::future::Either::Left((result, _)) => result,
+                        futures::future::Either::Right(_) => Err(format!(
+                            "{name} did not answer in {} s; check the network and try again",
+                            LOGIN_TIMEOUT.as_secs()
+                        )),
+                    };
+                    this.update_in(cx, |this, window, cx| {
+                        this.login_check = None;
+                        match result {
+                            Ok(message) => {
+                                this.login.update(cx, |login, cx| login.close(window, cx));
+                                cx.emit(SessionEvent::Reopen {
+                                    notice: Some((NoticeLevel::Info, message)),
+                                });
+                            }
+                            Err(error) => {
+                                this.login.update(cx, |login, cx| login.fail(error, cx));
+                            }
                         }
-                        Err(error) => this.login.update(cx, |login, cx| login.fail(error, cx)),
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
@@ -1110,20 +1318,58 @@ impl Session {
         true
     }
 
-    /// `<C-Tab>`: prompt → timeline → tree (when shown) → prompt.
+    /// `<C-Tab>`: prompt → timeline → tree (when shown) → chats (when
+    /// shown) → prompt.
     pub fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let timeline = self.timeline.focus_handle(cx);
         let tree_shown = self.tree.read(cx).is_visible();
+        let in_timeline = timeline.contains_focused(window, cx);
+        let in_tree = self.tree.focus_handle(cx).contains_focused(window, cx);
         if self.input.read(cx).owns_focus(window, cx) {
             window.focus(&timeline, cx);
             self.timeline
                 .update(cx, |view, cx| view.select_last_if_none(cx));
-        } else if timeline.contains_focused(window, cx) && tree_shown {
+        } else if in_timeline && tree_shown {
             self.tree.update(cx, |tree, cx| tree.focus(window, cx));
+        } else if (in_timeline || in_tree) && self.chats_shown {
+            cx.emit(SessionEvent::Chats(crate::chats::ChatsCommand::Focus));
         } else {
             self.focus_input(window, cx);
         }
         cx.notify();
+    }
+
+    /// Tells the session whether the window shows the chats sidebar, so
+    /// `focus.next` goes through it.
+    pub fn set_chats_shown(&mut self, shown: bool) {
+        self.chats_shown = shown;
+    }
+
+    /// `app.quit` and `/quit`. While a turn runs the first ask only warns;
+    /// a second one within [`QUIT_CONFIRM`] quits.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let confirmed = self
+            .quit_asked_at
+            .is_some_and(|at| now.saturating_duration_since(at) < QUIT_CONFIRM);
+        if self.running.is_some() && !confirmed {
+            self.quit_asked_at = Some(now);
+            let keys = crate::help::action_keys(self.input.read(cx).keymap(), QUIT_ACTION)
+                .unwrap_or_else(|| "/quit".to_owned());
+            let message = format!(
+                "a turn is running; {keys} again within {} s quits anyway",
+                QUIT_CONFIRM.as_secs()
+            );
+            self.notice(NoticeLevel::Warning, message, cx);
+            return;
+        }
+        self.quit_asked_at = None;
+        window.dispatch_action(Box::new(crate::app::Quit), cx);
+    }
+
+    /// Whether the session waits for a second quit.
+    pub fn quit_pending(&self) -> bool {
+        self.quit_asked_at.is_some()
     }
 
     /// The timeline view (replaced by `/clear`).
@@ -1200,6 +1446,13 @@ impl Session {
                 status.apply(event, cx);
             }
         });
+        let mode = events.iter().rev().find_map(|event| match event {
+            DomainEvent::ModeChanged { mode } => Some(*mode),
+            _ => None,
+        });
+        if let Some((mode, view)) = mode.zip(self.permissions_view(cx)) {
+            view.update(cx, |view, cx| view.set_mode(mode, cx));
+        }
         self.activity.update(cx, |activity, cx| {
             for event in &events {
                 activity.apply(event, cx);
@@ -1446,7 +1699,7 @@ impl Session {
         };
         let arg = arg.trim();
         match name {
-            "q" | "quit" | "qa" => cx.quit(),
+            "q" | "quit" | "qa" => self.quit(window, cx),
             "model" => match arg
                 .split_once(' ')
                 .map_or((arg, ""), |(a, b)| (a, b.trim()))
@@ -1482,6 +1735,7 @@ impl Session {
             "login" => self.open_login(arg, window, cx),
             "logout" => self.logout(arg, window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
+            "permissions" => self.open_permissions(window, cx),
             "modal" if arg == "close" => {
                 let closed = self
                     .modal
@@ -1496,7 +1750,12 @@ impl Session {
                 cx,
             ),
             _ => {
-                if let Some(reply) = self.controller.run_command(name, arg) {
+                if crate::picker::PickerMode::for_action(&Action::Builtin(name.to_owned()))
+                    .is_some()
+                {
+                    // `/picker.files` from the palette.
+                    self.action(&Action::Builtin(name.to_owned()), window, cx);
+                } else if let Some(reply) = self.controller.run_command(name, arg) {
                     self.commands.push(name.to_owned());
                     self.sync_activity(cx);
                     let name = name.to_owned();
@@ -1816,6 +2075,32 @@ impl Session {
             FOCUS_NEXT_ACTION => self.focus_next(window, cx),
             MODEL_ACTION => self.open_model_popup(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
+            PERMISSIONS_ACTION => self.open_permissions(window, cx),
+            QUIT_ACTION => self.quit(window, cx),
+            FULLSCREEN_ACTION => window.toggle_fullscreen(),
+            THEME_ACTION => self.open_theme_popup(window, cx),
+            MODE_ACTION => self.open_mode_popup(window, cx),
+            PROJECT_ACTION => self.switch_project(window, cx),
+            OUTLINE_ACTION => self
+                .timeline
+                .update(cx, |timeline, cx| timeline.toggle_outline(window, cx)),
+            FOCUS_WIDGET_ACTION => {
+                let focused = self
+                    .timeline
+                    .update(cx, |timeline, cx| timeline.focus_widget(window, cx));
+                if !focused {
+                    self.notice(
+                        NoticeLevel::Info,
+                        "the selected block has no keys of its own",
+                        cx,
+                    );
+                }
+            }
+            name if crate::chats::ChatsCommand::for_action(name).is_some() => {
+                if let Some(command) = crate::chats::ChatsCommand::for_action(name) {
+                    cx.emit(SessionEvent::Chats(command));
+                }
+            }
             _ => self.notice(
                 NoticeLevel::Info,
                 format!("the action {action:?} does nothing yet"),
@@ -1876,11 +2161,78 @@ impl Session {
         window.focus(&focus, cx);
     }
 
+    /// Opens the `/permissions` modal once the controller listed the
+    /// rules.
+    pub fn open_permissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rules = self.controller.permission_rules();
+        cx.spawn_in(window, async move |this, cx| {
+            let listing = rules.await;
+            this.update_in(cx, |this, window, cx| {
+                this.show_permissions(listing, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_permissions(
+        &mut self,
+        listing: RuleListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keys = crate::help::action_keys(self.input.read(cx).keymap(), PERMISSION_ACTION);
+        let controller = Arc::clone(&self.controller);
+        let view = cx.new(|cx| PermissionsView::new(controller, listing, keys, window, cx));
+        let cycle = cx.subscribe(&view, |this, view, event: &PermissionsEvent, cx| {
+            let PermissionsEvent::CycleMode = event;
+            this.cycle_permission_mode(cx);
+            let mode = this.controller.permission_mode();
+            view.update(cx, |view, cx| view.set_mode(mode, cx));
+        });
+        self.permissions_events = Some(cycle);
+        let focus = view.focus_handle(cx);
+        let spec = ModalSpec {
+            id: permissions_modal_id(),
+            plugin: "crest".into(),
+            title: "Permissions".into(),
+            width: Percent::new(70.0).unwrap_or(Percent::FULL),
+            height: Percent::new(80.0).unwrap_or(Percent::FULL),
+            position: ModalPosition::CENTER,
+            content: CustomNode::Text {
+                text: String::new(),
+            },
+        };
+        self.modal.update(cx, |modal, cx| {
+            modal.open_view(spec, view.into(), window, cx)
+        });
+        // Keys reach the list first; Esc still bubbles up to the host.
+        window.focus(&focus, cx);
+    }
+
+    /// The `/permissions` modal's view, while it is open.
+    pub fn permissions_view(&self, cx: &App) -> Option<Entity<PermissionsView>> {
+        self.modal
+            .read(cx)
+            .view(&permissions_modal_id())
+            .and_then(|view| view.clone().downcast::<PermissionsView>().ok())
+    }
+
     /// Puts `/model ` in the prompt, whose popup lists the models (the
     /// input asks for them with [`InputEvent::ModelsWanted`]).
     pub fn open_model_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| {
             input.set_text("/model ", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Puts `/mode ` in the prompt, whose palette lists the permission
+    /// modes.
+    pub fn open_mode_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| {
+            input.set_text("/mode ", window, cx);
             input.focus(window, cx);
         });
         cx.notify();
@@ -1987,6 +2339,19 @@ impl Session {
     }
 }
 
+/// The palette rows `/mode ` lists: one per permission mode.
+fn mode_rows() -> Vec<crate::help::CommandRow> {
+    PermissionMode::ALL
+        .iter()
+        .map(|mode| crate::help::CommandRow {
+            name: format!("mode {mode}"),
+            usage: format!("/mode {mode}"),
+            description: format!("Set the permission mode to {mode}"),
+            source: crate::help::BUILTIN_SOURCE.into(),
+        })
+        .collect()
+}
+
 /// The aliases whose model is in `catalog` (an alias of a provider without
 /// a key is no choice), then the catalog.
 fn with_aliases(aliases: Vec<ModelChoice>, catalog: Vec<ModelChoice>) -> Vec<ModelChoice> {
@@ -2018,9 +2383,12 @@ mod tests {
     use application::ports::form::FormPort;
     use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+    use application::testing::permissions::MemoryPermissionStore;
     use application::testing::system::{RecordingSink, RecordingTelemetry};
     use application::tools::files::{FileToolPorts, register_file_tools};
     use application::tools::registry::ToolRegistry;
+    use application::usecases::approval::SharedPermissions;
+    use application::usecases::permissions::ProjectRules;
     use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
     use domain::block::ToolStatus;
     use domain::conversation::ContentPart;
@@ -2097,6 +2465,52 @@ mod tests {
                 .collect()
         }
 
+        fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::load_rules(
+                    service.permissions(),
+                    service.project_rules(),
+                )
+                .await
+            }
+            .boxed()
+        }
+
+        fn remove_permission_rule(
+            &self,
+            rule: PermissionRule,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::remove_rule(
+                    service.permissions(),
+                    service.project_rules(),
+                    &rule,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            }
+            .boxed()
+        }
+
+        fn promote_permission_rule(
+            &self,
+            rule: PermissionRule,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::promote_rule(
+                    service.permissions(),
+                    service.project_rules(),
+                    &rule,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            }
+            .boxed()
+        }
+
         /// Two OpenCode models, besides the aliases.
         fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
             let models = ["opencode-go:glm-5.3", "opencode-go:kimi-k3"]
@@ -2165,13 +2579,16 @@ mod tests {
             futures::future::ready(reply).boxed()
         }
 
-        /// Only `sk-ant-good` is accepted.
+        /// Only `sk-ant-good` is accepted; `sk-ant-slow` never answers.
         fn login(
             &self,
             _account: Account,
             key: String,
         ) -> BoxFuture<'static, Result<String, String>> {
             self.logins.lock().unwrap().push(key.clone());
+            if key == "sk-ant-slow" {
+                return futures::future::pending().boxed();
+            }
             let result = if key == "sk-ant-good" {
                 Ok("stored".to_owned())
             } else {
@@ -2213,6 +2630,10 @@ mod tests {
 
     struct Harness {
         session: Entity<Session>,
+        /// The agent's policy.
+        permissions: SharedPermissions,
+        /// Holds the project's `permissions.local.toml` (workspace `/ws`).
+        rules_file: Arc<MemoryPermissionStore>,
         llm: Arc<ScriptedLlm>,
         sink: Arc<RecordingSink>,
         logins: Arc<Mutex<Vec<String>>>,
@@ -2263,6 +2684,33 @@ mod tests {
         register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
         cx: &mut TestAppContext,
     ) -> (Harness, &mut VisualTestContext) {
+        harness_parts(script, conversation, history, register, |_| {}, cx)
+    }
+
+    /// A harness whose session runs `keymap` (no `<leader>x` callback).
+    fn harness_keymap(
+        keymap: Keymap<Action>,
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
+        harness_parts(
+            Vec::new(),
+            Conversation::new("/ws", 0),
+            Vec::new(),
+            |_, _| {},
+            move |parts| parts.keymap = keymap,
+            cx,
+        )
+    }
+
+    /// [`harness_resuming`], with `tweak` changing the parts last.
+    fn harness_parts(
+        script: Vec<ScriptedResponse>,
+        conversation: Conversation,
+        history: Vec<Block>,
+        register: impl FnOnce(&mut ToolRegistry, Arc<dyn FormPort>),
+        tweak: impl FnOnce(&mut SessionParts),
+        cx: &mut TestAppContext,
+    ) -> (Harness, &mut VisualTestContext) {
         cx.executor().allow_parking();
         cx.update(gpui_component::init);
         let fs =
@@ -2296,6 +2744,9 @@ mod tests {
             ModelPolicy::default(),
             Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask))),
         );
+        let rules_file = Arc::new(MemoryPermissionStore::new());
+        let service = service.with_project_rules(ProjectRules::new(rules_file.clone(), "/ws"));
+        let permissions = Arc::clone(service.permissions());
         let logins = Arc::new(Mutex::new(Vec::new()));
         let resume_pending = !conversation.pending_tool_uses().is_empty();
         let controller = Arc::new(AgentController {
@@ -2304,11 +2755,13 @@ mod tests {
             events: sink.clone(),
             logins: Arc::clone(&logins),
         });
-        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
+        parts.fs = Some(fs);
         parts.forms = Some(forms);
         parts.resume_pending = resume_pending;
         parts.keymap.set("<leader>x", Action::Callback(7)).unwrap();
         parts.history = history;
+        tweak(&mut parts);
         let slot = Rc::new(RefCell::new(None));
         let out = slot.clone();
         let (_host, cx) = cx.add_window_view(move |window, cx| {
@@ -2329,6 +2782,8 @@ mod tests {
         (
             Harness {
                 session,
+                permissions,
+                rules_file,
                 llm,
                 sink,
                 logins,
@@ -2463,6 +2918,50 @@ mod tests {
         send("/login openai", cx);
         cx.run_until_parked();
         assert!(!login.read_with(cx, |l, _| l.is_open()), "unknown account");
+    }
+
+    #[gpui::test]
+    fn a_login_check_can_be_cancelled_and_times_out(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        send("/login", cx);
+        cx.run_until_parked();
+        let login = login_view(&h, cx);
+        login.update_in(cx, |l, window, cx| {
+            l.set_key("sk-ant-slow", window, cx);
+            l.submit(cx);
+        });
+        cx.run_until_parked();
+        assert!(login.read_with(cx, |l, _| l.is_busy()));
+        cx.simulate_keystrokes("escape");
+        assert!(
+            !login.read_with(cx, |l, _| l.is_open()),
+            "Esc cancels the check"
+        );
+        h.session.read_with(cx, |s, _| {
+            assert!(s.login_check.is_none(), "the check is dropped")
+        });
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "back in the prompt");
+        });
+
+        // The Cancel button works as well, and an unanswered check times out.
+        send("/login", cx);
+        cx.run_until_parked();
+        login.update_in(cx, |l, window, cx| {
+            l.set_key("sk-ant-slow", window, cx);
+            l.submit(cx);
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(LOGIN_TIMEOUT);
+        cx.run_until_parked();
+        login.read_with(cx, |l, _| {
+            assert!(l.is_open() && !l.is_busy());
+            assert!(l.error().is_some_and(|e| e.contains("did not answer")));
+        });
+        let cancel = cx.debug_bounds("login-cancel").expect("Cancel drawn");
+        cx.simulate_click(cancel.center(), gpui::Modifiers::none());
+        assert!(!login.read_with(cx, |l, _| l.is_open()), "Cancel closes it");
     }
 
     #[gpui::test]
@@ -2818,6 +3317,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn leader_u_takes_the_queued_prompt_back_and_leader_ctrl_c_interrupts(cx: &mut TestAppContext) {
+        let script = vec![
+            ScriptedResponse::text("uno").hang_after(2),
+            ScriptedResponse::text("dos"),
+        ];
+        let (h, cx) = harness(script, cx);
+        send("primero", cx);
+        let llm = h.llm.clone();
+        wait_until(&h, cx, "the first turn to reach the model", move |_, _| {
+            llm.remaining() == 1
+        });
+        send("segundo", cx);
+        h.session.read_with(cx, |s, _| assert_eq!(s.queued(), 1));
+        cx.simulate_keystrokes("ctrl-g u");
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.queued(), 0);
+            assert_eq!(s.input().read(cx).text(cx), "segundo");
+        });
+        cx.simulate_keystrokes("ctrl-g ctrl-c");
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(s.input().read(cx).text(cx), "segundo")
+        });
+    }
+
+    #[gpui::test]
     fn leader_p_cycles_the_permission_mode(cx: &mut TestAppContext) {
         let (h, cx) = harness(Vec::new(), cx);
         cx.simulate_keystrokes("ctrl-g p");
@@ -3159,13 +3684,13 @@ mod tests {
         let view = help_view(&h, cx).expect("F1 opens the help");
         cx.simulate_keystrokes("/");
         cx.update(|window, cx| assert!(view.read(cx).is_searching(window, cx)));
-        cx.simulate_input("picker");
+        cx.simulate_input("block.toggle");
         cx.run_until_parked();
         view.read_with(cx, |v, cx| {
-            assert_eq!(v.query(cx), "picker");
+            assert_eq!(v.query(cx), "block.toggle");
             let f = v.filtered();
             assert_eq!(f.commands.len(), 0);
-            assert_eq!(f.keys.len(), 2, "picker.files and picker.grep");
+            assert_eq!(f.keys.len(), 2, "block.toggle and block.toggle_view");
             // The search moved to the section with matches.
             assert_eq!(v.section(), Section::Keys);
         });
@@ -3231,6 +3756,221 @@ mod tests {
     }
 
     #[gpui::test]
+    fn esc_closes_the_outline_before_focusing_the_prompt(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        timeline.update_in(cx, |t, window, cx| t.toggle_outline(window, cx));
+        cx.run_until_parked();
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        assert!(timeline.read_with(cx, |t, _| t.outline_open()));
+        assert!(!in_input(cx), "the open menu takes the focus");
+        cx.simulate_keystrokes("escape");
+        assert!(
+            !timeline.read_with(cx, |t, _| t.outline_open()),
+            "Esc closes the menu"
+        );
+        assert!(!in_input(cx), "the first Esc only closes the menu");
+        cx.simulate_keystrokes("escape");
+        assert!(in_input(cx), "a second Esc goes back to the prompt");
+    }
+
+    #[gpui::test]
+    fn a_focused_block_widget_gets_esc_and_its_keys(cx: &mut TestAppContext) {
+        use domain::devops::flame::{FlameTree, ProfileFormat};
+        let mut tree = FlameTree::new();
+        tree.add(["main", "parse"], 30);
+        tree.add(["idle"], 10);
+        let spec = tree.finish(ProfileFormat::Folded, "samples");
+        let block = Block::new(BlockKind::FlameGraph(Box::new(spec.clone())));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.run_until_parked();
+        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        flame.update_in(cx, |f, window, cx| {
+            f.zoom_to(1, cx);
+            window.focus(&f.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        let prompt = |cx: &mut VisualTestContext| {
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
+        };
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        cx.simulate_keystrokes("escape");
+        assert_eq!(flame.read_with(cx, |f, _| f.zoom()), 0, "Esc zooms out");
+        assert!(!in_input(cx), "the widget took the Esc");
+        // A key the widget does not take still lands in the prompt.
+        cx.simulate_keystrokes("x");
+        assert_eq!(prompt(cx), "x");
+        assert!(in_input(cx));
+    }
+
+    #[gpui::test]
+    fn a_focused_list_widget_gets_the_arrows_and_enter(cx: &mut TestAppContext) {
+        use domain::devops::logs::{LogFormat, LogSpec};
+        let list: domain::widget::list::ListSpec = serde_json::from_value(serde_json::json!({
+            "items": [
+                { "text": "one", "fields": { "k": "v" } },
+                { "text": "two", "fields": { "k": "v" } },
+                { "text": "three" },
+            ]
+        }))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let spec = LogSpec {
+            path: None,
+            format: LogFormat::Json,
+            total_lines: 3,
+            truncated: false,
+            list: list.clone(),
+            histogram: None,
+        };
+        let block = Block::new(BlockKind::Logs(Box::new(spec)));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let list = cx.update(|window, cx| {
+            crate::widgets::list::view(crate::blocks::custom::node_id(id, 0), &list, window, cx)
+        });
+        list.update_in(cx, |l, window, cx| {
+            window.focus(&l.focus_handle().clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down down enter");
+        list.read_with(cx, |l, _| {
+            assert_eq!(l.selected(), Some(1), "the arrows reach the list");
+            assert!(l.is_open(1), "and so does Enter");
+        });
+        h.session.read_with(cx, |s, cx| {
+            assert_eq!(
+                s.input().read(cx).text(cx),
+                "",
+                "nothing reached the prompt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn the_picker_closes_by_shortcut_click_outside_and_esc(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let mode =
+            |cx: &mut VisualTestContext| h.session.read_with(cx, |s, cx| s.picker.read(cx).mode());
+        let in_input = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = h.session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        // The shortcut toggles it; the other one switches the mode.
+        cx.simulate_keystrokes("ctrl-g f f");
+        assert_eq!(mode(cx), Some(crate::picker::PickerMode::Files));
+        cx.simulate_keystrokes("ctrl-g f g");
+        assert_eq!(mode(cx), Some(crate::picker::PickerMode::Grep));
+        cx.simulate_keystrokes("ctrl-g f g");
+        assert_eq!(mode(cx), None, "the same shortcut closes it");
+        assert!(in_input(cx));
+        assert_eq!(
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx)),
+            "",
+            "the keys after the leader are not typed"
+        );
+        // A click on the backdrop closes it.
+        cx.simulate_keystrokes("ctrl-g f f");
+        cx.run_until_parked();
+        let backdrop = cx.debug_bounds("picker-backdrop").expect("backdrop drawn");
+        let corner = backdrop.origin + gpui::point(gpui::px(4.), gpui::px(4.));
+        cx.simulate_click(corner, gpui::Modifiers::none());
+        assert_eq!(mode(cx), None, "a click outside closes it");
+        // So does its close button.
+        cx.simulate_keystrokes("ctrl-g f f");
+        cx.run_until_parked();
+        let close = cx.debug_bounds("picker-close").expect("close drawn");
+        cx.simulate_click(close.center(), gpui::Modifiers::none());
+        assert_eq!(mode(cx), None, "the close button closes it");
+        // Esc closes it with the focus outside its input.
+        cx.simulate_keystrokes("ctrl-g f f");
+        h.session.update_in(cx, |s, window, cx| {
+            window.focus(&s.timeline().focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("escape");
+        assert_eq!(mode(cx), None, "Esc closes it from anywhere");
+    }
+
+    #[gpui::test]
+    fn the_palette_opens_the_pickers_and_their_alt_keys_reach_them(cx: &mut TestAppContext) {
+        use crate::picker::PickerMode;
+        let (h, cx) = harness(Vec::new(), cx);
+        let picker = h.session.read_with(cx, |s, _| s.picker.clone());
+        // The `/` palette lists them with their keys.
+        cx.simulate_input("/picker");
+        cx.run_until_parked();
+        h.session.read_with(cx, |s, cx| {
+            let rows = s.input().read(cx).palette(cx);
+            let files = rows
+                .iter()
+                .find(|row| row.name == "picker.files")
+                .expect("listed");
+            assert!(
+                files.description.ends_with("(Ctrl+G ff)"),
+                "{}",
+                files.description
+            );
+        });
+        // Running it from the palette opens the picker.
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            picker.read_with(cx, |p, _| p.mode()),
+            Some(PickerMode::Files)
+        );
+        h.session
+            .update_in(cx, |s, window, cx| s.command("picker.grep", window, cx));
+        assert_eq!(
+            picker.read_with(cx, |p, _| p.mode()),
+            Some(PickerMode::Grep)
+        );
+        // `Alt+…` flips the options without going to the keymap or being typed.
+        cx.simulate_keystrokes("alt-c alt-w alt-p");
+        picker.read_with(cx, |p, cx| {
+            assert!(p.options().match_case && p.options().whole_word);
+            assert!(!p.options().regex);
+            assert!(!p.preview_enabled());
+            assert_eq!(p.query(cx), "");
+        });
+        assert_eq!(
+            h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx)),
+            ""
+        );
+        // A match is previewed from the file, through the file system.
+        cx.simulate_keystrokes("alt-p");
+        cx.simulate_input("add");
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::picker::SEARCH_DEBOUNCE);
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(crate::picker::preview::PREVIEW_DEBOUNCE);
+        cx.run_until_parked();
+        picker.read_with(cx, |p, _| {
+            let preview = p.preview().expect("previewed");
+            assert_eq!(preview.path.as_str(), "src/lib.rs");
+            assert_eq!(preview.lines, ["pub fn add() {}"]);
+            assert!(!preview.loading);
+            assert_eq!(preview.match_index(), Some(0));
+        });
+    }
+
+    #[gpui::test]
     fn vim_keys_move_in_the_focused_timeline(cx: &mut TestAppContext) {
         let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
         send("hola", cx);
@@ -3289,6 +4029,34 @@ mod tests {
             let names: Vec<_> = input.palette(cx).iter().map(|r| r.name.clone()).collect();
             assert_eq!(names, ["model", "mode", "modal"]);
         });
+    }
+
+    #[gpui::test]
+    fn the_palette_hides_on_blur_and_on_a_click_outside(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        // Focus events are only sent to the active window.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        let shown = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| !s.input().read(cx).palette(cx).is_empty())
+        };
+        cx.simulate_input("/mo");
+        assert!(shown(cx));
+        h.session.update_in(cx, |s, window, cx| {
+            window.focus(&s.timeline().focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        assert!(!shown(cx), "the prompt lost the focus");
+        cx.simulate_keystrokes("escape");
+        cx.simulate_input("d");
+        assert!(shown(cx), "typing shows it again");
+        // A click on the timeline.
+        cx.simulate_click(
+            gpui::point(gpui::px(20.), gpui::px(20.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(!shown(cx), "a click outside hides it");
     }
 
     #[gpui::test]
@@ -3400,5 +4168,556 @@ mod tests {
             &content[1],
             ContentPart::Image { media_type, .. } if media_type == "image/png"
         ));
+    }
+
+    fn prompt_of(h: &Harness, cx: &mut VisualTestContext) -> String {
+        h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
+    }
+
+    #[gpui::test]
+    fn the_leader_opens_the_theme_mode_and_outline_pickers(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno")], cx);
+        send("hola", cx);
+        wait_until(&h, cx, "the turn", |s, _| !s.is_running());
+        cx.simulate_keystrokes("ctrl-g shift-t");
+        assert_eq!(prompt_of(&h, cx), "/theme ");
+        cx.simulate_keystrokes("escape");
+        h.session.update_in(cx, |s, window, cx| {
+            s.input()
+                .update(cx, |input, cx| input.set_text("", window, cx));
+        });
+        cx.simulate_keystrokes("ctrl-g shift-p");
+        assert_eq!(prompt_of(&h, cx), "/mode ");
+        let rows: Vec<String> = h.session.read_with(cx, |s, cx| {
+            s.input()
+                .read(cx)
+                .palette(cx)
+                .iter()
+                .map(|row| row.name.clone())
+                .collect()
+        });
+        assert_eq!(rows, ["mode ask", "mode auto-edit", "mode plan"]);
+        // Enter on the chosen row sets that mode.
+        cx.simulate_keystrokes("down enter");
+        h.session.read_with(cx, |s, _| {
+            assert_eq!(s.controller.permission_mode(), PermissionMode::AutoEdit);
+        });
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        cx.simulate_keystrokes("ctrl-g shift-o");
+        assert!(timeline.read_with(cx, |t, _| t.outline_open()), "opened");
+        cx.simulate_keystrokes("ctrl-g shift-o");
+        assert!(!timeline.read_with(cx, |t, _| t.outline_open()), "closed");
+    }
+
+    #[gpui::test]
+    fn chat_keys_reach_the_window_and_focus_next_goes_through_the_chats(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let chats = |h: &Harness| -> Vec<crate::chats::ChatsCommand> {
+            h.reopens
+                .borrow()
+                .iter()
+                .filter_map(|event| match event {
+                    SessionEvent::Chats(command) => Some(*command),
+                    _ => None,
+                })
+                .collect()
+        };
+        // The harness maps `<leader>x` to a Lua function: chat.delete is
+        // left out here.
+        cx.simulate_keystrokes("ctrl-g c ctrl-g n ctrl-g b ctrl-g , ctrl-g s");
+        use crate::chats::ChatsCommand as C;
+        assert_eq!(
+            chats(&h),
+            [C::New, C::Next, C::Prev, C::Rename, C::TogglePanel]
+        );
+        // Without the sidebar the cycle skips it.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert_eq!(chats(&h).len(), 5);
+        h.session.update(cx, |s, _| s.set_chats_shown(true));
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert_eq!(chats(&h).last(), Some(&C::Focus), "the timeline hands over");
+    }
+
+    #[gpui::test]
+    fn quitting_during_a_turn_asks_twice(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let quits = Rc::new(std::cell::Cell::new(0));
+        let counter = quits.clone();
+        cx.update(|_, cx| {
+            cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1, "idle: quits at once");
+        // A turn that never ends by itself.
+        let (_tx, rx) = oneshot::channel::<()>();
+        h.session.update(cx, |s, cx| {
+            s.running = Some(CancelToken::new());
+            s.turn = Some(cx.spawn(async move |_, _| {
+                rx.await.ok();
+            }));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1, "the first ask only warns");
+        assert!(h.session.read_with(cx, |s, _| s.quit_pending()));
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 2, "the second quits");
+        // Over the help modal too.
+        cx.simulate_keystrokes("f1");
+        cx.run_until_parked();
+        h.session.update(cx, |s, _| s.running = None);
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 3);
+    }
+
+    #[gpui::test]
+    fn the_leader_enter_gives_the_keys_to_the_block_widget_and_esc_back(cx: &mut TestAppContext) {
+        use domain::devops::flame::{FlameTree, ProfileFormat};
+        let mut tree = FlameTree::new();
+        tree.add(["main", "parse"], 30);
+        let spec = tree.finish(ProfileFormat::Folded, "samples");
+        let block = Block::new(BlockKind::FlameGraph(Box::new(spec.clone())));
+        let id = block.id;
+        let (h, cx) = harness_with(Vec::new(), vec![block], cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let focused = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let s = h.session.read(cx);
+                (
+                    flame.read(cx).focus_handle(cx).is_focused(window),
+                    s.timeline().focus_handle(cx).is_focused(window),
+                    s.input().focus_handle(cx).contains_focused(window, cx),
+                )
+            })
+        };
+        cx.simulate_keystrokes("ctrl-g enter");
+        assert_eq!(focused(cx), (true, false, false), "the widget has the keys");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            focused(cx),
+            (false, true, false),
+            "Esc: back to the timeline"
+        );
+        cx.simulate_keystrokes("escape");
+        assert_eq!(focused(cx), (false, false, true), "then to the prompt");
+        // A block without keys of its own says so.
+        h.session.update(cx, |s, cx| {
+            s.dispatch(
+                DomainEvent::BlockAdded {
+                    block: Block::new(BlockKind::Markdown {
+                        title: None,
+                        source: "plain".into(),
+                    }),
+                },
+                cx,
+            );
+        });
+        cx.simulate_keystrokes("ctrl-tab end ctrl-g enter");
+        assert_eq!(focused(cx), (false, true, false), "the timeline keeps it");
+    }
+
+    #[test]
+    fn the_new_actions_have_descriptions_in_the_help() {
+        let rows = crate::help::key_rows(&default_keymap(), |_| None);
+        for action in [
+            "turn.interrupt",
+            "queue.edit",
+            "app.quit",
+            "window.fullscreen",
+            "chat.new",
+            "block.focus_widget",
+            "permissions.open",
+        ] {
+            let row = rows.iter().find(|r| r.action == action).unwrap();
+            assert_ne!(row.description, "unknown builtin action", "{action}");
+        }
+    }
+
+    fn permissions_view(
+        h: &Harness,
+        cx: &mut VisualTestContext,
+    ) -> Option<Entity<PermissionsView>> {
+        h.session.read_with(cx, |s, cx| s.permissions_view(cx))
+    }
+
+    fn rule_texts(view: &Entity<PermissionsView>, cx: &mut VisualTestContext) -> Vec<String> {
+        view.read_with(cx, |v, _| {
+            v.rows().iter().map(|row| row.text.clone()).collect()
+        })
+    }
+
+    fn rule(text: &str) -> PermissionRule {
+        text.parse().unwrap()
+    }
+
+    #[gpui::test]
+    fn leader_a_lists_the_rules_and_d_and_p_change_them(cx: &mut TestAppContext) {
+        use domain::permission::RuleScope;
+        use std::path::Path;
+
+        use crate::permissions::RuleGroup;
+
+        let (h, cx) = harness(Vec::new(), cx);
+        let ws = Path::new("/ws");
+        h.rules_file.set_text(
+            ws,
+            "allow = [\"edit_file(src/*)\"]\ndeny = [\"run_command(git push *)\"]\n",
+        );
+        {
+            let mut policy = h.permissions.lock().unwrap();
+            policy.remember(rule("run_command(cargo test *)"));
+            policy.remember(rule("ls"));
+            for kept in h.rules_file.rules(ws) {
+                policy.remember(kept);
+            }
+        }
+        cx.simulate_keystrokes("ctrl-g shift-a");
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("<leader>A opens /permissions");
+        assert_eq!(
+            rule_texts(&view, cx),
+            [
+                "run_command(cargo test *)",
+                "ls",
+                "edit_file(src/*)",
+                "run_command(git push *)"
+            ]
+        );
+        view.read_with(cx, |v, _| {
+            let groups: Vec<_> = v.rows().iter().map(|row| row.group).collect();
+            assert_eq!(
+                groups,
+                [
+                    RuleGroup::Session,
+                    RuleGroup::Session,
+                    RuleGroup::Project,
+                    RuleGroup::Deny
+                ]
+            );
+            assert_eq!(
+                v.listing().project_file.as_deref(),
+                Some(Path::new("/ws/.crest/permissions.local.toml"))
+            );
+            assert_eq!(v.mode(), PermissionMode::Ask);
+        });
+        cx.update(|window, cx| {
+            assert!(view.focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // `p` moves the selected session rule to the project file.
+        cx.simulate_keystrokes("p");
+        cx.run_until_parked();
+        let promoted = rule("run_command(cargo test *)").with_scope(RuleScope::Project);
+        assert!(h.rules_file.rules(ws).contains(&promoted));
+        assert!(h.permissions.lock().unwrap().rules.contains(&promoted));
+        assert_eq!(
+            rule_texts(&view, cx),
+            [
+                "ls",
+                "run_command(cargo test *)",
+                "edit_file(src/*)",
+                "run_command(git push *)"
+            ],
+            "it moved to the Project group, in its place in the policy"
+        );
+
+        // `d` removes a session rule at once.
+        cx.simulate_keystrokes("d");
+        cx.run_until_parked();
+        assert!(!h.permissions.lock().unwrap().rules.contains(&rule("ls")));
+        assert_eq!(rule_texts(&view, cx).len(), 3);
+
+        // A project rule asks first; another key keeps it.
+        cx.simulate_keystrokes("down d");
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |v, _| v.confirming().is_some()));
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |v, _| v.confirming().is_none()));
+        assert_eq!(h.rules_file.rules(ws).len(), 3);
+        // A second `d` deletes it from the file and the policy.
+        cx.simulate_keystrokes("d d");
+        cx.run_until_parked();
+        let edit = rule("edit_file(src/*)").with_scope(RuleScope::Project);
+        assert!(!h.rules_file.rules(ws).contains(&edit));
+        assert!(!h.permissions.lock().unwrap().rules.contains(&edit));
+        assert_eq!(
+            rule_texts(&view, cx),
+            ["run_command(cargo test *)", "run_command(git push *)"]
+        );
+        let status = view.read_with(cx, |v, _| v.status().map(str::to_owned));
+        assert_eq!(
+            status.as_deref(),
+            Some("removed `edit_file(src/*)` from the project file")
+        );
+
+        // The filter box.
+        cx.simulate_keystrokes("/");
+        cx.simulate_input("push");
+        cx.run_until_parked();
+        assert_eq!(rule_texts(&view, cx), ["run_command(git push *)"]);
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| assert!(!view.read(cx).is_filtering(window, cx)));
+
+        // `m` cycles the mode, for the status bar too.
+        cx.simulate_keystrokes("m");
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |v, _| v.mode()),
+            PermissionMode::AutoEdit
+        );
+        assert_eq!(
+            h.session
+                .read_with(cx, |s, _| s.controller.permission_mode()),
+            PermissionMode::AutoEdit
+        );
+
+        cx.simulate_keystrokes("escape");
+        assert!(permissions_view(&h, cx).is_none(), "Esc closes it");
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "the focus is back");
+        });
+    }
+
+    #[gpui::test]
+    fn the_permissions_selection_stays_in_view(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        {
+            let mut policy = h.permissions.lock().unwrap();
+            for n in 0..60 {
+                policy.remember(rule(&format!("run_command(tool{n} *)")));
+            }
+        }
+        h.session
+            .update_in(cx, |s, window, cx| s.command("permissions", window, cx));
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("open");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("end");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.selected(), 59);
+            assert!(crate::keyscroll::is_visible(v.scroll_handle(), 59));
+            assert!(!crate::keyscroll::is_visible(v.scroll_handle(), 0));
+        });
+    }
+
+    #[gpui::test]
+    fn slash_permissions_without_rules_says_how_to_add_one(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_input("/permissions");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("/permissions opens it");
+        assert!(rule_texts(&view, cx).is_empty());
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("permissions-empty").is_some());
+        // The mode line names the keys of permission.cycle.
+        assert!(cx.debug_bounds("permissions-mode").is_some());
+        // A file with problems is listed and not rewritten.
+        h.rules_file
+            .set_text(std::path::Path::new("/ws"), "allow = [\"bad(\"]\n");
+        cx.simulate_keystrokes("escape");
+        h.session
+            .update_in(cx, |s, window, cx| s.command("permissions", window, cx));
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("open again");
+        assert_eq!(view.read_with(cx, |v, _| v.listing().warnings.len()), 1);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("permissions-warnings").is_some());
+    }
+
+    #[gpui::test]
+    fn the_leader_shows_what_can_follow_until_a_key_esc_or_the_timeout(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        let which_key = |cx: &mut VisualTestContext| {
+            h.session
+                .read_with(cx, |s, cx| s.input().read(cx).which_key())
+        };
+        let drawn = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            cx.debug_bounds("which-key").is_some()
+        };
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        cx.simulate_keystrokes("ctrl-g");
+        let next = which_key(cx);
+        let what = |key: &str| {
+            next.iter()
+                .find(|n| n.key == key)
+                .map(|n| n.what.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(what("h"), "Open the help");
+        assert_eq!(what("f"), "+2 more", "ff and fg start with f");
+        assert_eq!(what("x"), "Lua function", "the harness maps <leader>x");
+        assert!(drawn(cx), "the popup shows");
+        // The next key of a longer mapping narrows it down.
+        cx.simulate_keystrokes("f");
+        let next = which_key(cx);
+        let keys: Vec<&str> = next.iter().map(|n| n.key.as_str()).collect();
+        assert_eq!(keys, ["f", "g"]);
+        // Esc settles the prefix: the popup goes.
+        cx.simulate_keystrokes("escape");
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        // So does a pause.
+        cx.simulate_keystrokes("ctrl-g");
+        assert!(drawn(cx));
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        cx.run_until_parked();
+        assert!(which_key(cx).is_empty());
+        assert!(!drawn(cx));
+        // And a key that completes a mapping.
+        cx.simulate_keystrokes("ctrl-g p");
+        assert!(which_key(cx).is_empty());
+    }
+
+    #[gpui::test]
+    fn the_help_keys_filter_and_copy_a_remap_snippet(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_keystrokes("f1");
+        cx.run_until_parked();
+        let view = help_view(&h, cx).expect("the help is open");
+        cx.simulate_keystrokes("2 /");
+        cx.simulate_input("picker.grep");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.section(), Section::Keys);
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].tags, ["picker.grep", "default"]);
+        });
+        cx.simulate_keystrokes("c");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
+        assert!(
+            copied.contains("app.keymap.set(\"<leader>fg\", \"picker.grep\")"),
+            "{copied}"
+        );
+        assert!(
+            copied.contains("[[bind]]\nkeys = \"<leader>fg\"\naction = \"picker.grep\""),
+            "{copied}"
+        );
+        view.read_with(cx, |v, _| {
+            assert!(v.status().is_some_and(|s| s.contains("remap snippet")));
+        });
+        // The source is searchable; a mapping of the config says so.
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("plugin x", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            assert!(v.rows().is_empty(), "the harness maps no plugin keys");
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("global lua", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].primary, "<C-g>x");
+        });
+        // A fixed key of a panel has no snippet.
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("before".into()));
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| v.set_query("Expand the row", window, cx));
+        });
+        view.read_with(cx, |v, _| {
+            let rows = v.rows();
+            assert_eq!(rows.len(), 1, "{rows:?}");
+            assert_eq!(rows[0].tags, ["Help", "fixed"]);
+        });
+        cx.simulate_keystrokes("c");
+        let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(clipboard.as_deref(), Some("before"));
+        view.read_with(cx, |v, _| {
+            assert!(v.status().is_some_and(|s| s.contains("cannot be remapped")));
+        });
+    }
+
+    #[gpui::test]
+    fn ctrl_c_in_the_picker_copies_its_selection_without_interrupting(cx: &mut TestAppContext) {
+        let (h, cx) = harness(vec![ScriptedResponse::text("uno").hang_after(2)], cx);
+        send("primero", cx);
+        let llm = h.llm.clone();
+        wait_until(&h, cx, "the turn to reach the model", move |_, _| {
+            llm.remaining() == 0
+        });
+        assert!(h.session.read_with(cx, |s, _| s.is_running()));
+        cx.simulate_keystrokes("ctrl-g f f");
+        let picker = h.session.read_with(cx, |s, _| s.picker.clone());
+        assert!(picker.read_with(cx, |p, _| p.is_open()));
+        cx.simulate_input("abc");
+        cx.simulate_keystrokes("shift-left shift-left");
+        assert_eq!(
+            picker.read_with(cx, |p, cx| p.selected_text(cx)).as_deref(),
+            Some("bc")
+        );
+        cx.simulate_keystrokes("ctrl-c");
+        cx.run_until_parked();
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some("bc"));
+        assert!(
+            h.session.read_with(cx, |s, _| s.is_running()),
+            "copying does not interrupt the turn"
+        );
+        assert!(picker.read_with(cx, |p, _| p.is_open()));
+        // Without a selection, Ctrl+C interrupts as before.
+        cx.simulate_keystrokes("right ctrl-c");
+        wait_until(&h, cx, "the interrupted turn", |s, _| !s.is_running());
+    }
+
+    #[gpui::test]
+    fn the_welcome_screen_names_the_keys_of_the_keymap(cx: &mut TestAppContext) {
+        use application::keymap::Platform;
+        use application::keymap::layers::build_keymap;
+        use application::ports::plugin::{KeyAction, KeymapSpec};
+        let unbind = |lhs: &str| KeymapSpec {
+            lhs: lhs.into(),
+            action: KeyAction::Unmap,
+            description: None,
+            plugin: "config".into(),
+        };
+        let specs = [
+            unbind("<C-Tab>"),
+            KeymapSpec {
+                lhs: "<F8>".into(),
+                action: KeyAction::Builtin("focus.next".into()),
+                description: None,
+                plugin: "config".into(),
+            },
+            unbind("<leader>m"),
+        ];
+        let (keymap, warnings) = build_keymap(&specs, Some("<C-Space>"), Platform::current());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (h, cx) = harness_keymap(keymap, cx);
+        let welcome = h
+            .session
+            .read_with(cx, |s, cx| s.timeline().read(cx).welcome_keys().to_vec());
+        let row = |keys: &str| {
+            welcome
+                .iter()
+                .find(|(k, _)| k == keys)
+                .map(|(_, what)| what.clone())
+        };
+        let shortcuts = row("Ctrl+Space").expect("the leader row");
+        assert_eq!(
+            shortcuts, "shortcuts: e tree · ff files · fg grep · j/k blocks · h help",
+            "no model: its key was removed"
+        );
+        assert!(row("Ctrl+G").is_none(), "{welcome:?}");
+        assert!(row("Ctrl+Tab").is_none(), "{welcome:?}");
+        assert!(row("F8").is_some_and(|what| what.starts_with("move the focus")));
+        assert!(row("Ctrl+Shift+C").is_some(), "{welcome:?}");
     }
 }

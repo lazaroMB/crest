@@ -129,6 +129,11 @@ pub struct FormView {
     errors: BTreeMap<String, String>,
     /// Why the tool asked again.
     error: Option<String>,
+    /// The fields as they were when the form started waiting, to tell
+    /// whether the user typed or chose something.
+    initial: Vec<Result<Option<Value>, String>>,
+    /// `Esc` was pressed with answers in the fields: the next one cancels.
+    confirm_cancel: bool,
     focus_handle: FocusHandle,
     restore_focus: Option<FocusHandle>,
     _subscriptions: Vec<Subscription>,
@@ -249,6 +254,8 @@ impl FormView {
             sent: false,
             errors: BTreeMap::new(),
             error: None,
+            initial: Vec::new(),
+            confirm_cancel: false,
             focus_handle: cx.focus_handle(),
             restore_focus: None,
             _subscriptions: subscriptions,
@@ -396,6 +403,8 @@ impl FormView {
             })
             .ok();
         });
+        self.initial = self.field_values(cx);
+        self.confirm_cancel = false;
         self.waiting = Some(Waiting {
             pending,
             _cancel: cancel,
@@ -449,6 +458,37 @@ impl FormView {
     /// The problems shown under the fields, by field name.
     pub fn errors(&self) -> &BTreeMap<String, String> {
         &self.errors
+    }
+
+    /// What every field reads, in order.
+    fn field_values(&self, cx: &App) -> Vec<Result<Option<Value>, String>> {
+        self.spec
+            .fields
+            .iter()
+            .zip(&self.inputs)
+            .map(|(field, input)| read_field(field, input, cx))
+            .collect()
+    }
+
+    /// Whether a field changed since the form started waiting.
+    pub fn has_input(&self, cx: &App) -> bool {
+        self.field_values(cx) != self.initial
+    }
+
+    /// Whether the next `Esc` discards the answers typed.
+    pub fn confirming_cancel(&self) -> bool {
+        self.confirm_cancel
+    }
+
+    /// `Esc`: cancels, but with answers in the fields only on the second
+    /// press, so a stray `Esc` does not throw them away.
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.confirm_cancel || !self.has_input(cx) {
+            self.cancel(window, cx);
+        } else {
+            self.confirm_cancel = true;
+            cx.notify();
+        }
     }
 
     /// The value of every field the user filled, or the problems by field.
@@ -551,6 +591,10 @@ impl FormView {
         if m.control || m.alt || m.platform {
             return;
         }
+        if event.keystroke.key != "escape" && self.confirm_cancel {
+            self.confirm_cancel = false;
+            cx.notify();
+        }
         match event.keystroke.key.as_str() {
             "tab" => {
                 if m.shift {
@@ -564,7 +608,7 @@ impl FormView {
                 }
             }
             "enter" if !m.shift => self.submit(window, cx),
-            "escape" => self.cancel(window, cx),
+            "escape" => self.escape(window, cx),
             // The timeline would move its selection.
             "up" | "down" | "home" | "end" | "pageup" | "pagedown" | "enter" => {}
             _ => return,
@@ -776,8 +820,16 @@ impl FormView {
                 Some("Not waiting for an answer".to_owned()),
                 theme.muted_foreground,
             )
+        } else if self.confirm_cancel {
+            (
+                Some("Esc again discards your answers; Enter submits".to_owned()),
+                theme.danger,
+            )
         } else if missing.is_empty() {
-            (None, theme.muted_foreground)
+            (
+                Some("Enter submits · Esc cancels".to_owned()),
+                theme.muted_foreground,
+            )
         } else {
             (
                 Some(format!("Required: {}", missing.join(", "))),

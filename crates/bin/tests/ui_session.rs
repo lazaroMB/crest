@@ -4,7 +4,7 @@
 //! session is saved; `Ctrl+C` interrupts a hanging model.
 
 // Helpers outside #[test] functions unwrap too: a failure is a test failure.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -61,12 +61,30 @@ fn open_with<'a>(
     init: Option<&str>,
     cx: &'a mut TestAppContext,
 ) -> (Window_, &'a mut VisualTestContext) {
+    open_with_files(script, init, &[], cx)
+}
+
+/// [`open_with`], with `files` (path in the workspace, text) written
+/// before the window opens.
+fn open_with_files<'a>(
+    script: Vec<ScriptedResponse>,
+    init: Option<&str>,
+    files: &[(&str, &str)],
+    cx: &'a mut TestAppContext,
+) -> (Window_, &'a mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(gpui_component::init);
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("ws");
     std::fs::create_dir_all(workspace.join("src")).unwrap();
     std::fs::write(workspace.join("src/lib.rs"), LIB).unwrap();
+    for (path, text) in files {
+        let path = workspace.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, text).unwrap();
+    }
     let db = dir.path().join("sessions.db");
     let mut sources = ConfigSources::default();
     if let Some(init) = init {
@@ -97,6 +115,11 @@ fn open_with<'a>(
         .build()
         .unwrap();
     let parts = session_parts(&config, overrides, runtime.handle()).unwrap();
+    // The pickers' preview reads through the app's file system, on the
+    // runtime, from any executor.
+    let fs = parts.fs.clone().expect("the previews have a file system");
+    let root = domain::workspace::WorkspacePath::root();
+    assert_eq!(futures::executor::block_on(fs.exists(&root)), Ok(true));
     let slot = Rc::new(RefCell::new(None));
     let out = slot.clone();
     let (_host, cx) = cx.add_window_view(move |window, cx| {
@@ -216,6 +239,106 @@ fn a_turn_from_the_input_edits_after_approval_and_is_saved(cx: &mut TestAppConte
     assert_eq!(saved.session.turns.len(), 1);
     let saved: Vec<_> = saved.timeline.into_iter().map(|b| b.kind).collect();
     assert_eq!(texts(&saved)[0], "> arregla add\n");
+}
+
+/// The dialog's keys go through the session: the cursor picks "always in
+/// project" for the folder pattern, which lands in the project file, and
+/// the next edit in that folder runs without asking.
+#[gpui::test]
+fn always_in_project_from_the_dialog_writes_the_project_file(cx: &mut TestAppContext) {
+    let script = vec![
+        ScriptedResponse::tool_use(
+            "toolu_1",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "a - b", "new": "a + b" }),
+        ),
+        ScriptedResponse::tool_use(
+            "toolu_2",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "fn add", "new": "fn sum" }),
+        ),
+        ScriptedResponse::text(EXPLANATION),
+    ];
+    let (w, cx) = open(script, cx);
+    cx.simulate_input("arregla add");
+    cx.simulate_keystrokes("enter");
+
+    wait_until(&w, cx, "the approval dialog", |s, cx| {
+        s.approval().read(cx).current().is_some()
+    });
+    // Narrow to the exact path and back to the folder, then the third row.
+    cx.simulate_keystrokes("shift-tab tab down down");
+    let pattern = w.session.read_with(cx, |s, cx| {
+        let dialog = s.approval().read(cx);
+        (
+            dialog.selected(),
+            dialog.pattern().map(|rung| rung.rule.to_string()),
+        )
+    });
+    assert_eq!(
+        pattern,
+        (
+            Some(ui::approval::Choice::Project),
+            Some("edit_file(src/*)".to_owned())
+        )
+    );
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the end of the turn", |s, _| !s.is_running());
+
+    let fixed = std::fs::read_to_string(w.workspace.join("src/lib.rs")).unwrap();
+    assert_eq!(
+        fixed,
+        LIB.replace("a - b", "a + b").replace("fn add", "fn sum")
+    );
+    let rules = std::fs::read_to_string(w.workspace.join(".crest/permissions.local.toml")).unwrap();
+    assert!(rules.contains("\"edit_file(src/*)\""), "{rules}");
+    assert_eq!(w.llm.remaining(), 0);
+}
+
+/// `/permissions` over the real controller lists the project file's rules
+/// and a confirmed delete rewrites the file.
+#[gpui::test]
+fn slash_permissions_removes_a_project_rule_from_the_file(cx: &mut TestAppContext) {
+    let file = ".crest/permissions.local.toml";
+    let text = "allow = [\"run_command(cargo test *)\"]\ndeny = [\"run_command(git push *)\"]\n";
+    let (w, cx) = open_with_files(Vec::new(), None, &[(file, text)], cx);
+    cx.simulate_input("/permissions");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the permissions modal", |s, cx| {
+        s.permissions_view(cx).is_some()
+    });
+    let rows = |w: &Window_, cx: &mut VisualTestContext| {
+        w.session.read_with(cx, |s, cx| {
+            s.permissions_view(cx)
+                .map(|view| {
+                    view.read(cx)
+                        .rows()
+                        .iter()
+                        .map(|row| row.text.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    };
+    assert_eq!(
+        rows(&w, cx),
+        ["run_command(cargo test *)", "run_command(git push *)"]
+    );
+    cx.simulate_keystrokes("d d");
+    let path = w.workspace.join(file);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rows(&w, cx).len() != 1 {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the delete"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+        cx.run_until_parked();
+    }
+    let rules = std::fs::read_to_string(&path).unwrap();
+    assert!(!rules.contains("cargo test"), "{rules}");
+    assert!(rules.contains("\"run_command(git push *)\""), "{rules}");
+    assert_eq!(rows(&w, cx), ["run_command(git push *)"]);
 }
 
 #[gpui::test]
@@ -680,14 +803,43 @@ fn the_picker_opens_a_project_and_slash_project_goes_back(cx: &mut TestAppContex
         std::thread::sleep(Duration::from_millis(10));
     };
     let weak = session.downgrade();
-    session.update_in(cx, |s, window, cx| s.command("project", window, cx));
+    let to_picker = |cx: &mut gpui::VisualTestContext| {
+        let session = weak.upgrade().expect("the session is alive");
+        session.update_in(cx, |s, window, cx| s.command("project", window, cx));
+        cx.run_until_parked();
+        workbench.read_with(cx, |w, cx| {
+            let picker = w.project_picker().expect("back to the picker");
+            let shown = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
+            let expected = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
+            assert_eq!(picker.read(cx).text(cx), expected);
+        });
+    };
     drop(session);
+    to_picker(cx);
+    assert!(
+        weak.upgrade().is_some(),
+        "the session is kept until another project is chosen"
+    );
+
+    // Esc returns to it.
+    cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    workbench.read_with(cx, |w, cx| {
-        let picker = w.project_picker().expect("back to the picker");
-        let shown = adapter_fs::guard::canonicalize_blocking(dir.path()).unwrap();
-        let expected = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
-        assert_eq!(picker.read(cx).text(cx), expected);
+    workbench.read_with(cx, |w, _| {
+        let shown = w.session().expect("the session is back");
+        assert!(Some(shown.clone()) == weak.upgrade(), "the same session");
     });
+
+    // Choosing a project drops it.
+    to_picker(cx);
+    workbench.update_in(cx, |w, window, cx| w.open(project.clone(), window, cx));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if workbench.read_with(cx, |w, _| w.session().is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the project never opened");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(weak.upgrade().is_none(), "the session was dropped");
 }

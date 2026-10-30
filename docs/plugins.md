@@ -65,6 +65,7 @@ Each file has its own environment: its global variables are not visible from oth
 | `app.permissions.sensitive_paths` | list of strings | Paths the tools cannot read. |
 | `app.plugins` | list of strings | Extra plugins (global config only). |
 | `app.keymap.set(keys, action [, { desc }])` | see below | At load time. |
+| `app.keymap.del(keys)`, `app.keymap.unmap(keys)` | `string → nil` (see below) | At load time. |
 | `app.commands.register(name, fn [, { desc }])` | see below | At load time. |
 | `app.tools.register(def)` | see below | At load time. |
 | `app.on(event, fn)` | see below | At load time. |
@@ -90,19 +91,26 @@ app.keymap.set("<leader>r", "picker.grep")               -- builtin action
 app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear the session" })
 ```
 
-crest has no modes: the prompt is always ready to type and a mapping works wherever the focus is. The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
+crest has no modes: the prompt is always ready to type and a mapping works in the prompt, the timeline, the tree and the chats sidebar (pickers, dialogs, forms and the help keep their own keys; the help's Keys section lists them). The Neovim form with a mode first, `app.keymap.set("n", keys, action, opts)` (or a list of modes), is still accepted and the mode is ignored.
 
 - **`keys`**: the sequence in Neovim notation. It must **start with a chord or `<leader>`** (`<C-x>`, `<leader>r`, `<F5>`): a mapping that starts with a plain key (`j`, `gg`, `?`) would steal typing, so it is ignored with a warning at startup.
   - single characters after the first key (`<leader>gg`);
   - `<leader>` (`Ctrl+G` unless `app.opt.leader` says otherwise);
-  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd);
+  - modifiers `<C-x>` (Ctrl), `<A-x>` or `<M-x>` (Alt; unreliable on macOS, where Option composes characters), `<S-x>` (Shift), `<D-x>` (Cmd), `<P-x>` (the platform's primary modifier: Cmd on macOS, Ctrl elsewhere; the builtin `<P-q>` quits on both);
   - key names `<CR>`/`<Enter>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, `<Space>`, `<lt>`, `<gt>`, `<Bar>`, `<Bslash>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<Home>`, `<End>`, `<PageUp>`, `<PageDown>` and `<F1>`–`<F24>`.
 
-  `<leader>` expands to the current `app.opt.leader` when the keymap is applied.
+  `<leader>` expands to `app.opt.leader` when the keymap is built, in the builtin mappings too: with `app.opt.leader = "<C-,>"`, `<C-,>ff` opens the file picker and `Ctrl+G` is free.
 - **`action`**: the name of a builtin action or a Lua function. The function is called with no arguments (`nil`) and can use `app.cmd` and `app.send`. If it returns `app.ui.block(...)`, that block is added to the timeline.
 - **`opts`** (optional, as in Neovim): a table whose `desc` (a string) describes the mapping in the help's Keys section (`F1`, `/help keys`), next to the plugin that set it. Without `desc`, a builtin action shows its own description. Anything other than a table, or a `desc` that is not a string, is a diagnostic and the call is ignored.
 
-A keymap replaces any other with the same keys, builtin ones included. These are the builtin actions valid as a string:
+A keymap replaces any other with the same keys, builtin ones included; the layers apply in order (plugins, the global `keymap.toml`, the global `init.lua`, the workspace `keymap.toml`, the workspace `init.lua`), so a later one wins. When the window opens, crest warns (the notices in the status bar and the startup problems of the help's Files section) about:
+
+- an action name that is not one of the builtin actions below: the mapping is skipped;
+- the same keys mapped twice in one file (or by two plugins): the last one wins;
+- a mapping that is the start of a longer one (`<leader>f` with `<leader>ff` also mapped, builtin or not): the short one waits for the next key and only runs after `timeoutlen`;
+- keys that do not parse, or that start with a plain key: the mapping is skipped.
+
+These are the builtin actions valid as a string:
 
 | Action | What it does |
 | --- | --- |
@@ -117,12 +125,33 @@ A keymap replaces any other with the same keys, builtin ones included. These are
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |
 | `permission.cycle` | Cycles the permission mode. |
+| `permissions.open` | Opens the `/permissions` modal with the permission rules. |
 | `input.cancel` | In the prompt, copies its selection, else clears the prompt, else interrupts (`Ctrl+C`). With the chat focused and text selected in it, copies that text. |
 | `selection.copy` | Copies the selected text, from the prompt or else the chat (`Ctrl+Shift+C`, `Ctrl+Insert`). Never interrupts. |
 | `turn.interrupt` | Interrupts the turn or the running command. |
+| `queue.edit` | Takes the last queued prompt back into the prompt. |
 | `help.open` | Opens the help modal. |
+| `app.quit` | Quits crest (while a turn runs, asks for a second press within 3 s). |
+| `window.fullscreen` | Enters or leaves full screen. |
+| `theme.pick`, `mode.pick` | Puts `/theme ` / `/mode ` in the prompt, whose popup lists the choices. |
+| `project.switch` | Goes back to the project picker (`/project`). |
+| `panel.chats` | Shows or hides the chats sidebar. |
+| `chat.new`, `chat.next`, `chat.prev` | A new chat in this project / the next (older) / the previous (newer) one. |
+| `chat.rename`, `chat.delete` | Renames / asks to delete the open chat, in the sidebar. |
+| `timeline.outline` | Opens or closes the menu of your questions. |
+| `block.focus_widget` | Gives the keys to the widget of the selected block (`Esc` gives them back). |
 
-Any other name is accepted at load time, but pressing it only shows the notice `the action "…" does nothing yet`. For example, `session.resume` is not implemented.
+Any other name (`session.resume`, a typo) is skipped with the warning ``keymap `<leader>r` ignored: unknown action `session.resume` `` when the window opens; before, it was accepted and only failed when pressed.
+
+### `app.keymap.del(keys)`
+
+```lua
+app.keymap.del("<leader>x")      -- free Ctrl+G x (chat.delete)
+app.keymap.unmap("<C-c>")        -- the same function; Ctrl+C then does nothing
+app.keymap.set("<leader>x", "picker.grep")   -- the keys can be mapped again
+```
+
+Removes the mapping of `keys`, builtin ones included, with the same notation and `<leader>` as `set`; `unmap` is the same function, and the Neovim form with a mode first (`app.keymap.del("n", keys)`) is accepted. Removals run in call order with the mappings of the same file, and the layers apply in order, so a workspace `init.lua` can remove what the global one mapped. Only the exact keys go: deleting `<leader>f` leaves `<leader>ff`. A removal that finds nothing mapped is a startup warning, and a `keys` that is not a string is a diagnostic with the line.
 
 ### `app.commands.register(name, fn, opts)`
 
@@ -165,7 +194,7 @@ app.tools.register({
 | `effect` | string | What the permission policy uses (see the table in [configuration.md](configuration.md#permissions-and-sensitive-paths)). **It defaults to `"execute"`**, so the tool asks for approval in `ask` and `auto-edit` and is denied in `plan`. A read-only tool should declare `effect = "read"`. |
 | `handler` | function | Receives the model's input as a table. |
 
-The approval dialog shows `plugin `<plugin>`: <tool> <input JSON>`, and "always allow" applies to that exact input.
+The approval dialog shows `plugin `<plugin>`: <tool> <input JSON>`. Its "this session" (`s`) and "always in project" (`p`) rows allow either that exact input or, after `Tab`, **any input** of the tool (written `<tool>` without parentheses); the exact input is proposed first. The same holds for MCP tools. See [usage.md](usage.md#patterns).
 
 **Handler return value**:
 
@@ -287,7 +316,7 @@ app.tools.register{
 
 ### `app.ask`: forms
 
-`app.ask{ title, description, schema, order, submit_label }` shows the same form as the `ask_user` tool, in place in the timeline, and waits for the answer. The fields are those of `ask_user` plus `order`, the property names in display order (Lua tables have no order, so without it the fields are sorted by name); `schema` may also be a JSON string, which keeps its order. It returns the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer: the headless mode has no forms). A prompt sent while the form waits answers it in prose: `nil`, `"the user answered in the chat instead"` and the words as a third value. An answer that does not fit the fields is asked again with the reason, up to three times.
+`app.ask{ title, description, schema, order, submit_label }` shows the same form as the `ask_user` tool, in place in the timeline, and waits for the answer. The fields are those of `ask_user` plus `order` (but `title` is required here), the property names in display order (Lua tables have no order, so without it the fields are sorted by name); `schema` may also be a JSON string, which keeps its order. It returns the submitted values by field name, or `nil` and the reason when the user cancels (or nobody can answer: the headless mode has no forms). A prompt sent while the form waits answers it in prose: `nil`, `"the user answered in the chat instead"` and the words as a third value. An answer that does not fit the fields is asked again with the reason, up to three times.
 
 ```lua
 local answer, why, reply = app.ask{
@@ -689,7 +718,9 @@ Approve it with `crest --trust-plugin jsonq` and ask "list the dependencies in p
 | Error in a keymap or command callback | `Error` block with `Lua: <message>`. |
 | Malformed `app.plugin` entry | Diagnostic with the line of the call. Only that entry is ignored. |
 | Capability API without approval | Lua error saying how to approve it (`crest --trust-plugin <name>` or `/plugin trust <name>`). |
-| Keymap with invalid notation | Notice ``keymap `x` ignored: …`` when the window opens. |
+| Keymap with invalid notation, a plain first key or an unknown action | Notice ``keymap `x` ignored: …`` when the window opens. |
+| Keys mapped twice in a file, a mapping that starts a longer one, `keymap.del` of unmapped keys | A warning notice when the window opens; the keymap still loads. |
+| Problem in a `keymap.toml` | A startup warning with the file (and the line of a syntax error); a file that does not parse is ignored, a bad entry is skipped. |
 
 In headless mode the diagnostics go to the terminal. Run `crest --headless "hello"` to check that your config loads cleanly.
 
@@ -812,7 +843,7 @@ local app = require("app")
 app.opt.leader = "<C-,>"
 
 -- Ctrl+, x: new session
-app.keymap.set("<leader>x", function() app.cmd("clear") end)
+app.keymap.set("<leader>X", function() app.cmd("clear") end)
 
 -- Ctrl+P: file picker
 app.keymap.set("<C-p>", "picker.files")
@@ -823,12 +854,13 @@ app.keymap.set("<leader>t", function()
 end)
 ```
 
-With `leader = "<C-,>"`, the mappings in this file use `Ctrl+,`, but the builtin ones (`Ctrl+G ff`, `Ctrl+G m`...) keep using `Ctrl+G`. If you want to move them, map them again:
+With `leader = "<C-,>"`, the mappings in this file and the builtin ones (`Ctrl+, ff`, `Ctrl+, m`...) use `Ctrl+,`, and `Ctrl+G` does nothing. Earlier versions left the builtin mappings on `Ctrl+G`; to keep one there, map it with the chord written out:
 
 ```lua
-app.keymap.set("<leader>ff", "picker.files")
-app.keymap.set("<leader>fg", "picker.grep")
+app.keymap.set("<C-g>ff", "picker.files")
 ```
+
+A leader that does not parse, or that is a plain key the prompt types (`" "`, `","`), is a startup warning and the leader stays `Ctrl+G`.
 
 ### Testing a plugin
 

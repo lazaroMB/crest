@@ -4,11 +4,18 @@
 //! The UI does not know how to build a session: the binary passes a
 //! [`ProjectOpener`] that turns a directory into [`SessionParts`]. While it
 //! works the window says so; when it fails the picker comes back with the
-//! reason. `/project` dispatches [`SwitchProject`], which drops the open
-//! session (and with it everything the binary started for it) and shows
-//! the picker again. [`SessionEvent::Reopen`] (after `/login` or
-//! `/logout`) builds the session of the same directory again, so the agent
-//! starts with the new API key.
+//! reason. `/project` dispatches [`SwitchProject`], which shows the picker
+//! again; the open session (and with it everything the binary started for
+//! it) is dropped once another project is chosen. Until then it is kept out
+//! of sight, and `Esc` or **Back** in the picker returns to it.
+//! [`SessionEvent::Reopen`] (after `/login` or `/logout`) builds the
+//! session of the same directory again, so the agent starts with the new
+//! API key.
+//!
+//! The chats sidebar shows beside the session; `panel.chats` hides it.
+//! The session's [`SessionEvent::Chats`] (the keymap's `chat.*` actions,
+//! `focus.next` into the list) are run here. With no session open (the
+//! picker), the keys of `app.quit` and `window.fullscreen` still work.
 //!
 //! Switching chats while a turn runs (a form waiting for an answer, a long
 //! reply) parks the busy session instead of dropping it: it keeps running
@@ -28,12 +35,12 @@ use futures::future::BoxFuture;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, actions, div,
+    Subscription, Window, actions, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
 use crate::app::{RootView, set_theme, window_title};
-use crate::chats::{ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
+use crate::chats::{ChatsCommand, ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -102,9 +109,14 @@ pub struct Workbench {
     content: Content,
     /// Busy sessions whose chat was left, by session id.
     parked: HashMap<String, Live>,
+    /// The session `/project` left, until a project is chosen.
+    back: Option<Live>,
     chats: Entity<ChatsPanel>,
+    /// The chats sidebar is on screen (`panel.chats`).
+    chats_shown: bool,
     focus_handle: FocusHandle,
     _chats: Subscription,
+    _keys: Subscription,
 }
 
 impl Workbench {
@@ -116,13 +128,21 @@ impl Workbench {
     ) -> Self {
         let chats = cx.new(|cx| ChatsPanel::new(String::new(), None, cx));
         let subscription = cx.subscribe_in(&chats, window, Self::on_chats);
+        let weak = cx.entity().downgrade();
+        let keys = cx.intercept_keystrokes(move |event, window, cx| {
+            weak.update(cx, |this, cx| this.key_without_session(event, window, cx))
+                .ok();
+        });
         Self {
             opener,
             content: Content::Opening(dir),
             parked: HashMap::new(),
+            back: None,
             chats,
+            chats_shown: true,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
+            _keys: keys,
         }
     }
 
@@ -201,6 +221,117 @@ impl Workbench {
         self.parked.len()
     }
 
+    /// Whether the chats sidebar is on screen.
+    pub fn chats_shown(&self) -> bool {
+        self.chats_shown
+    }
+
+    /// The chats sidebar.
+    pub fn chats(&self) -> &Entity<ChatsPanel> {
+        &self.chats
+    }
+
+    /// With no session on screen (the picker, a project opening), the keys
+    /// the builtin keymap gives to `app.quit` and `window.fullscreen` still
+    /// work; with one, the session's keymap has them.
+    fn key_without_session(
+        &mut self,
+        event: &gpui::KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session().is_some() {
+            return;
+        }
+        let Some(key) = crate::input::key_from_keystroke(&event.keystroke) else {
+            return;
+        };
+        let keymap = application::keymap::default_keymap();
+        let Some(application::keymap::Action::Builtin(name)) =
+            keymap.lookup(std::slice::from_ref(&key)).exact
+        else {
+            return;
+        };
+        match name.as_str() {
+            crate::session::QUIT_ACTION => {
+                window.dispatch_action(Box::new(crate::app::Quit), cx);
+            }
+            crate::session::FULLSCREEN_ACTION => window.toggle_fullscreen(),
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// Shows or hides the chats sidebar; hidden, it cannot keep the focus.
+    pub fn toggle_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let had_focus = self.chats.focus_handle(cx).contains_focused(window, cx);
+        self.chats_shown = !self.chats_shown;
+        let shown = self.chats_shown;
+        if let Some(session) = self.session().cloned() {
+            session.update(cx, |session, cx| {
+                session.set_chats_shown(shown);
+                if !shown && had_focus {
+                    session.focus_input(window, cx);
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    /// Runs what a key asked the session about the chats.
+    fn chats_command(
+        &mut self,
+        command: ChatsCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Content::Session(live) = &self.content else {
+            return;
+        };
+        let dir = live.dir.clone();
+        match command {
+            ChatsCommand::New => self.switch_chat(dir, SessionOpen::New, window, cx),
+            ChatsCommand::Next | ChatsCommand::Prev => {
+                let step = if command == ChatsCommand::Next { 1 } else { -1 };
+                match self.chats.read(cx).neighbor(step) {
+                    Some((root, id)) => {
+                        self.switch_chat(PathBuf::from(root), SessionOpen::Id(id), window, cx);
+                    }
+                    None => self.inform("this project has no other chat".into(), cx),
+                }
+            }
+            ChatsCommand::Rename | ChatsCommand::Delete => {
+                if !self.chats_shown {
+                    self.toggle_chats(window, cx);
+                }
+                self.chats.update(cx, |chats, cx| {
+                    if command == ChatsCommand::Rename {
+                        chats.rename_current(window, cx);
+                    } else {
+                        chats.delete_current(window, cx);
+                    }
+                });
+            }
+            ChatsCommand::TogglePanel => self.toggle_chats(window, cx),
+            ChatsCommand::Focus => {
+                if self.chats_shown {
+                    self.chats.update(cx, |chats, cx| chats.focus(window, cx));
+                } else if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| session.focus_input(window, cx));
+                }
+            }
+        }
+    }
+
+    /// Shows `message` as information in the shown session, if any.
+    fn inform(&self, message: String, cx: &mut Context<Self>) {
+        if let Some(session) = self.session().cloned() {
+            session.update(cx, |session, cx| {
+                session.show_notice(NoticeLevel::Info, message, cx);
+            });
+        }
+    }
+
     fn show_picker(
         &mut self,
         at: Option<&Path>,
@@ -220,9 +351,9 @@ impl Workbench {
         cx.subscribe_in(
             &picker,
             window,
-            |this, _, event: &ProjectPickerEvent, window, cx| {
-                let ProjectPickerEvent::Chosen(dir) = event;
-                this.open(dir.clone(), window, cx);
+            |this, _, event: &ProjectPickerEvent, window, cx| match event {
+                ProjectPickerEvent::Chosen(dir) => this.open(dir.clone(), window, cx),
+                ProjectPickerEvent::Back => this.go_back(window, cx),
             },
         )
         .detach();
@@ -254,6 +385,8 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let opening = self.opener.open_as(dir.clone(), which);
+        // Dropping the session `/project` left drops its controller.
+        self.back = None;
         self.content = Content::Opening(dir.clone());
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
@@ -306,8 +439,11 @@ impl Workbench {
     /// Puts `live` on screen: new, or back from the parked ones.
     fn show_live(&mut self, live: Live, window: &mut Window, cx: &mut Context<Self>) {
         window.set_window_title(&window_title(&live.label));
-        live.session
-            .update(cx, |session, cx| session.set_shown(true, window, cx));
+        let chats_shown = self.chats_shown;
+        live.session.update(cx, |session, cx| {
+            session.set_chats_shown(chats_shown);
+            session.set_shown(true, window, cx);
+        });
         let (root, id) = (live.dir.display().to_string(), live.session_id.clone());
         self.chats
             .update(cx, |chats, cx| chats.set_current(root, id, cx));
@@ -323,6 +459,12 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         match event {
+            SessionEvent::Chats(command) => {
+                // Only the shown session has the keyboard.
+                if self.session() == Some(session) {
+                    self.chats_command(*command, window, cx);
+                }
+            }
             SessionEvent::Reopen { notice } => {
                 // Only the shown session reopens; a parked one is idle by
                 // the time it could ask.
@@ -398,6 +540,11 @@ impl Workbench {
             }
             ChatsEvent::Rename { id, title } => self.rename_chat(id, title, window, cx),
             ChatsEvent::Delete { root, id } => self.delete_chat(root, id, window, cx),
+            ChatsEvent::Dismissed => {
+                if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| session.focus_input(window, cx));
+                }
+            }
         }
     }
 
@@ -459,7 +606,9 @@ impl Workbench {
         true
     }
 
-    /// Saves `title` on the chat `id` and refreshes the list.
+    /// Saves `title` on the chat `id` and refreshes the list. The list
+    /// already shows the title and the prompt has the focus back: the save
+    /// of a chat with a turn running waits for the turn.
     fn rename_chat(
         &mut self,
         id: String,
@@ -470,6 +619,13 @@ impl Workbench {
         let Some(session) = self.session().cloned() else {
             return;
         };
+        // The field is gone: a focus left nowhere (or in the list) goes
+        // back to the prompt; a click elsewhere keeps its target.
+        let lost = window.focused(cx).is_none()
+            || self.chats.focus_handle(cx).contains_focused(window, cx);
+        if lost {
+            session.update(cx, |session, cx| session.focus_input(window, cx));
+        }
         let current = self.open_id().as_deref() == Some(id.as_str());
         let opener = Arc::clone(&self.opener);
         // The session of the chat, shown or parked, saves the title itself:
@@ -482,6 +638,7 @@ impl Workbench {
                 .get(&id)
                 .map(|live| live.session.read(cx).retitle(title.clone()))
         };
+        let renamed = id.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = if let Some(primary) = primary {
                 match primary.await {
@@ -491,29 +648,19 @@ impl Workbench {
             } else {
                 opener.rename_chat(id, title).await
             };
-            this.update_in(cx, |this, window, cx| {
-                this.finish_rename(result, window, cx);
-            })
-            .ok();
+            this.update(cx, |this, cx| this.finish_rename(&renamed, result, cx))
+                .ok();
         })
         .detach();
     }
 
-    fn finish_rename(
-        &mut self,
-        result: Result<(), String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_rename(&mut self, id: &str, result: Result<(), String>, cx: &mut Context<Self>) {
         if let Err(err) = &result {
             self.notify(format!("could not rename the chat: {err}"), cx);
+            self.chats
+                .update(cx, |chats, cx| chats.forget_title(id, cx));
         }
         self.reload_chats(cx);
-        if result.is_ok()
-            && let Some(session) = self.session().cloned()
-        {
-            session.update(cx, |session, cx| session.focus_input(window, cx));
-        }
     }
 
     /// Shows `message` as a warning in the shown session, if any.
@@ -613,8 +760,27 @@ impl Workbench {
             return;
         }
         let at = live.dir.parent().map(Path::to_path_buf);
-        // Dropping the session drops its controller and what it started.
+        let Content::Session(live) =
+            std::mem::replace(&mut self.content, Content::Opening(PathBuf::new()))
+        else {
+            return;
+        };
+        // Kept, out of sight and without the keyboard, until a project is
+        // chosen: `Esc` or Back returns to it.
+        live.session
+            .update(cx, |session, cx| session.set_shown(false, window, cx));
+        self.back = Some(live);
         self.show_picker(at.as_deref(), None, window, cx);
+        if let Content::Picker(picker) = &self.content {
+            picker.update(cx, |picker, cx| picker.set_can_go_back(true, cx));
+        }
+    }
+
+    /// Back from the picker `/project` opened to the session it left.
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(live) = self.back.take() {
+            self.show_live(live, window, cx);
+        }
     }
 }
 
@@ -630,7 +796,7 @@ impl Render for Workbench {
             Content::Picker(picker) => picker.clone().into_any_element(),
             Content::Session(live) => h_flex()
                 .size_full()
-                .child(self.chats.clone())
+                .when(self.chats_shown, |row| row.child(self.chats.clone()))
                 .child(div().flex_1().h_full().min_w_0().child(live.root.clone()))
                 .into_any_element(),
             Content::Opening(dir) => div()
@@ -694,6 +860,11 @@ mod tests {
         fn new_session(&self) -> BoxFuture<'static, ()> {
             futures::future::ready(()).boxed()
         }
+
+        /// As a running turn holding the app: the title never saves.
+        fn set_chat_title(&self, _title: String) -> BoxFuture<'static, Result<(), String>> {
+            futures::future::pending().boxed()
+        }
     }
 
     /// Opens every directory but `/home/u/bad`; records what it opened.
@@ -701,6 +872,8 @@ mod tests {
     struct Opener {
         opened: Mutex<Vec<PathBuf>>,
         news: Mutex<usize>,
+        /// Titles saved by `rename_chat`, by id.
+        titles: Mutex<HashMap<String, String>>,
     }
 
     impl ProjectOpener for Opener {
@@ -749,9 +922,10 @@ mod tests {
         }
 
         fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
+            let titles = self.titles.lock().unwrap_or_else(PoisonError::into_inner);
             let chat = |id: &str| crate::chats::ChatEntry {
                 id: id.to_owned(),
-                title: id.to_owned(),
+                title: titles.get(id).cloned().unwrap_or_else(|| id.to_owned()),
             };
             futures::future::ready(vec![ProjectChats {
                 name: "proj".into(),
@@ -759,6 +933,14 @@ mod tests {
                 chats: vec![chat("latest"), chat("second")],
             }])
             .boxed()
+        }
+
+        fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
+            self.titles
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(id, title);
+            futures::future::ready(Ok(())).boxed()
         }
 
         fn browser(&self) -> Arc<dyn ProjectBrowserPort> {
@@ -775,6 +957,7 @@ mod tests {
         let opener = Arc::new(Opener {
             opened: Mutex::new(Vec::new()),
             news: Mutex::new(0),
+            titles: Mutex::new(HashMap::new()),
         });
         let (view, cx) =
             cx.add_window_view(|window, cx| Workbench::picker(opener, None, window, cx));
@@ -950,5 +1133,306 @@ mod tests {
         });
         cx.update(|_, _| {});
         assert!(weak.upgrade().is_none(), "the first session was dropped");
+    }
+
+    #[gpui::test]
+    fn the_chat_menu_cancels_by_button_esc_or_click_outside(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let at = |cx: &mut VisualTestContext, selector: &'static str| {
+            cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("no {selector}"))
+                .center()
+        };
+        let right_click = |cx: &mut VisualTestContext| {
+            redraw(cx);
+            let row = at(cx, "chats-session-0-1");
+            cx.simulate_mouse_down(row, gpui::MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(row, gpui::MouseButton::Right, gpui::Modifiers::none());
+            redraw(cx);
+            assert!(chats.read_with(cx, |c, _| c.menu_open()));
+        };
+        let prompt_focused = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let input = session.read(cx).input().focus_handle(cx);
+                input.contains_focused(window, cx)
+            })
+        };
+        // Cancel.
+        right_click(cx);
+        let cancel = at(cx, "chats-cancel-0-1");
+        cx.simulate_click(cancel, gpui::Modifiers::none());
+        assert!(
+            !chats.read_with(cx, |c, _| c.menu_open()),
+            "Cancel closes it"
+        );
+        // Esc while renaming gives the prompt the focus back.
+        right_click(cx);
+        let rename = at(cx, "chats-rename-0-1");
+        cx.simulate_click(rename, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)),
+            "the rename field has the focus"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()), "Esc closes it");
+        assert!(prompt_focused(cx), "the prompt has the focus again");
+        // A click elsewhere.
+        right_click(cx);
+        cx.simulate_click(
+            gpui::point(gpui::px(900.), gpui::px(300.)),
+            gpui::Modifiers::none(),
+        );
+        assert!(
+            !chats.read_with(cx, |c, _| c.menu_open()),
+            "a click outside closes it"
+        );
+    }
+
+    #[gpui::test]
+    fn a_renamed_chat_shows_its_name_even_while_its_save_waits(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let rename =
+            |row: &'static str, menu: &'static str, name: &str, cx: &mut VisualTestContext| {
+                redraw(cx);
+                let at = cx.debug_bounds(row).expect("the chat row").center();
+                cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+                cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+                redraw(cx);
+                let item = cx.debug_bounds(menu).expect("Rename").center();
+                cx.simulate_click(item, gpui::Modifiers::none());
+                redraw(cx);
+                assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+                cx.simulate_keystrokes("ctrl-a backspace");
+                cx.simulate_input(name);
+                cx.simulate_keystrokes("enter");
+                cx.run_until_parked();
+            };
+        let title = |id: &str, cx: &mut VisualTestContext| {
+            chats.read_with(cx, |c, _| c.title_of(id)).expect("listed")
+        };
+        // The open chat: its session saves the title, here never (a turn
+        // holds it). The list shows it at once and the prompt is back.
+        rename("chats-session-0-0", "chats-rename-0-0", "Mi chat", cx);
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()), "Enter saved");
+        assert_eq!(title("latest", cx), "Mi chat");
+        cx.update(|window, cx| {
+            let input = session.read(cx).input().focus_handle(cx);
+            assert!(
+                input.contains_focused(window, cx),
+                "the prompt has the focus"
+            );
+        });
+        // Another chat: the store saves it and the catalog lists it.
+        rename("chats-session-0-1", "chats-rename-0-1", "Otro", cx);
+        assert_eq!(title("second", cx), "Otro");
+        view.update(cx, |view, cx| view.reload_chats(cx));
+        cx.run_until_parked();
+        assert_eq!(title("second", cx), "Otro", "saved");
+        assert_eq!(title("latest", cx), "Mi chat", "still waiting");
+    }
+
+    #[gpui::test]
+    fn esc_or_back_returns_from_slash_project_to_the_session(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        let session = shown(&view, cx);
+        let to_picker = |cx: &mut VisualTestContext| {
+            session.update_in(cx, |session, window, cx| {
+                session.command("project", window, cx)
+            });
+            cx.run_until_parked();
+            view.read_with(cx, |view, _| assert!(view.project_picker().is_some()));
+        };
+        to_picker(cx);
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(
+            shown(&view, cx) == session,
+            "Esc goes back to the same session"
+        );
+        cx.update(|window, cx| {
+            let input = session.read(cx).input().focus_handle(cx);
+            assert!(
+                input.contains_focused(window, cx),
+                "with the prompt focused"
+            );
+        });
+
+        to_picker(cx);
+        let back = cx.debug_bounds("project-back").expect("Back drawn");
+        cx.simulate_click(back.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(shown(&view, cx) == session, "so does Back");
+
+        // Choosing a project drops it.
+        to_picker(cx);
+        let weak = session.downgrade();
+        drop(session);
+        view.update_in(cx, |view, window, cx| {
+            view.open(PathBuf::from("/home/u/other"), window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|_, _| {});
+        assert!(weak.upgrade().is_none(), "the left session was dropped");
+    }
+
+    fn shown_id(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<String> {
+        view.read_with(cx, |view, _| view.open_id())
+    }
+
+    fn list_focused(cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| crate::chats::list_has_focus(window, cx))
+    }
+
+    #[gpui::test]
+    fn the_chat_keys_switch_create_and_hide_chats(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("latest"));
+        cx.simulate_keystrokes("ctrl-g n");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("second"));
+        cx.simulate_keystrokes("ctrl-g n");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("latest"), "wraps");
+        cx.simulate_keystrokes("ctrl-g b");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("second"));
+        cx.simulate_keystrokes("ctrl-g c");
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("new-1"));
+        // The sidebar hides and comes back; hidden, the cycle skips it.
+        cx.simulate_keystrokes("ctrl-g s");
+        assert!(!view.read_with(cx, |view, _| view.chats_shown()));
+        draw(&view, cx);
+        assert!(cx.debug_bounds("chats-empty").is_none());
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(!list_focused(cx));
+        cx.simulate_keystrokes("ctrl-g s");
+        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+    }
+
+    #[gpui::test]
+    fn the_chats_list_takes_the_keyboard(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        let session = shown(&view, cx);
+        // prompt → timeline → (no tree) → chats, on the open chat.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx), "Ctrl+Tab reaches the chats");
+        let selected = |cx: &mut VisualTestContext| chats.read_with(cx, |c, _| c.selected_index());
+        assert_eq!(
+            selected(cx),
+            Some(1),
+            "on the open chat (row 0 is the project)"
+        );
+        // Letters do not land in the prompt; arrows move.
+        cx.simulate_keystrokes("j");
+        assert_eq!(selected(cx), Some(2));
+        assert_eq!(prompt_text(&session, cx), "");
+        // A session kept alive here would still take the keys after the
+        // switch below.
+        drop(session);
+        cx.simulate_keystrokes("up up up");
+        assert_eq!(selected(cx), Some(0), "stops at the top");
+        cx.simulate_keystrokes("end");
+        assert_eq!(selected(cx), Some(2));
+        // Delete asks; Esc cancels.
+        cx.simulate_keystrokes("delete");
+        assert!(chats.read_with(cx, |c, _| c.menu_open()));
+        cx.simulate_keystrokes("escape");
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()));
+        // F2 opens the name field.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx));
+        cx.simulate_keystrokes("down f2");
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Enter opens the selected chat.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        let target = chats.read_with(cx, |c, _| c.rows()[2].clone());
+        cx.simulate_keystrokes("end enter");
+        cx.run_until_parked();
+        let crate::chats::ChatRow::Chat { id, .. } = target else {
+            panic!("a chat row");
+        };
+        assert_eq!(shown_id(&view, cx), Some(id));
+        // Ctrl+Tab from the list goes back to the prompt.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(list_focused(cx));
+        cx.simulate_keystrokes("ctrl-tab");
+        assert!(!list_focused(cx));
+    }
+
+    #[gpui::test]
+    fn chat_rename_and_delete_keys_act_on_the_open_chat(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        cx.update(|window, _| window.activate_window());
+        open(&view, "/home/u/proj", cx);
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        cx.simulate_keystrokes("ctrl-g ,");
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Hidden, the sidebar comes back to ask.
+        cx.simulate_keystrokes("ctrl-g s ctrl-g x");
+        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+        assert!(chats.read_with(cx, |c, _| c.menu_open()), "asks first");
+        assert!(list_focused(cx), "so Enter confirms");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(!chats.read_with(cx, |c, _| c.menu_open()));
+        // The test opener cannot delete: the session says so.
+        let session = shown(&view, cx);
+        session.read_with(cx, |s, cx| {
+            let now = cx.background_executor().now();
+            let notice = s
+                .status()
+                .read(cx)
+                .state()
+                .notice(now)
+                .map(|n| n.message.clone());
+            assert!(
+                notice.is_some_and(|m| m.contains("could not delete")),
+                "the delete was asked"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn quit_works_in_the_project_picker(cx: &mut TestAppContext) {
+        let (_view, cx) = workbench(cx);
+        let quits = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = quits.clone();
+        cx.update(|_, cx| {
+            cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
+        });
+        cx.simulate_keystrokes("ctrl-q");
+        assert_eq!(quits.get(), 1);
     }
 }

@@ -92,6 +92,7 @@ use super::compact::{
     compactable_turns, context_tokens, estimate_tokens, replace_turns,
     summarize as summarize_history, summary_request, summary_turn, transcript,
 };
+use super::permissions::ProjectRules;
 use super::routing::{Routing, route, used_tools};
 use super::web_sources::web_sources;
 
@@ -360,6 +361,14 @@ impl AgentService {
         }
     }
 
+    /// Writes the "always in project" rules the user grants to
+    /// `project`.
+    #[must_use]
+    pub fn with_project_rules(mut self, project: ProjectRules) -> Self {
+        self.gate = self.gate.with_project_rules(project);
+        self
+    }
+
     /// Sets the system prompt, sent with a cache breakpoint.
     #[must_use]
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
@@ -427,6 +436,12 @@ impl AgentService {
     #[must_use]
     pub fn permissions(&self) -> &SharedPermissions {
         self.gate.permissions()
+    }
+
+    /// Where the "always in project" rules are written, if anywhere.
+    #[must_use]
+    pub fn project_rules(&self) -> Option<&ProjectRules> {
+        self.gate.project_rules()
     }
 
     /// The tools offered to the model.
@@ -1123,7 +1138,10 @@ impl TurnRun<'_> {
             return false;
         };
         match answer {
-            Ok(ApprovalResponse::Approve) => tracker.raise_cap(session),
+            // "All edits" is about writes; here it is a plain yes.
+            Ok(ApprovalResponse::Approve | ApprovalResponse::ApproveAllEdits) => {
+                tracker.raise_cap(session);
+            }
             Ok(ApprovalResponse::ApproveAlways { .. }) => tracker.lift_cap(session),
             Ok(ApprovalResponse::Deny { .. }) | Err(_) => {
                 self.emit(DomainEvent::Notice {
@@ -1429,7 +1447,8 @@ impl TurnRun<'_> {
                 kind: tool_call_kind(&ctx.tool_use_id, name, input.clone(), summary),
             },
         });
-        let action = ActionRequest::new(name, effect, prepared.subject.clone());
+        let mut action = ActionRequest::new(name, effect, prepared.subject.clone());
+        action.argv.clone_from(&prepared.argv);
         match self.service.gate.decide(&action) {
             Decision::Deny { reason } => (
                 ToolOutput::error(policy_denial(&reason)),

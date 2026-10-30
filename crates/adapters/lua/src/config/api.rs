@@ -234,6 +234,38 @@ mod tests {
     }
 
     #[test]
+    fn keymap_del_and_unmap_record_removals_in_call_order() {
+        let lua = lua();
+        let phase = Phase::new(&lua, "init.lua", "config").unwrap();
+        run(
+            &lua,
+            &phase,
+            r#"app.keymap.set("<leader>x", "help.open")
+               app.keymap.del("<leader>x")
+               app.keymap.unmap("n", "<C-c>")
+               app.keymap.del(3)"#,
+        );
+        let got = phase.take();
+        let shown: Vec<(&str, &KeyAction)> = got
+            .keymaps
+            .iter()
+            .map(|k| (k.lhs.as_str(), &k.action))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("<leader>x", &KeyAction::Builtin("help.open".into())),
+                ("<leader>x", &KeyAction::Unmap),
+                ("<C-c>", &KeyAction::Unmap),
+            ]
+        );
+        assert!(got.keymaps.iter().all(|k| k.plugin == "config"));
+        assert_eq!(got.diagnostics.len(), 1, "{:?}", got.diagnostics);
+        assert!(got.diagnostics[0].message.contains("keymap.del"));
+        assert_eq!(got.diagnostics[0].line, Some(4));
+    }
+
+    #[test]
     fn commands_and_keymaps_take_a_desc_option() {
         let lua = lua();
         let phase = Phase::new(&lua, "plugins/jira.lua", "jira").unwrap();

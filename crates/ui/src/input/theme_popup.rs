@@ -14,7 +14,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use super::PALETTE_ROWS;
+use super::{PALETTE_ROWS, window_note};
 use crate::session::ThemeChoice;
 
 /// What the popup shows for the current line.
@@ -152,9 +152,7 @@ pub fn render(
         ThemePopup::Entries(entries) => {
             let total = entries.len();
             let selected = selected.min(total - 1);
-            let shown = PALETTE_ROWS.min(total - top);
-            let position = (total > PALETTE_ROWS)
-                .then(|| format!(" · {}–{} of {total}", top + 1, top + shown));
+            let position = window_note(top, total);
             let rows: Vec<_> = entries
                 .into_iter()
                 .enumerate()

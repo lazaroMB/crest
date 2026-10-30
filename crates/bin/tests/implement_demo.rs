@@ -259,7 +259,10 @@ async fn implements_the_spec_end_to_end() {
     assert!(out.contains("sh tests/add.sh | passes"), "{out}");
     // README.md asked and was approved.
     assert!(
-        out.contains("Allow write_file README.md? [y]es / [a]lways / [n]o: y\n"),
+        out.contains(
+            "Allow write_file README.md? [y]es / [s]ession write_file(README.md) / \
+             [p]roject write_file(README.md) / [e]dits (writes only) / [n]o: y\n"
+        ),
         "{out}"
     );
     // Verification: expected against obtained.

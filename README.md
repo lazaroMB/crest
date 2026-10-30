@@ -117,7 +117,7 @@ Every step is a checkpoint in SQLite: close crest and `/research resume` picks u
 
 ## You approve every change
 
-Nothing touches your files or runs a command without asking (unless you choose `auto-edit`). The dialog shows the exact diff or command line; `y` approves, `a` always approves that file or command, `n` rejects. A `plan` mode lets the agent read but never write. `app.opt.max_session_cost` caps what a session may spend, and `app.opt.pricing` gives the prices per model (without them the status bar counts tokens instead of dollars). [Cost and spending cap](docs/configuration.md#cost-and-spending-cap).
+Nothing touches your files or runs a command without asking (unless you choose `auto-edit`). The dialog shows the exact diff or command line; `y` approves once, `s` allows a pattern such as `cargo test *` for the session, `p` saves it for the project in `.crest/permissions.local.toml` (where you can also write deny rules), `n` rejects; `/permissions` lists and removes the rules. [Approvals and patterns](docs/usage.md#approvals-and-permission-modes). A `plan` mode lets the agent read but never write. `app.opt.max_session_cost` caps what a session may spend, and `app.opt.pricing` gives the prices per model (without them the status bar counts tokens instead of dollars). [Cost and spending cap](docs/configuration.md#cost-and-spending-cap).
 
 Secrets and personal data never leave your machine by accident: API keys, tokens, private keys, passwords, emails, cards, IBANs and national ids in tool results and in your prompts are masked as `[REDACTED:kind]` before the model, the timeline or the saved session see them. [What is masked](docs/configuration.md#privacy-secrets-and-personal-data).
 

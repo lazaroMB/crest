@@ -11,15 +11,23 @@
 //! select blocks, `Home`/`End` the first and last, `Enter` expands or
 //! collapses the selected one and `PageUp`/`PageDown` scroll by a page.
 //! Empty, it shows the crest mark and the keys to start with.
+//!
+//! `Esc` and printable keys typed with the focus in the timeline reach the
+//! focused element first (a block widget, the outline menu): the session
+//! hands them over as a [`DeferredKey`] and only when nothing in the
+//! timeline takes them do they fall back to the prompt (`Esc` focuses it,
+//! a letter is typed into it, a vim key moves the selection). `Esc` that a
+//! block widget leaves gives the focus back to the timeline first
+//! ([`TimelineView::focus_widget`] is the way in).
 
-use application::keymap::{Action, Key, KeyCode};
+use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap, parse_keys};
 use application::ports::events::DomainEvent;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
     InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, SharedString,
+    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, list,
     prelude::FluentBuilder as _, px,
 };
@@ -34,6 +42,27 @@ use super::{TimelineChange, TimelineState, copy_text, render_block};
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
 const OVERDRAW: f32 = 512.0;
 
+/// What runs when a deferred key reaches the timeline unhandled.
+type KeyFallback = Box<dyn FnOnce(&mut Window, &mut App)>;
+
+/// A key the session let through to the focused element of the timeline,
+/// with what to do when no element takes it.
+pub struct DeferredKey {
+    key: Key,
+    fallback: KeyFallback,
+}
+
+impl DeferredKey {
+    /// `key`, and `fallback` to run when it reaches the timeline itself
+    /// unhandled (and is not one of its vim keys).
+    pub fn new(key: Key, fallback: impl FnOnce(&mut Window, &mut App) + 'static) -> Self {
+        Self {
+            key,
+            fallback: Box::new(fallback),
+        }
+    }
+}
+
 /// The timeline area of the main window.
 pub struct TimelineView {
     state: TimelineState,
@@ -46,6 +75,14 @@ pub struct TimelineView {
     copied_reply: Option<usize>,
     /// The menu of the user's questions is open.
     outline_open: bool,
+    /// The scroll of the menu's rows.
+    outline_scroll: ScrollHandle,
+    /// The menu just opened: scroll its current question into view.
+    outline_reveal: bool,
+    /// The key being dispatched, when the session deferred it.
+    deferred: Option<DeferredKey>,
+    /// The keys the welcome screen suggests, from the keymap in use.
+    welcome: Vec<(String, String)>,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -63,9 +100,25 @@ impl TimelineView {
             _hint_expiry: None,
             copied_reply: None,
             outline_open: false,
+            outline_scroll: ScrollHandle::new(),
+            outline_reveal: false,
+            deferred: None,
+            welcome: welcome_keys(&default_keymap()),
             _reply_expiry: None,
             _events: None,
         }
+    }
+
+    /// The keys the welcome screen suggests: keys and what they do.
+    pub fn welcome_keys(&self) -> &[(String, String)] {
+        &self.welcome
+    }
+
+    /// Makes the welcome screen suggest the keys of `keymap` (the one the
+    /// prompt runs, with the person's mappings).
+    pub fn set_welcome_keys(&mut self, keymap: &Keymap<Action>, cx: &mut Context<Self>) {
+        self.welcome = welcome_keys(keymap);
+        cx.notify();
     }
 
     /// The hint offering to copy the selected text, if shown.
@@ -204,17 +257,58 @@ impl TimelineView {
         }
     }
 
+    /// Hands the key about to be dispatched to the focused element of the
+    /// timeline; [`DeferredKey::fallback`] runs if nothing takes it.
+    pub fn defer_key(&mut self, deferred: DeferredKey) {
+        self.deferred = Some(deferred);
+    }
+
+    /// Forgets a deferred key that an element took (it stopped the key
+    /// before it reached the timeline).
+    pub fn clear_deferred_key(&mut self) {
+        self.deferred = None;
+    }
+
+    /// Whether a deferred key waits.
+    pub fn has_deferred_key(&self) -> bool {
+        self.deferred.is_some()
+    }
+
+    /// A deferred key reached the timeline unhandled: a vim key acts on
+    /// it, any other runs its fallback once this dispatch is over.
+    fn fall_through(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(deferred) = self.deferred.take() else {
+            return;
+        };
+        cx.stop_propagation();
+        if let Some(action) = Self::vim_action(&deferred.key) {
+            self.handle_action(&Action::builtin(action), cx);
+            return;
+        }
+        // `Esc` in a block widget gives the keys back to the timeline;
+        // only from the timeline itself does it go on to the prompt.
+        if deferred.key == Key::plain(KeyCode::Esc) && !self.focus_handle.is_focused(window) {
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
+            return;
+        }
+        let fallback = deferred.fallback;
+        window.defer(cx, fallback);
+    }
+
     /// Keys while the timeline has the focus.
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = &event.keystroke.modifiers;
         if event.keystroke.key == "escape" && self.copy_hint.take().is_some() {
             gpui_base::TextSelection::clear(window, cx);
+            self.deferred = None;
             cx.notify();
             cx.stop_propagation();
             return;
         }
         if event.keystroke.key == "escape" && self.outline_open {
             self.outline_open = false;
+            self.deferred = None;
             cx.notify();
             cx.stop_propagation();
             return;
@@ -238,7 +332,10 @@ impl TimelineView {
                 cx.stop_propagation();
                 return;
             }
-            _ => return,
+            _ => {
+                self.fall_through(window, cx);
+                return;
+            }
         };
         self.handle_action(&Action::builtin(action), cx);
         cx.stop_propagation();
@@ -333,6 +430,46 @@ impl TimelineView {
         }
     }
 
+    /// `block.focus_widget`: the widget of the selected block (the last
+    /// one when none is) takes the keys; `Esc` gives them back to the
+    /// timeline. Returns false when the block has no keys of its own.
+    pub fn focus_widget(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.select_last_if_none(cx);
+        let Some(entry) = self.state.selected_entry() else {
+            return false;
+        };
+        let Some(handle) = crate::blocks::block_focus(entry.block.id, cx) else {
+            return false;
+        };
+        window.focus(&handle, cx);
+        cx.notify();
+        true
+    }
+
+    /// Whether the menu of the user's questions is open.
+    pub fn outline_open(&self) -> bool {
+        self.outline_open
+    }
+
+    /// Opens or closes the menu of the user's questions. Open, the
+    /// timeline takes the focus so `Esc` closes it.
+    pub fn toggle_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.outline_open = !self.outline_open;
+        if self.outline_open {
+            self.outline_reveal = true;
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Closes the menu of the user's questions.
+    pub fn close_outline(&mut self, cx: &mut Context<Self>) {
+        if self.outline_open {
+            self.outline_open = false;
+            cx.notify();
+        }
+    }
+
     /// Selects the menu row and scrolls that block to the top of the chat.
     fn choose_outline(&mut self, ix: usize, cx: &mut Context<Self>) {
         let before = self.state.selected();
@@ -371,6 +508,7 @@ impl TimelineView {
                 let block = mark.block;
                 div()
                     .id(("chat-outline-mark", ix))
+                    .debug_selector(move || format!("chat-outline-mark-{ix}"))
                     .w_full()
                     .h(px(12.))
                     .flex()
@@ -379,9 +517,9 @@ impl TimelineView {
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            this.outline_open = true;
+                            this.toggle_outline(window, cx);
                             this.choose_outline(block, cx);
                         }),
                     )
@@ -394,37 +532,30 @@ impl TimelineView {
                     )
             }));
         let menu = self.outline_open.then(|| {
-            let mut card = v_flex()
-                .id("chat-outline")
-                .w(px(220.))
-                .max_h(px(320.))
-                .flex_none()
-                .overflow_y_scroll()
-                .py_2()
-                .px_3()
-                .gap_1()
-                .rounded_lg()
-                .border_1()
-                .border_color(border)
-                .bg(popover)
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+            let mut rows = Vec::new();
+            let mut active_row = None;
             for (group_ix, group) in outline.groups.iter().enumerate() {
                 if !group.title.is_empty() {
-                    card = card.child(
+                    rows.push(
                         div()
                             .id(("chat-outline-group", group_ix))
                             .pt(if group_ix == 0 { px(0.) } else { px(6.) })
                             .text_sm()
                             .text_color(muted)
-                            .child(group.title.clone()),
+                            .child(group.title.clone())
+                            .into_any_element(),
                     );
                 }
                 for item in &group.items {
                     let block = item.block;
                     let color = if item.active { link } else { foreground };
-                    card = card.child(
+                    if item.active {
+                        active_row = Some(rows.len());
+                    }
+                    rows.push(
                         div()
                             .id(("chat-outline-item", item.block))
+                            .debug_selector(move || format!("chat-outline-item-{block}"))
                             .w_full()
                             .cursor_pointer()
                             .text_sm()
@@ -434,21 +565,81 @@ impl TimelineView {
                                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                                     cx.stop_propagation();
                                     this.choose_outline(block, cx);
+                                    this.close_outline(cx);
                                 }),
                             )
-                            .child(format!("{}. {}", item.number, item.label)),
+                            .child(format!("{}. {}", item.number, item.label))
+                            .into_any_element(),
                     );
                 }
             }
-            card
+            if self.outline_reveal {
+                if let Some(row) = active_row {
+                    crate::keyscroll::ensure_visible(&self.outline_scroll, row);
+                }
+                // Asked again until the menu has been laid out once.
+                self.outline_reveal =
+                    active_row.is_some() && !crate::keyscroll::laid_out(&self.outline_scroll);
+                if self.outline_reveal {
+                    cx.notify();
+                }
+            }
+            v_flex()
+                .id("chat-outline")
+                .w(px(220.))
+                .max_h(px(320.))
+                .flex_none()
+                .py_2()
+                .px_3()
+                .gap_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(border)
+                .bg(popover)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    h_flex()
+                        .flex_none()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("Esc to close")
+                        .child(
+                            div()
+                                .debug_selector(|| "chat-outline-close".to_owned())
+                                .child(
+                                    Button::new("chat-outline-close")
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Close)
+                                        .tooltip("Close")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.close_outline(cx);
+                                        })),
+                                ),
+                        ),
+                )
+                .child(
+                    crate::keyscroll::list("chat-outline-rows", &self.outline_scroll, rows)
+                        .flex_shrink(1.)
+                        .gap_1(),
+                )
         });
         Some(
             h_flex()
+                .id("chat-outline-layer")
                 .absolute()
                 .top(px(8.))
                 .right(px(10.))
                 .items_start()
                 .gap_1()
+                // A click anywhere else closes the menu.
+                .when(self.outline_open, |layer| {
+                    layer.on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                        this.close_outline(cx);
+                    }))
+                })
                 .children(menu)
                 .child(rail)
                 .into_any_element(),
@@ -578,38 +769,103 @@ impl Focusable for TimelineView {
     }
 }
 
-/// The keys the welcome screen suggests.
-const WELCOME_KEYS: &[(&str, &str)] = &[
-    ("/", "commands: /research, /implement, /!cmd, /help…"),
-    (
-        "Ctrl+G",
-        "shortcuts: e tree · ff files · fg grep · m model · j/k blocks · h help",
-    ),
-    ("Ctrl+Tab", "move the focus: prompt → timeline → tree"),
-    ("Esc", "back to the prompt"),
-    ("Ctrl+C", "clear the prompt or interrupt the turn"),
-    (
-        "Ctrl+Shift+C",
-        "copy the selected text, from the prompt or the chat",
-    ),
-];
+/// The keys of `action` in `keymap`: `preferred` (notation) when it is one
+/// of them, else the shortest.
+fn keys_of(keymap: &Keymap<Action>, action: &str, preferred: Option<&str>) -> Option<String> {
+    let wanted = Action::builtin(action);
+    preferred
+        .and_then(|notation| parse_keys(notation, keymap.leader()).ok())
+        .filter(|keys| keymap.lookup(keys).exact == Some(&wanted))
+        .map(|keys| crate::help::keys_label(&keys))
+        .or_else(|| crate::help::action_keys(keymap, action))
+}
+
+/// The keys the welcome screen suggests, from `keymap`: the leader with
+/// what follows it, then the focus, the prompt, cancelling and copying.
+/// An action without keys is left out.
+pub fn welcome_keys(keymap: &Keymap<Action>) -> Vec<(String, String)> {
+    let mut rows = vec![(
+        "/".to_owned(),
+        "commands: /research, /implement, /!cmd, /help…".to_owned(),
+    )];
+    let leader = parse_keys("<leader>", keymap.leader()).unwrap_or_default();
+    let entries = keymap.entries();
+    // What follows the leader for `action`, if it is under the leader.
+    let after_leader = |action: &str| {
+        entries
+            .iter()
+            .filter(|e| matches!(&e.action, Action::Builtin(name) if name == action))
+            .filter_map(|e| e.keys.strip_prefix(leader.as_slice()))
+            .filter(|rest| !rest.is_empty())
+            .min_by_key(|rest| rest.len())
+            .map(crate::help::keys_label)
+    };
+    let mut shortcuts: Vec<String> = Vec::new();
+    for (action, what) in [
+        ("panel.tree", "tree"),
+        ("picker.files", "files"),
+        ("picker.grep", "grep"),
+        ("model.pick", "model"),
+    ] {
+        if let Some(keys) = after_leader(action) {
+            shortcuts.push(format!("{keys} {what}"));
+        }
+    }
+    match (after_leader("block.next"), after_leader("block.prev")) {
+        (Some(next), Some(prev)) => shortcuts.push(format!("{next}/{prev} blocks")),
+        (Some(keys), None) | (None, Some(keys)) => shortcuts.push(format!("{keys} blocks")),
+        (None, None) => {}
+    }
+    if let Some(keys) = after_leader("help.open") {
+        shortcuts.push(format!("{keys} help"));
+    }
+    if !leader.is_empty() && !shortcuts.is_empty() {
+        rows.push((
+            crate::help::keys_label(&leader),
+            format!("shortcuts: {}", shortcuts.join(" · ")),
+        ));
+    }
+    for (action, preferred, what) in [
+        (
+            "focus.next",
+            Some("<C-Tab>"),
+            "move the focus: prompt → timeline → tree",
+        ),
+        ("focus.input", None, "back to the prompt"),
+        (
+            "input.cancel",
+            None,
+            "clear the prompt or interrupt the turn",
+        ),
+        (
+            "selection.copy",
+            Some("<C-S-c>"),
+            "copy the selected text, from the prompt or the chat",
+        ),
+    ] {
+        if let Some(keys) = keys_of(keymap, action, preferred) {
+            rows.push((keys, what.to_owned()));
+        }
+    }
+    rows
+}
 
 /// The empty timeline: the crest mark and the keys to start with.
-fn welcome(cx: &App) -> impl IntoElement {
+fn welcome(keys: &[(String, String)], cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let rows = WELCOME_KEYS.iter().map(|(keys, what)| {
+    let rows = keys.iter().map(|(keys, what)| {
         h_flex()
             .gap_3()
             .child(
                 div()
                     .w(px(110.))
                     .text_color(theme.primary)
-                    .child(SharedString::from(*keys)),
+                    .child(SharedString::from(keys.clone())),
             )
             .child(
                 div()
                     .text_color(theme.muted_foreground)
-                    .child(SharedString::from(*what)),
+                    .child(SharedString::from(what.clone())),
             )
     });
     v_flex()
@@ -645,10 +901,11 @@ impl Render for TimelineView {
             return div()
                 .id("timeline-empty")
                 .track_focus(&self.focus_handle)
+                .on_key_down(cx.listener(Self::on_key))
                 .size_full()
                 .border_t_1()
                 .border_color(edge)
-                .child(welcome(cx))
+                .child(welcome(&self.welcome, cx))
                 .into_any_element();
         }
         let view = cx.entity().downgrade();
@@ -712,7 +969,7 @@ mod tests {
     use application::ports::events::EventSink as _;
     use application::testing::system::RecordingSink;
     use domain::block::{Block, BlockKind};
-    use gpui::{Entity, TestAppContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     fn text(markdown: &str) -> Block {
         Block::new(BlockKind::Text {
@@ -749,6 +1006,87 @@ mod tests {
                 &view.state().entries()[0].block.kind,
                 BlockKind::Text { markdown } if markdown == "hola mundo"
             ));
+        });
+    }
+
+    #[gpui::test]
+    fn the_outline_menu_closes_every_way(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("> uno"), text("reply"), text("> dos"), text("reply")]
+                    .map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        let click = |cx: &mut VisualTestContext, selector: &'static str| {
+            let at = cx
+                .debug_bounds(selector)
+                .map(|b| b.center())
+                .unwrap_or_else(|| panic!("no {selector}"));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let open = |cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.outline_open());
+        draw(cx);
+        // The rail toggles the menu.
+        click(cx, "chat-outline-mark-0");
+        assert!(open(cx));
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        assert!(!open(cx), "a second click on the rail closes it");
+        // Choosing a question closes it.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        click(cx, "chat-outline-item-2");
+        assert!(!open(cx), "choosing closes it");
+        assert_eq!(view.read_with(cx, |v, _| v.state().selected()), Some(2));
+        // The close button.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        click(cx, "chat-outline-close");
+        assert!(!open(cx), "the close button closes it");
+        // A click elsewhere.
+        draw(cx);
+        click(cx, "chat-outline-mark-0");
+        draw(cx);
+        cx.simulate_click(gpui::point(px(40.), px(600.)), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(!open(cx), "a click outside closes it");
+    }
+
+    #[gpui::test]
+    fn the_outline_scrolls_to_the_current_question(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        view.update(cx, |view, cx| {
+            let blocks: Vec<_> = (0..40)
+                .flat_map(|n| [text(&format!("> question {n}")), text("reply")])
+                .map(|block| DomainEvent::BlockAdded { block })
+                .collect();
+            view.apply_all(blocks, cx);
+        });
+        // The last question is the current one.
+        view.update(cx, |view, cx| {
+            view.choose_outline(78, cx);
+        });
+        view.update_in(cx, |view, window, cx| view.toggle_outline(window, cx));
+        for _ in 0..2 {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+        view.read_with(cx, |view, _| {
+            let scroll = &view.outline_scroll;
+            assert!(scroll.max_offset().y > px(0.), "the menu scrolls");
+            assert!(scroll.offset().y < px(0.), "down to the current question");
+            assert!(crate::keyscroll::is_visible(scroll, 39), "which is in view");
         });
     }
 

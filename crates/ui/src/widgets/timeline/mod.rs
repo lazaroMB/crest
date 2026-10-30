@@ -940,6 +940,8 @@ pub fn view(
     cx: &mut App,
 ) -> gpui::Entity<TimelineView> {
     let view = crate::blocks::block_state(id, window, cx, |_, cx| TimelineView::new(spec, cx));
+    let focus = view.read(cx).focus.clone();
+    crate::blocks::remember_focus(id, &focus, cx);
     view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }

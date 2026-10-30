@@ -4,7 +4,7 @@ expression: def
 ---
 {
   "name": "grep",
-  "description": "Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by its context lines as `path-line- text`; groups of lines are separated by `--`.\n- `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to search for a literal string, and `ignore_case` for a case-insensitive search.\n- Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).\n- Files ignored by .gitignore are skipped. Paths are relative to the workspace root.\n- Returns at most `limit` matches (default 100) with `context` lines around each (default 2; use 0 for just the matching lines). Refine the pattern when the result is cut.",
+  "description": "Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by its context lines as `path-line- text`; groups of lines are separated by `--`.\n- `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to search for a literal string, `ignore_case` for a case-insensitive search and `word` to match whole words only.\n- Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).\n- Files ignored by .gitignore are skipped. Paths are relative to the workspace root.\n- Returns at most `limit` matches (default 100) with `context` lines around each (default 2; use 0 for just the matching lines). Refine the pattern when the result is cut.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -36,6 +36,11 @@ expression: def
       "ignore_case": {
         "type": "boolean",
         "description": "Match case-insensitively.",
+        "default": false
+      },
+      "word": {
+        "type": "boolean",
+        "description": "Only match whole words: the match must not be preceded or followed\nby a letter, digit or underscore.",
         "default": false
       },
       "context": {

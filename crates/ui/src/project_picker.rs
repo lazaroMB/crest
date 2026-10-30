@@ -13,7 +13,9 @@
 //! enters it (opens a recent one).
 //!
 //! All disk access goes through the [`ProjectBrowserPort`]; choosing emits
-//! [`ProjectPickerEvent::Chosen`] and the owner opens the project.
+//! [`ProjectPickerEvent::Chosen`] and the owner opens the project. Opened
+//! from a project (`/project`), `Esc` or **Back** emits
+//! [`ProjectPickerEvent::Back`] to return to it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,8 +26,9 @@ use application::ports::projects::{
 use application::usecases::project_picker::{filter_dirs, split_typed_path};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    px,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -35,6 +38,8 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 pub enum ProjectPickerEvent {
     /// Open this directory as the project.
     Chosen(PathBuf),
+    /// Go back to the project the picker was opened from.
+    Back,
 }
 
 /// A recent project and whether it still exists.
@@ -79,8 +84,12 @@ pub struct ProjectPickerView {
     listing: Option<DirListing>,
     recent: Vec<RecentRow>,
     selected: usize,
+    /// The scroll of the rows, which follows the chosen one.
+    scroll: ScrollHandle,
     error: Option<String>,
     notice: Option<String>,
+    /// Whether there is a project to go back to.
+    can_go_back: bool,
     listing_task: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -106,7 +115,7 @@ impl ProjectPickerView {
         });
         let changed = cx.subscribe(&input, |this: &mut Self, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
-                this.selected = 0;
+                this.select(0);
                 this.error = None;
                 this.refresh(cx);
             }
@@ -123,8 +132,10 @@ impl ProjectPickerView {
             listing: None,
             recent: Vec::new(),
             selected: 0,
+            scroll: ScrollHandle::new(),
             error: None,
             notice: None,
+            can_go_back: false,
             listing_task: None,
             _tasks: Vec::new(),
             _subscriptions: vec![changed, keys],
@@ -152,6 +163,12 @@ impl ProjectPickerView {
             })
             .ok();
         }));
+    }
+
+    /// Offers `Esc` and a **Back** button to return to the open project.
+    pub fn set_can_go_back(&mut self, can_go_back: bool, cx: &mut Context<Self>) {
+        self.can_go_back = can_go_back;
+        cx.notify();
     }
 
     /// A message under the path field (why a project did not open).
@@ -205,6 +222,17 @@ impl ProjectPickerView {
         self.selected
     }
 
+    /// The scroll of the rows, which follows the chosen one.
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
+    /// Chooses row `ix` and scrolls it into view.
+    fn select(&mut self, ix: usize) {
+        self.selected = ix;
+        crate::keyscroll::ensure_visible(&self.scroll, ix);
+    }
+
     /// Gives the focus to the path field.
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = self.input.read(cx).focus_handle(cx);
@@ -215,7 +243,7 @@ impl ProjectPickerView {
         let text = text.to_owned();
         self.input
             .update(cx, |input, cx| input.set_value(text, window, cx));
-        self.selected = 0;
+        self.select(0);
         self.error = None;
         self.refresh(cx);
     }
@@ -265,12 +293,13 @@ impl ProjectPickerView {
         let text = self.text(cx);
         let no_filter = split_typed_path(&text).filter.is_empty();
         match keystroke.key.as_str() {
+            "escape" if self.can_go_back => cx.emit(ProjectPickerEvent::Back),
             "enter" if ctrl => self.open_listed(cx),
             "enter" => self.open_selected(&rows, cx),
             "up" if !rows.is_empty() => {
-                self.selected = (self.selected + rows.len() - 1) % rows.len();
+                self.select((self.selected + rows.len() - 1) % rows.len());
             }
-            "down" if !rows.is_empty() => self.selected = (self.selected + 1) % rows.len(),
+            "down" if !rows.is_empty() => self.select((self.selected + 1) % rows.len()),
             "tab" | "right" => {
                 let Some(row) = rows.get(self.selected) else {
                     return;
@@ -502,20 +531,33 @@ impl Render for ProjectPickerView {
                 .border_1()
                 .border_color(theme.border)
                 .rounded_md()
-                .child(div().text_lg().child("Open a project"))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(div().text_lg().child("Open a project"))
+                        .children(self.can_go_back.then(|| {
+                            div()
+                                .id("project-back")
+                                .debug_selector(|| "project-back".to_owned())
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .cursor_pointer()
+                                .child("Back (Esc)")
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(ProjectPickerEvent::Back)),
+                                )
+                        })),
+                )
                 .child(Input::new(&self.input))
                 .children(
                     self.notice
                         .clone()
                         .map(|notice| div().text_color(theme.danger).child(notice)),
                 )
-                .child(
-                    div()
-                        .id("project-rows")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .children(items),
-                )
+                .child(crate::keyscroll::list("project-rows", &self.scroll, items).flex_1())
                 .child(
                     h_flex()
                         .gap_2()
@@ -567,8 +609,9 @@ mod tests {
         let seen = chosen.clone();
         cx.update(|window, cx| {
             cx.subscribe(&view, move |_, event: &ProjectPickerEvent, _| {
-                let ProjectPickerEvent::Chosen(path) = event;
-                seen.borrow_mut().push(path.clone());
+                if let ProjectPickerEvent::Chosen(path) = event {
+                    seen.borrow_mut().push(path.clone());
+                }
             })
             .detach();
             view.update(cx, |view, cx| view.focus(window, cx));
@@ -621,6 +664,37 @@ mod tests {
             *chosen.borrow(),
             [PathBuf::from("/home/u/crest"), PathBuf::from("/home/u")]
         );
+    }
+
+    #[gpui::test]
+    fn the_chosen_row_stays_in_view(cx: &mut TestAppContext) {
+        let mut dirs = InMemoryDirs::new("/home/u");
+        for n in 0..40 {
+            dirs = dirs.with_dir(format!("/home/u/dir_{n:02}"));
+        }
+        let (view, cx, _) = picker(dirs, cx);
+        assert_eq!(names(&view, cx).len(), 40);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        for _ in 0..30 {
+            cx.simulate_keystrokes("down");
+        }
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.selected(), 30);
+            let scroll = view.scroll_handle();
+            assert!(scroll.offset().y < px(0.), "the rows scrolled");
+            assert!(crate::keyscroll::is_visible(scroll, 30), "row 30 in view");
+        });
+        // A new filter starts again at the top.
+        set(&view, "/home/u/dir_0", cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.selected(), 0);
+            assert!(crate::keyscroll::is_visible(view.scroll_handle(), 0));
+        });
     }
 
     #[gpui::test]

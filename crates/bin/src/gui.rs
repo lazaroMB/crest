@@ -45,6 +45,10 @@ use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::fs::{
+    DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
+    ReadFileRequest, WriteFileRequest,
+};
 use application::ports::llm::{ModelCatalogPort, ModelInfo};
 use application::ports::mcp::{McpPort, McpServerState};
 use application::ports::plugin::{
@@ -58,6 +62,9 @@ use application::ports::search::{
 use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
+use application::usecases::permissions::{
+    ProjectRules, RuleListing, load_rules, promote_rule, remove_rule,
+};
 use application::usecases::run_turn::{SharedPermissions, UserInput};
 use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
@@ -66,8 +73,8 @@ use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
 use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
-use domain::permission::PermissionMode;
-use domain::workspace::WorkspaceRoot;
+use domain::permission::{PermissionMode, PermissionRule};
+use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
@@ -163,6 +170,72 @@ impl<T: ContentSearchPort + ?Sized + 'static> ContentSearchPort for TokioPort<T>
     }
 }
 
+impl<T: ?Sized> TokioPort<T> {
+    async fn run_fs<R, F>(&self, call: impl FnOnce(Arc<T>) -> F) -> Result<R, FsError>
+    where
+        F: Future<Output = Result<R, FsError>> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.handle
+            .spawn(call(Arc::clone(&self.inner)))
+            .await
+            .unwrap_or_else(|_| Err(FsError::Io("the runtime is shutting down".into())))
+    }
+}
+
+/// The file system the pickers preview through (only `read_file` is used
+/// there; the rest forwards too, for completeness).
+#[async_trait]
+impl<T: FileSystemPort + ?Sized + 'static> FileSystemPort for TokioPort<T> {
+    fn root(&self) -> &WorkspaceRoot {
+        self.inner.root()
+    }
+
+    async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
+        self.run_fs(|port| async move { port.read_file(request).await })
+            .await
+    }
+
+    async fn read_bytes(&self, path: &WorkspacePath, max: u64) -> Result<Vec<u8>, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.read_bytes(&path, max).await })
+            .await
+    }
+
+    async fn read_head(&self, path: &WorkspacePath, max: u64) -> Result<(Vec<u8>, u64), FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.read_head(&path, max).await })
+            .await
+    }
+
+    async fn exists(&self, path: &WorkspacePath) -> Result<bool, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.exists(&path).await })
+            .await
+    }
+
+    async fn list_dir(&self, path: &WorkspacePath) -> Result<Vec<DirEntry>, FsError> {
+        let path = path.clone();
+        self.run_fs(|port| async move { port.list_dir(&path).await })
+            .await
+    }
+
+    async fn prepare_edit(&self, request: EditFileRequest) -> Result<PendingChange, FsError> {
+        self.run_fs(|port| async move { port.prepare_edit(request).await })
+            .await
+    }
+
+    async fn prepare_write(&self, request: WriteFileRequest) -> Result<PendingChange, FsError> {
+        self.run_fs(|port| async move { port.prepare_write(request).await })
+            .await
+    }
+
+    async fn apply(&self, change: PendingChange) -> Result<FileChange, FsError> {
+        self.run_fs(|port| async move { port.apply(change).await })
+            .await
+    }
+}
+
 /// The models of a catalog for the `/model` picker, grouped by provider
 /// (ids without prefix first) and sorted by id within each.
 #[must_use]
@@ -203,6 +276,8 @@ pub struct UiController {
     handle: Handle,
     app: Arc<tokio::sync::Mutex<App>>,
     permissions: SharedPermissions,
+    /// The project's `permissions.local.toml`, for `/permissions`.
+    project_rules: Option<ProjectRules>,
     prompt_history: SharedPromptHistory,
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
@@ -663,6 +738,7 @@ impl UiController {
     pub fn new(mut app: App, handle: Handle) -> Self {
         let research = Arc::new(tokio::sync::Mutex::new(app.research.take()));
         let permissions = Arc::clone(app.permissions());
+        let project_rules = app.service.project_rules().cloned();
         let prompt_history = Arc::clone(app.shared_prompt_history());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
@@ -700,6 +776,7 @@ impl UiController {
             handle,
             app: Arc::new(tokio::sync::Mutex::new(app)),
             permissions,
+            project_rules,
             prompt_history,
             models,
             plugins,
@@ -1224,6 +1301,42 @@ impl SessionController for UiController {
         self.models.clone()
     }
 
+    fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self
+            .handle
+            .spawn(async move { load_rules(&permissions, project.as_ref()).await });
+        task.map(Result::unwrap_or_default).boxed()
+    }
+
+    fn remove_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self.handle.spawn(async move {
+            remove_rule(&permissions, project.as_ref(), &rule)
+                .await
+                .map_err(|err| err.to_string())
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn promote_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self.handle.spawn(async move {
+            promote_rule(&permissions, project.as_ref(), &rule)
+                .await
+                .map_err(|err| err.to_string())
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
     fn record_prompt(&self, line: String) {
         self.prompt_history
             .lock()
@@ -1241,13 +1354,13 @@ impl SessionController for UiController {
 
     fn set_chat_title(&self, title: String) -> BoxFuture<'static, Result<(), String>> {
         let app = Arc::clone(&self.app);
+        // A running turn holds the app until it ends (and saves the old
+        // title then): this waits for it, and the save after keeps the new
+        // one. The UI shows the title meanwhile and does not wait.
         self.handle
             .spawn(async move {
-                {
-                    let mut guard = app.lock().await;
-                    guard.session.title = Some(title);
-                }
-                let guard = app.lock().await;
+                let mut guard = app.lock().await;
+                guard.session.title = Some(title);
                 guard.save().await.map_err(|err| err.to_string())
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
@@ -1540,8 +1653,23 @@ fn login_on(
             Err(err) => format!("{stored} (it could not be made the default: {err})"),
         })
     });
-    task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
-        .boxed()
+    // The dialog drops the future when the user cancels or the check
+    // times out: the check stops then instead of storing the key later.
+    let abort = AbortOnDrop(task.abort_handle());
+    task.map(move |joined| {
+        drop(abort);
+        joined.unwrap_or_else(|err| Err(err.to_string()))
+    })
+    .boxed()
+}
+
+/// Aborts a runtime task when dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// `/logout` on the runtime of `handle`.
@@ -1654,6 +1782,8 @@ pub fn session_parts(
         Ok(app) => {
             let files = TokioPort::new(Arc::clone(&app.file_search), handle.clone());
             let content = TokioPort::new(Arc::clone(&app.content_search), handle.clone());
+            let fs: Arc<dyn FileSystemPort> =
+                Arc::new(TokioPort::new(Arc::clone(&app.fs), handle.clone()));
             let workspace = app.workspace.as_path().to_path_buf();
             let model = initial_model(&app);
             let (keymap, key_warnings) = crate::keys::keymap(&app.keymaps, &app.options);
@@ -1685,6 +1815,8 @@ pub fn session_parts(
                 Arc::new(files),
                 Arc::new(content),
             );
+            // The previews read with the app's guards (sensitive paths).
+            parts.fs = Some(fs);
             parts.model = Some(model);
             parts.needs_model = needs_model;
             parts.keymap = keymap;

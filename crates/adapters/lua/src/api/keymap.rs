@@ -1,10 +1,16 @@
-//! `app.keymap.set` and `app.commands.register`.
+//! `app.keymap.set`, `app.keymap.del` (alias `unmap`) and
+//! `app.commands.register`.
 //!
 //! ```lua
 //! app.keymap.set("<leader>r", "picker.files")
 //! app.keymap.set("<C-x>", function() app.cmd("clear") end, { desc = "Clear" })
+//! app.keymap.del("<leader>x")          -- builtin mappings too
 //! app.commands.register("review", function(args) ... end, { desc = "Review the changes" })
 //! ```
+//!
+//! `del` is recorded in call order with the mappings, so a later `set` of
+//! the same keys maps them again. The keys are checked when the keymap is
+//! built (`application::keymap::layers`), with the rest of the warnings.
 //!
 //! The optional last table (Neovim style) takes `desc`, the description the
 //! help shows next to the mapping or the command. The app has no modes; the
@@ -41,6 +47,9 @@ pub(crate) fn install(
 ) -> mlua::Result<()> {
     let keymap = lua.create_table()?;
     keymap.set("set", keymap_set(lua, sink, origin)?)?;
+    let del = keymap_del(lua, sink, origin)?;
+    keymap.set("del", del.clone())?;
+    keymap.set("unmap", del)?;
     app.set("keymap", keymap)?;
     let commands = lua.create_table()?;
     commands.set("register", commands_register(lua, sink, origin)?)?;
@@ -192,6 +201,35 @@ fn keymap_set(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Func
         match parsed {
             Ok(spec) => lock(&sink).keymaps.push(spec),
             Err(message) => report(lua, &sink, &origin, message),
+        }
+        Ok(())
+    })
+}
+
+fn keymap_del(lua: &Lua, sink: &Sink, origin: &Arc<Origin>) -> mlua::Result<Function> {
+    let (sink, origin) = (Arc::clone(sink), Arc::clone(origin));
+    lua.create_function(move |lua, args: mlua::Variadic<Value>| {
+        let mut args: Vec<Value> = args.into_iter().collect();
+        // `del(mode, lhs)`: the mode is ignored.
+        if args.len() >= 2 && matches!(args.get(1), Some(Value::String(_))) && is_mode(&args[0]) {
+            args.remove(0);
+        }
+        match args.into_iter().next() {
+            Some(Value::String(lhs)) => {
+                let lhs = lhs.to_str()?.to_owned();
+                lock(&sink).keymaps.push(KeymapSpec {
+                    lhs,
+                    action: KeyAction::Unmap,
+                    description: None,
+                    plugin: origin.plugin.clone(),
+                });
+            }
+            _ => report(
+                lua,
+                &sink,
+                &origin,
+                "keymap.del: the key sequence must be a string".into(),
+            ),
         }
         Ok(())
     })

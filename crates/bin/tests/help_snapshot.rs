@@ -134,12 +134,12 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
 
     let leader_j = help.keys.iter().find(|k| k.keys == "<C-g>j").unwrap();
     assert_eq!(leader_j.description, "Open the issue");
-    assert_eq!(leader_j.source, "jira");
+    assert_eq!(leader_j.source, "plugin jira");
     let j = help.keys.iter().find(|k| k.keys == "<C-g>k").unwrap();
     assert!(j.overridden, "{j:?}");
     assert_eq!(
         (j.action.as_str(), j.source.as_str()),
-        ("block.last", "config")
+        ("block.last", "global")
     );
 
     let tool = |name: &str| help.tools.iter().find(|t| t.name == name).unwrap();

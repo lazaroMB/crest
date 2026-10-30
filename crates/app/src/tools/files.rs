@@ -210,7 +210,8 @@ const GREP_DESCRIPTION: &str = "\
 Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by \
 its context lines as `path-line- text`; groups of lines are separated by `--`.
 - `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to \
-search for a literal string, and `ignore_case` for a case-insensitive search.
+search for a literal string, `ignore_case` for a case-insensitive search and `word` to match \
+whole words only.
 - Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).
 - Files ignored by .gitignore are skipped. Paths are relative to the workspace root.
 - Returns at most `limit` matches (default 100) with `context` lines around each (default 2; \
@@ -778,6 +779,7 @@ impl TypedTool for RunCommandTool {
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
         let subject = input.display();
+        let argv = input.argv();
         let preview = ApprovalPreview::Command {
             command: input.command.clone(),
             args: input.args.clone(),
@@ -799,7 +801,9 @@ impl TypedTool for RunCommandTool {
                 Err(err) => ToolOutput::error(err.to_string()),
             })
         };
-        Ok(PreparedCall::new(subject, run.boxed()).with_preview(preview))
+        Ok(PreparedCall::new(subject, run.boxed())
+            .with_preview(preview)
+            .with_argv(argv))
     }
 }
 
@@ -1174,6 +1178,14 @@ mod tests {
         assert_eq!(tool.effect(&input), ToolEffect::Execute);
         let prepared = tool.prepare(input, &ctx()).await.unwrap();
         assert_eq!(prepared.subject, "cargo test -p 'my crate'");
+        assert_eq!(
+            prepared.argv.as_deref(),
+            Some(
+                ["cargo", "test", "-p", "my crate"]
+                    .map(String::from)
+                    .as_slice()
+            )
+        );
         assert_eq!(
             prepared.preview,
             Some(ApprovalPreview::Command {
