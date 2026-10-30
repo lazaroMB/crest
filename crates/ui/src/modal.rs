@@ -5,8 +5,10 @@
 //! no modal is open (the same pattern as the approval dialog). It keeps a
 //! stack by id: opening an id that is already open replaces that modal and
 //! brings it to the front; updating replaces its content; closing removes
-//! it. Each modal is a card placed at [`modal_bounds`] for the current
-//! window size (so it follows resizes), with a header (title, plugin,
+//! it. Each modal is a card placed by the rules of
+//! [`domain::modal::modal_bounds`] within the area the host covers (the
+//! session, beside the chats sidebar and the tree; it follows resizes),
+//! with a header (title, plugin,
 //! close button) and a body that scrolls both ways when the content is
 //! larger. A dimmed backdrop covers the window behind the cards.
 //!
@@ -20,14 +22,14 @@
 //! the window's executor.
 
 use domain::block::{BlockId, CustomNode};
-use domain::modal::{ModalId, ModalSpec, modal_bounds};
+use domain::modal::{HorizontalAnchor, MODAL_MARGIN, ModalId, ModalSpec, VerticalAnchor};
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{
     AnyView, App, AppContext as _, Context, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
-    px,
+    px, relative,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
@@ -278,12 +280,6 @@ impl ModalHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let viewport = window.viewport_size();
-        let rect = modal_bounds(
-            f32::from(viewport.width),
-            f32::from(viewport.height),
-            &open.spec,
-        );
         let view = open.view.clone();
         let body = match &view {
             Some(_) => None,
@@ -338,15 +334,14 @@ impl ModalHost {
                         this.close(&id, window, cx);
                     })),
             );
-        v_flex()
+        let position = open.spec.position;
+        let card = v_flex()
             .id(("modal", ix))
             .debug_selector(|| "modal-card".to_owned())
             .occlude()
-            .absolute()
-            .left(px(rect.x))
-            .top(px(rect.y))
-            .w(px(rect.width))
-            .h(px(rect.height))
+            .flex_none()
+            .w(relative(open.spec.width.fraction()))
+            .h(relative(open.spec.height.fraction()))
             .overflow_hidden()
             .bg(theme.popover)
             .text_color(theme.popover_foreground)
@@ -373,7 +368,28 @@ impl ModalHost {
                     .track_scroll(&open.scroll)
                     .child(div().p_3().min_w_0().child(body))
                     .scrollbar(&open.scroll, ScrollbarAxis::Both)
-            }))
+            }));
+        // The card is sized against this layer, not the window: the host
+        // fills the session area, which the chats sidebar and the tree
+        // panel make narrower than the window. The padding is the margin
+        // and the percentages apply to what is left, as in `modal_bounds`.
+        let layer = div()
+            .absolute()
+            .inset_0()
+            .p(px(MODAL_MARGIN))
+            .flex()
+            .flex_row();
+        let layer = match position.horizontal {
+            HorizontalAnchor::Left => layer.justify_start(),
+            HorizontalAnchor::Center => layer.justify_center(),
+            HorizontalAnchor::Right => layer.justify_end(),
+        };
+        let layer = match position.vertical {
+            VerticalAnchor::Top => layer.items_start(),
+            VerticalAnchor::Center => layer.items_center(),
+            VerticalAnchor::Bottom => layer.items_end(),
+        };
+        layer.child(card)
     }
 }
 

@@ -1,5 +1,5 @@
 use domain::block::CustomNode;
-use domain::modal::{ModalPosition, Percent};
+use domain::modal::{ModalPosition, Percent, modal_bounds};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, size};
 
 use super::*;
@@ -70,6 +70,40 @@ fn an_open_modal_is_drawn_at_its_bounds(cx: &mut TestAppContext) {
             && (got.3 - want.3).abs() < 1.0,
         "{got:?} != {want:?}"
     );
+}
+
+/// A window with a 300 px sidebar and the host over the rest, like the
+/// workbench with the chats sidebar shown.
+struct BesideSidebar(Entity<ModalHost>);
+
+impl Render for BesideSidebar {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .size_full()
+            .child(div().w(px(300.)).h_full())
+            .child(div().relative().flex_1().h_full().child(self.0.clone()))
+    }
+}
+
+#[gpui::test]
+fn beside_a_sidebar_the_modal_fits_the_session_area(cx: &mut TestAppContext) {
+    // `/open` with the chats sidebar shown: the host covers only the area
+    // right of the sidebar, and the card must stay inside it.
+    cx.update(gpui_component::init);
+    let (root, cx) =
+        cx.add_window_view(|window, cx| BesideSidebar(cx.new(|cx| ModalHost::new(window, cx))));
+    let host = cx.update(|_, cx| root.read(cx).0.clone());
+    let spec = spec("cov/a", 100.0, 100.0, "center", text("x"));
+    apply(&host, DomainEvent::ModalOpened { spec }, cx);
+    cx.simulate_resize(size(px(1000.), px(600.)));
+    cx.run_until_parked();
+    let drawn = cx
+        .debug_bounds("modal-card")
+        .unwrap_or_else(|| panic!("not drawn"));
+    assert_eq!(drawn.origin, point(px(320.), px(20.)));
+    assert_eq!(drawn.size, size(px(660.), px(560.)));
 }
 
 #[gpui::test]
