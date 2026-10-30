@@ -125,6 +125,7 @@ These are the builtin actions valid as a string:
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |
 | `permission.cycle` | Cycles the permission mode. |
+| `permissions.open` | Opens the `/permissions` modal with the permission rules. |
 | `input.cancel` | In the prompt, copies its selection, else clears the prompt, else interrupts (`Ctrl+C`). With the chat focused and text selected in it, copies that text. |
 | `selection.copy` | Copies the selected text, from the prompt or else the chat (`Ctrl+Shift+C`, `Ctrl+Insert`). Never interrupts. |
 | `turn.interrupt` | Interrupts the turn or the running command. |
