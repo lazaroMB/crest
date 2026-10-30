@@ -4,16 +4,19 @@
 //! MCP servers, the models, the command-line flags and the paths in use.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use application::decide::Decider;
 use application::keymap::layers::{GLOBAL_TOML, WORKSPACE_TOML, source_label};
 use application::keymap::{Action, KeymapEntry, parse_keys};
 use application::ports::mcp::{McpServerState, McpServerStatus, parse_qualified_name};
 use application::ports::plugin::{
-    ConfigOrigin, HookKind, KeyAction, KeymapSpec, McpServerSpec, McpTransport,
+    AppOptions, CommandSpec, ConfigOrigin, ConfigSources, HookKind, HookSpec, KeyAction,
+    KeymapSpec, McpServerSpec, McpTransport, PluginCapabilities, PluginToolSpec,
 };
+use application::tools::registry::ToolRegistry;
 use clap::CommandFactory as _;
-use domain::model::{ModelRole, ResolveRequest};
+use domain::model::{ModelPolicy, ModelRole, ResolveRequest};
 use domain::permission::ToolEffect;
 use ui::commands::CommandInfo;
 use ui::help::{
@@ -24,6 +27,59 @@ use ui::help::{
 use crate::args::Args;
 use crate::plugin_trust::PluginTrust;
 use crate::root::App;
+
+/// What the help reads of the [`App`], copied when the window opens so the
+/// help does not wait for a running turn (which holds the `App`). None of it
+/// changes after start; the MCP tools, the plugin trust and the servers'
+/// states are still read when the help opens.
+#[derive(Clone)]
+pub struct HelpSource {
+    commands: Vec<CommandSpec>,
+    keymaps: Vec<KeymapSpec>,
+    options: AppOptions,
+    plugin_tools: Vec<PluginToolSpec>,
+    hooks: Vec<HookSpec>,
+    plugin_capabilities: Vec<PluginCapabilities>,
+    config_sources: ConfigSources,
+    tools: ToolRegistry,
+    models: ModelPolicy,
+    decider: Decider,
+    turn_override: Option<String>,
+    workspace: PathBuf,
+    db_path: Option<PathBuf>,
+    mcp_trust_path: Option<PathBuf>,
+    plugin_trust_path: Option<PathBuf>,
+    mcp_specs: Vec<McpServerSpec>,
+    config_errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+impl HelpSource {
+    /// What the help of `app` shows.
+    #[must_use]
+    pub fn of(app: &App) -> Self {
+        Self {
+            commands: app.commands.clone(),
+            keymaps: app.keymaps.clone(),
+            options: app.options.clone(),
+            plugin_tools: app.plugin_tools.clone(),
+            hooks: app.hooks.clone(),
+            plugin_capabilities: app.plugin_capabilities.clone(),
+            config_sources: app.config_sources.clone(),
+            tools: app.service.tools().clone(),
+            models: app.model_policy().clone(),
+            decider: app.decider.clone(),
+            turn_override: app.turn_options.turn_override.clone(),
+            workspace: app.workspace.as_path().to_path_buf(),
+            db_path: app.db_path.clone(),
+            mcp_trust_path: app.mcp_trust_path.clone(),
+            plugin_trust_path: app.plugin_trust_path.clone(),
+            mcp_specs: app.mcp_specs.clone(),
+            config_errors: app.config_errors.clone(),
+            warnings: app.warnings.clone(),
+        }
+    }
+}
 
 /// The commands the binary runs ([`UiController::run_command`]).
 ///
@@ -345,16 +401,16 @@ fn entry<'a>(rows: &'a mut BTreeMap<String, PluginRow>, name: &str) -> &'a mut P
     })
 }
 
-/// The plugins of `app`: every name that registered something or declared
+/// The plugins of `source`: every name that registered something or declared
 /// capabilities, the global config first and the workspace config last.
-fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
+fn plugin_rows(source: &HelpSource, trust: &PluginTrust) -> Vec<PluginRow> {
     let mut rows: BTreeMap<String, PluginRow> = BTreeMap::new();
-    for tool in &app.plugin_tools {
+    for tool in &source.plugin_tools {
         entry(&mut rows, &tool.plugin)
             .adds
             .push(format!("tool {}", tool.name));
     }
-    for command in &app.commands {
+    for command in &source.commands {
         let plugin = if command.plugin.is_empty() {
             GLOBAL_CONFIG
         } else {
@@ -364,7 +420,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             .adds
             .push(format!("command :{}", command.name));
     }
-    for keymap in &app.keymaps {
+    for keymap in &source.keymaps {
         // The keymap.toml files are not plugins; the Keys section shows
         // what they map.
         if keymap.plugin == GLOBAL_TOML || keymap.plugin == WORKSPACE_TOML {
@@ -384,7 +440,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             .adds
             .push(format!("{what} {}", keymap.lhs));
     }
-    for hook in &app.hooks {
+    for hook in &source.hooks {
         let kind = match hook.kind {
             HookKind::BeforeTool => "before_tool",
             HookKind::AfterTool => "after_tool",
@@ -393,7 +449,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             .adds
             .push(format!("hook {kind}"));
     }
-    for decl in &app.plugin_capabilities {
+    for decl in &source.plugin_capabilities {
         let granted = trust.is_granted(decl);
         let r = entry(&mut rows, &decl.plugin);
         r.path = decl.source.display().to_string();
@@ -407,7 +463,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
             r.approve = Some(format!("/plugin trust {}", decl.plugin));
         }
     }
-    let sources = &app.config_sources;
+    let sources = &source.config_sources;
     let plugins_dir = sources
         .global
         .as_deref()
@@ -439,7 +495,7 @@ fn plugin_rows(app: &App, trust: &PluginTrust) -> Vec<PluginRow> {
                 r.trust = "no capabilities".into();
             }
             if !r.path.is_empty() {
-                r.diagnostics = app
+                r.diagnostics = source
                     .config_errors
                     .iter()
                     .filter(|e| e.starts_with(&r.path))
@@ -501,10 +557,14 @@ fn mcp_rows(specs: &[McpServerSpec], statuses: &[McpServerStatus]) -> Vec<McpRow
         .collect()
 }
 
-/// The help's snapshot of `app`; `statuses` are the MCP servers' states
+/// The help's snapshot of `source`; `statuses` are the MCP servers' states
 /// now.
 #[must_use]
-pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) -> HelpSnapshot {
+pub fn snapshot(
+    source: &HelpSource,
+    trust: &PluginTrust,
+    statuses: &[McpServerStatus],
+) -> HelpSnapshot {
     let mut commands: Vec<CommandRow> = BIN_COMMANDS
         .iter()
         .map(|info| CommandRow {
@@ -514,7 +574,7 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
             source: BUILTIN_SOURCE.into(),
         })
         .collect();
-    commands.extend(app.commands.iter().map(|c| CommandRow {
+    commands.extend(source.commands.iter().map(|c| CommandRow {
         name: c.name.clone(),
         usage: format!("/{} [args]", c.name),
         description: c.description.clone().unwrap_or_default(),
@@ -525,19 +585,19 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         },
     }));
 
-    let (keymap, _) = crate::keys::keymap(&app.keymaps, &app.options);
+    let (keymap, _) = crate::keys::keymap(&source.keymaps, &source.options);
     let leader = keymap.leader().to_owned();
     let keys = key_rows(&keymap, |entry| {
-        mapping_of(entry, &app.keymaps, &leader)
+        mapping_of(entry, &source.keymaps, &leader)
             .map(|spec| (spec.description.clone(), source_label(&spec.plugin)))
     });
 
-    let registry = app.service.tools();
+    let registry = &source.tools;
     let mut tools: Vec<ToolRow> = registry
         .definitions()
         .into_iter()
         .map(|def| {
-            let plugin = app.plugin_tools.iter().find(|t| t.name == def.name);
+            let plugin = source.plugin_tools.iter().find(|t| t.name == def.name);
             let (source, effect) = if let Some(spec) = plugin {
                 (
                     ToolSource::Plugin(spec.plugin.clone()),
@@ -568,7 +628,7 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
     };
     tools.sort_by_key(|t| rank(&t.source));
 
-    let policy = app.model_policy();
+    let policy = &source.models;
     let mut models: Vec<ModelRow> = ModelRole::ALL
         .iter()
         .map(|role| ModelRow {
@@ -589,12 +649,12 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
     models.push(ModelRow {
         kind: "setting".into(),
         name: "decision model".into(),
-        value: match app.decider.model() {
+        value: match source.decider.model() {
             Some(model) => format!("{model} (Cloudflare)"),
             None => "off (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)".into(),
         },
     });
-    if let Some(model) = &app.turn_options.turn_override {
+    if let Some(model) = &source.turn_override {
         models.push(ModelRow {
             kind: "setting".into(),
             name: "--model".into(),
@@ -602,7 +662,7 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         });
     }
 
-    let sources = &app.config_sources;
+    let sources = &source.config_sources;
     let plugins_dir = sources
         .global
         .as_deref()
@@ -613,18 +673,18 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         value,
     };
     let paths = vec![
-        path("workspace", app.workspace.as_path().display().to_string()),
+        path("workspace", source.workspace.display().to_string()),
         path("global config", path_text(sources.global.as_deref())),
         path("workspace config", path_text(sources.workspace.as_deref())),
         path("plugins", path_text(plugins_dir.as_deref())),
-        path("sessions and flows", path_text(app.db_path.as_deref())),
+        path("sessions and flows", path_text(source.db_path.as_deref())),
         path(
             "approved MCP servers",
-            path_text(app.mcp_trust_path.as_deref()),
+            path_text(source.mcp_trust_path.as_deref()),
         ),
         path(
             "approved plugins",
-            path_text(app.plugin_trust_path.as_deref()),
+            path_text(source.plugin_trust_path.as_deref()),
         ),
         path(
             "documentation",
@@ -636,15 +696,15 @@ pub fn snapshot(app: &App, trust: &PluginTrust, statuses: &[McpServerStatus]) ->
         commands,
         keys,
         tools,
-        plugins: plugin_rows(app, trust),
-        mcp: mcp_rows(&app.mcp_specs, statuses),
+        plugins: plugin_rows(source, trust),
+        mcp: mcp_rows(&source.mcp_specs, statuses),
         models,
         cli: cli_rows(),
         paths,
-        diagnostics: app
+        diagnostics: source
             .config_errors
             .iter()
-            .chain(&app.warnings)
+            .chain(&source.warnings)
             .cloned()
             .collect(),
     }

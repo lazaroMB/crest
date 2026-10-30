@@ -45,6 +45,7 @@ use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
 use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application::ports::formats::FormatsPort;
 use application::ports::fs::{
     DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
     ReadFileRequest, WriteFileRequest,
@@ -91,11 +92,13 @@ use ui::workbench::{ProjectOpener, Workbench};
 
 use crate::args::Args;
 use crate::aside::{Aside, Route, opened_notice};
+use crate::help::HelpSource;
 use crate::plugin_trust::PluginTrust;
 use crate::preferences::Preferences;
 use crate::research::ResearchCommand;
 use crate::root::{
-    App, Config, Frontend, MissingApiKey, Overrides, SharedPromptHistory, build_app,
+    App, Config, Frontend, MissingApiKey, Overrides, SharedPromptHistory, SharedShellContext,
+    build_app,
 };
 
 /// [`EventSink`] that sends every event to the UI.
@@ -293,6 +296,14 @@ pub struct UiController {
     decider: Decider,
     simulator: Simulator,
     shell: Arc<dyn application::ports::shell::ShellPort>,
+    /// The output of the `/!` commands for the next prompt.
+    shell_context: SharedShellContext,
+    /// Reads the files `/open` shows.
+    fs: Arc<dyn FileSystemPort>,
+    /// Reads the STEP models `/open` shows.
+    formats: Arc<dyn FormatsPort>,
+    /// What `/help` shows.
+    help: Arc<HelpSource>,
     /// Commands running on the runtime, aborted by `Ctrl+C`.
     running: Arc<Mutex<Vec<AbortHandle>>>,
     /// Where `/login` stores the API key.
@@ -337,7 +348,7 @@ async fn research_command(
     )
     .await;
     drop(guard);
-    save(&app).await;
+    save_later(app);
     match result {
         Ok(message) => Reply::Notice(NoticeLevel::Info, message),
         Err(message) => Reply::Notice(NoticeLevel::Warning, message),
@@ -384,6 +395,12 @@ async fn save(app: &tokio::sync::Mutex<App>) {
     if let Err(err) = app.save().await {
         app.warn(format!("could not save the session: {err}"));
     }
+}
+
+/// Saves the chat session once a running turn lets go of it, without
+/// waiting for that: the command that calls it answers now.
+fn save_later(app: Arc<tokio::sync::Mutex<App>>) {
+    tokio::spawn(async move { save(&app).await });
 }
 
 /// The implementation flow the chat drives, if one is active.
@@ -761,6 +778,10 @@ impl UiController {
         let simulator = app.simulator.clone();
         let decider = app.decider.clone();
         let shell = Arc::clone(&app.shell);
+        let shell_context = Arc::clone(&app.shell_context);
+        let fs = Arc::clone(&app.fs);
+        let formats = Arc::clone(&app.formats);
+        let help = Arc::new(HelpSource::of(&app));
         let preferences_path = app.preferences_path.clone();
         let default_provider = app.default_provider;
         let catalog = app.catalog.clone();
@@ -790,6 +811,10 @@ impl UiController {
             decider,
             simulator,
             shell,
+            shell_context,
+            fs,
+            formats,
+            help,
             running: Arc::new(Mutex::new(Vec::new())),
             api_keys: Arc::new(crate::credentials::KeyringCredentials::default()),
             preferences_path,
@@ -868,7 +893,12 @@ pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<St
     emit_user_blocks(app, &request.prompt, &request.images);
     let images = request.images;
     let mut prompt = request.prompt;
-    let mut before = std::mem::take(&mut app.shell_context);
+    let mut before = std::mem::take(
+        &mut *app
+            .shell_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
     before.extend(context);
     if !before.is_empty() {
         let mut context = before.join("\n\n");
@@ -967,18 +997,24 @@ fn interrupted(name: &str) -> String {
 }
 
 /// `/!command`: runs it in the workspace, shows its output and keeps it for
-/// the model's next prompt.
-async fn shell_command(app: Arc<tokio::sync::Mutex<App>>, line: String) -> Reply {
-    let shell = Arc::clone(&app.lock().await.shell);
+/// the model's next prompt. It does not wait for a running turn: the output
+/// goes to the prompt after it, and the session is saved once it ends.
+async fn shell_command(
+    shell: Arc<dyn application::ports::shell::ShellPort>,
+    context: SharedShellContext,
+    events: Arc<dyn EventSink>,
+    app: Arc<tokio::sync::Mutex<App>>,
+    line: String,
+) -> Reply {
     let run = application::usecases::shell_command::run_user_command(shell.as_ref(), &line).await;
-    let mut app = app.lock().await;
-    app.shell_context.push(run.context);
-    app.emit(DomainEvent::BlockAdded {
+    context
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(run.context);
+    events.emit(DomainEvent::BlockAdded {
         block: Block::new(run.block),
     });
-    if let Err(err) = app.save().await {
-        app.warn(format!("could not save the session: {err}"));
-    }
+    save_later(app);
     Reply::Done
 }
 
@@ -999,19 +1035,16 @@ async fn post_images(
 
 /// `/open @path`: shows the file in a modal. The modal goes through the
 /// app's sink, so a picture's path is checked again by the image guard; it
-/// is not part of the saved timeline.
-async fn open_command(app: Arc<tokio::sync::Mutex<App>>, args: String) -> Reply {
-    let (fs, step) = {
-        let app = app.lock().await;
-        let step = application::usecases::open_file::StepReader {
-            formats: Arc::clone(&app.formats),
-            offload: Arc::clone(&app.compute.offload),
-        };
-        (Arc::clone(&app.fs), step)
-    };
+/// is not part of the saved timeline. It does not wait for a running turn.
+async fn open_command(
+    fs: Arc<dyn FileSystemPort>,
+    step: application::usecases::open_file::StepReader,
+    events: Arc<dyn EventSink>,
+    args: String,
+) -> Reply {
     match application::usecases::open_file::open_file_with(fs.as_ref(), Some(&step), &args).await {
         Ok(spec) => {
-            app.lock().await.emit(DomainEvent::ModalOpened { spec });
+            events.emit(DomainEvent::ModalOpened { spec });
             Reply::Done
         }
         Err(err) => Reply::Notice(NoticeLevel::Warning, err.to_string()),
@@ -1044,7 +1077,7 @@ async fn flow_line(
     };
     let result = crate::research::line(session, &line).await;
     drop(guard);
-    save(&app).await;
+    save_later(app);
     match result {
         Ok(message) => Reply::Notice(NoticeLevel::Info, message),
         Err(message) => Reply::Notice(NoticeLevel::Warning, message),
@@ -1411,7 +1444,16 @@ impl SessionController for UiController {
                 ))
                 .boxed(),
             ),
-            "!" => Some(self.spawn_command("!", shell_command(Arc::clone(&self.app), args))),
+            "!" => {
+                let task = shell_command(
+                    Arc::clone(&self.shell),
+                    Arc::clone(&self.shell_context),
+                    Arc::clone(&self.events),
+                    Arc::clone(&self.app),
+                    args,
+                );
+                Some(self.spawn_command("!", task))
+            }
             "stage" | "back" | "skip" | "abort" | "retry" | "reopen" => {
                 let line = format!("/{name} {args}").trim_end().to_owned();
                 let task = flow_line(
@@ -1443,7 +1485,14 @@ impl SessionController for UiController {
                 let task = plugin_command(Arc::clone(&self.plugin_trust), args);
                 Some(self.spawn_command("plugin", task))
             }
-            "open" => Some(self.spawn_command("open", open_command(Arc::clone(&self.app), args))),
+            "open" => {
+                let step = application::usecases::open_file::StepReader {
+                    formats: Arc::clone(&self.formats),
+                    offload: Arc::clone(&self.compute.offload),
+                };
+                let task = open_command(Arc::clone(&self.fs), step, Arc::clone(&self.events), args);
+                Some(self.spawn_command("open", task))
+            }
             _ => {
                 let id = self.commands.get(name)?;
                 Some(self.run_callback(id.0, serde_json::Value::String(args)))
@@ -1562,22 +1611,27 @@ impl SessionController for UiController {
     }
 
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
-        let (app, trust) = (Arc::clone(&self.app), Arc::clone(&self.plugin_trust));
+        let (help, trust) = (Arc::clone(&self.help), Arc::clone(&self.plugin_trust));
+        let mcp = self.mcp.port().cloned();
         let task = self
             .handle
-            .spawn(async move { help_snapshot(&app, &trust).await });
+            .spawn(async move { help_snapshot(&help, &trust, mcp.as_deref()).await });
         task.map(Result::unwrap_or_default).boxed()
     }
 }
 
-/// The help's snapshot of `app`, with the MCP servers' states now.
-pub async fn help_snapshot(app: &tokio::sync::Mutex<App>, trust: &PluginTrust) -> HelpSnapshot {
-    let app = app.lock().await;
-    let statuses = match &app.mcp {
-        Some(mcp) => mcp.manager.servers().await,
+/// The help's snapshot of `source`, with the MCP servers' states now. It
+/// does not wait for a running turn.
+pub async fn help_snapshot(
+    source: &HelpSource,
+    trust: &PluginTrust,
+    mcp: Option<&dyn McpPort>,
+) -> HelpSnapshot {
+    let statuses = match mcp {
+        Some(mcp) => mcp.servers().await,
         None => Vec::new(),
     };
-    crate::help::snapshot(&app, trust, &statuses)
+    crate::help::snapshot(source, trust, &statuses)
 }
 
 /// The controller of a window whose agent could not start.
