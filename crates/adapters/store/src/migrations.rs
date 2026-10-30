@@ -99,7 +99,41 @@ pub fn current_version(conn: &Connection) -> Result<u32, rusqlite::Error> {
 /// [`MigrationError::TooNew`] if the database is ahead of this build, or
 /// [`MigrationError::Sql`] if a step fails (that step is rolled back).
 pub fn migrate(conn: &mut Connection) -> Result<u32, MigrationError> {
+    repair_forge_branch(conn).map_err(|source| MigrationError::Sql {
+        name: "repair_forge_branch",
+        source,
+    })?;
     migrate_with(conn, MIGRATIONS)
+}
+
+/// Rewinds a database migrated by a build of the retired forge branch.
+///
+/// That branch shipped its own migration 5 (`0005_retire_old_flows`, which
+/// only created `retired_flows` and dropped old flow checkpoints), so such a
+/// file reports version 5 without the `discoveries` tables of
+/// `0005_discovery`, and `0006` then fails on every open. Detected by that
+/// shape, the database goes back to version 4 so the real 0005 and 0006 run;
+/// no applied migration is edited.
+fn repair_forge_branch(conn: &mut Connection) -> rusqlite::Result<()> {
+    let has_table = |conn: &Connection, name: &str| -> rusqlite::Result<bool> {
+        conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |row| row.get(0),
+        )
+    };
+    if current_version(conn)? != 5
+        || !has_table(conn, "retired_flows")?
+        || has_table(conn, "discoveries")?
+    {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch("DROP TABLE retired_flows;")?;
+    tx.pragma_update(None, "user_version", 4)?;
+    tx.commit()?;
+    tracing::warn!("store was migrated by the forge branch; rewound to version 4");
+    Ok(())
 }
 
 /// [`migrate`] over an explicit list, so tests can stop at an older version.
@@ -166,6 +200,35 @@ mod tests {
                 "timeline_blocks"
             ]
         );
+    }
+
+    #[test]
+    fn migrates_a_forge_branch_version_5_database() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert_eq!(migrate_with(&mut conn, &MIGRATIONS[..4]).unwrap(), 4);
+        conn.execute_batch(
+            r#"
+            INSERT INTO sessions (id, workspace_root, title, created_at, updated_at, data_json)
+                VALUES ('a', '/ws', 'kept', 1, 2, '{"id":"a"}');
+            CREATE TABLE retired_flows (count INTEGER NOT NULL);
+            INSERT INTO retired_flows VALUES (0);
+            PRAGMA user_version = 5;
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn).unwrap(), latest_version());
+
+        let mut empty = Connection::open_in_memory().unwrap();
+        migrate(&mut empty).unwrap();
+        assert_eq!(tables(&conn), tables(&empty));
+        let title: String = conn
+            .query_row("SELECT title FROM sessions WHERE id = 'a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "kept");
     }
 
     #[test]
