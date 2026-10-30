@@ -61,12 +61,30 @@ fn open_with<'a>(
     init: Option<&str>,
     cx: &'a mut TestAppContext,
 ) -> (Window_, &'a mut VisualTestContext) {
+    open_with_files(script, init, &[], cx)
+}
+
+/// [`open_with`], with `files` (path in the workspace, text) written
+/// before the window opens.
+fn open_with_files<'a>(
+    script: Vec<ScriptedResponse>,
+    init: Option<&str>,
+    files: &[(&str, &str)],
+    cx: &'a mut TestAppContext,
+) -> (Window_, &'a mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(gpui_component::init);
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("ws");
     std::fs::create_dir_all(workspace.join("src")).unwrap();
     std::fs::write(workspace.join("src/lib.rs"), LIB).unwrap();
+    for (path, text) in files {
+        let path = workspace.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, text).unwrap();
+    }
     let db = dir.path().join("sessions.db");
     let mut sources = ConfigSources::default();
     if let Some(init) = init {
@@ -275,6 +293,52 @@ fn always_in_project_from_the_dialog_writes_the_project_file(cx: &mut TestAppCon
     let rules = std::fs::read_to_string(w.workspace.join(".crest/permissions.local.toml")).unwrap();
     assert!(rules.contains("\"edit_file(src/*)\""), "{rules}");
     assert_eq!(w.llm.remaining(), 0);
+}
+
+/// `/permissions` over the real controller lists the project file's rules
+/// and a confirmed delete rewrites the file.
+#[gpui::test]
+fn slash_permissions_removes_a_project_rule_from_the_file(cx: &mut TestAppContext) {
+    let file = ".crest/permissions.local.toml";
+    let text = "allow = [\"run_command(cargo test *)\"]\ndeny = [\"run_command(git push *)\"]\n";
+    let (w, cx) = open_with_files(Vec::new(), None, &[(file, text)], cx);
+    cx.simulate_input("/permissions");
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the permissions modal", |s, cx| {
+        s.permissions_view(cx).is_some()
+    });
+    let rows = |w: &Window_, cx: &mut VisualTestContext| {
+        w.session.read_with(cx, |s, cx| {
+            s.permissions_view(cx)
+                .map(|view| {
+                    view.read(cx)
+                        .rows()
+                        .iter()
+                        .map(|row| row.text.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    };
+    assert_eq!(
+        rows(&w, cx),
+        ["run_command(cargo test *)", "run_command(git push *)"]
+    );
+    cx.simulate_keystrokes("d d");
+    let path = w.workspace.join(file);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rows(&w, cx).len() != 1 {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the delete"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+        cx.run_until_parked();
+    }
+    let rules = std::fs::read_to_string(&path).unwrap();
+    assert!(!rules.contains("cargo test"), "{rules}");
+    assert!(rules.contains("\"run_command(git push *)\""), "{rules}");
+    assert_eq!(rows(&w, cx), ["run_command(git push *)"]);
 }
 
 #[gpui::test]
