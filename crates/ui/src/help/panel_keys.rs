@@ -169,8 +169,32 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
         "Esc",
         "Back to the project you left (after /project)",
     ),
-    ("Approval dialog", "y", "Approve"),
-    ("Approval dialog", "a", "Approve always"),
+    (
+        "Approval dialog",
+        "Up / Down, Enter",
+        "Choose an answer and confirm it (or click it)",
+    ),
+    ("Approval dialog", "y", "Approve once"),
+    (
+        "Approval dialog",
+        "s, a",
+        "Approve and allow the pattern this session",
+    ),
+    (
+        "Approval dialog",
+        "p",
+        "Approve and allow the pattern in the project",
+    ),
+    (
+        "Approval dialog",
+        "e",
+        "Edits only: approve and switch to auto-edit",
+    ),
+    (
+        "Approval dialog",
+        "Tab / Shift+Tab",
+        "Widen / narrow the pattern",
+    ),
     (
         "Approval dialog",
         "n",
@@ -179,7 +203,7 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
     ("Approval dialog", "Esc", "Reject without a reason"),
     (
         "Approval dialog",
-        "Up / Down, PageUp / PageDown",
+        "PageUp / PageDown, Shift+Up / Down, Home / End",
         "Scroll the preview",
     ),
     ("Forms", "Tab / Shift+Tab", "Move between the fields"),

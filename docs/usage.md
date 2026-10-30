@@ -66,7 +66,7 @@ The prompt has the focus at start and gets it back by itself after a picker, a m
 | File and text pickers | `↑` / `↓`, `Enter` inserts the reference, `Esc` closes, `Alt+P` preview, `Alt+C` / `Alt+R` / `Alt+W` case, regex, whole word. |
 | Help | See [Help](#help). |
 | Plugin modal | `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` scroll, `Esc` closes. |
-| Approval dialog | `y`, `a`, `n`, `Esc`; `↑` / `↓`, `PageUp` / `PageDown` scroll the preview. |
+| Approval dialog | `↑` / `↓` + `Enter`, or `y`, `s` (`a`), `p`, `e`, `n`; `Tab` / `Shift+Tab` adjust the pattern; `Esc` rejects; `PageUp` / `PageDown`, `Shift+↑` / `Shift+↓` scroll the preview. |
 | Filterable list (logs, `app.ui.list`) | After a click on a row, or `↓` from its filter: `↑` / `↓`, `Home` / `End` move the selection (kept in view), `Enter` opens or closes the selected item's fields. |
 | Simulation board | See [Simulation board](#simulation-board). |
 
@@ -289,17 +289,28 @@ To change mode: `Ctrl+G p`, `/mode <mode>` or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
-When approval is needed, a dialog opens with the colored diff (for edits) or with the exact command and its directory (for `run_command`):
+When approval is needed, a dialog opens with the colored diff (for edits) or with the exact command and its directory (for `run_command`), and under it the answers as rows: `y`, `s`, `p`, `e` (edits only) and `n`.
+
+```
+ › y  Yes, once
+   s  Yes, this session for   ‹ cargo test * ›
+   p  Yes, always in project  ‹ cargo test * ›
+   n  No, tell crest why…
+```
 
 | Key | Answer |
 | --- | --- |
+| `↑` / `↓`, `Enter` | Move the cursor through the rows and pick the one under it. A click on a row picks it too. |
 | `y` | Approve this once. |
-| `a` | Always approve: creates a rule for **that same tool and that exact subject** (the same path or the same command line, nothing broader). |
+| `s` (or `a`) | Approve and allow the pattern in the chip for the rest of the session. |
+| `p` | Approve and allow the pattern in this workspace for good: it is written to `.crest/permissions.local.toml`. |
+| `e` | Only for edits (`edit_file`, `write_file`): approve and switch the session to `auto-edit`, so the next edits are not asked (`Ctrl+G p` or `/mode ask` undoes it). |
+| `Tab` / `Shift+Tab` | Widen or narrow the pattern of the `s` and `p` rows: the exact command, the program and its subcommand (`cargo test *`, proposed first) or the whole program (`cargo *`); for edits the exact file, its folder (`src/ui/*`, proposed first) or the folder above. The `‹` `›` arrows of the chip do the same with the mouse. A broader pattern shows what it allows (``allows any `cargo test …` ``). Shells, wrappers and interpreters running inline code (`sh -c`, `sudo`, `python -c`, `npx`...) are only allowed exactly. |
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
 | `Esc` | Reject without a reason (the dialog's footer reminds you). |
-| `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End` | Scroll a long preview. |
+| `PageUp` / `PageDown`, `Shift+↑` / `Shift+↓`, `Home` / `End` | Scroll a long preview. |
 
-There are also `Approve (y)`, `Always (a)` and `Reject (n)` buttons. If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
+If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
 "Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `/clear` keeps those of the current run.
 
