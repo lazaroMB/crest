@@ -21,6 +21,13 @@
 //! UI (`/model`, `/mode`…) are handled by the UI first. When the flow ends
 //! the chat answers turns again.
 //!
+//! With `app.opt.research = { engine = "discovery" }` the same commands run
+//! the discovery engine ([`crate::discovery`]): `/research <problem>` at the
+//! research level, `--deep` at the deep level, gate answers approve or
+//! correct the open section, `/reopen <section> [reason]` drops the later
+//! verdicts, and `/research accept` freezes the discovery and derives its
+//! Spec.
+//!
 //! Headless: `crest --headless --research "<problem>"` runs the flow in the
 //! terminal and reads each gate's answer from stdin (`resume` as the problem
 //! continues the pending flow; `--quick` or `--deep` before the problem
@@ -30,7 +37,11 @@ use application::cost::PricingTable;
 use application::decide::Decider;
 use std::sync::Arc;
 
-use adapter_store::SqliteFlowStorage;
+use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage};
+use application::flows::aside::GateInfo;
+use application::flows::discovery::error::DiscoveryError;
+use application::flows::discovery::lock::DiscoveryLock;
+use application::flows::discovery::session::DiscoverySession;
 use application::flows::research::agents::{ExplorePorts, explore_agent, node_agent};
 use application::flows::research::error::FlowError;
 use application::flows::research::flow::FlowReply;
@@ -45,10 +56,13 @@ use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::permissions::ProjectRules;
 use application::usecases::run_turn::{AgentDeps, SharedPermissions};
+use domain::discovery::{Level, Section, Status};
 use domain::model::ModelPolicy;
 use domain::permission::ToolEffect;
 use domain::research::Pipeline;
 use domain::workspace::WorkspaceRoot;
+
+use crate::discovery::{DiscoveryParts, Engine};
 
 /// What the research flow is built from, all shared with the chat.
 pub struct ResearchParts {
@@ -78,6 +92,76 @@ pub struct ResearchParts {
     pub decider: Decider,
     /// Prices of the models, for the cost of each stage (maybe empty).
     pub pricing: PricingTable,
+    /// The discovery log and source store (the chat's database).
+    pub discovery: Arc<SqliteDiscoveryStore>,
+    /// The lock of open discovery folders, shared with the tools' file port.
+    pub lock: DiscoveryLock,
+    /// Which engine `/research` runs on.
+    pub engine: Engine,
+    /// The web, for the discovery engine's sources (the explore ports hold
+    /// the tools; this is the port itself).
+    pub web: Option<Arc<dyn application::ports::web::WebPort>>,
+}
+
+/// The research flow of the workspace: one of the two engines.
+#[derive(Debug)]
+pub enum Research {
+    /// The graph-flow pipelines.
+    Graph(Box<ResearchSession>),
+    /// The discovery engine.
+    Discovery(DiscoverySession),
+}
+
+impl Research {
+    /// Which engine this is.
+    #[must_use]
+    pub fn engine(&self) -> Engine {
+        match self {
+            Self::Graph(_) => Engine::Graph,
+            Self::Discovery(_) => Engine::Discovery,
+        }
+    }
+
+    /// Whether the flow waits for a line of the chat.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        match self {
+            Self::Graph(s) => s.is_active(),
+            Self::Discovery(s) => s.is_active(),
+        }
+    }
+
+    /// The gate waiting now, if any.
+    pub async fn gate_info(&self) -> Option<GateInfo> {
+        match self {
+            Self::Graph(s) => s.gate_info().await,
+            Self::Discovery(s) => s.gate_info(),
+        }
+    }
+
+    /// How the last flow ended, for the headless exit code: `Some(true)`
+    /// when it completed (or was accepted), `Some(false)` when it is
+    /// still open (saved, resumable), `None` when it failed or was
+    /// aborted or there is none.
+    pub async fn finished(&self) -> Option<bool> {
+        match self {
+            Self::Graph(s) => match s.last_status().await {
+                Ok(Some(FlowStatus::Completed)) => Some(true),
+                Ok(Some(status)) if status.is_open() => Some(false),
+                _ => None,
+            },
+            Self::Discovery(s) => {
+                // The one this session drove, not the newest of the workspace.
+                let id = s.last()?;
+                let report = s.engine().status(id).await.ok()?;
+                match report.status {
+                    Status::Accepted => Some(true),
+                    Status::Open => Some(false),
+                    Status::Aborted => None,
+                }
+            }
+        }
+    }
 }
 
 /// The MCP tools of `tools` that only read (servers declared with a read
@@ -97,7 +181,7 @@ fn read_only_mcp(tools: &ToolRegistry) -> Vec<Arc<dyn application::tools::regist
 /// # Errors
 ///
 /// When the read-only agent or the graph cannot be built.
-pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
+pub fn build(parts: ResearchParts) -> anyhow::Result<Research> {
     let ResearchParts {
         agent,
         tools,
@@ -111,32 +195,67 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<ResearchSession> {
         storage,
         decider,
         pricing,
+        discovery,
+        lock,
+        engine,
+        web,
     } = parts;
     let llm: Arc<dyn LlmPort> = Arc::clone(&agent.llm);
     explore.llm = Arc::clone(&llm);
     explore.extra_tools.extend(read_only_mcp(&tools));
-    let explorer = explore_agent(explore)?;
+    let shell = explore.shell.clone();
+    let explorer = Arc::new(explore_agent(explore)?);
     let events = Arc::clone(&agent.events);
-    let acting = node_agent(
-        AgentDeps {
-            llm: Arc::clone(&llm),
-            ..agent
-        },
-        tools,
-        models.clone(),
-        permissions,
-    )
-    .with_system_prompt(system_prompt)
-    .with_project_rules(project_rules);
+    let acting = Arc::new(
+        node_agent(
+            AgentDeps {
+                llm: Arc::clone(&llm),
+                ..agent
+            },
+            tools,
+            models.clone(),
+            permissions,
+        )
+        .with_system_prompt(system_prompt)
+        .with_project_rules(project_rules),
+    );
     let root = root.as_path().display().to_string();
-    let deps = NodeDeps::new(llm, models, events)
-        .with_agent(Arc::new(acting))
-        .with_explore_agent(Arc::new(explorer))
-        .with_workspace_root(root.clone())
-        .with_decider(decider)
-        .with_pricing(pricing);
-    let graphs = research_graphs(deps, Some(workspace))?;
-    Ok(ResearchSession::new(graphs, storage, root))
+    match engine {
+        Engine::Discovery => {
+            let shell =
+                shell.ok_or_else(|| anyhow::anyhow!("the discovery engine needs a shell"))?;
+            Ok(Research::Discovery(crate::discovery::build(
+                DiscoveryParts {
+                    store: discovery,
+                    llm,
+                    models,
+                    events,
+                    decider,
+                    explorer,
+                    worker: acting,
+                    fs: Arc::clone(&workspace.fs),
+                    search: Arc::clone(&workspace.search),
+                    web,
+                    shell,
+                    lock,
+                    root,
+                    human: crate::discovery::human_name(),
+                },
+            )))
+        }
+        Engine::Graph => {
+            let deps = NodeDeps::new(llm, models, events)
+                .with_agent(acting)
+                .with_explore_agent(explorer)
+                .with_workspace_root(root.clone())
+                .with_decider(decider)
+                .with_pricing(pricing);
+            let graphs = research_graphs(deps, Some(workspace))?;
+            Ok(Research::Graph(Box::new(ResearchSession::new(
+                graphs, storage, root,
+            ))))
+        }
+    }
 }
 
 /// How `/research <problem>` runs: the flag before the problem.
@@ -192,8 +311,12 @@ pub enum ResearchCommand {
     /// `/research cancel [n|id|all]`: aborts the last flow, the one
     /// numbered `n` in `/research list`, or every open one.
     Cancel(Option<String>),
-    /// `/research stage|back <stage>|skip|abort`: a command for the last flow.
+    /// `/research stage|back <stage>|skip|abort|reopen <section>`: a
+    /// command for the last flow.
     Line(String),
+    /// `/research accept`: freezes an approved discovery and derives its
+    /// Spec (discovery engine only).
+    Accept,
     /// `/research`.
     Status,
 }
@@ -214,7 +337,8 @@ impl ResearchCommand {
             "list" | "ls" | "listar" if rest.is_empty() => Self::List(false),
             "list" | "ls" | "listar" if matches!(rest, "all" | "todos") => Self::List(true),
             "cancel" | "cancelar" | "descartar" | "drop" => Self::Cancel(which),
-            "stage" | "skip" | "abort" | "back" => Self::Line(format!("/{args}")),
+            "stage" | "skip" | "abort" | "back" | "reopen" => Self::Line(format!("/{args}")),
+            "accept" | "aceptar" if rest.is_empty() => Self::Accept,
             flag => match StartMode::from_flag(flag) {
                 Some(mode) => Self::Start {
                     problem: rest.to_owned(),
@@ -245,6 +369,18 @@ pub const USAGE: &str = "no active research flow; `/research <problem descriptio
 ///
 /// The error of the flow, as text, also when a node failed.
 pub async fn command(
+    research: &mut Research,
+    command: ResearchCommand,
+    now: u64,
+) -> Result<String, String> {
+    match research {
+        Research::Graph(session) => graph_command(session, command, now).await,
+        Research::Discovery(session) => discovery_command(session, command).await,
+    }
+}
+
+/// [`command`] on the graph-flow engine.
+async fn graph_command(
     research: &mut ResearchSession,
     command: ResearchCommand,
     now: u64,
@@ -261,8 +397,11 @@ pub async fn command(
             research.start(&problem, now, mode.options()).await
         }
         ResearchCommand::Resume(which) => research.resume(which.as_deref()).await,
-        ResearchCommand::Line(line) => return self::line(research, &line).await,
+        ResearchCommand::Line(line) => return graph_line(research, &line).await,
         ResearchCommand::List(all) => return list(research, all).await,
+        ResearchCommand::Accept => {
+            return Err("`/research accept` belongs to the discovery engine (app.opt.research.engine = \"discovery\")".to_owned());
+        }
         ResearchCommand::Cancel(which) => {
             return match research.cancel(which.as_deref()).await {
                 Ok(0) => Ok("nothing to cancel: that research flow already stopped".to_owned()),
@@ -293,6 +432,158 @@ pub async fn command(
         Ok(status) => Ok(describe_status(&status)),
         Err(err) => Err(message(&err)),
     }
+}
+
+/// [`command`] on the discovery engine.
+async fn discovery_command(
+    session: &mut DiscoverySession,
+    command: ResearchCommand,
+) -> Result<String, String> {
+    let result = match command {
+        ResearchCommand::Start { problem, .. } if problem.is_empty() => {
+            return Err("`/research --deep <problem>` needs a problem description".to_owned());
+        }
+        ResearchCommand::Start { problem, mode } => {
+            let level = match mode {
+                StartMode::Deep => Level::Deep,
+                StartMode::Auto | StartMode::Quick => Level::Research,
+            };
+            session.start(&problem, level).await
+        }
+        ResearchCommand::Resume(which) => session.resume(which.as_deref()).await,
+        ResearchCommand::Line(line) => return discovery_line(session, &line).await,
+        ResearchCommand::List(all) => return discovery_list(session, all).await,
+        ResearchCommand::Accept => session.accept().await,
+        ResearchCommand::Cancel(which) => {
+            return cancel_message(session.cancel(which.as_deref()).await);
+        }
+        ResearchCommand::Status => session.status().await,
+    };
+    result.map_err(discovery_message)
+}
+
+/// The message of `/research cancel` on the discovery engine.
+fn cancel_message(result: Result<usize, DiscoveryError>) -> Result<String, String> {
+    match result {
+        Ok(0) => Ok("nothing to cancel: no open discovery".to_owned()),
+        Ok(1) => Ok("discovery aborted; its log is kept".to_owned()),
+        Ok(n) => Ok(format!("{n} discoveries aborted; their logs are kept")),
+        Err(err) => Err(discovery_message(err)),
+    }
+}
+
+/// `/research list [all]` on the discovery engine.
+async fn discovery_list(session: &DiscoverySession, all: bool) -> Result<String, String> {
+    let list = session.list().await.map_err(discovery_message)?;
+    let total = list.len();
+    let shown: Vec<_> = list
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| all || d.status == Status::Open)
+        .collect();
+    if shown.is_empty() {
+        return Ok(if total == 0 {
+            "no discovery yet; `/research <problem>` starts one".to_owned()
+        } else {
+            format!("no open discovery; `/research list all` shows the {total} stored")
+        });
+    }
+    let mut out = String::new();
+    for (i, d) in &shown {
+        let problem: String = d
+            .problem
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(80)
+            .collect();
+        let position = match (d.status, d.open) {
+            (Status::Open, Some(section)) => format!("open at `{section}`"),
+            (Status::Open, None) => "ready to accept".to_owned(),
+            (Status::Accepted, _) => "accepted".to_owned(),
+            (Status::Aborted, _) => "aborted".to_owned(),
+        };
+        out.push_str(&format!(
+            "{}. **{problem}** — {} · {:?} · {position} · {} events\n",
+            i + 1,
+            d.id,
+            d.level,
+            d.events
+        ));
+    }
+    out.push_str(
+        "\n`/research resume <n>` continues one, `/research cancel` aborts the active one.",
+    );
+    Ok(out)
+}
+
+/// A line for the discovery engine: the answer to its gate, or `/reopen
+/// <section> [reason]`, `/back <section>`, `/abort`, `/stage`.
+async fn discovery_line(session: &mut DiscoverySession, text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return session
+            .handle_line(trimmed)
+            .await
+            .map_err(discovery_message);
+    };
+    let (name, arg) = rest
+        .split_once(char::is_whitespace)
+        .map_or((rest, ""), |(n, a)| (n, a.trim()));
+    match name {
+        "reopen" | "back" => {
+            let (section, reason) = arg
+                .split_once(char::is_whitespace)
+                .map_or((arg, "reopened from the chat"), |(s, r)| (s, r.trim()));
+            let section: Section = section.parse().map_err(|_| {
+                format!("`{section}` names no section; one of: {}", section_names())
+            })?;
+            session
+                .reopen(section, reason)
+                .await
+                .map_err(discovery_message)
+        }
+        "abort" => session.abort().await.map_err(discovery_message),
+        "accept" => session.accept().await.map_err(discovery_message),
+        "stage" | "status" => session.status().await.map_err(discovery_message),
+        "skip" | "retry" => Err(format!(
+            "`/{name}` does not apply to the discovery engine; `/research` shows the next legal step"
+        )),
+        // Headless passes `/research …` through here while a gate waits.
+        "research" => {
+            let (sub, rest) = arg
+                .split_once(char::is_whitespace)
+                .map_or((arg, ""), |(s, r)| (s, r.trim()));
+            let which = (!rest.is_empty()).then_some(rest);
+            match sub {
+                "" | "status" | "stage" => session.status().await.map_err(discovery_message),
+                "accept" => session.accept().await.map_err(discovery_message),
+                "cancel" | "abort" => cancel_message(session.cancel(which).await),
+                "resume" => session.resume(which).await.map_err(discovery_message),
+                "list" => discovery_list(session, rest == "all").await,
+                _ => Err(format!(
+                    "`/research {sub}` is not available while a discovery waits; answer the gate, or use `/research accept`, `/research cancel [n|all]`, `/research resume [n]`, `/research list`"
+                )),
+            }
+        }
+        // A slash line is never a verdict: a typo must not rewrite a section.
+        _ => Err(format!(
+            "`/{name}` is not a discovery command; answer the gate in plain text, or use `/reopen <section> [reason]`, `/abort`, `/stage`, `/research accept`"
+        )),
+    }
+}
+
+fn section_names() -> String {
+    Section::ALL
+        .iter()
+        .map(|s| format!("`{}`", s.heading().to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn discovery_message(err: DiscoveryError) -> String {
+    format!("discovery: {err}")
 }
 
 /// " · $0.41 so far" when the cost of `used` is known, else nothing.
@@ -361,7 +652,15 @@ async fn list(research: &ResearchSession, all: bool) -> Result<String, String> {
 /// # Errors
 ///
 /// The error of the flow, as text, also when a node failed.
-pub async fn line(research: &mut ResearchSession, text: &str) -> Result<String, String> {
+pub async fn line(research: &mut Research, text: &str) -> Result<String, String> {
+    match research {
+        Research::Graph(session) => graph_line(session, text).await,
+        Research::Discovery(session) => discovery_line(session, text).await,
+    }
+}
+
+/// [`line`] on the graph-flow engine.
+async fn graph_line(research: &mut ResearchSession, text: &str) -> Result<String, String> {
     match research.handle_line(text).await {
         Ok(FlowReply::Status(status @ FlowStatus::Failed { .. })) => Err(describe_status(&status)),
         Ok(reply) => Ok(describe_reply(&reply)),
@@ -370,12 +669,29 @@ pub async fn line(research: &mut ResearchSession, text: &str) -> Result<String, 
 }
 
 /// The notice shown at start-up when a flow was left halfway.
-pub async fn pending_notice(research: &ResearchSession) -> Option<String> {
-    let position = research.pending().await.ok()??;
-    Some(format!(
-        "a research flow is pending ({position}); {}",
-        resume_hint(&position.status)
-    ))
+pub async fn pending_notice(research: &Research) -> Option<String> {
+    match research {
+        Research::Graph(session) => {
+            let position = session.pending().await.ok()??;
+            Some(format!(
+                "a research flow is pending ({position}); {}",
+                resume_hint(&position.status)
+            ))
+        }
+        Research::Discovery(session) => {
+            // Open discoveries keep their folders locked across sessions.
+            let _ = session.lock_open().await;
+            let pending = session.pending().await.ok()??;
+            let at = pending.open.map_or_else(
+                || "ready to accept".to_owned(),
+                |s| format!("open at `{s}`"),
+            );
+            Some(format!(
+                "discovery {} is pending ({at}); `/research resume` continues it",
+                pending.id
+            ))
+        }
+    }
 }
 
 fn message(err: &FlowError) -> String {
@@ -439,6 +755,11 @@ mod tests {
             ResearchCommand::parse("back 3"),
             ResearchCommand::Line("/back 3".into())
         );
+        assert_eq!(
+            ResearchCommand::parse("reopen scope too narrow"),
+            ResearchCommand::Line("/reopen scope too narrow".into())
+        );
+        assert_eq!(ResearchCommand::parse("accept"), ResearchCommand::Accept);
         let start = |problem: &str, mode| ResearchCommand::Start {
             problem: problem.into(),
             mode,

@@ -387,6 +387,7 @@ fn source_label(source: &SourceRef) -> String {
         SourceRef::Url { url, .. } => url.clone(),
         SourceRef::Commit { sha, .. } => sha.clone(),
         SourceRef::Command { command, .. } => command.clone(),
+        other => other.reference(),
     }
 }
 

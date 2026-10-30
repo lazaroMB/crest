@@ -9,8 +9,6 @@
 //! window (see [`crate::aside`]); a side question is never guessed here.
 
 use application::flows::aside::{last_answer, preamble};
-use application::flows::research::gate::FlowStatus;
-use application::flows::research::session::ResearchSession;
 use application::ports::events::{DomainEvent, NoticeLevel};
 
 use super::run::frontend;
@@ -18,6 +16,7 @@ use super::terminal::{Style, Terminal};
 use super::{Exit, StdinApproval};
 use crate::args::Args;
 use crate::aside::{Aside, Route, opened_notice};
+use crate::discovery::Engine;
 use crate::gui::{command_turn, run_turn_in};
 use crate::research::{self, ResearchCommand};
 use crate::root::{App, Config, Overrides, build_app, now_ms};
@@ -60,16 +59,14 @@ pub async fn run_flow(
             None => {}
         }
         if !session.is_active() {
-            break match session.last_status().await {
-                Ok(Some(FlowStatus::Completed)) => Exit::Success,
-                Ok(Some(status)) if status.is_open() => {
+            break match session.finished().await {
+                Some(true) => Exit::Success,
+                Some(false) => {
                     // A failed or interrupted stage: the flow stays stored
                     // at its last checkpoint.
-                    terminal.lock().line(
-                        Some(Style::Yellow),
-                        "the flow is saved; `crest --headless --research retry` runs the \
-                         stage again",
-                    );
+                    terminal
+                        .lock()
+                        .line(Some(Style::Yellow), open_hint(session.engine()));
                     Exit::TurnFailed
                 }
                 _ => Exit::TurnFailed,
@@ -100,7 +97,7 @@ pub async fn run_flow(
 /// chat turn, `None`) or the answer to the gate.
 async fn side_line(
     app: &mut App,
-    session: &mut ResearchSession,
+    session: &mut crate::research::Research,
     aside: &mut Aside,
     line: &str,
 ) -> Option<Result<String, String>> {
@@ -182,5 +179,36 @@ pub async fn run(args: &Args, problem: &str) -> Exit {
             eprintln!("error: {err:#}");
             Exit::Config
         }
+    }
+}
+
+/// What to tell the user about a flow left open (saved, not waiting): the
+/// graph engine reruns the failed stage with `retry`, the discovery engine
+/// rejects `/retry` and continues from its log with `resume`.
+fn open_hint(engine: Engine) -> &'static str {
+    match engine {
+        Engine::Graph => {
+            "the flow is saved; `crest --headless --research retry` runs the stage again"
+        }
+        Engine::Discovery => {
+            "the discovery is saved; `crest --headless --research resume` continues it"
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_open_discovery_is_told_to_resume_not_retry() {
+        let hint = open_hint(Engine::Discovery);
+        assert!(hint.contains("--research resume"), "{hint}");
+        assert!(!hint.contains("retry"), "{hint}");
+    }
+
+    #[test]
+    fn an_open_graph_flow_keeps_the_retry_hint() {
+        assert!(open_hint(Engine::Graph).contains("--research retry"));
     }
 }

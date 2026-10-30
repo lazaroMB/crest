@@ -89,6 +89,8 @@ flowchart TB
 | `SimExport` | `ports/sim.rs` | `board_html(&Board)` | `adapter_export::HtmlExporter` | — (the use case tests use a stub) |
 | `TelemetryPort` | `ports/telemetry.rs` | `turn_started`, `llm_call`, `tool_call`, `turn_finished` | `adapter_telemetry::TracingTelemetry` (and `NoopTelemetry` in the port itself) | `system::RecordingTelemetry` |
 | `SessionStorage` (graph-flow trait) | — | — | `adapter_store::SqliteFlowStorage` | graph-flow's in-memory storage |
+| `DiscoveryLogPort` | `ports/discovery.rs` | `start`, `append` (replays and judges before writing), `load`, `list`, `put_artifact`, `artifact`, `artifacts` | `adapter_store::SqliteDiscoveryStore` | `discovery::MemoryDiscoveryLog` |
+| `SourceStorePort` | `ports/discovery.rs` | `put`, `get`, `sources` | `adapter_store::SqliteDiscoveryStore` | `discovery::MemorySourceStore` |
 
 Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
@@ -242,6 +244,8 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 | `0001_init.sql` | `sessions`, `timeline_blocks`, `permission_rules` | The session (history as JSON), its timeline block by block and its session-scoped rules (project rules live in `.crest/permissions.local.toml`). |
 | `0002_turn_count.sql` | `sessions.turn_count` | Number of turns (to list without deserializing). |
 | `0003_flow_sessions.sql` | `flow_sessions` | graph-flow checkpoints of both workflows, with optimistic locking by version. |
+| `0004_prompt_history.sql` | `sessions.prompt_history` | The lines sent from the prompt, which `Up` brings back. |
+| `0005_discovery.sql` | `discoveries`, `discovery_events`, `discovery_artifacts`, `discovery_sources` | The discovery engine: one row per discovery, its append-only event log (judged by the domain before every insert), the texts it produced and the text of every source it read, with hashes. |
 
 - The session is saved after every turn, as `StoredSession { session, timeline, permission_rules }`.
 - On startup, `resume_latest` takes the workspace's most recent session (by canonical path), restores its rules and re-emits its timeline.

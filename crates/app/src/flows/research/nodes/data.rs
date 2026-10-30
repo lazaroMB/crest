@@ -470,6 +470,7 @@ fn source_label(source: &SourceRef) -> String {
         }
         SourceRef::Url { url, title } => title.clone().unwrap_or_else(|| url.clone()),
         SourceRef::Command { command, .. } => format!("$ {command}"),
+        other => other.reference(),
     }
 }
 
@@ -479,6 +480,12 @@ fn source_kind(source: &SourceRef) -> &'static str {
         SourceRef::Commit { .. } => "commit",
         SourceRef::Url { .. } => "web",
         SourceRef::Command { .. } => "command",
+        SourceRef::Paper { .. } => "paper",
+        SourceRef::Book { .. } => "book",
+        SourceRef::Standard { .. } => "standard",
+        SourceRef::Docs { .. } => "docs",
+        SourceRef::Repo { .. } => "repo",
+        SourceRef::Article { .. } => "article",
     }
 }
 

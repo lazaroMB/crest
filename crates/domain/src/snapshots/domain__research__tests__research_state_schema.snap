@@ -202,6 +202,248 @@ expression: "schemars::schema_for!(ResearchState)"
             "command",
             "output_excerpt"
           ]
+        },
+        {
+          "description": "A paper, preprint or study report.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "paper"
+            },
+            "title": {
+              "description": "Title.",
+              "type": "string"
+            },
+            "authors": {
+              "description": "Authors, as written (`Anderson, B. B., and others`).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "year": {
+              "description": "Year of publication.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "venue": {
+              "description": "Journal, conference or repository.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "doi": {
+              "description": "DOI (`10.1145/2858036.2858341`).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "arxiv": {
+              "description": "arXiv id (`2301.01234`).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "description": "Where it was read.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "title"
+          ]
+        },
+        {
+          "description": "A book or a chapter.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "book"
+            },
+            "title": {
+              "description": "Title.",
+              "type": "string"
+            },
+            "authors": {
+              "description": "Authors or editors.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "year": {
+              "description": "Year of the edition.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "publisher": {
+              "description": "Publisher.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "isbn": {
+              "description": "ISBN.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pages": {
+              "description": "Chapter or page range.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "title"
+          ]
+        },
+        {
+          "description": "A standard, an RFC or a specification.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "standard"
+            },
+            "id": {
+              "description": "Its id (`RFC 9110`, `ISO/IEC 25010:2023`).",
+              "type": "string"
+            },
+            "title": {
+              "description": "Title.",
+              "type": "string"
+            },
+            "url": {
+              "description": "Where it was read.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "title"
+          ]
+        },
+        {
+          "description": "Documentation of a product, versioned.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "docs"
+            },
+            "url": {
+              "description": "URL.",
+              "type": "string"
+            },
+            "title": {
+              "description": "Title.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Product version or date the page states.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "title"
+          ]
+        },
+        {
+          "description": "A file of a repository at a revision (this one or another).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "repo"
+            },
+            "repo": {
+              "description": "`owner/name` or a URL.",
+              "type": "string"
+            },
+            "rev": {
+              "description": "Commit, tag or branch.",
+              "type": "string"
+            },
+            "path": {
+              "description": "Path inside the repository.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "repo",
+            "rev",
+            "path"
+          ]
+        },
+        {
+          "description": "An article or a blog post.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "article"
+            },
+            "url": {
+              "description": "URL.",
+              "type": "string"
+            },
+            "title": {
+              "description": "Title.",
+              "type": "string"
+            },
+            "author": {
+              "description": "Author.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "date": {
+              "description": "Publication date, as written.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "url",
+            "title"
+          ]
         }
       ]
     },

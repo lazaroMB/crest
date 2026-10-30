@@ -43,7 +43,6 @@ use application::flows::aside::{GateInfo, last_answer, preamble};
 use application::flows::implement::flow::{FlowError, FlowReply};
 use application::flows::implement::graph::{ImplementSession, status_notice};
 use application::flows::implement::state::FlowStatus;
-use application::flows::research::session::ResearchSession;
 use application::ports::credentials::ApiKeyPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::fs::{
@@ -315,7 +314,7 @@ pub struct UiController {
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
 /// line does not wait for (or block) the chat's turns.
-type SharedResearch = Arc<tokio::sync::Mutex<Option<ResearchSession>>>;
+type SharedResearch = Arc<tokio::sync::Mutex<Option<crate::research::Research>>>;
 
 /// `/research <args>`: starts, resumes or reports the research flow and
 /// saves the chat session (its timeline holds the flow's blocks).
@@ -1413,7 +1412,7 @@ impl SessionController for UiController {
                 .boxed(),
             ),
             "!" => Some(self.spawn_command("!", shell_command(Arc::clone(&self.app), args))),
-            "stage" | "back" | "skip" | "abort" | "retry" => {
+            "stage" | "back" | "skip" | "abort" | "retry" | "reopen" => {
                 let line = format!("/{name} {args}").trim_end().to_owned();
                 let task = flow_line(
                     Arc::clone(&self.app),

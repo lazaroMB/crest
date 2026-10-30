@@ -7,6 +7,7 @@
 pub mod args;
 pub mod aside;
 pub mod credentials;
+pub mod discovery;
 pub mod gui;
 pub mod headless;
 pub mod help;
