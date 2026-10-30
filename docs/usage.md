@@ -242,7 +242,7 @@ With an empty query, `Ctrl+G ff` lists the files you chose last (marked `recent`
 
 `Ctrl+G fg` searches for the literal text, ignoring case, by default. The chips under the field, or their keys, change that: **Match case** (`Alt+C`), **Regex** (`Alt+R`, ripgrep syntax) and **Whole word** (`Alt+W`). The options stay as you left them for the next search. The match is highlighted in each row.
 
-On a window at least 860 px wide the popup has two columns: the results and a preview of the highlighted one, with line numbers and syntax colors. For a text match it starts 10 lines above the match, whose line and text are marked; it shows the lines grep returned at once and the file a moment later. `Alt+P` hides or shows the preview.
+On a window at least 860 px wide the popup has two columns: the results and a preview of the highlighted one, with line numbers and syntax colors. For a text match it starts 10 lines above the match, whose line and text are marked; it shows the lines grep returned at once and the file a moment later. Pictures (png, jpeg, gif, webp, svg, bmp, ico) and 3D models (obj, stl, ply up to 8 MB) are previewed as a still, the same files `/open` shows in a viewer; other binary files, and STEP parts, get a card that says so (`Enter` inserts the path, `/open @path` shows the file). `Alt+P` hides or shows the preview.
 
 | Key | Action |
 | --- | --- |

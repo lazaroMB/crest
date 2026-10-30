@@ -5,12 +5,21 @@
 //! returned ([`Preview::of_context`]); the file itself is read through the
 //! [`FileSystemPort`](application::ports::fs::FileSystemPort) after
 //! [`PREVIEW_DEBOUNCE`] ([`preview_request`]) and replaces it.
+//!
+//! Pictures and 3D models (what `/open` would show for the same file, see
+//! [`FileKind`](application::usecases::open_file::FileKind)) are previewed
+//! too, as a still ([`RichPreview`]): a picture from its path, a model
+//! parsed off the UI thread when the file is under
+//! [`PREVIEW_MODEL_MAX_BYTES`]. Anything else that is not text says so
+//! ([`RichPreview::Unsupported`]) instead of showing an error.
 
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Duration;
 
 use application::ports::fs::{FileContent, ReadFileRequest};
 use application::ports::search::ColumnRange;
+use domain::model3d::ModelSpec;
 use domain::workspace::WorkspacePath;
 use gpui::HighlightStyle;
 use gpui_component::Rope;
@@ -24,6 +33,40 @@ pub const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(80);
 pub const LINES_BEFORE: usize = 10;
 /// Lines read for a preview.
 pub const PREVIEW_LINES: usize = 80;
+/// Largest 3D model parsed for a preview; `/open` reads bigger ones.
+pub const PREVIEW_MODEL_MAX_BYTES: u64 = 8 * 1024 * 1024;
+/// Largest picture previewed; `/open` shows bigger ones.
+pub const PREVIEW_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// What the preview draws instead of lines of text.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RichPreview {
+    /// A picture, decoded by GPUI from its absolute path.
+    Image {
+        /// Absolute path of the file.
+        path: String,
+    },
+    /// A 3D model, already parsed.
+    Model(Arc<ModelSpec>),
+    /// Nothing to draw, and why; the pane says what to do instead.
+    Unsupported {
+        /// Short reason ("binary file", "3D model over 8 MiB").
+        reason: String,
+    },
+}
+
+/// `size` in bytes for a note: `1.2 MB`, `640 KB`, `12 B`.
+pub fn human_size(size: u64) -> String {
+    const KB: f64 = 1024.0;
+    let size = size as f64;
+    if size >= KB * KB {
+        format!("{:.1} MB", size / (KB * KB))
+    } else if size >= KB {
+        format!("{:.0} KB", size / KB)
+    } else {
+        format!("{size:.0} B")
+    }
+}
 
 /// Syntax styles of one line: byte ranges within it, in order.
 pub type LineStyles = Vec<(Range<usize>, HighlightStyle)>;
@@ -45,7 +88,7 @@ pub fn preview_request(item: &PickerItem) -> ReadFileRequest {
 }
 
 /// What the preview shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Preview {
     /// The file.
     pub path: WorkspacePath,
@@ -61,6 +104,8 @@ pub struct Preview {
     pub loading: bool,
     /// Why the file could not be read.
     pub error: Option<String>,
+    /// A picture, a model or an "unsupported" card instead of `lines`.
+    pub rich: Option<RichPreview>,
 }
 
 impl Preview {
@@ -86,7 +131,27 @@ impl Preview {
             column_range: item.column_range,
             loading: true,
             error: None,
+            rich: None,
         }
+    }
+
+    /// The preview of `item` as a picture, a model or an unsupported file.
+    pub fn rich(item: &PickerItem, rich: RichPreview) -> Self {
+        Self {
+            loading: false,
+            rich: Some(rich),
+            ..Self::of_context(item)
+        }
+    }
+
+    /// [`Self::rich`] with [`RichPreview::Unsupported`].
+    pub fn unsupported(item: &PickerItem, reason: impl Into<String>) -> Self {
+        Self::rich(
+            item,
+            RichPreview::Unsupported {
+                reason: reason.into(),
+            },
+        )
     }
 
     /// The preview of `item` once its file was read.
@@ -270,6 +335,28 @@ mod tests {
         let failed = Preview::failed(&item, "file is binary".into());
         assert_eq!(failed.lines.len(), 4);
         assert_eq!(failed.error.as_deref(), Some("file is binary"));
+    }
+
+    #[test]
+    fn rich_previews_are_not_loading() {
+        let item = PickerItem::file(p("logo.png"));
+        let preview = Preview::rich(
+            &item,
+            RichPreview::Image {
+                path: "/w/logo.png".into(),
+            },
+        );
+        assert!(!preview.loading && preview.lines.is_empty() && preview.is_for(&item));
+        let unsupported = Preview::unsupported(&item, "binary file");
+        assert_eq!(
+            unsupported.rich,
+            Some(RichPreview::Unsupported {
+                reason: "binary file".into()
+            })
+        );
+        assert_eq!(human_size(12), "12 B");
+        assert_eq!(human_size(640 * 1024), "640 KB");
+        assert_eq!(human_size(1_258_291), "1.2 MB");
     }
 
     #[test]
