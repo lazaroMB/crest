@@ -230,7 +230,11 @@ impl HelpSnapshot {
         // A command that runs a builtin action (`/picker.files`) says
         // which keys run it too.
         for row in &mut commands {
-            if let Some(keys) = action_keys(local.keymap, &row.name) {
+            let action = crate::commands::COMMAND_ACTIONS
+                .iter()
+                .find(|(command, _)| *command == row.name)
+                .map_or(row.name.as_str(), |(_, action)| action);
+            if let Some(keys) = action_keys(local.keymap, action) {
                 row.description = format!("{} ({keys})", row.description);
             }
         }
@@ -263,6 +267,19 @@ impl HelpSnapshot {
             kind: "setting".into(),
             name: "permission mode".into(),
             value: local.permission_mode.to_string(),
+        });
+        // Where the rules are seen and changed, with the keys of this keymap.
+        let keys = |action: &str, fallback: &str| {
+            action_keys(local.keymap, action).unwrap_or_else(|| fallback.to_owned())
+        };
+        self.models.push(ModelRow {
+            kind: "setting".into(),
+            name: "permission rules".into(),
+            value: format!(
+                "/permissions ({}) lists, removes and promotes them; {} cycles the mode",
+                keys("permissions.open", "no key"),
+                keys("permission.cycle", "/mode"),
+            ),
         });
         self
     }

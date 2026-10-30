@@ -63,6 +63,9 @@ use application::ports::search::{
 use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
+use application::usecases::permissions::{
+    ProjectRules, RuleListing, load_rules, promote_rule, remove_rule,
+};
 use application::usecases::run_turn::{SharedPermissions, UserInput};
 use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
@@ -71,7 +74,7 @@ use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
 use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
-use domain::permission::PermissionMode;
+use domain::permission::{PermissionMode, PermissionRule};
 use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -274,6 +277,8 @@ pub struct UiController {
     handle: Handle,
     app: Arc<tokio::sync::Mutex<App>>,
     permissions: SharedPermissions,
+    /// The project's `permissions.local.toml`, for `/permissions`.
+    project_rules: Option<ProjectRules>,
     prompt_history: SharedPromptHistory,
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
@@ -734,6 +739,7 @@ impl UiController {
     pub fn new(mut app: App, handle: Handle) -> Self {
         let research = Arc::new(tokio::sync::Mutex::new(app.research.take()));
         let permissions = Arc::clone(app.permissions());
+        let project_rules = app.service.project_rules().cloned();
         let prompt_history = Arc::clone(app.shared_prompt_history());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
@@ -771,6 +777,7 @@ impl UiController {
             handle,
             app: Arc::new(tokio::sync::Mutex::new(app)),
             permissions,
+            project_rules,
             prompt_history,
             models,
             plugins,
@@ -1293,6 +1300,42 @@ impl SessionController for UiController {
 
     fn models(&self) -> Vec<ModelChoice> {
         self.models.clone()
+    }
+
+    fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self
+            .handle
+            .spawn(async move { load_rules(&permissions, project.as_ref()).await });
+        task.map(Result::unwrap_or_default).boxed()
+    }
+
+    fn remove_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self.handle.spawn(async move {
+            remove_rule(&permissions, project.as_ref(), &rule)
+                .await
+                .map_err(|err| err.to_string())
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn promote_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let (permissions, project) = (Arc::clone(&self.permissions), self.project_rules.clone());
+        let task = self.handle.spawn(async move {
+            promote_rule(&permissions, project.as_ref(), &rule)
+                .await
+                .map_err(|err| err.to_string())
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
     }
 
     fn record_prompt(&self, line: String) {

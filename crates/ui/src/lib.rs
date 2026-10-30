@@ -13,6 +13,7 @@ pub mod input;
 pub mod keyscroll;
 pub mod login;
 pub mod modal;
+pub mod permissions;
 pub mod picker;
 pub mod project_picker;
 pub mod render3d;

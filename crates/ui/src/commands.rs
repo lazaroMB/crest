@@ -40,6 +40,12 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Change the permission mode",
     },
     CommandInfo {
+        name: "permissions",
+        usage: "/permissions",
+        description: "List the permission rules of this session and project: d removes one, p moves a \
+                      session rule to the project file",
+    },
+    CommandInfo {
         name: "clear",
         usage: "/clear",
         description: "Start a new, empty session (not while a turn runs)",
@@ -81,6 +87,10 @@ pub const BUILTIN_COMMANDS: &[CommandInfo] = &[
         description: "Quit crest (also /quit and /qa)",
     },
 ];
+
+/// Commands that run a builtin action of another name: the help names
+/// the action's keys after them.
+pub const COMMAND_ACTIONS: &[(&str, &str)] = &[("permissions", "permissions.open")];
 
 /// The status-bar hint for `/command`, which nothing runs.
 pub fn unknown_command_hint(command: &str) -> String {

@@ -216,6 +216,15 @@ const EXACT_ONLY_REASON: &str = "shells and interpreters are only allowed exactl
 
 /// The text of the pattern chip: `cargo test *`, `src/*`, the exact
 /// subject, or "any input".
+/// What the "all edits" row adds: the mode it switches to and how to
+/// undo it.
+fn all_edits_hint(mode_keys: Option<&str>) -> String {
+    match mode_keys {
+        Some(keys) => format!("(auto-edit · {keys} to undo)"),
+        None => "(auto-edit · /mode ask to undo)".to_owned(),
+    }
+}
+
 fn pattern_text(rung: &RuleOption) -> String {
     rung.rule
         .matcher
@@ -321,6 +330,9 @@ pub struct ApprovalView {
     /// Whether its session is on screen. A parked session's dialog keeps
     /// its queue but never takes the focus.
     shown: bool,
+    /// Keys of `permission.cycle` (`Ctrl+G p`), named by the "all edits"
+    /// row; `None` when unbound.
+    mode_keys: Option<String>,
     _inbox: Task<()>,
 }
 
@@ -355,8 +367,15 @@ impl ApprovalView {
             restore_focus: None,
             next_key: 0,
             shown: true,
+            mode_keys: Some("<leader>p".to_owned()),
             _inbox: task,
         }
+    }
+
+    /// Sets the keys the "all edits" row names to undo it (those of
+    /// `permission.cycle` in the session's keymap; `None` when unbound).
+    pub fn set_mode_keys(&mut self, keys: Option<String>) {
+        self.mode_keys = keys;
     }
 
     /// Tells the dialog whether its session is on screen. Shown again, it
@@ -782,7 +801,10 @@ impl ApprovalView {
             Choice::AllEdits => Some(
                 div()
                     .text_color(cx.theme().muted_foreground)
-                    .child("(auto-edit · <leader>p to undo)")
+                    .debug_selector(|| "approval-all-edits-hint".to_owned())
+                    .child(SharedString::from(all_edits_hint(
+                        self.mode_keys.as_deref(),
+                    )))
                     .into_any_element(),
             ),
             Choice::Once | Choice::Reject => None,
@@ -983,6 +1005,15 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
+
+    #[test]
+    fn the_all_edits_row_names_the_keys_of_the_keymap() {
+        assert_eq!(
+            all_edits_hint(Some("Ctrl+G p")),
+            "(auto-edit · Ctrl+G p to undo)"
+        );
+        assert_eq!(all_edits_hint(None), "(auto-edit · /mode ask to undo)");
+    }
 
     pub(super) fn command_request(id: u64) -> ApprovalRequest {
         ApprovalRequest {

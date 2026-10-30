@@ -85,6 +85,11 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
     assert_eq!(names.first(), Some(&"help"));
     assert_eq!(names.last(), Some(&"review"), "plugin commands after");
     assert!(names.contains(&"model") && names.contains(&"q"));
+    let permissions = full.commands.iter().find(|c| c.name == "permissions");
+    assert!(
+        permissions.is_some_and(|c| c.description.ends_with("(Ctrl+G A)")),
+        "{permissions:?}"
+    );
     let help = full.keys.iter().find(|k| k.keys == "<F1>").unwrap();
     assert_eq!(help.action, HELP_ACTION);
     assert_eq!(help.description, "Open the help");
@@ -101,6 +106,12 @@ fn complete_adds_the_builtin_commands_keys_and_models() {
             ("alias", "opus", "claude-opus"),
             ("setting", "next turn", "opus"),
             ("setting", "permission mode", "plan"),
+            (
+                "setting",
+                "permission rules",
+                "/permissions (Ctrl+G A) lists, removes and promotes them; Ctrl+G p \
+                 cycles the mode"
+            ),
         ]
     );
 }

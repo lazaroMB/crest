@@ -226,6 +226,32 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
     ),
     ("Help", "/", "Search"),
     ("Help", "Esc", "Close"),
+    (
+        "Permissions (/permissions)",
+        "Up / Down, k / j, Home / End",
+        "Select a rule",
+    ),
+    (
+        "Permissions (/permissions)",
+        "d, Delete",
+        "Remove the rule (a project rule asks first: y or d confirm)",
+    ),
+    (
+        "Permissions (/permissions)",
+        "p",
+        "Move a session rule to the project file",
+    ),
+    (
+        "Permissions (/permissions)",
+        "m",
+        "Cycle the permission mode",
+    ),
+    (
+        "Permissions (/permissions)",
+        "/",
+        "Filter the rules (Enter goes back to the list)",
+    ),
+    ("Permissions (/permissions)", "Esc", "Close"),
     ("/login", "Enter", "Check the key"),
     ("/login", "Esc", "Close (also while the key is checked)"),
 ];

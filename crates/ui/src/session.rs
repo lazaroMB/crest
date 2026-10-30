@@ -77,12 +77,13 @@ use application::ports::fs::FileSystemPort;
 use application::ports::plugin::PluginAction;
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::usecases::cancel::CancelToken;
+use application::usecases::permissions::RuleListing;
 use domain::block::{Block, BlockId, BlockKind, CustomNode, ImageData, ImageFit};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::{Account, ModelId, ModelRole};
-use domain::permission::PermissionMode;
+use domain::permission::{PermissionMode, PermissionRule};
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
@@ -107,6 +108,7 @@ use crate::input::{
 };
 use crate::login::{LoginEvent, LoginView};
 use crate::modal::ModalHost;
+use crate::permissions::{PermissionsEvent, PermissionsView, permissions_modal_id};
 use crate::picker::{PickerEvent, PickerView};
 use crate::status::StatusView;
 use crate::timeline::{DeferredKey, TimelineView};
@@ -128,6 +130,8 @@ pub const FULLSCREEN_ACTION: &str = "window.fullscreen";
 pub const THEME_ACTION: &str = "theme.pick";
 /// Action of `<leader>P`.
 pub const MODE_ACTION: &str = "mode.pick";
+/// Action of `<leader>A` and `/permissions`.
+pub const PERMISSIONS_ACTION: &str = "permissions.open";
 /// Action of `<leader>W`.
 pub const PROJECT_ACTION: &str = "project.switch";
 /// Action of `<leader>O`.
@@ -263,6 +267,32 @@ pub trait SessionController: Send + Sync {
 
     /// The models `<leader>m` offers.
     fn models(&self) -> Vec<ModelChoice>;
+
+    /// The permission rules in force, for `/permissions`, with the
+    /// problems of the project file. The default has none.
+    fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+        futures::future::ready(RuleListing::default()).boxed()
+    }
+
+    /// Removes `rule` from the policy (and from the project file, for a
+    /// project rule); `Err` says why it stays.
+    fn remove_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let _ = rule;
+        futures::future::ready(Err("this session cannot change its rules".to_owned())).boxed()
+    }
+
+    /// Makes the session rule `rule` a project rule, written to the
+    /// project file; `Err` says why it stays a session rule.
+    fn promote_permission_rule(
+        &self,
+        rule: PermissionRule,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let _ = rule;
+        futures::future::ready(Err("this session cannot change its rules".to_owned())).boxed()
+    }
 
     /// Every model the providers with a key offer, for the `/model`
     /// picker; `Err` says why they could not be listed.
@@ -560,6 +590,8 @@ pub struct Session {
     /// When quitting was asked during a turn: a second ask within
     /// [`QUIT_CONFIRM`] quits.
     quit_asked_at: Option<Instant>,
+    /// `m` of the `/permissions` modal (replaced when it opens again).
+    permissions_events: Option<Subscription>,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -645,6 +677,8 @@ impl Session {
             timeline
         });
         let status = cx.new(|_| StatusView::new(workspace_label));
+        // The approval dialog names the keys that undo "allow all edits".
+        let mode_keys = crate::help::action_keys(&keymap, PERMISSION_ACTION);
         let mode = controller.permission_mode();
         status.update(cx, |status, cx| {
             let state = status.state_mut(cx);
@@ -671,7 +705,11 @@ impl Session {
             picker.set_file_system(fs);
             picker
         });
-        let approval = cx.new(|cx| ApprovalView::new(approvals, window, cx));
+        let approval = cx.new(|cx| {
+            let mut approval = ApprovalView::new(approvals, window, cx);
+            approval.set_mode_keys(mode_keys);
+            approval
+        });
         let modal = cx.new(|cx| ModalHost::new(window, cx));
         let login = cx.new(|cx| LoginView::new(window, cx));
 
@@ -766,6 +804,7 @@ impl Session {
             login_check: None,
             chats_shown: false,
             quit_asked_at: None,
+            permissions_events: None,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -1407,6 +1446,13 @@ impl Session {
                 status.apply(event, cx);
             }
         });
+        let mode = events.iter().rev().find_map(|event| match event {
+            DomainEvent::ModeChanged { mode } => Some(*mode),
+            _ => None,
+        });
+        if let Some((mode, view)) = mode.zip(self.permissions_view(cx)) {
+            view.update(cx, |view, cx| view.set_mode(mode, cx));
+        }
         self.activity.update(cx, |activity, cx| {
             for event in &events {
                 activity.apply(event, cx);
@@ -1689,6 +1735,7 @@ impl Session {
             "login" => self.open_login(arg, window, cx),
             "logout" => self.logout(arg, window, cx),
             "help" | "h" => self.open_help(arg, window, cx),
+            "permissions" => self.open_permissions(window, cx),
             "modal" if arg == "close" => {
                 let closed = self
                     .modal
@@ -2028,6 +2075,7 @@ impl Session {
             FOCUS_NEXT_ACTION => self.focus_next(window, cx),
             MODEL_ACTION => self.open_model_popup(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
+            PERMISSIONS_ACTION => self.open_permissions(window, cx),
             QUIT_ACTION => self.quit(window, cx),
             FULLSCREEN_ACTION => window.toggle_fullscreen(),
             THEME_ACTION => self.open_theme_popup(window, cx),
@@ -2111,6 +2159,63 @@ impl Session {
         });
         // Keys reach the help first; Esc still bubbles up to the host.
         window.focus(&focus, cx);
+    }
+
+    /// Opens the `/permissions` modal once the controller listed the
+    /// rules.
+    pub fn open_permissions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rules = self.controller.permission_rules();
+        cx.spawn_in(window, async move |this, cx| {
+            let listing = rules.await;
+            this.update_in(cx, |this, window, cx| {
+                this.show_permissions(listing, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_permissions(
+        &mut self,
+        listing: RuleListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keys = crate::help::action_keys(self.input.read(cx).keymap(), PERMISSION_ACTION);
+        let controller = Arc::clone(&self.controller);
+        let view = cx.new(|cx| PermissionsView::new(controller, listing, keys, window, cx));
+        let cycle = cx.subscribe(&view, |this, view, event: &PermissionsEvent, cx| {
+            let PermissionsEvent::CycleMode = event;
+            this.cycle_permission_mode(cx);
+            let mode = this.controller.permission_mode();
+            view.update(cx, |view, cx| view.set_mode(mode, cx));
+        });
+        self.permissions_events = Some(cycle);
+        let focus = view.focus_handle(cx);
+        let spec = ModalSpec {
+            id: permissions_modal_id(),
+            plugin: "crest".into(),
+            title: "Permissions".into(),
+            width: Percent::new(70.0).unwrap_or(Percent::FULL),
+            height: Percent::new(80.0).unwrap_or(Percent::FULL),
+            position: ModalPosition::CENTER,
+            content: CustomNode::Text {
+                text: String::new(),
+            },
+        };
+        self.modal.update(cx, |modal, cx| {
+            modal.open_view(spec, view.into(), window, cx)
+        });
+        // Keys reach the list first; Esc still bubbles up to the host.
+        window.focus(&focus, cx);
+    }
+
+    /// The `/permissions` modal's view, while it is open.
+    pub fn permissions_view(&self, cx: &App) -> Option<Entity<PermissionsView>> {
+        self.modal
+            .read(cx)
+            .view(&permissions_modal_id())
+            .and_then(|view| view.clone().downcast::<PermissionsView>().ok())
     }
 
     /// Puts `/model ` in the prompt, whose popup lists the models (the
@@ -2278,9 +2383,12 @@ mod tests {
     use application::ports::form::FormPort;
     use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
     use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+    use application::testing::permissions::MemoryPermissionStore;
     use application::testing::system::{RecordingSink, RecordingTelemetry};
     use application::tools::files::{FileToolPorts, register_file_tools};
     use application::tools::registry::ToolRegistry;
+    use application::usecases::approval::SharedPermissions;
+    use application::usecases::permissions::ProjectRules;
     use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
     use domain::block::ToolStatus;
     use domain::conversation::ContentPart;
@@ -2355,6 +2463,52 @@ mod tests {
                 .into_iter()
                 .map(|(alias, model)| ModelChoice { alias, model })
                 .collect()
+        }
+
+        fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::load_rules(
+                    service.permissions(),
+                    service.project_rules(),
+                )
+                .await
+            }
+            .boxed()
+        }
+
+        fn remove_permission_rule(
+            &self,
+            rule: PermissionRule,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::remove_rule(
+                    service.permissions(),
+                    service.project_rules(),
+                    &rule,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            }
+            .boxed()
+        }
+
+        fn promote_permission_rule(
+            &self,
+            rule: PermissionRule,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            let service = Arc::clone(&self.service);
+            async move {
+                application::usecases::permissions::promote_rule(
+                    service.permissions(),
+                    service.project_rules(),
+                    &rule,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            }
+            .boxed()
         }
 
         /// Two OpenCode models, besides the aliases.
@@ -2476,6 +2630,10 @@ mod tests {
 
     struct Harness {
         session: Entity<Session>,
+        /// The agent's policy.
+        permissions: SharedPermissions,
+        /// Holds the project's `permissions.local.toml` (workspace `/ws`).
+        rules_file: Arc<MemoryPermissionStore>,
         llm: Arc<ScriptedLlm>,
         sink: Arc<RecordingSink>,
         logins: Arc<Mutex<Vec<String>>>,
@@ -2586,6 +2744,9 @@ mod tests {
             ModelPolicy::default(),
             Arc::new(Mutex::new(PermissionPolicy::new(PermissionMode::Ask))),
         );
+        let rules_file = Arc::new(MemoryPermissionStore::new());
+        let service = service.with_project_rules(ProjectRules::new(rules_file.clone(), "/ws"));
+        let permissions = Arc::clone(service.permissions());
         let logins = Arc::new(Mutex::new(Vec::new()));
         let resume_pending = !conversation.pending_tool_uses().is_empty();
         let controller = Arc::new(AgentController {
@@ -2621,6 +2782,8 @@ mod tests {
         (
             Harness {
                 session,
+                permissions,
+                rules_file,
                 llm,
                 sink,
                 logins,
@@ -4164,10 +4327,210 @@ mod tests {
             "window.fullscreen",
             "chat.new",
             "block.focus_widget",
+            "permissions.open",
         ] {
             let row = rows.iter().find(|r| r.action == action).unwrap();
             assert_ne!(row.description, "unknown builtin action", "{action}");
         }
+    }
+
+    fn permissions_view(
+        h: &Harness,
+        cx: &mut VisualTestContext,
+    ) -> Option<Entity<PermissionsView>> {
+        h.session.read_with(cx, |s, cx| s.permissions_view(cx))
+    }
+
+    fn rule_texts(view: &Entity<PermissionsView>, cx: &mut VisualTestContext) -> Vec<String> {
+        view.read_with(cx, |v, _| {
+            v.rows().iter().map(|row| row.text.clone()).collect()
+        })
+    }
+
+    fn rule(text: &str) -> PermissionRule {
+        text.parse().unwrap()
+    }
+
+    #[gpui::test]
+    fn leader_a_lists_the_rules_and_d_and_p_change_them(cx: &mut TestAppContext) {
+        use domain::permission::RuleScope;
+        use std::path::Path;
+
+        use crate::permissions::RuleGroup;
+
+        let (h, cx) = harness(Vec::new(), cx);
+        let ws = Path::new("/ws");
+        h.rules_file.set_text(
+            ws,
+            "allow = [\"edit_file(src/*)\"]\ndeny = [\"run_command(git push *)\"]\n",
+        );
+        {
+            let mut policy = h.permissions.lock().unwrap();
+            policy.remember(rule("run_command(cargo test *)"));
+            policy.remember(rule("ls"));
+            for kept in h.rules_file.rules(ws) {
+                policy.remember(kept);
+            }
+        }
+        cx.simulate_keystrokes("ctrl-g shift-a");
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("<leader>A opens /permissions");
+        assert_eq!(
+            rule_texts(&view, cx),
+            [
+                "run_command(cargo test *)",
+                "ls",
+                "edit_file(src/*)",
+                "run_command(git push *)"
+            ]
+        );
+        view.read_with(cx, |v, _| {
+            let groups: Vec<_> = v.rows().iter().map(|row| row.group).collect();
+            assert_eq!(
+                groups,
+                [
+                    RuleGroup::Session,
+                    RuleGroup::Session,
+                    RuleGroup::Project,
+                    RuleGroup::Deny
+                ]
+            );
+            assert_eq!(
+                v.listing().project_file.as_deref(),
+                Some(Path::new("/ws/.crest/permissions.local.toml"))
+            );
+            assert_eq!(v.mode(), PermissionMode::Ask);
+        });
+        cx.update(|window, cx| {
+            assert!(view.focus_handle(cx).contains_focused(window, cx));
+        });
+
+        // `p` moves the selected session rule to the project file.
+        cx.simulate_keystrokes("p");
+        cx.run_until_parked();
+        let promoted = rule("run_command(cargo test *)").with_scope(RuleScope::Project);
+        assert!(h.rules_file.rules(ws).contains(&promoted));
+        assert!(h.permissions.lock().unwrap().rules.contains(&promoted));
+        assert_eq!(
+            rule_texts(&view, cx),
+            [
+                "ls",
+                "run_command(cargo test *)",
+                "edit_file(src/*)",
+                "run_command(git push *)"
+            ],
+            "it moved to the Project group, in its place in the policy"
+        );
+
+        // `d` removes a session rule at once.
+        cx.simulate_keystrokes("d");
+        cx.run_until_parked();
+        assert!(!h.permissions.lock().unwrap().rules.contains(&rule("ls")));
+        assert_eq!(rule_texts(&view, cx).len(), 3);
+
+        // A project rule asks first; another key keeps it.
+        cx.simulate_keystrokes("down d");
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |v, _| v.confirming().is_some()));
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |v, _| v.confirming().is_none()));
+        assert_eq!(h.rules_file.rules(ws).len(), 3);
+        // A second `d` deletes it from the file and the policy.
+        cx.simulate_keystrokes("d d");
+        cx.run_until_parked();
+        let edit = rule("edit_file(src/*)").with_scope(RuleScope::Project);
+        assert!(!h.rules_file.rules(ws).contains(&edit));
+        assert!(!h.permissions.lock().unwrap().rules.contains(&edit));
+        assert_eq!(
+            rule_texts(&view, cx),
+            ["run_command(cargo test *)", "run_command(git push *)"]
+        );
+        let status = view.read_with(cx, |v, _| v.status().map(str::to_owned));
+        assert_eq!(
+            status.as_deref(),
+            Some("removed `edit_file(src/*)` from the project file")
+        );
+
+        // The filter box.
+        cx.simulate_keystrokes("/");
+        cx.simulate_input("push");
+        cx.run_until_parked();
+        assert_eq!(rule_texts(&view, cx), ["run_command(git push *)"]);
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| assert!(!view.read(cx).is_filtering(window, cx)));
+
+        // `m` cycles the mode, for the status bar too.
+        cx.simulate_keystrokes("m");
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |v, _| v.mode()),
+            PermissionMode::AutoEdit
+        );
+        assert_eq!(
+            h.session
+                .read_with(cx, |s, _| s.controller.permission_mode()),
+            PermissionMode::AutoEdit
+        );
+
+        cx.simulate_keystrokes("escape");
+        assert!(permissions_view(&h, cx).is_none(), "Esc closes it");
+        cx.update(|window, cx| {
+            let input = h.session.read(cx).input().focus_handle(cx);
+            assert!(input.contains_focused(window, cx), "the focus is back");
+        });
+    }
+
+    #[gpui::test]
+    fn the_permissions_selection_stays_in_view(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        {
+            let mut policy = h.permissions.lock().unwrap();
+            for n in 0..60 {
+                policy.remember(rule(&format!("run_command(tool{n} *)")));
+            }
+        }
+        h.session
+            .update_in(cx, |s, window, cx| s.command("permissions", window, cx));
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("open");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("end");
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        view.read_with(cx, |v, _| {
+            assert_eq!(v.selected(), 59);
+            assert!(crate::keyscroll::is_visible(v.scroll_handle(), 59));
+            assert!(!crate::keyscroll::is_visible(v.scroll_handle(), 0));
+        });
+    }
+
+    #[gpui::test]
+    fn slash_permissions_without_rules_says_how_to_add_one(cx: &mut TestAppContext) {
+        let (h, cx) = harness(Vec::new(), cx);
+        cx.simulate_input("/permissions");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("/permissions opens it");
+        assert!(rule_texts(&view, cx).is_empty());
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("permissions-empty").is_some());
+        // The mode line names the keys of permission.cycle.
+        assert!(cx.debug_bounds("permissions-mode").is_some());
+        // A file with problems is listed and not rewritten.
+        h.rules_file
+            .set_text(std::path::Path::new("/ws"), "allow = [\"bad(\"]\n");
+        cx.simulate_keystrokes("escape");
+        h.session
+            .update_in(cx, |s, window, cx| s.command("permissions", window, cx));
+        cx.run_until_parked();
+        let view = permissions_view(&h, cx).expect("open again");
+        assert_eq!(view.read_with(cx, |v, _| v.listing().warnings.len()), 1);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("permissions-warnings").is_some());
     }
 
     #[gpui::test]
