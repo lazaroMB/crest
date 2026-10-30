@@ -143,19 +143,29 @@ impl TimelineState {
         self.index.get(&id).copied()
     }
 
+    /// Whether block `ix` ends a complete reply: it is not a prompt, and a
+    /// prompt follows it (or nothing does and the turn is over). Cheap, for
+    /// every frame; [`Self::reply_to_copy`] builds the text on demand.
+    pub fn is_reply_end(&self, ix: usize) -> bool {
+        let Some(entry) = self.entries.get(ix) else {
+            return false;
+        };
+        if is_prompt_entry(entry) {
+            return false;
+        }
+        match self.entries.get(ix + 1) {
+            Some(next) => is_prompt_entry(next),
+            None => !self.turn_open,
+        }
+    }
+
     /// The text to copy for the reply that ends at block `ix`: the text
     /// blocks since the last prompt. `None` unless `ix` is the last block of
     /// the reply, the reply is complete (the next block is a prompt, or no
     /// turn is running) and it has text.
     pub fn reply_to_copy(&self, ix: usize) -> Option<String> {
-        let entry = self.entries.get(ix)?;
-        if is_prompt_entry(entry) {
+        if !self.is_reply_end(ix) {
             return None;
-        }
-        match self.entries.get(ix + 1) {
-            Some(next) if !is_prompt_entry(next) => return None,
-            None if self.turn_open => return None,
-            _ => {}
         }
         let start = self.entries[..ix]
             .iter()

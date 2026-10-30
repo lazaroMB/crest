@@ -7,12 +7,11 @@
 //! the source, drawn as one fenced `markdown` code block so the same
 //! highlighter colors the raw text.
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::BlockKind;
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, Window, div,
+    AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
+    Window, div,
 };
-use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use crate::timeline::TimelineEntry;
@@ -20,27 +19,23 @@ use crate::timeline::TimelineEntry;
 /// Wraps `source` in a fenced `markdown` code block whose fence is longer
 /// than any backtick run inside it, so the source shows verbatim.
 pub fn fenced_source(source: &str) -> String {
-    let longest = source
-        .split(|c| c != '`')
-        .map(str::len)
-        .max()
-        .unwrap_or_default();
-    let fence = "`".repeat(longest.max(2) + 1);
-    let newline = if source.ends_with('\n') { "" } else { "\n" };
-    format!("{fence}markdown\n{source}{newline}{fence}\n")
-}
-
-fn element_id(prefix: &str, id: BlockId) -> ElementId {
-    ElementId::Name(SharedString::from(format!("{prefix}-{id}")))
+    super::custom::fenced_code(Some("markdown"), source)
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Markdown { title, source } = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let theme = cx.theme();
     let id = entry.block.id;
+    // Both views keep their parse across frames (`block_state`): a long
+    // document scrolled out of the timeline and back is not parsed again.
+    let body = if entry.alt_view {
+        super::math::code_block(id, Some("markdown"), source, window, cx)
+    } else {
+        super::math::markdown_block(id, source, window, cx)
+    };
+    let theme = cx.theme();
     let (mode, hint) = if entry.alt_view {
         ("source", "t: document")
     } else {
@@ -69,14 +64,6 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                 .text_color(theme.muted_foreground)
                 .child(format!("{mode} · {hint}")),
         );
-    let body = if entry.alt_view {
-        TextView::markdown(
-            element_id("markdown-source", id),
-            SharedString::from(fenced_source(source)),
-        )
-    } else {
-        super::math::markdown(element_id("markdown-doc", id), source)
-    };
     v_flex()
         .gap_2()
         .px_3()

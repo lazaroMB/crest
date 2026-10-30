@@ -257,6 +257,52 @@ fn long_content_scrolls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_document_scrolls_virtualized(cx: &mut TestAppContext) {
+    let (host, cx) = host(cx);
+    let source: String = (0..2000).map(|i| format!("line {i}\n\n")).collect();
+    let id = ModalId::new("cov/doc");
+    let open = |source: String| DomainEvent::ModalOpened {
+        spec: spec(
+            "cov/doc",
+            50.0,
+            30.0,
+            "center",
+            CustomNode::Markdown { source },
+        ),
+    };
+    apply(&host, open(source.clone()), cx);
+    draw(&host, cx);
+    let doc = host.read_with(cx, |host, _| {
+        host.document(&id)
+            .cloned()
+            .unwrap_or_else(|| panic!("a markdown modal has a document"))
+    });
+    // The plain body is not used: nothing was laid out under its scroll.
+    let max = host.read_with(cx, |host, _| {
+        host.scroll_handle(&id)
+            .map(|s| s.max_offset())
+            .unwrap_or_default()
+    });
+    assert_eq!(max.y, px(0.), "the document is not in the scrolled div");
+    let top = |cx: &mut VisualTestContext| {
+        doc.read_with(cx, |doc, _| doc.list_state().logical_scroll_top().item_ix)
+    };
+    assert_eq!(top(cx), 0);
+    cx.simulate_keystrokes("end");
+    draw(&host, cx);
+    assert!(top(cx) > 0, "End scrolls the document's list");
+    cx.simulate_keystrokes("home");
+    draw(&host, cx);
+    assert_eq!(top(cx), 0, "Home goes back to the top");
+    // An update of the same modal keeps the document (and its scroll).
+    apply(&host, open(format!("{source}tail\n")), cx);
+    let same = host.read_with(cx, |host, _| {
+        host.document(&id).map(|d| d.entity_id()) == Some(doc.entity_id())
+    });
+    assert!(same, "the update reused the document");
+}
+
+#[gpui::test]
 fn links_in_a_modal_open_the_browser(cx: &mut TestAppContext) {
     let (host, cx) = host(cx);
     let content = CustomNode::Col {

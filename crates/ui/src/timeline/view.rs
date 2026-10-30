@@ -75,6 +75,13 @@ pub struct TimelineView {
     copied_reply: Option<usize>,
     /// The menu of the user's questions is open.
     outline_open: bool,
+    /// The menu's rows, rebuilt when the entries or the selection change
+    /// rather than on every frame (it walks every entry).
+    outline: super::outline::Outline,
+    /// `(entries revision, selection)` `outline` was built for.
+    outline_key: Option<(u64, Option<usize>)>,
+    /// Bumped whenever an event changed the entries.
+    revision: u64,
     /// The scroll of the menu's rows.
     outline_scroll: ScrollHandle,
     /// The menu just opened: scroll its current question into view.
@@ -100,6 +107,9 @@ impl TimelineView {
             _hint_expiry: None,
             copied_reply: None,
             outline_open: false,
+            outline: super::outline::Outline { groups: Vec::new() },
+            outline_key: None,
+            revision: 0,
             outline_scroll: ScrollHandle::new(),
             outline_reveal: false,
             deferred: None,
@@ -247,7 +257,21 @@ impl TimelineView {
         for ix in &touched {
             self.list.remeasure_items(*ix..*ix + 1);
         }
-        changed || !touched.is_empty()
+        let changed = changed || !touched.is_empty();
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        changed
+    }
+
+    /// Rebuilds `outline` when the entries or the selection changed.
+    fn refresh_outline(&mut self) {
+        let key = (self.revision, self.state.selected());
+        if self.outline_key != Some(key) {
+            self.outline =
+                super::outline::chat_outline(self.state.entries(), self.state.selected());
+            self.outline_key = Some(key);
+        }
     }
 
     /// Selects the last block when none is selected (on taking the focus).
@@ -486,7 +510,8 @@ impl TimelineView {
 
     /// The chat menu: a rail of marks, and the questions when it is open.
     fn outline_layer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let outline = super::outline::chat_outline(self.state.entries(), self.state.selected());
+        self.refresh_outline();
+        let outline = &self.outline;
         if outline.is_empty() {
             return None;
         }
@@ -661,7 +686,9 @@ impl TimelineView {
 
     /// The "Copy" button at the end of a complete reply.
     fn reply_footer(&self, ix: usize, view: WeakEntity<Self>) -> Option<AnyElement> {
-        let text = self.state.reply_to_copy(ix)?;
+        if !self.state.is_reply_end(ix) {
+            return None;
+        }
         let copied = self.copied_reply == Some(ix);
         let button = Button::new(("reply-copy", ix))
             .ghost()
@@ -675,14 +702,17 @@ impl TimelineView {
             .on_click(move |_, _, cx| {
                 // The row's click would select and expand the block.
                 cx.stop_propagation();
-                let text = text.clone();
-                view.update(cx, |this, cx| this.copy_reply(ix, text, cx))
-                    .ok();
+                view.update(cx, |this, cx| this.copy_reply(ix, cx)).ok();
             });
         Some(h_flex().pt_1().child(button).into_any_element())
     }
 
-    fn copy_reply(&mut self, ix: usize, text: String, cx: &mut Context<Self>) {
+    /// Copies the reply that ends at block `ix`; the text is built now,
+    /// not on every frame the button is drawn.
+    fn copy_reply(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(text) = self.state.reply_to_copy(ix) else {
+            return;
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.copied_reply = Some(ix);
         self._reply_expiry = Some(cx.spawn(async move |this, cx| {

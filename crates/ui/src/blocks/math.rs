@@ -25,15 +25,16 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::Arc;
 
+use domain::block::BlockId;
 use gpui::{
-    AnyElement, App, ClipboardItem, ElementId, Global, Hsla, InteractiveElement as _,
-    IntoElement as _, ParentElement as _, Pixels, RenderImage, Rgba, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, img, px,
+    AnyElement, App, AppContext as _, ClipboardItem, Context, ElementId, Entity, Global, Hsla,
+    InteractiveElement as _, IntoElement as _, ParentElement as _, Pixels, RenderImage, Rgba,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, img, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::text::{
     InlineElement, InlineRenderContext, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
-    TextView, markdown_ast::Node,
+    TextView, TextViewState, markdown_ast::Node,
 };
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
@@ -194,10 +195,121 @@ pub fn element(source: &str, display: bool, window: &mut Window, cx: &mut App) -
 
 /// A markdown `TextView` that shows TeX math: `source` normalized by
 /// [`domain::math::normalize`], with [`InlineMath`] and [`DisplayMath`].
+///
+/// Its parse lives in element state, which GPUI drops when the element is
+/// not drawn for a frame. Blocks of the timeline scroll out of view and
+/// back; they use [`markdown_block`] so the parse survives.
 pub fn markdown(id: impl Into<ElementId>, source: &str) -> TextView {
-    TextView::markdown(id, SharedString::from(domain::math::normalize(source)))
-        .plugin(InlineMath)
-        .plugin(DisplayMath)
+    with_math(TextView::markdown(
+        id,
+        SharedString::from(domain::math::normalize(source)),
+    ))
+}
+
+/// `view` with the math plugins.
+pub fn with_math(view: TextView) -> TextView {
+    view.plugin(InlineMath).plugin(DisplayMath)
+}
+
+/// The parsed document of a markdown block, kept across frames.
+///
+/// A `TextView` built from text keeps its [`TextViewState`] (the parsed
+/// tree, the code highlights, the measured heights) in element state,
+/// which GPUI drops as soon as the element misses a frame; a block that
+/// scrolls out of the timeline and back is parsed and measured again. This
+/// entity holds the state for the life of the block instead (through
+/// [`super::block_state`]) and only hands the text over when the source
+/// changed, so a frame that draws an unchanged block costs one comparison.
+pub struct MarkdownState {
+    /// What the shown text was derived from, as the renderer gave it.
+    source: String,
+    /// Which derivation produced the shown text (a document, a fenced
+    /// source...), so the same source in another view is not mistaken for
+    /// the one already shown.
+    variant: String,
+    state: Entity<TextViewState>,
+}
+
+impl MarkdownState {
+    fn new(variant: &str, source: &str, shown: &str, cx: &mut Context<Self>) -> Self {
+        Self {
+            source: source.to_owned(),
+            variant: variant.to_owned(),
+            state: cx.new(|cx| TextViewState::markdown(shown, cx)),
+        }
+    }
+
+    /// The document state, for a `TextView::new`.
+    pub fn state(&self) -> &Entity<TextViewState> {
+        &self.state
+    }
+
+    /// Hands `derive(source)` to the document when `source` or `variant`
+    /// differ from what it shows.
+    fn sync(
+        &mut self,
+        variant: &str,
+        source: &str,
+        derive: &impl Fn(&str) -> String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.variant == variant && self.source == source {
+            return;
+        }
+        self.source.clear();
+        self.source.push_str(source);
+        self.variant.clear();
+        self.variant.push_str(variant);
+        let shown = derive(source);
+        self.state
+            .update(cx, |state, cx| state.set_text(&shown, cx));
+    }
+}
+
+/// Variant of [`markdown_block`].
+const DOCUMENT: &str = "document";
+
+/// The persistent [`MarkdownState`] of block `id` showing `derive(source)`.
+fn document_state(
+    id: BlockId,
+    variant: &str,
+    source: &str,
+    derive: impl Fn(&str) -> String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<TextViewState> {
+    let holder = super::block_state::<MarkdownState>(id, window, cx, |_, cx| {
+        MarkdownState::new(variant, source, &derive(source), cx)
+    });
+    holder.update(cx, |holder, cx| holder.sync(variant, source, &derive, cx));
+    holder.read(cx).state().clone()
+}
+
+/// [`markdown`] for block `id`, whose parse is kept across frames.
+pub fn markdown_block(id: BlockId, source: &str, window: &mut Window, cx: &mut App) -> TextView {
+    let state = document_state(id, DOCUMENT, source, domain::math::normalize, window, cx);
+    with_math(TextView::new(&state))
+}
+
+/// `source` as one fenced code block in `lang` for block `id`, highlighted
+/// once and kept across frames.
+pub fn code_block(
+    id: BlockId,
+    lang: Option<&str>,
+    source: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> TextView {
+    let variant = format!("code:{}", lang.unwrap_or_default());
+    let state = document_state(
+        id,
+        &variant,
+        source,
+        |source| super::custom::fenced_code(lang, source),
+        window,
+        cx,
+    );
+    TextView::new(&state)
 }
 
 /// The data of a math node: the TeX source.
@@ -401,6 +513,57 @@ fn display_error(source: &str, message: &str, cx: &App) -> AnyElement {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[gpui::test]
+    fn blocks_keep_their_parse_across_frames(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| crate::timeline::TimelineView::new(cx));
+        let id = BlockId::new();
+        let holder = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| crate::blocks::existing_block_state::<MarkdownState>(id, cx))
+                .unwrap_or_else(|| panic!("the block has a document state"))
+        };
+        let rendered = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            holder(cx).read_with(cx, |holder, cx| {
+                holder.state.read(cx).rendered_text().as_str().to_owned()
+            })
+        };
+        cx.update(|window, cx| {
+            markdown_block(id, "# One", window, cx);
+        });
+        let first = holder(cx).read_with(cx, |holder, _| holder.state.entity_id());
+        assert!(rendered(cx).contains("One"));
+
+        // The same source on a later frame: the same document, untouched.
+        cx.update(|window, cx| {
+            markdown_block(id, "# One", window, cx);
+        });
+        assert_eq!(
+            holder(cx).read_with(cx, |holder, _| holder.state.entity_id()),
+            first
+        );
+
+        // A change of source reaches the document; so does a change of view
+        // of the same source (the document as a fenced code block).
+        cx.update(|window, cx| {
+            markdown_block(id, "# Two", window, cx);
+        });
+        let text = rendered(cx);
+        assert!(text.contains("Two") && !text.contains("One"), "{text:?}");
+        cx.update(|window, cx| {
+            code_block(id, Some("markdown"), "# Two", window, cx);
+        });
+        assert!(
+            rendered(cx).contains("# Two"),
+            "the source view shows the markup"
+        );
+        assert_eq!(
+            holder(cx).read_with(cx, |holder, _| holder.state.entity_id()),
+            first,
+            "one document per block"
+        );
+    }
 
     #[test]
     fn rasterizes_inline_and_display_with_the_baseline_inside() {
