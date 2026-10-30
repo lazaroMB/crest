@@ -12,7 +12,10 @@
 //!
 //! One turn runs at a time, and a `/` command answered by the controller
 //! (`/research`, `/implement`, `/!cmd`...) keeps the session busy too until
-//! it replies. A prompt submitted while the session is busy is **queued**:
+//! it replies. Commands are not queued: they run at once, even during a
+//! turn (`/open`, `/!cmd`, `/help` do not wait for it; `/implement`,
+//! `/aside` and `/flow` do, as they drive the agent too). A prompt
+//! submitted while the session is busy is **queued**:
 //! the input stays usable, the [`ActivityView`] above it lists what waits,
 //! and the prompts are sent one by one once the session is free. `Up` in an
 //! empty prompt takes the last queued one back to edit it. `Ctrl+C`

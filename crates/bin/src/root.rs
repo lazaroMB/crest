@@ -254,6 +254,9 @@ impl EventSink for TimelineSink {
     }
 }
 
+/// Output of the `/!` commands waiting for the next prompt.
+pub type SharedShellContext = Arc<Mutex<Vec<String>>>;
+
 /// Everything a front end needs to run turns.
 pub struct App {
     /// The agent.
@@ -283,8 +286,9 @@ pub struct App {
     /// status bar.
     pub shell: Arc<dyn ShellPort>,
     /// Output of the `/!` commands run since the last prompt; it goes to
-    /// the model with the next one.
-    pub shell_context: Vec<String>,
+    /// the model with the next one. Shared so a `/!` run during a turn does
+    /// not wait for it.
+    pub shell_context: SharedShellContext,
     /// The Lua host that runs the callbacks of keymaps and commands, if Lua
     /// started.
     pub plugins: Option<Arc<dyn PluginHostPort>>,
@@ -958,7 +962,7 @@ pub async fn build_app(
         fs,
         file_search,
         shell: Arc::clone(&shell),
-        shell_context: Vec::new(),
+        shell_context: Arc::default(),
         content_search,
         plugins,
         keymaps: loaded.keymaps,
