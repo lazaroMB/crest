@@ -17,18 +17,25 @@
 //!
 //! On a wide enough window the popup has two columns: the results and a
 //! [`preview`] of the highlighted one, read through the
-//! [`FileSystemPort`] around the matching line. `Alt+P` hides or shows it.
+//! [`FileSystemPort`] around the matching line. Pictures and 3D models
+//! are previewed as stills (the same files `/open` shows as such); other
+//! binary files get a card that says so and what to do. `Alt+P` hides or
+//! shows the preview.
 
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
 use application::keymap::{Action, KeyCode};
-use application::ports::fs::FileSystemPort;
+use application::ports::fs::{FileSystemPort, FsError};
 use application::ports::search::{
     ColumnRange, ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest,
     GrepResult, ListFilesRequest, SearchError,
 };
+use application::usecases::model3d;
+use application::usecases::open_file::{FileKind, extension, file_kind};
+use domain::block::{BlockId, ImageData, ImageFit};
+use domain::model3d::ModelSpec;
 use domain::workspace::WorkspacePath;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -40,11 +47,13 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex};
+use uuid::Uuid;
 
 pub mod preview;
 
 use preview::{
-    LineStyles, PREVIEW_DEBOUNCE, Preview, overlay, preview_request, syntax_styles, valid_range,
+    LineStyles, PREVIEW_DEBOUNCE, PREVIEW_IMAGE_MAX_BYTES, PREVIEW_MODEL_MAX_BYTES, Preview,
+    RichPreview, human_size, overlay, preview_request, syntax_styles, valid_range,
 };
 
 /// Action that opens the file picker.
@@ -70,6 +79,13 @@ pub const TWO_COLUMNS_MIN_WIDTH: f32 = 860.;
 const RESULTS_SHARE: f32 = 0.45;
 /// Rough width of a character of the results, to cut long paths.
 const CHAR_WIDTH: f32 = 7.5;
+/// Height of the 3D still in the preview.
+const MODEL_PREVIEW_HEIGHT: f32 = 320.0;
+/// The one image view and the one model view of the preview: `block_state`
+/// never drops an entity, so every previewed file reuses these ids (the
+/// views swap their content when it changes).
+const PREVIEW_IMAGE: BlockId = BlockId(Uuid::from_u128(0x7069_636b_6572_2d70_7265_7669_6577_0001));
+const PREVIEW_MODEL: BlockId = BlockId(Uuid::from_u128(0x7069_636b_6572_2d70_7265_7669_6577_0002));
 
 /// The request the file picker sends for `query`: the defaults of the
 /// `find_file` tool (`{"query": …}`).
@@ -767,19 +783,26 @@ impl PickerView {
             self.set_preview(preview, cx);
             return;
         };
+        let kind = file_kind(&item.path);
+        if kind == FileKind::Step {
+            // Tessellating a part needs the formats adapter; /open has it.
+            self.preview_task = None;
+            self.set_preview(
+                Preview::unsupported(&item, "STEP part (shown by /open)"),
+                cx,
+            );
+            return;
+        }
         self.set_preview(Preview::of_context(&item), cx);
         self.preview_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(PREVIEW_DEBOUNCE).await;
-            let request = preview_request(&item);
-            let read = cx
-                .background_spawn(async move { fs.read_file(request).await })
-                .await;
+            let preview = match kind {
+                FileKind::Image => read_image(&fs, &item, cx).await,
+                FileKind::Model => read_model(&fs, &item, cx).await,
+                FileKind::Text | FileKind::Step => read_text(&fs, &item, cx).await,
+            };
             this.update(cx, |this, cx| {
                 this.preview_task = None;
-                let preview = match read {
-                    Ok(content) => Preview::read(&item, content),
-                    Err(err) => Preview::failed(&item, err.to_string()),
-                };
                 this.set_preview(preview, cx);
             })
             .ok();
@@ -870,6 +893,90 @@ impl PickerView {
             _ => return,
         }
         cx.stop_propagation();
+    }
+}
+
+/// What `Enter` and `/open` do with a file the preview cannot draw.
+const UNSUPPORTED_HINT: &str = "Enter inserts the path · /open @path shows it";
+
+/// The text preview of `item`: the lines around its match, or an
+/// "unsupported" card for a binary file.
+async fn read_text(
+    fs: &Arc<dyn FileSystemPort>,
+    item: &PickerItem,
+    cx: &mut gpui::AsyncApp,
+) -> Preview {
+    let fs = Arc::clone(fs);
+    let request = preview_request(item);
+    let read = cx
+        .background_spawn(async move { fs.read_file(request).await })
+        .await;
+    match read {
+        Ok(content) => Preview::read(item, content),
+        Err(FsError::Binary { .. }) => Preview::unsupported(item, "binary file"),
+        Err(err) => Preview::failed(item, err.to_string()),
+    }
+}
+
+/// The picture preview of `item`: its absolute path, once the port says
+/// the file may be read (inside the root, not sensitive) and its size is
+/// within [`PREVIEW_IMAGE_MAX_BYTES`]. GPUI decodes it when drawn.
+async fn read_image(
+    fs: &Arc<dyn FileSystemPort>,
+    item: &PickerItem,
+    cx: &mut gpui::AsyncApp,
+) -> Preview {
+    let absolute = fs.root().join(&item.path).to_string_lossy().into_owned();
+    let (fs, path) = (Arc::clone(fs), item.path.clone());
+    let probe = cx
+        .background_spawn(async move { fs.read_head(&path, 16).await })
+        .await;
+    match probe {
+        Ok((_, size)) if size > PREVIEW_IMAGE_MAX_BYTES => Preview::unsupported(
+            item,
+            format!(
+                "picture of {} (over {})",
+                human_size(size),
+                human_size(PREVIEW_IMAGE_MAX_BYTES)
+            ),
+        ),
+        Ok(_) => Preview::rich(item, RichPreview::Image { path: absolute }),
+        Err(err) => Preview::failed(item, err.to_string()),
+    }
+}
+
+/// The 3D preview of `item`: the file read and parsed off the UI thread,
+/// when it is under [`PREVIEW_MODEL_MAX_BYTES`].
+async fn read_model(
+    fs: &Arc<dyn FileSystemPort>,
+    item: &PickerItem,
+    cx: &mut gpui::AsyncApp,
+) -> Preview {
+    let (fs, path) = (Arc::clone(fs), item.path.clone());
+    let ext = extension(&item.path);
+    let name = item.path.file_name().unwrap_or("model").to_owned();
+    let parsed = cx
+        .background_spawn(async move {
+            let bytes = fs.read_bytes(&path, PREVIEW_MODEL_MAX_BYTES).await?;
+            Ok::<_, FsError>(model3d::parse(&ext, &bytes).map(|mesh| ModelSpec {
+                name,
+                mesh,
+                unit: None,
+            }))
+        })
+        .await;
+    match parsed {
+        Ok(Ok(spec)) => Preview::rich(item, RichPreview::Model(Arc::new(spec))),
+        Ok(Err(err)) => Preview::unsupported(item, format!("3D model: {err}")),
+        Err(FsError::TooLarge { size, limit }) => Preview::unsupported(
+            item,
+            format!(
+                "3D model of {} (over {})",
+                human_size(size),
+                human_size(limit)
+            ),
+        ),
+        Err(err) => Preview::failed(item, err.to_string()),
     }
 }
 
@@ -1023,7 +1130,12 @@ impl PickerView {
             .into_any_element()
     }
 
-    fn render_preview(&self, path_chars: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_preview(
+        &self,
+        path_chars: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let pane = v_flex()
@@ -1068,6 +1180,10 @@ impl PickerView {
                     .text_color(muted)
                     .child(SharedString::from(note))
             }));
+        if let Some(rich) = &preview.rich {
+            let body = self.render_rich(rich, &preview.path, window, cx);
+            return pane.child(header).child(body).into_any_element();
+        }
         let mark = HighlightStyle {
             background_color: Some(theme.warning.opacity(0.35)),
             font_weight: Some(FontWeight::BOLD),
@@ -1120,6 +1236,83 @@ impl PickerView {
     }
 }
 
+impl PickerView {
+    /// A picture or a model as a still, or the card of a file the preview
+    /// cannot draw. The still sits under a transparent layer: a click on it
+    /// must not take the focus from the input (the keys would stop
+    /// working) nor start a drag; `Enter` and `/open` give the real viewer.
+    fn render_rich(
+        &self,
+        rich: &RichPreview,
+        path: &WorkspacePath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let muted = theme.muted_foreground;
+        let still = |view: AnyElement| {
+            div()
+                .id("picker-preview-still")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .overflow_hidden()
+                .child(view)
+                .child(
+                    div()
+                        .id("picker-preview-shield")
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
+                )
+                .into_any_element()
+        };
+        match rich {
+            RichPreview::Image { path: absolute } => {
+                let data = ImageData::Path {
+                    path: absolute.clone(),
+                };
+                let view = crate::blocks::image_view::image_view(
+                    PREVIEW_IMAGE,
+                    &data,
+                    None,
+                    path.file_name(),
+                    ImageFit::Contain,
+                    window,
+                    cx,
+                );
+                still(view.into_any_element())
+            }
+            RichPreview::Model(spec) => {
+                let view = crate::blocks::model_view::model_view_inline(
+                    PREVIEW_MODEL,
+                    spec,
+                    MODEL_PREVIEW_HEIGHT,
+                    window,
+                    cx,
+                );
+                still(view.into_any_element())
+            }
+            RichPreview::Unsupported { reason } => v_flex()
+                .id("picker-preview-unsupported")
+                .debug_selector(|| "picker-preview-unsupported".to_owned())
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .text_color(muted)
+                .child(div().text_color(theme.foreground).child("No preview"))
+                .child(SharedString::from(reason.clone()))
+                .child(div().text_xs().child(UNSUPPORTED_HINT))
+                .into_any_element(),
+        }
+    }
+}
+
 impl Render for PickerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(mode) = self.mode else {
@@ -1157,7 +1350,7 @@ impl Render for PickerView {
             .when(!two_columns, |div| div.flex_1())
             .min_w_0()
             .h_full();
-        let preview = two_columns.then(|| self.render_preview(preview_chars, cx));
+        let preview = two_columns.then(|| self.render_preview(preview_chars, window, cx));
         let chips = (mode == PickerMode::Grep).then(|| self.render_chips(cx));
         // The backdrop: a click outside the popup closes it.
         div()
@@ -1671,6 +1864,87 @@ mod tests {
         // `Alt+P` hides it; moving no longer reads files.
         cx.simulate_keystrokes("alt-p");
         picker.read_with(cx, |picker, _| assert!(!picker.preview_enabled()));
+    }
+
+    #[gpui::test]
+    fn pictures_models_and_binaries_are_previewed_as_such(cx: &mut TestAppContext) {
+        const STL: &str = "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\n\
+                           vertex 0 1 0\nendloop\nendfacet\nendsolid t\n";
+        let fs = Arc::new(
+            InMemoryFs::new(test_root())
+                .with_bytes("shots/logo.png", vec![0x89, b'P', b'N', b'G', 0, 1])
+                .with_file("parts/tetra.stl", STL)
+                .with_bytes("build/app.bin", vec![0, 1, 2, 3])
+                .with_file("parts/bracket.step", "ISO-10303-21;\n"),
+        );
+        let (picker, cx) = picker(fs.clone(), cx);
+        cx.update(|_, cx| {
+            picker.update(cx, |picker, _| picker.set_file_system(Some(fs.clone())));
+        });
+        let preview_of = |query: &str, cx: &mut VisualTestContext| {
+            open(&picker, FILES_ACTION, cx);
+            cx.simulate_input(query);
+            settle(cx);
+            cx.executor().advance_clock(preview::PREVIEW_DEBOUNCE);
+            cx.run_until_parked();
+            let preview = picker.read_with(cx, |picker, _| {
+                assert_eq!(picker.items()[0].path.as_str(), query, "first result");
+                picker.preview().cloned().expect("previewed")
+            });
+            cx.update(|window, cx| picker.update(cx, |picker, cx| picker.dismiss(window, cx)));
+            preview
+        };
+
+        let picture = preview_of("shots/logo.png", cx);
+        assert!(!picture.loading && picture.lines.is_empty());
+        match picture.rich {
+            Some(RichPreview::Image { path }) => {
+                assert!(
+                    path.ends_with("logo.png") && path.len() > "shots/logo.png".len(),
+                    "{path}"
+                )
+            }
+            other => panic!("a picture: {other:?}"),
+        }
+
+        let model = preview_of("parts/tetra.stl", cx);
+        match model.rich {
+            Some(RichPreview::Model(spec)) => {
+                assert_eq!(
+                    (spec.name.as_str(), spec.mesh.triangles.len()),
+                    ("tetra.stl", 1)
+                );
+            }
+            other => panic!("a model: {other:?}"),
+        }
+
+        let binary = preview_of("build/app.bin", cx);
+        assert_eq!(
+            binary.rich,
+            Some(RichPreview::Unsupported {
+                reason: "binary file".into()
+            })
+        );
+        assert_eq!(binary.error, None, "not an error");
+
+        let step = preview_of("parts/bracket.step", cx);
+        assert!(matches!(
+            step.rich,
+            Some(RichPreview::Unsupported { ref reason }) if reason.contains("/open")
+        ));
+
+        // The stills draw under the shield; the card names itself.
+        open(&picker, FILES_ACTION, cx);
+        cx.simulate_input("build/app.bin");
+        settle(cx);
+        cx.executor().advance_clock(preview::PREVIEW_DEBOUNCE);
+        cx.run_until_parked();
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| div().relative().size_full().child(picker.clone()),
+        );
+        assert!(cx.debug_bounds("picker-preview-unsupported").is_some());
     }
 
     #[gpui::test]

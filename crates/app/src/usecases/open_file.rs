@@ -41,6 +41,34 @@ pub fn opened_path(id: &ModalId) -> Option<WorkspacePath> {
 /// Extensions shown as pictures.
 const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"];
 
+/// How a file is shown, from its extension: by `/open` and by the picker's
+/// preview, so both agree on what is a picture or a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileKind {
+    /// Text: markdown, JSON, a diagram, a diff or highlighted source.
+    Text,
+    /// A picture GPUI decodes (png, jpeg, gif, webp, svg, bmp, ico).
+    Image,
+    /// A 3D model crest parses itself (obj, stl, ply).
+    Model,
+    /// A STEP part, tessellated by the formats adapter.
+    Step,
+}
+
+/// The [`FileKind`] of `path`, from its extension.
+pub fn file_kind(path: &WorkspacePath) -> FileKind {
+    let ext = extension(path);
+    if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        FileKind::Image
+    } else if MODEL_EXTENSIONS.contains(&ext.as_str()) {
+        FileKind::Model
+    } else if STEP_EXTENSIONS.contains(&ext.as_str()) {
+        FileKind::Step
+    } else {
+        FileKind::Text
+    }
+}
+
 /// Why a file cannot be opened; the message says what to do instead.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OpenError {
@@ -191,16 +219,15 @@ pub async fn open_file_with(
         return Err(OpenError::Directory { path: shown });
     }
     let ext = extension(&path);
-    let (content, truncated) = if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        (image(fs, &path).await?, false)
-    } else if MODEL_EXTENSIONS.contains(&ext.as_str()) {
-        (model(fs, &path, &ext).await?, false)
-    } else if let Some(reader) = step.filter(|_| STEP_EXTENSIONS.contains(&ext.as_str())) {
-        (step_model(fs, reader, &path).await?, false)
-    } else {
-        let file = read_text(fs, &path).await?;
-        let truncated = file.truncated;
-        (viewer(&ext, file.lines.join("\n")), truncated)
+    let (content, truncated) = match (file_kind(&path), step) {
+        (FileKind::Image, _) => (image(fs, &path).await?, false),
+        (FileKind::Model, _) => (model(fs, &path, &ext).await?, false),
+        (FileKind::Step, Some(reader)) => (step_model(fs, reader, &path).await?, false),
+        (FileKind::Text | FileKind::Step, _) => {
+            let file = read_text(fs, &path).await?;
+            let truncated = file.truncated;
+            (viewer(&ext, file.lines.join("\n")), truncated)
+        }
     };
     let title = if truncated {
         format!("{shown} (first {MAX_OPEN_LINES} lines)")
@@ -348,7 +375,7 @@ fn root(fs: &dyn FileSystemPort) -> String {
 }
 
 /// The lowercase extension of `path`, or `""`.
-fn extension(path: &WorkspacePath) -> String {
+pub fn extension(path: &WorkspacePath) -> String {
     path.file_name()
         .and_then(|name| name.rsplit_once('.'))
         .filter(|(stem, _)| !stem.is_empty())
@@ -410,6 +437,18 @@ mod tests {
 
     async fn open(fs: &InMemoryFs, arg: &str) -> Result<ModalSpec, OpenError> {
         open_file(fs, arg).await
+    }
+
+    #[test]
+    fn the_kind_comes_from_the_extension() {
+        let kind = |p: &str| file_kind(&WorkspacePath::parse(p).unwrap());
+        assert_eq!(kind("shots/a.PNG"), FileKind::Image);
+        assert_eq!(kind("logo.svg"), FileKind::Image);
+        assert_eq!(kind("parts/bracket.stl"), FileKind::Model);
+        assert_eq!(kind("bracket.step"), FileKind::Step);
+        assert_eq!(kind("README.md"), FileKind::Text);
+        assert_eq!(kind("Makefile"), FileKind::Text);
+        assert_eq!(kind(".env"), FileKind::Text);
     }
 
     #[tokio::test]
