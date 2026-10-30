@@ -50,6 +50,18 @@ pub fn fenced_code(lang: Option<&str>, source: &str) -> String {
     format!("{fence}{}\n{source}{newline}{fence}\n", lang.unwrap_or(""))
 }
 
+/// The markdown a tree that is one document (a markdown or code node, what
+/// `/open` shows for a text file) hands to a `TextView`, or `None` for any
+/// other tree. A modal draws such a document virtualized (`TextView::scrollable`)
+/// instead of laying the whole file out on every frame.
+pub fn document_markdown(tree: &CustomNode) -> Option<String> {
+    match tree {
+        CustomNode::Markdown { source } => Some(domain::math::normalize(source)),
+        CustomNode::Code { lang, source } => Some(fenced_code(lang.as_deref(), source)),
+        _ => None,
+    }
+}
+
 /// Walks one tree, handing out ids to its stateful nodes.
 struct Walk<'a> {
     entry: &'a TimelineEntry,
@@ -148,13 +160,12 @@ impl Walk<'_> {
                 let entry = self.child_entry(BlockKind::Chart(spec.clone()));
                 super::chart::render(&entry, window, cx)
             }
-            CustomNode::Code { lang, source } => TextView::markdown(
-                element_id("custom-code", self.next_id()),
-                SharedString::from(fenced_code(lang.as_deref(), source)),
-            )
-            .into_any_element(),
+            CustomNode::Code { lang, source } => {
+                super::math::code_block(self.next_id(), lang.as_deref(), source, window, cx)
+                    .into_any_element()
+            }
             CustomNode::Markdown { source } => {
-                super::math::markdown(element_id("custom-markdown", self.next_id()), source)
+                super::math::markdown_block(self.next_id(), source, window, cx)
                     .on_link_click(open_link)
                     .into_any_element()
             }
@@ -235,7 +246,7 @@ impl Walk<'_> {
 
 /// Opens a link of markdown or HTML in the browser, when it is `http`,
 /// `https` or `mailto`.
-fn open_link(url: &SharedString, _: &ClickEvent, _: &mut Window, cx: &mut App) {
+pub(crate) fn open_link(url: &SharedString, _: &ClickEvent, _: &mut Window, cx: &mut App) {
     if is_openable_url(url) {
         cx.open_url(url);
     }

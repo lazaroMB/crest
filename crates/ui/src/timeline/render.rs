@@ -5,10 +5,10 @@
 //! numbers not from an engine); every other kind goes to
 //! [`crate::blocks::render`].
 
-use domain::block::{BlockId, BlockKind, ToolStatus};
+use domain::block::{BlockKind, ToolStatus};
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString,
-    Styled as _, Window, div,
+    AnyElement, App, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString, Styled as _,
+    Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -147,10 +147,6 @@ fn status_color(status: ToolStatus, cx: &App) -> Hsla {
     }
 }
 
-fn element_id(prefix: &str, id: BlockId) -> ElementId {
-    ElementId::Name(SharedString::from(format!("{prefix}-{id}")))
-}
-
 /// Draws the content of one block (without the selection frame).
 pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let id = entry.block.id;
@@ -163,7 +159,7 @@ pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) ->
             let shown = entry.numbers.resolved.as_ref().unwrap_or(markdown);
             // TeX math is pulled out before CommonMark parses the text.
             let text =
-                crate::blocks::math::markdown(element_id("text", id), shown).into_any_element();
+                crate::blocks::math::markdown_block(id, shown, window, cx).into_any_element();
             if entry.numbers.unverified.is_empty() {
                 text
             } else {

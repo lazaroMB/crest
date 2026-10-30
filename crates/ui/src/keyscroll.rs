@@ -7,8 +7,8 @@
 //! [`ensure_visible`] keeps the selected row in view as the keys move it.
 
 use gpui::{
-    AnyElement, Div, ElementId, InteractiveElement as _, ParentElement as _, Pixels, ScrollHandle,
-    Stateful, StatefulInteractiveElement as _, Styled as _, div, point, px,
+    AnyElement, Div, ElementId, InteractiveElement as _, ListOffset, ListState, ParentElement as _,
+    Pixels, ScrollHandle, Stateful, StatefulInteractiveElement as _, Styled as _, div, point, px,
 };
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
 
@@ -34,6 +34,25 @@ pub fn scroll_key(handle: &ScrollHandle, key: &str) -> bool {
     // GPUI offsets grow negative as the content moves up.
     let clamped = target.clamp(px(0.), max.max(px(0.)));
     handle.set_offset(point(handle.offset().x, -clamped));
+    true
+}
+
+/// [`scroll_key`] for a virtualized `gpui::list` (a scrollable
+/// `TextView`): the same keys move `list` by a line, a page or to an end.
+pub fn scroll_list_key(list: &ListState, key: &str) -> bool {
+    let page = list.viewport_bounds().size.height * PAGE;
+    match key {
+        "up" => list.scroll_by(-px(LINE)),
+        "down" => list.scroll_by(px(LINE)),
+        "pageup" => list.scroll_by(-page),
+        "pagedown" => list.scroll_by(page),
+        "home" => list.scroll_to(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.),
+        }),
+        "end" => list.scroll_to_end(),
+        _ => return false,
+    }
     true
 }
 
@@ -92,6 +111,22 @@ fn offset(handle: &ScrollHandle) -> Pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_keys_are_the_same_keys() {
+        let list = ListState::new(3, gpui::ListAlignment::Top, px(0.));
+        assert!(!scroll_list_key(&list, "x"));
+        for key in ["up", "down", "pageup", "pagedown", "home", "end"] {
+            assert!(scroll_list_key(&list, key), "{key}");
+        }
+        assert_eq!(
+            list.logical_scroll_top().item_ix,
+            3,
+            "end is past the last item"
+        );
+        scroll_list_key(&list, "home");
+        assert_eq!(list.logical_scroll_top().item_ix, 0);
+    }
 
     #[test]
     fn unknown_keys_do_nothing() {

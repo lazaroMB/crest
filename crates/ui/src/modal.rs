@@ -26,13 +26,14 @@ use domain::modal::{HorizontalAnchor, MODAL_MARGIN, ModalId, ModalSpec, Vertical
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{
-    AnyView, App, AppContext as _, Context, FocusHandle, Focusable, FontWeight,
+    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
     ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
     px, relative,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_component::text::{TextView, TextViewState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use uuid::Uuid;
 
@@ -51,6 +52,12 @@ struct Open {
     /// A native view shown instead of `spec.content` (the simulation
     /// board), filling the card.
     view: Option<AnyView>,
+    /// The parsed document when the content is one markdown or code node
+    /// (a file opened with `/open`). Drawn as a virtualized `TextView`
+    /// that lays out only the visible part: the body of a 20,000-line
+    /// file is not laid out again on every tick of the wheel. Owned here,
+    /// not in `block_state`, so it goes with the modal.
+    doc: Option<Entity<TextViewState>>,
 }
 
 /// Id of the stateful nodes of modal `id`: stable for the same id, so an
@@ -133,9 +140,25 @@ impl ModalHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let scroll = match self.stack.iter().position(|open| open.spec.id == spec.id) {
-            Some(ix) => self.stack.remove(ix).scroll,
-            None => ScrollHandle::new(),
+        let (scroll, previous_doc) =
+            match self.stack.iter().position(|open| open.spec.id == spec.id) {
+                Some(ix) => {
+                    let open = self.stack.remove(ix);
+                    (open.scroll, open.doc)
+                }
+                None => (ScrollHandle::new(), None),
+            };
+        let doc = match (
+            crate::blocks::custom::document_markdown(&spec.content),
+            previous_doc,
+        ) {
+            (Some(markdown), Some(doc)) => {
+                // An update keeps the scroll position of the document.
+                doc.update(cx, |doc, cx| doc.set_text(&markdown, cx));
+                Some(doc)
+            }
+            (Some(markdown), None) => Some(cx.new(|cx| TextViewState::markdown(&markdown, cx))),
+            (None, _) => None,
         };
         if self.stack.is_empty() {
             self.restore_focus = window.focused(cx);
@@ -145,6 +168,7 @@ impl ModalHost {
             spec,
             scroll,
             view,
+            doc,
         });
         window.focus(&self.focus_handle, cx);
         cx.notify();
@@ -245,6 +269,15 @@ impl ModalHost {
             .map(|open| &open.spec)
     }
 
+    /// The document of modal `id`, when its content is one markdown or
+    /// code node drawn virtualized (see [`Open::doc`]).
+    pub fn document(&self, id: &ModalId) -> Option<&Entity<TextViewState>> {
+        self.stack
+            .iter()
+            .find(|open| &open.spec.id == id)
+            .and_then(|open| open.doc.as_ref())
+    }
+
     /// The scroll position of modal `id`'s body.
     pub fn scroll_handle(&self, id: &ModalId) -> Option<&ScrollHandle> {
         self.stack
@@ -265,9 +298,14 @@ impl ModalHost {
         }
         // The body of a plugin modal scrolls with the keyboard too; a
         // view (the help) scrolls itself.
-        if let Some(top) = self.stack.last().filter(|open| open.view.is_none())
-            && crate::keyscroll::scroll_key(&top.scroll, &keys.key)
-        {
+        let Some(top) = self.stack.last().filter(|open| open.view.is_none()) else {
+            return;
+        };
+        let scrolled = match &top.doc {
+            Some(doc) => crate::keyscroll::scroll_list_key(doc.read(cx).list_state(), &keys.key),
+            None => crate::keyscroll::scroll_key(&top.scroll, &keys.key),
+        };
+        if scrolled {
             cx.stop_propagation();
             cx.notify();
         }
@@ -281,15 +319,23 @@ impl ModalHost {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let view = open.view.clone();
-        let body = match &view {
-            Some(_) => None,
-            None => Some(crate::blocks::custom::render_node(
+        let body = match (&view, &open.doc) {
+            (Some(_), _) => None,
+            (None, Some(doc)) => {
+                // The document scrolls itself, virtualized.
+                let text = crate::blocks::math::with_math(TextView::new(doc))
+                    .scrollable(true)
+                    .on_link_click(crate::blocks::custom::open_link);
+                Some(div().size_full().p_3().child(text).into_any_element())
+            }
+            (None, None) => Some(crate::blocks::custom::render_node(
                 open.node_id,
                 &open.spec.content,
                 window,
                 cx,
             )),
         };
+        let virtualized = open.doc.is_some();
         let theme = cx.theme();
         let id = open.spec.id.clone();
         let subtitle = if open.spec.title == open.spec.plugin {
@@ -359,15 +405,16 @@ impl ModalHost {
                     .child(view)
             }))
             .children(body.map(|body| {
-                div()
-                    .id(("modal-body", ix))
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_scroll()
-                    .track_scroll(&open.scroll)
-                    .child(div().p_3().min_w_0().child(body))
-                    .scrollbar(&open.scroll, ScrollbarAxis::Both)
+                let body_el = div().id(("modal-body", ix)).flex_1().min_h_0().w_full();
+                if virtualized {
+                    body_el.child(body)
+                } else {
+                    body_el
+                        .overflow_scroll()
+                        .track_scroll(&open.scroll)
+                        .child(div().p_3().min_w_0().child(body))
+                        .scrollbar(&open.scroll, ScrollbarAxis::Both)
+                }
             }));
         // The card is sized against this layer, not the window: the host
         // fills the session area, which the chats sidebar and the tree
