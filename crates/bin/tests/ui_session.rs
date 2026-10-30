@@ -223,6 +223,60 @@ fn a_turn_from_the_input_edits_after_approval_and_is_saved(cx: &mut TestAppConte
     assert_eq!(texts(&saved)[0], "> arregla add\n");
 }
 
+/// The dialog's keys go through the session: the cursor picks "always in
+/// project" for the folder pattern, which lands in the project file, and
+/// the next edit in that folder runs without asking.
+#[gpui::test]
+fn always_in_project_from_the_dialog_writes_the_project_file(cx: &mut TestAppContext) {
+    let script = vec![
+        ScriptedResponse::tool_use(
+            "toolu_1",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "a - b", "new": "a + b" }),
+        ),
+        ScriptedResponse::tool_use(
+            "toolu_2",
+            "edit_file",
+            json!({ "path": "src/lib.rs", "old": "fn add", "new": "fn sum" }),
+        ),
+        ScriptedResponse::text(EXPLANATION),
+    ];
+    let (w, cx) = open(script, cx);
+    cx.simulate_input("arregla add");
+    cx.simulate_keystrokes("enter");
+
+    wait_until(&w, cx, "the approval dialog", |s, cx| {
+        s.approval().read(cx).current().is_some()
+    });
+    // Narrow to the exact path and back to the folder, then the third row.
+    cx.simulate_keystrokes("shift-tab tab down down");
+    let pattern = w.session.read_with(cx, |s, cx| {
+        let dialog = s.approval().read(cx);
+        (
+            dialog.selected(),
+            dialog.pattern().map(|rung| rung.rule.to_string()),
+        )
+    });
+    assert_eq!(
+        pattern,
+        (
+            Some(ui::approval::Choice::Project),
+            Some("edit_file(src/*)".to_owned())
+        )
+    );
+    cx.simulate_keystrokes("enter");
+    wait_until(&w, cx, "the end of the turn", |s, _| !s.is_running());
+
+    let fixed = std::fs::read_to_string(w.workspace.join("src/lib.rs")).unwrap();
+    assert_eq!(
+        fixed,
+        LIB.replace("a - b", "a + b").replace("fn add", "fn sum")
+    );
+    let rules = std::fs::read_to_string(w.workspace.join(".crest/permissions.local.toml")).unwrap();
+    assert!(rules.contains("\"edit_file(src/*)\""), "{rules}");
+    assert_eq!(w.llm.remaining(), 0);
+}
+
 #[gpui::test]
 fn ctrl_c_interrupts_the_real_agent(cx: &mut TestAppContext) {
     let script = vec![ScriptedResponse::text("hola mundo cruel").hang_after(4)];
