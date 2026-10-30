@@ -354,7 +354,42 @@ app.permissions.sensitive_paths = { "secrets/" }
 
 An invalid pattern (empty, or with a `/` in the middle) makes crest fall back to the default list and show a notice.
 
-The "always allow" rules you grant in an approval dialog are saved with the session and come back when the session is resumed. There is no Lua syntax to declare them.
+Rules granted in an approval dialog with `s` (session) are saved with the session and come back when it is resumed. Rules for the whole project live in a TOML file, described next; there is no Lua syntax for rules.
+
+### Project permission rules (`permissions.local.toml`)
+
+`<workspace>/.crest/permissions.local.toml` holds the rules of one workspace. crest writes it when you answer `p` in an approval or press `p` in [`/permissions`](usage.md#permission-rules-permissions), and you can edit it by hand (crest reads it when the workspace opens):
+
+```toml
+# <workspace>/.crest/permissions.local.toml
+allow = [
+  "run_command(cargo test *)",   # cargo test with any arguments
+  "run_command(cargo fmt)",      # exactly `cargo fmt`
+  "edit_file(src/*)",            # edits anywhere under src/
+  "mcp__jira__search",           # that MCP tool, with any input
+]
+deny = [
+  "run_command(git push *)",     # never, whatever the mode or the allow list says
+  "write_file(migrations/*)",
+]
+```
+
+- `allow` rules answer "yes" where the mode would ask. They do not override `plan` mode, which still denies writes and commands.
+- `deny` rules win over everything: over `allow` rules (of the project or the session), over `auto-edit`, and even over reads. A denied call is not asked; the model gets ``denied by the rule `run_command(git push *)` ``.
+- Each entry is `tool(pattern)`, or a bare tool name for any input (`tool(*)` is the same):
+  - `run_command(prog sub *)`: a command whose arguments start with those words (compared word by word, so `cargo test *` does not match `cargo testx`); words are split as in a shell, so quote an argument with spaces.
+  - `run_command(prog args)` without `*`: that exact command.
+  - `edit_file(dir/*)`, `write_file(dir/*)`: a path prefix, within folder boundaries; without `*`, that exact path (relative to the workspace).
+  - any other text inside the parentheses: that exact input.
+- Shells, wrappers and interpreters given inline code (see [usage.md](usage.md#patterns)) are never offered a wider pattern in the dialog. A pattern you write by hand for them (`run_command(bash *)`) is honoured, but allows any script.
+
+Problems never stop crest: a file that does not parse, an unknown key, an entry that is not a string or not a rule becomes a warning at startup (shown like the `keymap.toml` ones and in `/permissions`) and is skipped; the other entries still apply. While the file has problems crest does **not** rewrite it, so nothing you wrote is lost: saving a new project rule, removing or promoting one fails with that reason (the rule then applies to the session only). When crest rewrites the file it writes the two lists again, without comments.
+
+Only the `.local` file is read. A versioned `permissions.toml` is never loaded: a cloned repository must not be able to grant itself permissions (the same reason MCP servers and plugin capabilities of a workspace need trust). Keep the file out of version control:
+
+```gitignore
+.crest/*.local.toml
+```
 
 ## Privacy: secrets and personal data
 

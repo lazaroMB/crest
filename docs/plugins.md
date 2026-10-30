@@ -193,7 +193,7 @@ app.tools.register({
 | `effect` | string | What the permission policy uses (see the table in [configuration.md](configuration.md#permissions-and-sensitive-paths)). **It defaults to `"execute"`**, so the tool asks for approval in `ask` and `auto-edit` and is denied in `plan`. A read-only tool should declare `effect = "read"`. |
 | `handler` | function | Receives the model's input as a table. |
 
-The approval dialog shows `plugin `<plugin>`: <tool> <input JSON>`, and "always allow" applies to that exact input.
+The approval dialog shows `plugin `<plugin>`: <tool> <input JSON>`. Its "this session" (`s`) and "always in project" (`p`) rows allow either that exact input or, after `Tab`, **any input** of the tool (written `<tool>` without parentheses); the exact input is proposed first. The same holds for MCP tools. See [usage.md](usage.md#patterns).
 
 **Handler return value**:
 

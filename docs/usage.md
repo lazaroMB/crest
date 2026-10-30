@@ -111,6 +111,7 @@ When a widget has nothing left for `Esc` to clear, `Esc` gives the keys back to 
 | `Ctrl+G m` | `model.pick` | Puts `/model ` in the prompt, which opens the model popup (the same as `/model`). |
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | `Ctrl+G P` | `mode.pick` | Puts `/mode ` in the prompt, whose palette lists the permission modes. |
+| `Ctrl+G A` | `permissions.open` | Opens the [permission rules](#permission-rules-permissions) (the same as `/permissions`). |
 | `Ctrl+G T` | `theme.pick` | Puts `/theme ` in the prompt, which opens the theme popup. |
 | `Ctrl+G W` | `project.switch` | Goes back to the project picker (the same as `/project`). |
 | `Ctrl+G s` | `panel.chats` | Shows or hides the chats sidebar (hidden, `Ctrl+Tab` skips it). |
@@ -141,6 +142,7 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/model <alias\|role\|id>` | Model for the **next** turn. Accepts an alias (`opus`), a role name (`plan`, which uses that role's whole spec) or a full id. `/model clear` goes back to the default model. |
 | `/model set <id>` | Saves `<id>` as your model for the default provider (as `Enter` in the popup) and reopens the session. |
 | `/mode <ask\|auto-edit\|plan>` | Changes the permission mode. `/mode ` (with the space) lists the three in the palette. |
+| `/permissions` | Lists the [permission rules](#permission-rules-permissions) of this session and project, to remove them or move a session rule to the project. |
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
 | `/project` | Goes back to the [project picker](#opening-a-project); this project closes once you choose another one, and `Esc` or **Back** returns to it. Not while a turn or command runs. |
@@ -160,7 +162,7 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/<name> <args>` | A command registered with `app.commands.register`. |
 | `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command /x (use /help, /model, /mode, /clear, /project, /login, /logout, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /theme, /mode, /permissions, /clear, /project, /login, /logout, /picker.files, /picker.grep, /modal, /q; /help lists every command)`.
 
 ### Shell commands (`/!`)
 
@@ -179,7 +181,7 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
 | 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
 | 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). |
-| 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn and the permission mode. |
+| 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn, the permission mode and the keys of `/permissions`. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
 | 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
 
@@ -285,7 +287,7 @@ Each tool declares its effect (`read`, `write`, `execute` or `network`), and the
 | `auto-edit` | yes | yes | asks |
 | `plan` | yes | no (denied) | no (denied) |
 
-To change mode: `Ctrl+G p`, `/mode <mode>` or `--mode` at startup.
+To change mode: `Ctrl+G p`, `/mode <mode>`, `m` in [`/permissions`](#permission-rules-permissions) or `--mode` at startup.
 
 `run_command` counts as a read only for `git log`, `git blame`, `git diff`, `git status` and `git show` without options that write (`--output`, `--no-index`, `--contents`, `--ext-diff`). Any other command counts as execution.
 
@@ -304,15 +306,64 @@ When approval is needed, a dialog opens with the colored diff (for edits) or wit
 | `y` | Approve this once. |
 | `s` (or `a`) | Approve and allow the pattern in the chip for the rest of the session. |
 | `p` | Approve and allow the pattern in this workspace for good: it is written to `.crest/permissions.local.toml`. |
-| `e` | Only for edits (`edit_file`, `write_file`): approve and switch the session to `auto-edit`, so the next edits are not asked (`Ctrl+G p` or `/mode ask` undoes it). |
-| `Tab` / `Shift+Tab` | Widen or narrow the pattern of the `s` and `p` rows: the exact command, the program and its subcommand (`cargo test *`, proposed first) or the whole program (`cargo *`); for edits the exact file, its folder (`src/ui/*`, proposed first) or the folder above. The `‹` `›` arrows of the chip do the same with the mouse. A broader pattern shows what it allows (``allows any `cargo test …` ``). Shells, wrappers and interpreters running inline code (`sh -c`, `sudo`, `python -c`, `npx`...) are only allowed exactly. |
+| `e` | Only for edits (`edit_file`, `write_file`): approve and switch the session to `auto-edit`, so the next edits are not asked (`Ctrl+G p` or `/mode ask` undoes it; the row names the key of `permission.cycle` in your keymap). This is "allow all edits": no rule is stored and the mode is not saved, so the next run starts in `ask` again. Sensitive paths and files outside the workspace are still refused. |
+| `Tab` / `Shift+Tab` | Widen or narrow the pattern of the `s` and `p` rows (see [Patterns](#patterns)). The `‹` `›` arrows of the chip do the same with the mouse. A broader pattern shows what it allows (``allows any `cargo test …` ``). |
 | `n` | Reject. It first asks for an optional reason, which is passed to the model: type it and press `Enter`, or `Esc` to go back. |
 | `Esc` | Reject without a reason (the dialog's footer reminds you). |
 | `PageUp` / `PageDown`, `Shift+↑` / `Shift+↓`, `Home` / `End` | Scroll a long preview. |
 
 If several requests arrive, they wait in a queue. A denied tool (by you, by the mode or by a hook) is not retried automatically: the model gets the reason and decides.
 
-"Always" rules are saved with the session and come back when it is resumed. `--new` and headless without `--continue` start with no rules, while `/clear` keeps those of the current run.
+#### Patterns
+
+The `s` and `p` rows allow a pattern, not only the call they answer. Tab widens it along a ladder; the middle rung is proposed first when there is one:
+
+| Tool | Ladder (narrowest first) |
+| --- | --- |
+| `run_command` | The exact command (`run_command(cargo test -p ui)`), the program and its subcommand (`run_command(cargo test *)`, proposed), the whole program (`run_command(cargo *)`). The subcommand is the first argument that does not start with `-`, so `ls -la` only offers the exact command and `ls *`. |
+| `edit_file`, `write_file` | The exact file (`edit_file(src/ui/view.rs)`), its folder (`edit_file(src/ui/*)`, proposed), the folder above (`edit_file(src/*)`). |
+| MCP and plugin tools | The exact input, or any input of that tool (`mcp__jira__search`, written without parentheses). |
+
+A command pattern compares the command's arguments one by one, not its text: `cargo test *` allows `cargo test -p ui` but not `cargo testx`, and `ls *` does not allow `lsof`. A path pattern stops at folder boundaries (`src/ui/*` does not allow `src/uikit/a.rs`).
+
+Some programs only get the **exact** command, because what they run is in their arguments; the chip shows the exact command and says why:
+
+- shells: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`, `tcsh`, `nu`, `pwsh`, `powershell`, `cmd`;
+- wrappers that run another command: `env`, `sudo`, `doas`, `xargs`, `nohup`, `time`, `nice`, `timeout`, `stdbuf`, `ionice`;
+- package runners: `npx`, `bunx`;
+- interpreters and runners given inline code or a package: `python… -c`, `node -e`/`--eval`/`-p`/`--print`, `perl -e`/`-E`, `ruby -e`, `php -r`, `lua -e`, `deno eval`, `bun -e`/`--eval`/`x`, `npm exec`, `pnpm dlx`/`exec`, `yarn dlx`.
+
+The program is compared by its base name, ignoring case and `.exe` (`/usr/bin/bash`, `python3.12`). The lists are `EXACT_ONLY_PROGRAMS` and `EXACT_ONLY_WHEN` in `crates/domain/src/permission.rs`.
+
+There is deliberately no "allow every command" answer, unlike "allow all edits" (`e`): a broad command rule (`bash *`, `npx *`, even `find *`) grants far more than it seems, so commands are allowed one pattern at a time.
+
+#### Session and project rules
+
+- **Session** (`s`): the rule lasts for this session. It is saved with the session and comes back when the session is resumed; `--new` and headless without `--continue` start without session rules, while `/clear` keeps those of the current run.
+- **Project** (`p`): the rule is written to `<workspace>/.crest/permissions.local.toml` and applies to every session in this workspace, now and later. The file is plain TOML ([configuration.md](configuration.md#project-permission-rules-permissionslocaltoml)) and can be edited by hand, also to add **deny** rules, which win over everything else: over allow rules, over `auto-edit` and over reads.
+
+crest only reads the `.local` file, never a shared `permissions.toml`: a cloned repository must not be able to grant itself permissions. Keep it out of version control; add this to your `.gitignore`:
+
+```gitignore
+.crest/*.local.toml
+```
+
+If crest cannot save a project rule (the file is not writable, or it has entries crest cannot read), the rule still applies to this session and a warning says why.
+
+#### Permission rules (`/permissions`)
+
+`/permissions` or `Ctrl+G A` opens a modal with the rules in force, grouped as **Session**, **Project** (with the path of the project file) and **Deny**, each row in the notation above with its scope. The current permission mode is shown on top with the key that cycles it. Changes apply at once: the next approval already sees them.
+
+| Key | Effect |
+| --- | --- |
+| `↑` / `↓`, `k` / `j`, `PageUp` / `PageDown`, `Home` / `End`, click | Selects a rule (it stays in view). |
+| `d`, `Delete` | Removes the selected rule. A project rule asks first: `y`, `d` or `Enter` confirm and any other key keeps it; it is then removed from the file too. |
+| `p` | Moves the selected session rule to the project file. |
+| `m` | Cycles the permission mode, like `Ctrl+G p`. |
+| `/` | Goes to the filter box: typing filters by the rule, its group or its scope. `Enter` or `↓` go back to the list. |
+| `Esc` | Closes the modal. |
+
+With no rules it says so (`No rules yet — answer s or p in an approval to add one`). If the project file has entries crest cannot read, the modal lists them and explains that crest will not rewrite the file until they are fixed: removing or promoting a project rule then fails with that reason, and the rules it could read still apply.
 
 The same dialog appears when the session reaches its spending cap (`app.opt.max_session_cost`). See [configuration.md](configuration.md#cost-and-spending-cap).
 

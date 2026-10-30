@@ -78,6 +78,7 @@ flowchart TB
 | `ContentSearchPort` | `ports/search.rs` | `grep` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ShellPort` | `ports/shell.rs` | `run`, `classify` | `adapter_shell::LocalShell` | `fs::ScriptedShell` |
 | `ApprovalPort` | `ports/approval.rs` | `request(ApprovalRequest)` | `ui::approval::UiApproval` (window), `crest::headless::StdinApproval` (terminal) | `system::ScriptedApproval` |
+| `PermissionStorePort` | `ports/permissions.rs` | `load`, `save` (the project's `.crest/permissions.local.toml`; parsing and writing the TOML are pure functions there) | `crest::permissions::FilePermissionStore` | `permissions::MemoryPermissionStore` |
 | `EventSink` | `ports/events.rs` | `emit(DomainEvent)` | `crest::gui::ChannelSink`, `crest::headless::HeadlessSink`. Both are wrapped in a `TimelineSink` (bin), which records the timeline that gets saved. | `system::RecordingSink` |
 | `SessionStorePort` | `ports/store.rs` | `save`, `load`, `latest_for_workspace`, `list`, `delete` | `adapter_store::SqliteSessionStore` | `system::InMemorySessionStore` |
 | `PluginHostPort` | `ports/plugin.rs` | `load_config`, `invoke_callback`, `call_tool`, `run_hook` | `adapter_lua::LuaHandle` | `system::FakePluginHost` |
@@ -91,7 +92,7 @@ flowchart TB
 
 Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
-The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command` and `recompute` (re-runs a computed card's envelope). The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
+The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command`, `recompute` (re-runs a computed card's envelope) and `permission_rules` / `remove_permission_rule` / `promote_permission_rule` (for `/permissions`, over `usecases::permissions`), among others. The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
 
 ## A turn: `run_turn`
 
@@ -169,6 +170,7 @@ The permission policy (`domain::permission`) combines the mode (`ask`, `auto-edi
 
 - a `Deny` rule always wins;
 - `AllowAlways` turns an `Ask` into `Allow`;
+- a rule matches a tool and a pattern (`RuleMatcher`: exact, path prefix, command prefix compared argument by argument, or any input) and has a scope: `Session` rules are saved with the session in SQLite, `Project` rules in `.crest/permissions.local.toml` through `PermissionStorePort`, loaded into the policy when the workspace opens. `rule_ladder` builds the patterns the approval dialog offers; `usecases::permissions` (`ProjectRules`, `load_rules`, `remove_rule`, `promote_rule`) is behind the "always in project" answer and `/permissions`;
 - the subagents' `read_only()` policy denies everything that is not a read.
 
 ## Domain events to the UI
@@ -237,13 +239,13 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 
 | Migration | Tables | What they store |
 | --- | --- | --- |
-| `0001_init.sql` | `sessions`, `timeline_blocks`, `permission_rules` | The session (history as JSON), its timeline block by block and its "always allow" rules. |
+| `0001_init.sql` | `sessions`, `timeline_blocks`, `permission_rules` | The session (history as JSON), its timeline block by block and its session-scoped rules (project rules live in `.crest/permissions.local.toml`). |
 | `0002_turn_count.sql` | `sessions.turn_count` | Number of turns (to list without deserializing). |
 | `0003_flow_sessions.sql` | `flow_sessions` | graph-flow checkpoints of both workflows, with optimistic locking by version. |
 
 - The session is saved after every turn, as `StoredSession { session, timeline, permission_rules }`.
 - On startup, `resume_latest` takes the workspace's most recent session (by canonical path), restores its rules and re-emits its timeline.
-- Outside SQLite live `mcp-trust.json` (approved MCP servers) and the Specs (`<workspace>/.crest/specs/`).
+- Outside SQLite live `mcp-trust.json` (approved MCP servers), the project permission rules (`<workspace>/.crest/permissions.local.toml`) and the Specs (`<workspace>/.crest/specs/`).
 
 ## Composition root
 
