@@ -126,6 +126,10 @@ pub struct RuleListing {
     pub deny: Vec<PermissionRule>,
     /// The project file, when the workspace has project rules.
     pub project_file: Option<PathBuf>,
+    /// Problems of the project file (entries crest cannot read), filled
+    /// in by [`load_rules`]. While there are any, crest does not rewrite
+    /// the file.
+    pub warnings: Vec<String>,
 }
 
 /// The rules in force, from the shared policy, in the order they were
@@ -143,6 +147,21 @@ pub fn list_rules(permissions: &SharedPermissions, project: Option<&ProjectRules
             (RuleDecision::AllowAlways, RuleScope::Project) => &mut listing.project,
         };
         group.push(rule.clone());
+    }
+    listing
+}
+
+/// [`list_rules`], with the problems of the project file read now.
+pub async fn load_rules(
+    permissions: &SharedPermissions,
+    project: Option<&ProjectRules>,
+) -> RuleListing {
+    let mut listing = list_rules(permissions, project);
+    if let Some(project) = project {
+        listing.warnings = match project.load().await {
+            Ok(loaded) => loaded.warnings,
+            Err(err) => vec![err.to_string()],
+        };
     }
     listing
 }
@@ -242,9 +261,26 @@ mod tests {
                 project: vec![in_project],
                 deny: vec![denied],
                 project_file: Some(PathBuf::from("/w/.crest/permissions.local.toml")),
+                warnings: Vec::new(),
             }
         );
         assert_eq!(list_rules(&permissions, None).project_file, None);
+    }
+
+    #[tokio::test]
+    async fn load_reports_the_problems_of_the_project_file() {
+        let (permissions, store, project) = setup(vec![rule("ls")]);
+        assert!(
+            load_rules(&permissions, Some(&project))
+                .await
+                .warnings
+                .is_empty()
+        );
+        store.set_text(Path::new("/w"), "allow = [\"bad(\"]\n");
+        let listing = load_rules(&permissions, Some(&project)).await;
+        assert_eq!(listing.session, [rule("ls")]);
+        assert_eq!(listing.warnings.len(), 1, "{:?}", listing.warnings);
+        assert!(load_rules(&permissions, None).await.warnings.is_empty());
     }
 
     #[tokio::test]

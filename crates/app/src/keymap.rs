@@ -714,6 +714,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("<leader>p", "permission.cycle", "Cycle the permission mode"),
     ("<leader>P", "mode.pick", "Choose the permission mode"),
     (
+        "<leader>A",
+        "permissions.open",
+        "List the permission rules of this session and project (remove, promote)",
+    ),
+    (
         "<leader>W",
         "project.switch",
         "Close this project and choose another one",
@@ -1288,6 +1293,7 @@ mod tests {
         let get = |n: &str| km.lookup(&default_keys(n)).exact.cloned();
         let b = |name: &str| Some(Action::builtin(name));
         assert_eq!(get("<C-g>c"), b("chat.new"));
+        assert_eq!(get("<leader>A"), b("permissions.open"));
         assert_eq!(get("<C-g>n"), b("chat.next"));
         assert_eq!(get("<C-g>b"), b("chat.prev"));
         assert_eq!(get("<C-g>,"), b("chat.rename"));
