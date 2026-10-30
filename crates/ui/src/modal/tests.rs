@@ -256,6 +256,32 @@ fn long_content_scrolls(cx: &mut TestAppContext) {
     assert!(max.y > px(1000.), "the body scrolls: {max:?}");
 }
 
+#[test]
+fn document_images_resolve_under_the_root() {
+    let root = WorkspaceRoot::new(if cfg!(windows) { r"C:\ws" } else { "/ws" }).unwrap();
+    let docs = WorkspacePath::parse("docs").unwrap();
+    let at = |dir: Option<&WorkspacePath>, uri: &str| {
+        document_image(&root, dir, uri).map(|p| p.display().to_string().replace('\\', "/"))
+    };
+    let ws = if cfg!(windows) { "C:/ws" } else { "/ws" };
+    assert_eq!(
+        at(None, "assets/logo.svg"),
+        Some(format!("{ws}/assets/logo.svg"))
+    );
+    assert_eq!(
+        at(Some(&docs), "./img/a.png"),
+        Some(format!("{ws}/docs/img/a.png"))
+    );
+    assert_eq!(
+        at(Some(&docs), "../assets/a.png"),
+        Some(format!("{ws}/assets/a.png"))
+    );
+    assert_eq!(at(None, "../etc/passwd"), None, "outside the workspace");
+    assert_eq!(at(None, "https://img.shields.io/badge/x"), None, "a URL");
+    assert_eq!(at(None, "data:image/png;base64,AAAA"), None, "a data URI");
+    assert_eq!(at(None, ""), None);
+}
+
 #[gpui::test]
 fn a_document_scrolls_virtualized(cx: &mut TestAppContext) {
     let (host, cx) = host(cx);
