@@ -25,6 +25,7 @@ use std::time::Duration;
 use application::ports::formats::StepRequest;
 use domain::engineering::cad::{CadModelSpec, CadSolid, MAX_SOLIDS};
 use domain::model3d::{ModelMesh, UpAxis};
+use rayon::prelude::*;
 use ruststep::ast::{EntityInstance, Name, Parameter, Record};
 use truck_meshalgo::prelude::*;
 use truck_stepio::r#in::Table;
@@ -172,41 +173,48 @@ fn read(text: &str, request: &StepRequest) -> Result<CadModelSpec, String> {
     };
     let mut out = Vec::with_capacity(solids.len());
     let single_product = (products.len() == 1).then(|| products[0].clone());
+    // Every shell is converted and meshed on rayon's pool (an assembly has
+    // many), and the results are then gathered in solid and shell order,
+    // so the mesh, the counts and the warnings are those of meshing one
+    // shell after another. A panic in the tessellator stays within its
+    // shell: `catch_unwind` runs inside the parallel job.
+    let shells: Vec<u64> = solids
+        .iter()
+        .flat_map(|solid| solid.shells.iter().copied())
+        .collect();
+    let meshed: Vec<Option<Meshed>> = shells
+        .par_iter()
+        .map(|id| mesh_shell(&table, *id, tolerance))
+        .collect();
+    let mut meshed = shells.iter().zip(meshed);
     for (ordinal, solid) in solids.iter().enumerate() {
         let first_triangle = mesh.triangles.len();
         let first_vertex = mesh.positions.len();
         let (mut faces, mut failed) = (0, 0);
-        for shell_id in &solid.shells {
-            let Some(holder) = table.shell.get(shell_id) else {
-                continue;
-            };
-            let shell = match table.to_compressed_shell(holder) {
-                Ok(shell) => shell,
-                Err(err) => {
+        for (shell_id, result) in meshed.by_ref().take(solid.shells.len()) {
+            match result {
+                None => {}
+                Some(Meshed::Unconverted(err)) => warnings.push(format!(
+                    "{}: shell #{shell_id} could not be converted ({})",
+                    solid.name,
+                    short(&err)
+                )),
+                Some(Meshed::Crashed(count)) => {
+                    faces += count;
+                    failed += count;
                     warnings.push(format!(
-                        "{}: shell #{shell_id} could not be converted ({})",
-                        solid.name,
-                        short(&format!("{err:?}"))
+                        "{}: the tessellator crashed on shell #{shell_id}; its {count} faces are not shown",
+                        solid.name
                     ));
-                    continue;
                 }
-            };
-            let count = shell.faces.len();
-            faces += count;
-            let Ok(meshed) =
-                catch_unwind(AssertUnwindSafe(|| shell.robust_triangulation(tolerance)))
-            else {
-                failed += count;
-                warnings.push(format!(
-                    "{}: the tessellator crashed on shell #{shell_id}; its {count} faces are not shown",
-                    solid.name
-                ));
-                continue;
-            };
-            for face in &meshed.faces {
-                match &face.surface {
-                    Some(polygon) => append(&mut mesh, polygon)?,
-                    None => failed += 1,
+                Some(Meshed::Faces(count, surfaces)) => {
+                    faces += count;
+                    for surface in &surfaces {
+                        match surface {
+                            Some(polygon) => append(&mut mesh, polygon)?,
+                            None => failed += 1,
+                        }
+                    }
                 }
             }
         }
@@ -250,6 +258,36 @@ fn read(text: &str, request: &StepRequest) -> Result<CadModelSpec, String> {
         tolerance,
         warnings,
     })
+}
+
+/// What became of one shell.
+enum Meshed {
+    /// truck could not build the shell from the table (its message).
+    Unconverted(String),
+    /// The tessellator panicked on the shell's faces (how many).
+    Crashed(usize),
+    /// How many faces the shell has, and the mesh of each meshed face
+    /// (`None` where one could not be meshed).
+    Faces(usize, Vec<Option<PolygonMesh>>),
+}
+
+/// Converts and meshes the shell `id` of `table`; `None` when the table
+/// has no such shell.
+fn mesh_shell(table: &Table, id: u64, tolerance: f64) -> Option<Meshed> {
+    let holder = table.shell.get(&id)?;
+    let shell = match table.to_compressed_shell(holder) {
+        Ok(shell) => shell,
+        Err(err) => return Some(Meshed::Unconverted(format!("{err:?}"))),
+    };
+    let count = shell.faces.len();
+    Some(
+        match catch_unwind(AssertUnwindSafe(|| shell.robust_triangulation(tolerance))) {
+            Ok(meshed) => {
+                Meshed::Faces(count, meshed.faces.into_iter().map(|f| f.surface).collect())
+            }
+            Err(_) => Meshed::Crashed(count),
+        },
+    )
 }
 
 /// Adds `polygon`'s triangles to `mesh`.
