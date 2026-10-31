@@ -529,6 +529,9 @@ impl Render for ModalHost {
             .on_key_down(cx.listener(Self::on_key))
             .absolute()
             .inset_0()
+            // The host is a cached view, laid out on its own: it fills the
+            // window by its size, not by its insets.
+            .size_full()
             .child(
                 div()
                     .id("modal-backdrop")
