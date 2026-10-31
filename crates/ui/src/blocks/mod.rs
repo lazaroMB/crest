@@ -61,6 +61,7 @@ pub mod waveform;
 
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use domain::block::{BlockId, BlockKind};
 use gpui::{
@@ -206,6 +207,40 @@ pub(crate) fn synced_state<T: 'static>(
     entity
 }
 
+/// A value worked out from the block `id` at revision `rev` (and `key`,
+/// view state such as whether the block is expanded), kept until either
+/// changes: a shell's styled output or a tool call's pretty input are
+/// made once rather than on every frame. Values of one type are told
+/// apart by `K`.
+pub(crate) fn derived<K: PartialEq + 'static, T: 'static>(
+    id: BlockId,
+    rev: u64,
+    key: K,
+    window: &mut Window,
+    cx: &mut App,
+    make: impl FnOnce(&K) -> T,
+) -> Rc<T> {
+    let state = synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| Derived::<K, T>(None),
+        |derived, _, _| derived.0 = None,
+    );
+    state.update(cx, |derived, _| match &derived.0 {
+        Some((made_for, value)) if *made_for == key => value.clone(),
+        _ => {
+            let value = Rc::new(make(&key));
+            derived.0 = Some((key, value.clone()));
+            value
+        }
+    })
+}
+
+/// What [`derived`] keeps: the key and the value made for it.
+struct Derived<K, T>(Option<(K, Rc<T>)>);
+
 /// The `T` entity of block `id`, if one was created.
 pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Option<Entity<T>> {
     let key = (id, TypeId::of::<T>());
@@ -316,6 +351,26 @@ mod tests {
             assert_eq!(again.read(cx).0, 7);
             assert_eq!(other.read(cx).0, 2);
         });
+    }
+
+    #[gpui::test]
+    fn derived_values_follow_the_revision_and_the_key(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let id = BlockId::new();
+        let made = std::cell::Cell::new(0);
+        let get = |rev: u64, key: bool, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                derived(id, rev, key, window, cx, |key| {
+                    made.set(made.get() + 1);
+                    (rev, *key)
+                })
+            })
+        };
+        let first = get(3, false, cx);
+        assert!(Rc::ptr_eq(&first, &get(3, false, cx)), "kept");
+        assert_eq!(*get(3, true, cx), (3, true), "another key");
+        assert_eq!(*get(4, true, cx), (4, true), "another revision");
+        assert_eq!(made.get(), 3);
     }
 
     #[gpui::test]

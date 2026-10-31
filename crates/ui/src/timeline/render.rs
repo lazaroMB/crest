@@ -182,32 +182,42 @@ pub fn render_block(entry: &TimelineEntry, window: &mut Window, cx: &mut App) ->
             status,
             output,
             ..
-        } => render_tool_call(
-            name,
-            summary,
-            input,
-            *status,
-            output.as_deref(),
-            entry.expanded,
-            cx,
-        ),
+        } => {
+            // The pretty input and the output are made once per revision,
+            // and only while the call is expanded.
+            let details = entry.expanded.then(|| {
+                crate::blocks::derived(id, entry.rev, (), window, cx, |()| ToolDetails {
+                    input: serde_json::to_string_pretty(input)
+                        .unwrap_or_default()
+                        .into(),
+                    output: output.as_deref().map(|output| output.to_owned().into()),
+                })
+            });
+            render_tool_call(name, summary, *status, output.as_deref(), details, cx)
+        }
         BlockKind::Error { message, hint } => render_error(message, hint.as_deref(), cx),
         _ => crate::blocks::render(entry, window, cx)
             .unwrap_or_else(|| crate::blocks::placeholder(entry, cx)),
     }
 }
 
+/// What an expanded tool call shows under its line.
+struct ToolDetails {
+    input: SharedString,
+    output: Option<SharedString>,
+}
+
+/// A tool call: its line, and `details` when it is expanded.
 fn render_tool_call(
     name: &str,
     summary: &str,
-    input: &serde_json::Value,
     status: ToolStatus,
     output: Option<&str>,
-    expanded: bool,
+    details: Option<std::rc::Rc<ToolDetails>>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let marker = if expanded { "▾" } else { "▸" };
+    let marker = if details.is_some() { "▾" } else { "▸" };
     let summary = summary.trim();
     let mut line = h_flex()
         .gap_1()
@@ -236,7 +246,7 @@ fn render_tool_call(
                 .text_color(status_color(status, cx))
                 .child(status_label(status)),
         );
-    if !expanded {
+    let Some(details) = details else {
         if let Some(note) = denial_note(status, output) {
             line = line
                 .child(div().text_color(theme.muted_foreground).child("·"))
@@ -250,21 +260,16 @@ fn render_tool_call(
                 );
         }
         return line.into_any_element();
-    }
-    let input = serde_json::to_string_pretty(input).unwrap_or_default();
-    let mut details = v_flex()
+    };
+    let mut shown = v_flex()
         .pl_4()
         .gap_1()
         .text_color(theme.muted_foreground)
-        .child(SharedString::from(input));
-    if let Some(output) = output {
-        details = details.child(
-            div()
-                .text_color(theme.foreground)
-                .child(SharedString::from(output.to_owned())),
-        );
+        .child(details.input.clone());
+    if let Some(output) = &details.output {
+        shown = shown.child(div().text_color(theme.foreground).child(output.clone()));
     }
-    v_flex().child(line).child(details).into_any_element()
+    v_flex().child(line).child(shown).into_any_element()
 }
 
 fn render_error(message: &str, hint: Option<&str>, cx: &App) -> AnyElement {
