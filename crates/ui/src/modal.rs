@@ -10,7 +10,9 @@
 //! session, beside the chats sidebar and the tree; it follows resizes),
 //! with a header (title, plugin,
 //! close button) and a body that scrolls both ways when the content is
-//! larger. A dimmed backdrop covers the window behind the cards.
+//! larger. A dimmed backdrop covers the window behind the cards. Lower
+//! modals stay visible around a smaller one on top; a modal wholly
+//! covered by one above it is not drawn.
 //!
 //! `Esc` (or a click on the backdrop) closes the front modal; `Up`/`Down`,
 //! `PageUp`/`PageDown` and `Home`/`End` scroll its body. The host
@@ -506,6 +508,44 @@ impl ModalHost {
     }
 }
 
+/// The share of the room `[start, end)` a card of `size` takes along one
+/// axis, placed as the card layer places it (start, center or end).
+fn span(size: Percent, start: bool, end: bool) -> (f32, f32) {
+    let size = size.fraction();
+    if start {
+        (0.0, size)
+    } else if end {
+        (1.0 - size, 1.0)
+    } else {
+        ((1.0 - size) / 2.0, (1.0 + size) / 2.0)
+    }
+}
+
+/// Whether the card of `top` hides the whole card of `below`: both are
+/// opaque and laid out in the same room, so then `below` need not be
+/// drawn.
+fn covers(top: &ModalSpec, below: &ModalSpec) -> bool {
+    const SLACK: f32 = 1e-4;
+    let contains = |a: (f32, f32), b: (f32, f32)| a.0 <= b.0 + SLACK && a.1 >= b.1 - SLACK;
+    let horizontal = |spec: &ModalSpec| {
+        let h = spec.position.horizontal;
+        span(
+            spec.width,
+            h == HorizontalAnchor::Left,
+            h == HorizontalAnchor::Right,
+        )
+    };
+    let vertical = |spec: &ModalSpec| {
+        let v = spec.position.vertical;
+        span(
+            spec.height,
+            v == VerticalAnchor::Top,
+            v == VerticalAnchor::Bottom,
+        )
+    };
+    contains(horizontal(top), horizontal(below)) && contains(vertical(top), vertical(below))
+}
+
 impl Focusable for ModalHost {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -521,6 +561,11 @@ impl Render for ModalHost {
             .stack
             .iter()
             .enumerate()
+            .filter(|(ix, open)| {
+                !self.stack[ix + 1..]
+                    .iter()
+                    .any(|above| covers(&above.spec, &open.spec))
+            })
             .map(|(ix, open)| self.render_card(ix, open, window, cx).into_any_element())
             .collect();
         div()

@@ -315,7 +315,7 @@ impl MarkdownState {
             plain: !may_hold_math(source),
             source: source.to_owned(),
             variant: variant.to_owned(),
-            state: cx.new(|cx| TextViewState::markdown(shown, cx)),
+            state: document(variant, shown, cx),
         }
     }
 
@@ -354,16 +354,34 @@ impl MarkdownState {
         self.plain = !may_hold_math(source);
         self.source.clear();
         self.source.push_str(source);
+        let reformat = (self.variant == HTML) != (variant == HTML);
         self.variant.clear();
         self.variant.push_str(variant);
         let shown = derive(source);
-        self.state
-            .update(cx, |state, cx| state.set_text(&shown, cx));
+        if reformat {
+            // Markdown and HTML are parsed differently: a new document.
+            self.state = document(variant, &shown, cx);
+        } else {
+            self.state
+                .update(cx, |state, cx| state.set_text(&shown, cx));
+        }
+    }
+}
+
+/// A document of `text`: HTML for the [`HTML`] variant, markdown
+/// otherwise.
+fn document(variant: &str, text: &str, cx: &mut App) -> Entity<TextViewState> {
+    if variant == HTML {
+        cx.new(|cx| TextViewState::html(text, cx))
+    } else {
+        cx.new(|cx| TextViewState::markdown(text, cx))
     }
 }
 
 /// Variant of [`markdown_block`].
 const DOCUMENT: &str = "document";
+/// Variant of [`html_block`].
+const HTML: &str = "html";
 
 /// The persistent [`MarkdownState`] of block `id` showing `derive(source)`.
 fn document_state(
@@ -385,6 +403,13 @@ fn document_state(
 pub fn markdown_block(id: BlockId, source: &str, window: &mut Window, cx: &mut App) -> TextView {
     let state = document_state(id, DOCUMENT, source, domain::math::normalize, window, cx);
     with_math(TextView::new(&state))
+}
+
+/// `source` as an HTML document for block `id`, whose parse is kept across
+/// frames like [`markdown_block`]'s.
+pub fn html_block(id: BlockId, source: &str, window: &mut Window, cx: &mut App) -> TextView {
+    let state = document_state(id, HTML, source, str::to_owned, window, cx);
+    TextView::new(&state)
 }
 
 /// `source` as one fenced code block in `lang` for block `id`, highlighted
@@ -679,6 +704,40 @@ mod tests {
             first,
             "one document per block"
         );
+    }
+
+    #[gpui::test]
+    fn html_nodes_keep_their_parse_and_get_their_own_document(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| crate::timeline::TimelineView::new(cx));
+        let id = BlockId::new();
+        let document = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            let holder = cx
+                .update(|_, cx| crate::blocks::existing_block_state::<MarkdownState>(id, cx))
+                .unwrap_or_else(|| panic!("the node has a document state"));
+            holder.read_with(cx, |holder, cx| {
+                (
+                    holder.state.entity_id(),
+                    holder.state.read(cx).rendered_text().as_str().to_owned(),
+                )
+            })
+        };
+        cx.update(|window, cx| {
+            html_block(id, "<p>One <b>bold</b></p>", window, cx);
+        });
+        let (first, text) = document(cx);
+        assert!(text.contains("One bold"), "{text:?}");
+        cx.update(|window, cx| {
+            html_block(id, "<p>One <b>bold</b></p>", window, cx);
+        });
+        assert_eq!(document(cx).0, first, "kept across frames");
+        // The same node as markdown is parsed as markdown, in a new document.
+        cx.update(|window, cx| {
+            markdown_block(id, "<b>raw</b> *em*", window, cx);
+        });
+        let (second, _) = document(cx);
+        assert_ne!(second, first);
     }
 
     #[gpui::test]
