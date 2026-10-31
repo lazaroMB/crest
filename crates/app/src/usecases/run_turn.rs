@@ -631,6 +631,7 @@ impl AgentService {
             }),
             context: None,
             cancel: opts.cancel,
+            sent: Mutex::default(),
             running: Mutex::new(None),
         };
         let result = run.run().await;
@@ -706,6 +707,7 @@ impl AgentService {
             }),
             context: None,
             cancel: opts.cancel,
+            sent: Mutex::default(),
             running: Mutex::new(None),
         };
         let result = run.resume(pending).await;
@@ -839,10 +841,25 @@ struct TurnRun<'a> {
     /// Context reported by the last model call, for compaction.
     context: Option<ContextMark>,
     cancel: CancelToken,
+    /// The messages the requests of this turn share (see
+    /// [`SentMessages`]).
+    sent: Mutex<SentMessages>,
     /// The tool call being awaited, while it is. An interruption drops
     /// the future at that await and finds the entry still here: it says
     /// what to tell the model and how its extra block ends.
     running: Mutex<Option<RunningCall>>,
+}
+
+/// The history as the requests of one turn send it. Each message is
+/// copied once per turn, not once per model call: the session's history
+/// stays the same until a compaction (which drops it) and the turn only
+/// appends messages.
+#[derive(Default)]
+struct SentMessages {
+    /// The session's history, once copied.
+    history: Option<Vec<Arc<Message>>>,
+    /// The turn's messages copied so far.
+    turn: Vec<Arc<Message>>,
 }
 
 /// A tool call at its await (see [`TurnRun::running`]).
@@ -1088,13 +1105,19 @@ impl TurnRun<'_> {
     }
 
     fn request(&self) -> LlmRequest {
-        let messages = self
-            .session
-            .history()
-            .chain(&self.turn.messages)
-            .cloned()
-            .collect();
-        let mut req = LlmRequest::new(self.model.clone(), messages);
+        let mut sent = self.sent.lock().unwrap_or_else(PoisonError::into_inner);
+        let SentMessages { history, turn } = &mut *sent;
+        let history =
+            history.get_or_insert_with(|| self.session.history().cloned().map(Arc::new).collect());
+        // Only appended to; anything else (never seen) copies it again.
+        if turn.len() > self.turn.messages.len() {
+            turn.clear();
+        }
+        let added = &self.turn.messages[turn.len()..];
+        turn.extend(added.iter().cloned().map(Arc::new));
+        let mut req = LlmRequest::new(self.model.clone(), Vec::new());
+        req.messages = history.iter().chain(turn.iter()).cloned().collect();
+        drop(sent);
         if !self.service.system_prompt.is_empty() {
             req.system = vec![SystemBlock::cached(self.service.system_prompt.clone())];
         }
@@ -1278,6 +1301,10 @@ impl TurnRun<'_> {
         let turn = summary_turn(&summary.text, &self.session.turns[..count], summary.usage);
         replace_turns(self.session, count, turn);
         self.context = None;
+        self.sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .history = None;
         self.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
             message: format!("history compacted: {count} turns → summary"),

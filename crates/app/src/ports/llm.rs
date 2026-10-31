@@ -30,8 +30,10 @@ pub struct LlmRequest {
     /// System prompt, split into blocks so cache breakpoints can be placed
     /// between the stable and the volatile parts.
     pub system: Vec<SystemBlock>,
-    /// Conversation history, oldest first.
-    pub messages: Vec<Message>,
+    /// Conversation history, oldest first. Each message is shared: the
+    /// agent loop sends the same history on every call of a turn and only
+    /// copies the messages it adds.
+    pub messages: Vec<Arc<Message>>,
     /// Client-side tools the model may call (results are produced locally).
     /// Shared: the agent loop sends the same list on every call.
     pub tools: Arc<[ToolDefinition]>,
@@ -52,7 +54,7 @@ impl LlmRequest {
         Self {
             model,
             system: Vec::new(),
-            messages,
+            messages: messages.into_iter().map(Arc::new).collect(),
             tools: Arc::new([]),
             server_tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
