@@ -739,8 +739,11 @@ impl TimelineView {
             return div().into_any_element();
         };
         let content = render_block(entry, window, cx);
-        let theme = cx.theme();
         let selected = self.state.selected() == Some(ix);
+        let copy_row = selected
+            .then(|| crate::blocks::copy::row(entry, copy_text_of(view.clone()), window, cx))
+            .flatten();
+        let theme = cx.theme();
         let width = block_width(&entry.block.kind);
         let footer = self.reply_footer(ix, view.clone());
         // `min_w_0`: content that does not wrap on its own (a form's
@@ -754,12 +757,7 @@ impl TimelineView {
             .border_l_2()
             .debug_selector(move || format!("block-{ix}"))
             .child(content)
-            .when_some(
-                selected
-                    .then(|| crate::blocks::copy::row(entry, cx))
-                    .flatten(),
-                |block, row| block.child(row),
-            )
+            .children(copy_row)
             .children(footer);
         let block = if selected {
             block
@@ -791,6 +789,17 @@ impl TimelineView {
             .child(block)
             .into_any_element()
     }
+}
+
+/// Makes the copy-as text of a block of `view` on click, from the block as
+/// it is then.
+fn copy_text_of(view: WeakEntity<TimelineView>) -> crate::blocks::copy::CopyText {
+    std::rc::Rc::new(move |id, key, cx| {
+        let view = view.upgrade()?;
+        let state = &view.read(cx).state;
+        let entry = state.get(state.position(id)?)?;
+        crate::blocks::copy::text(&entry.block.kind, key)
+    })
 }
 
 impl Focusable for TimelineView {

@@ -555,9 +555,8 @@ mod tests {
         let (first, second) = (text("a"), text("b"));
         state.apply(&added(&first));
         state.apply(&added(&second));
-        let revs = |state: &TimelineState| -> Vec<u64> {
-            state.entries().iter().map(|e| e.rev).collect()
-        };
+        let revs =
+            |state: &TimelineState| -> Vec<u64> { state.entries().iter().map(|e| e.rev).collect() };
         let before = revs(&state);
         assert_ne!(before[0], before[1]);
         assert!(before.iter().all(|rev| *rev != NO_REV));
