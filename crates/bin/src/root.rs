@@ -232,7 +232,7 @@ impl TurnCheckpointPort for Checkpoint {
             permission_rules: lock_permissions(&self.permissions).rules.clone(),
             prompt_history,
         };
-        if let Err(err) = self.store.save(&stored).await {
+        if let Err(err) = self.store.save(stored).await {
             eprintln!("warning: could not save the turn in progress: {err}");
         }
     }
@@ -435,7 +435,7 @@ impl App {
     /// The store's error.
     pub async fn save(&self) -> Result<(), StoreError> {
         match &self.store {
-            Some(store) => store.save(&self.stored_session()).await,
+            Some(store) => store.save(self.stored_session()).await,
             None => Ok(()),
         }
     }
