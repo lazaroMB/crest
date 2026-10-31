@@ -17,7 +17,9 @@
 //! from a project (`/project`), `Esc` or **Back** emits
 //! [`ProjectPickerEvent::Back`] to return to it.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use application::ports::projects::{
@@ -83,6 +85,9 @@ pub struct ProjectPickerView {
     listed_for: Option<String>,
     listing: Option<DirListing>,
     recent: Vec<RecentRow>,
+    /// The rows for the path field's text, worked out once per text and
+    /// listing: render and every key read them.
+    rows: RefCell<Option<(SharedString, Rc<[Row]>)>>,
     selected: usize,
     /// The scroll of the rows, which follows the chosen one.
     scroll: ScrollHandle,
@@ -131,6 +136,7 @@ impl ProjectPickerView {
             listed_for: None,
             listing: None,
             recent: Vec::new(),
+            rows: RefCell::default(),
             selected: 0,
             scroll: ScrollHandle::new(),
             error: None,
@@ -159,6 +165,7 @@ impl ProjectPickerView {
             }
             this.update(cx, |this, cx| {
                 this.recent = rows;
+                this.rows.take();
                 cx.notify();
             })
             .ok();
@@ -199,9 +206,21 @@ impl ProjectPickerView {
 
     /// The selectable rows, in order: recent projects (with no filter)
     /// and the matching directories.
-    pub fn rows(&self, cx: &App) -> Vec<Row> {
-        let text = self.text(cx);
-        let typed = split_typed_path(&text);
+    pub fn rows(&self, cx: &App) -> Rc<[Row]> {
+        let text = self.input.read(cx).value();
+        let mut cache = self.rows.borrow_mut();
+        if let Some((key, rows)) = cache.as_ref()
+            && *key == text
+        {
+            return Rc::clone(rows);
+        }
+        let rows: Rc<[Row]> = self.rows_for(&text).into();
+        *cache = Some((text, Rc::clone(&rows)));
+        rows
+    }
+
+    fn rows_for(&self, text: &str) -> Vec<Row> {
+        let typed = split_typed_path(text);
         let mut rows: Vec<Row> = Vec::new();
         if typed.filter.is_empty() {
             rows.extend(self.recent.iter().cloned().map(Row::Recent));
@@ -275,6 +294,7 @@ impl ProjectPickerView {
                         this.error = Some(err.to_string());
                     }
                 }
+                this.rows.take();
                 this.listing_task = None;
                 cx.notify();
             })
@@ -624,10 +644,10 @@ mod tests {
         cx.run_until_parked();
         view.read_with(cx, |view, cx| {
             view.rows(cx)
-                .into_iter()
+                .iter()
                 .map(|row| match row {
                     Row::Recent(recent) => format!("★{}", recent.root.display()),
-                    Row::Dir(dir) => dir.name,
+                    Row::Dir(dir) => dir.name.clone(),
                 })
                 .collect()
         })
