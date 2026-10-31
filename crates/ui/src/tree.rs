@@ -27,8 +27,8 @@ use futures::channel::mpsc;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Pixels, Render,
+    ScrollStrategy, SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::list::ListItem;
 use gpui_component::tree::{TreeEvent, TreeItem, TreeState, tree};
@@ -202,6 +202,15 @@ impl TreePanel {
         self.visible
     }
 
+    /// How wide the panel is: none of the window while hidden.
+    pub fn width(&self) -> Pixels {
+        if self.visible {
+            px(PANEL_WIDTH)
+        } else {
+            px(0.)
+        }
+    }
+
     /// Shows or hides the panel.
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
         self.visible = !self.visible;
@@ -301,6 +310,8 @@ impl TreePanel {
                 .await;
             this.update(cx, |this, cx| this.loaded(result, cx)).ok();
         }));
+        // "Loading the files…" while nothing was loaded yet.
+        cx.notify();
     }
 
     /// Reloads after each burst of `changes`, once [`REFRESH_DEBOUNCE`]

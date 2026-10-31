@@ -628,12 +628,13 @@ pub fn open(
         root.set_activity(activity, cx);
         root.set_input(input.clone(), cx);
         root.set_status(status, cx);
-        root.set_side_panel(tree, cx);
+        let panel = tree.clone();
+        root.set_side_panel(tree, move |cx| panel.read(cx).width(), cx);
         root.push_overlay(picker, cx);
         root.push_overlay(session.clone(), cx);
         // Plugin modals sit below the approval dialog, which must stay
         // reachable while one is open.
-        root.push_overlay(modal, cx);
+        root.push_cached_overlay(modal, cx);
         root.push_overlay(login, cx);
         root.push_overlay(approval, cx);
     });

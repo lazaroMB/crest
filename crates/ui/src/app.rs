@@ -12,8 +12,9 @@
 
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px, size,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString,
+    StyleRefinement, Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
+    div, px, size,
 };
 use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
@@ -278,14 +279,38 @@ where
 /// ([`Self::push_overlay`]) is rendered as a child of a `relative`
 /// container over the whole window, in the order pushed; overlays draw
 /// nothing while closed and position themselves (`absolute`) when open.
+///
+/// The timeline, the side panel and the overlays pushed with
+/// [`Self::push_cached_overlay`] are cached views (`AnyView::cached`): a
+/// frame that another view asked for (the activity line's spinner, every
+/// 100 ms during a turn) reuses what they drew last instead of rendering
+/// them again. A cached view draws again only when it, or a view inside
+/// it, calls `cx.notify()`, when its bounds change, or when the whole
+/// window refreshes (focus, theme, resize). So everything such a view
+/// shows must notify it when it changes: entities that are only read
+/// while rendering (not drawn as child views) do not. The input and the
+/// status bar are not cached: their height follows their content, and a
+/// cached view is laid out at a style given up front.
 pub struct RootView {
     focus_handle: FocusHandle,
     timeline: Option<AnyView>,
     input: Option<AnyView>,
     activity: Option<AnyView>,
     status: Option<AnyView>,
-    side_panel: Option<AnyView>,
-    overlays: Vec<AnyView>,
+    side_panel: Option<SidePanel>,
+    overlays: Vec<Overlay>,
+}
+
+/// The side panel and how wide it is (zero while hidden).
+struct SidePanel {
+    view: AnyView,
+    width: Box<dyn Fn(&App) -> Pixels>,
+}
+
+/// A layer above the window, cached or not.
+struct Overlay {
+    view: AnyView,
+    cached: bool,
 }
 
 impl RootView {
@@ -302,16 +327,41 @@ impl RootView {
         }
     }
 
-    /// Fills the side panel on the left (the workspace tree).
-    pub fn set_side_panel(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
-        self.side_panel = Some(view.into());
+    /// Fills the side panel on the left (the workspace tree), `width(cx)`
+    /// wide: zero while it is hidden. The panel is a cached view: when its
+    /// width changes it must notify itself (the root then asks again).
+    pub fn set_side_panel(
+        &mut self,
+        view: impl Into<AnyView>,
+        width: impl Fn(&App) -> Pixels + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.side_panel = Some(SidePanel {
+            view: view.into(),
+            width: Box::new(width),
+        });
         cx.notify();
     }
 
     /// Adds a layer above the window (a picker, the approval dialog).
     /// Later overlays are drawn above earlier ones.
     pub fn push_overlay(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
-        self.overlays.push(view.into());
+        self.overlays.push(Overlay {
+            view: view.into(),
+            cached: false,
+        });
+        cx.notify();
+    }
+
+    /// [`Self::push_overlay`] for a cached view, laid out over the whole
+    /// window: open, its root must fill it (`absolute` and `size_full`,
+    /// since a cached view's root is laid out on its own), and everything
+    /// it shows must notify it.
+    pub fn push_cached_overlay(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.overlays.push(Overlay {
+            view: view.into(),
+            cached: true,
+        });
         cx.notify();
     }
 
@@ -347,11 +397,18 @@ impl Focusable for RootView {
     }
 }
 
-/// Slot content: the view when present, else placeholder text.
-fn slot(view: &Option<AnyView>, placeholder: &'static str, cx: &App) -> AnyElement {
-    match view {
-        Some(view) => view.clone().into_any_element(),
-        None => div()
+/// Slot content: the view when present (cached at `cached` when given),
+/// else placeholder text.
+fn slot(
+    view: &Option<AnyView>,
+    cached: Option<StyleRefinement>,
+    placeholder: &'static str,
+    cx: &App,
+) -> AnyElement {
+    match (view, cached) {
+        (Some(view), Some(style)) => view.clone().cached(style).into_any_element(),
+        (Some(view), None) => view.clone().into_any_element(),
+        (None, _) => div()
             .text_color(cx.theme().muted_foreground)
             .child(placeholder)
             .into_any_element(),
@@ -369,6 +426,7 @@ impl Render for RootView {
             .h_full()
             .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
                 &self.timeline,
+                Some(StyleRefinement::default().size_full()),
                 "timeline",
                 cx,
             )))
@@ -379,7 +437,7 @@ impl Render for RootView {
                     .pb_1()
                     .border_t_1()
                     .border_color(border)
-                    .child(slot(&self.input, "input", cx)),
+                    .child(slot(&self.input, None, "input", cx)),
             )
             .child(
                 div()
@@ -388,20 +446,37 @@ impl Render for RootView {
                     .border_t_1()
                     .border_color(border)
                     .bg(status_bg)
-                    .child(slot(&self.status, "status", cx)),
+                    .child(slot(&self.status, None, "status", cx)),
             );
+        let side_panel = self.side_panel.as_ref().map(|panel| {
+            let width = (panel.width)(cx);
+            panel
+                .view
+                .clone()
+                .cached(StyleRefinement::default().w(width).h_full().flex_none())
+        });
+        let overlays = self.overlays.iter().map(|overlay| {
+            let view = overlay.view.clone();
+            if overlay.cached {
+                view.cached(
+                    StyleRefinement::default()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                )
+                .into_any_element()
+            } else {
+                view.into_any_element()
+            }
+        });
         div()
             .id("crest-root")
             .track_focus(&self.focus_handle)
             .relative()
             .size_full()
-            .child(
-                h_flex()
-                    .size_full()
-                    .children(self.side_panel.clone())
-                    .child(session),
-            )
-            .children(self.overlays.iter().cloned())
+            .child(h_flex().size_full().children(side_panel).child(session))
+            .children(overlays)
     }
 }
 
@@ -473,6 +548,50 @@ mod tests {
         assert_eq!(opts.theme.name, "twocrest");
         assert_eq!(opts.font_family, DEFAULT_FONT_FAMILY);
         assert!(opts.font_size > 0.0);
+    }
+
+    /// A view that counts how many times it was drawn.
+    struct Counting(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Render for Counting {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            div().size_full()
+        }
+    }
+
+    #[gpui::test]
+    fn a_frame_for_the_activity_line_reuses_the_cached_slots(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (root, cx) = cx.add_window_view(|_, cx| RootView::new(cx));
+        let mut draws = Vec::new();
+        let mut views = Vec::new();
+        for _ in 0..4 {
+            let count = std::rc::Rc::new(std::cell::Cell::new(0));
+            views.push(cx.new(|_| Counting(count.clone())));
+            draws.push(count);
+        }
+        let [timeline, panel, activity, input] = [0, 1, 2, 3].map(|ix| views[ix].clone());
+        root.update(cx, |root, cx| {
+            root.set_timeline(timeline.clone(), cx);
+            root.set_side_panel(panel.clone(), |_| px(100.), cx);
+            root.set_activity(activity.clone(), cx);
+            root.set_input(input.clone(), cx);
+        });
+        cx.run_until_parked();
+        let counts = || draws.iter().map(|d| d.get()).collect::<Vec<_>>();
+        let before = counts();
+        assert!(before.iter().all(|n| *n > 0), "{before:?}");
+        activity.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let after = counts();
+        assert_eq!(after[0], before[0], "the timeline is reused");
+        assert_eq!(after[1], before[1], "the side panel is reused");
+        assert!(after[2] > before[2], "the activity line draws again");
+        assert!(after[3] > before[3], "the input is not cached");
+        timeline.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(counts()[0] > after[0], "a notified timeline draws again");
     }
 
     #[test]
