@@ -212,7 +212,7 @@ pub fn messages_request(req: &LlmRequest, model: &ModelId, stream: bool) -> Mess
     let mut out = MessagesRequest::new(
         model.as_str(),
         req.effective_max_tokens(),
-        req.messages.iter().map(message).collect(),
+        req.messages.iter().map(|m| message(m)).collect(),
     );
     out.system = req
         .system

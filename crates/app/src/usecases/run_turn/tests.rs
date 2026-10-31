@@ -346,6 +346,27 @@ async fn second_turn_sends_the_previous_history() {
 }
 
 #[tokio::test]
+async fn the_calls_of_a_turn_share_the_messages_and_tools_they_resend() {
+    let mut h = Harness::new(vec![
+        ScriptedResponse::text("uno"),
+        ScriptedResponse::tool_use("toolu_1", "echo", json!({ "text": "a" })),
+        ScriptedResponse::text("dos"),
+    ]);
+    h.run("a").await.unwrap();
+    h.run("b").await.unwrap();
+    let requests = h.llm.requests();
+    let [_, first, second] = requests.as_slice() else {
+        panic!("expected 3 requests, got {}", requests.len());
+    };
+    // History, the prompt and the tool use: not copied for the second call.
+    assert_eq!(second.messages.len(), first.messages.len() + 2);
+    for (a, b) in first.messages.iter().zip(&second.messages) {
+        assert!(Arc::ptr_eq(a, b));
+    }
+    assert!(Arc::ptr_eq(&first.tools, &second.tools));
+}
+
+#[tokio::test]
 async fn iteration_limit_stops_with_a_clear_error() {
     let call = || ScriptedResponse::tool_use("toolu_x", "echo", json!({ "text": "a" }));
     let mut h = Harness::new(vec![call(), call(), call()]).configure(|s| s.with_max_iterations(2));
