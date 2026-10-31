@@ -16,12 +16,13 @@ use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, ComputedValue, Interval, Narrative,
     StackDimension, ToleranceBody, ToleranceDistribution, UncertaintyKind, WarningSeverity, apa,
 };
+use rayon::prelude::*;
 use serde_json::Value;
 
 use crate::distribution::{bins, histogram};
 use crate::envelope::{self, auto_decimals, bounded, number, warning};
 use crate::rng::{RNG_NAME, Rng};
-use crate::simulate::draw;
+use crate::simulate::{BATCH_VALUES, draw_raw, finish};
 
 /// Fewest and most draws.
 const SAMPLES: (u32, u32) = (1_000, 2_000_000);
@@ -140,22 +141,48 @@ pub fn run(
             },
         })
         .collect();
+    // The stream is read in order, a batch at a time (a dimension without
+    // tolerance reads nothing); the draws are mapped and summed per sample
+    // in parallel, each sum in dimension order, so the stack is the one of
+    // drawing one sample at a time.
     let mut rng = Rng::new(request.seed);
     let n = request.samples as usize;
-    let mut stack: Vec<f64> = (0..n)
-        .map(|_| {
-            dims.iter()
-                .zip(&draws)
-                .map(|(d, dist)| {
-                    if d.half_width == 0.0 {
-                        d.center * d.direction.sign()
-                    } else {
-                        draw(dist, &mut rng) * d.direction.sign()
-                    }
-                })
-                .sum()
-        })
-        .collect();
+    let k = dims.len();
+    let batch = (BATCH_VALUES / k).clamp(1, n);
+    let mut raw: Vec<f64> = Vec::with_capacity(batch * k);
+    let mut sums: Vec<f64> = Vec::with_capacity(batch);
+    let mut stack: Vec<f64> = Vec::with_capacity(n);
+    let mut left = n;
+    while left > 0 {
+        let size = left.min(batch);
+        raw.clear();
+        for _ in 0..size {
+            for (d, dist) in dims.iter().zip(&draws) {
+                raw.push(if d.half_width == 0.0 {
+                    0.0
+                } else {
+                    draw_raw(dist, &mut rng)
+                });
+            }
+        }
+        raw.par_chunks(k)
+            .map(|drawn| {
+                dims.iter()
+                    .zip(&draws)
+                    .zip(drawn)
+                    .map(|((d, dist), raw)| {
+                        if d.half_width == 0.0 {
+                            d.center * d.direction.sign()
+                        } else {
+                            finish(dist, *raw) * d.direction.sign()
+                        }
+                    })
+                    .sum()
+            })
+            .collect_into_vec(&mut sums);
+        stack.extend_from_slice(&sums);
+        left -= size;
+    }
     let nf = n as f64;
     let mean = stack.iter().sum::<f64>() / nf;
     let sd = (stack.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (nf - 1.0)).sqrt();
