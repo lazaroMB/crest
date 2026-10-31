@@ -727,8 +727,10 @@ mod tests {
         assert!(block_on(cached.list_models()).is_ok());
         assert_eq!(inner.calls(), 2);
 
-        let expired =
-            CachedCatalog::with_ttl(Arc::clone(&inner) as Arc<dyn ModelCatalogPort>, Duration::ZERO);
+        let expired = CachedCatalog::with_ttl(
+            Arc::clone(&inner) as Arc<dyn ModelCatalogPort>,
+            Duration::ZERO,
+        );
         block_on(expired.list_models()).unwrap();
         block_on(expired.list_models()).unwrap();
         assert_eq!(inner.calls(), 4);

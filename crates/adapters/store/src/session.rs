@@ -531,7 +531,11 @@ pub(crate) mod tests {
         count_block_writes(&conn);
 
         save(&mut conn, &stored).unwrap();
-        assert_eq!(block_writes(&conn), 0, "an unchanged timeline is not written");
+        assert_eq!(
+            block_writes(&conn),
+            0,
+            "an unchanged timeline is not written"
+        );
 
         // A streamed block grows and a new one is appended.
         stored.timeline[5].kind = BlockKind::Error {
