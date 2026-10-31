@@ -2,6 +2,8 @@
 //! the JSON, with JSON in the text as fallback for adapters that ignore
 //! `tool_choice` (as the research flow does).
 
+use std::sync::Arc;
+
 use domain::conversation::{ContentPart, Message};
 use domain::model::ResolvedModel;
 use futures::StreamExt as _;
@@ -22,7 +24,7 @@ pub(crate) async fn ask_json(
 ) -> Result<Result<Value, String>, LlmError> {
     let mut req = LlmRequest::new(model, vec![Message::user_text(prompt)]);
     req.system = vec![SystemBlock::new(system)];
-    req.tools = vec![tool.clone()];
+    req.tools = Arc::new([tool.clone()]);
     req.tool_choice = ToolChoice::Tool(tool.name.clone());
     let mut stream = llm.stream(req).await?;
     let mut assembler = MessageAssembler::new();

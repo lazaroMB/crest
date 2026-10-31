@@ -9,6 +9,7 @@
 //!   must not keep working in the background.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use domain::conversation::{ContentPart, Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
@@ -32,7 +33,8 @@ pub struct LlmRequest {
     /// Conversation history, oldest first.
     pub messages: Vec<Message>,
     /// Client-side tools the model may call (results are produced locally).
-    pub tools: Vec<ToolDefinition>,
+    /// Shared: the agent loop sends the same list on every call.
+    pub tools: Arc<[ToolDefinition]>,
     /// Tools executed by the provider itself (web search, web fetch).
     pub server_tools: Vec<ServerTool>,
     /// How the model must choose among the tools.
@@ -51,7 +53,7 @@ impl LlmRequest {
             model,
             system: Vec::new(),
             messages,
-            tools: Vec::new(),
+            tools: Arc::new([]),
             server_tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
             max_tokens: None,

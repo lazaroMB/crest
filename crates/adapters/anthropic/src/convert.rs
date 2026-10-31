@@ -325,7 +325,8 @@ mod request_tests {
             ToolDefinition::new("read_file", "Read a file", schema.clone()).cached(),
             ToolDefinition::new("grep", "Search file contents", schema.clone()).cached(),
             ToolDefinition::new("shell", "Run a command", schema),
-        ];
+        ]
+        .into();
         req.server_tools = vec![
             ServerTool::WebSearch { max_uses: Some(5) },
             ServerTool::WebFetch { max_uses: None },
@@ -366,7 +367,7 @@ mod request_tests {
         // No tools: tool_choice is never sent.
         assert_eq!(body(&req, false).get("tool_choice"), None);
 
-        req.tools = vec![tool()];
+        req.tools = vec![tool()].into();
         assert_eq!(
             body(&req, false)["tool_choice"],
             json!({"type": "tool", "name": "t"})

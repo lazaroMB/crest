@@ -57,7 +57,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 futures = "0.3.34"
 schemars = "1.2.3"
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
 # keymap.toml: the declarative keymap, parsed in the app layer.

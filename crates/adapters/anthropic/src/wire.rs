@@ -1332,7 +1332,8 @@ mod request_tests {
             }),
             WireTool::Server(ServerToolDef::web_search(Some(5))),
             WireTool::Server(ServerToolDef::web_fetch(None)),
-        ];
+        ]
+        .into();
         req.tool_choice = Some(WireToolChoice::Tool {
             name: "get_weather".into(),
         });
