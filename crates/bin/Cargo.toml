@@ -11,9 +11,12 @@ publish.workspace = true
 # Export the spans to Langfuse (LANGFUSE_* variables).
 langfuse = ["adapter-telemetry/langfuse"]
 
+# No doctests: the docs have no Rust examples, and `cargo test` would still
+# run rustdoc over the whole crate to find none.
 [lib]
 name = "crest"
 path = "src/lib.rs"
+doctest = false
 
 [[bin]]
 name = "crest"

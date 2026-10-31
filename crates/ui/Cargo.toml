@@ -7,6 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# No doctests: the docs have no Rust examples, and `cargo test` would still
+# run rustdoc over the whole crate to find none.
+[lib]
+doctest = false
+
 [dependencies]
 anstyle-parse.workspace = true
 application.workspace = true
