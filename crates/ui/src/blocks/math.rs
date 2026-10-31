@@ -235,12 +235,30 @@ pub struct MarkdownState {
     /// source...), so the same source in another view is not mistaken for
     /// the one already shown.
     variant: String,
+    /// Whether `source` cannot hold math ([`may_hold_math`]), so that it
+    /// normalizes to itself.
+    plain: bool,
     state: Entity<TextViewState>,
+}
+
+/// Whether `text` may hold a formula or a dollar [`domain::math::normalize`]
+/// rewrites: without `$`, `\` or a `math` fence it returns the text as is.
+fn may_hold_math(text: &str) -> bool {
+    text.contains(['$', '\\']) || text.contains("math")
+}
+
+/// `at`, moved back to the start of the character it falls in.
+fn floor_boundary(text: &str, mut at: usize) -> usize {
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
 }
 
 impl MarkdownState {
     fn new(variant: &str, source: &str, shown: &str, cx: &mut Context<Self>) -> Self {
         Self {
+            plain: !may_hold_math(source),
             source: source.to_owned(),
             variant: variant.to_owned(),
             state: cx.new(|cx| TextViewState::markdown(shown, cx)),
@@ -264,6 +282,22 @@ impl MarkdownState {
         if self.variant == variant && self.source == source {
             return;
         }
+        // A streamed reply grows by appends. While it holds no math at all
+        // its normalized form is itself, so the new tail goes straight to
+        // the document instead of normalizing the whole reply again.
+        if variant == DOCUMENT
+            && self.variant == DOCUMENT
+            && self.plain
+            && let Some(tail) = source.strip_prefix(self.source.as_str())
+            // "math" may straddle the old end.
+            && !may_hold_math(&source[floor_boundary(source, self.source.len().saturating_sub(4))..])
+        {
+            self.source.push_str(tail);
+            self.state
+                .update(cx, |state, cx| state.set_text(source, cx));
+            return;
+        }
+        self.plain = !may_hold_math(source);
         self.source.clear();
         self.source.push_str(source);
         self.variant.clear();
@@ -571,6 +605,47 @@ mod tests {
             first,
             "one document per block"
         );
+    }
+
+    #[gpui::test]
+    fn streamed_appends_reach_the_document_and_math_is_still_normalized(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| crate::timeline::TimelineView::new(cx));
+        let id = BlockId::new();
+        let mut source = String::new();
+        for piece in [
+            "Plain ",
+            "streamed ",
+            "text, then ",
+            "a price of $5 ",
+            "and $x_1$.",
+        ] {
+            source.push_str(piece);
+            cx.update(|window, cx| {
+                markdown_block(id, &source, window, cx);
+            });
+        }
+        // The same text handed over at once.
+        let whole = BlockId::new();
+        cx.update(|window, cx| {
+            markdown_block(whole, &source, window, cx);
+        });
+        cx.run_until_parked();
+        let shown = |id: BlockId, cx: &mut gpui::VisualTestContext| {
+            let holder = cx
+                .update(|_, cx| crate::blocks::existing_block_state::<MarkdownState>(id, cx))
+                .unwrap_or_else(|| panic!("the block has a document state"));
+            holder.read_with(cx, |holder, cx| {
+                assert_eq!(holder.source, source);
+                assert!(!holder.plain, "the dollars end the plain run");
+                holder.state.read(cx).rendered_text().as_str().to_owned()
+            })
+        };
+        let streamed = shown(id, cx);
+        assert!(streamed.starts_with("Plain streamed text, then a price of "));
+        assert_eq!(streamed, shown(whole, cx));
     }
 
     #[test]
