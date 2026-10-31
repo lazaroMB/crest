@@ -47,7 +47,9 @@ use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
-use application::providers::{Provider, ProviderRouter, ProvidersOptions, effective_default};
+use application::providers::{
+    CachedCatalog, Provider, ProviderRouter, ProvidersOptions, effective_default,
+};
 use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
 use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
 use application::tools::files::{FileToolPorts, register_file_tools};
@@ -1078,10 +1080,11 @@ type ModelPorts = (
 async fn opencode_access(
     key: &str,
     providers: &ProvidersOptions,
+    listings: &crate::opencode::PlanListings,
     path: Option<&Path>,
     warnings: &mut Vec<String>,
 ) -> PlanAccess {
-    let access = crate::opencode::probe_access(key, providers, CATALOG_TIMEOUT).await;
+    let access = crate::opencode::probe_access(key, providers, listings, CATALOG_TIMEOUT).await;
     let known = access.go.is_some() || access.zen.is_some() || access.zen_free.is_some();
     if let (true, Some(path)) = (known, path) {
         let path = path.to_path_buf();
@@ -1118,12 +1121,18 @@ async fn model_ports(
         return Ok((Arc::clone(llm), overrides.catalog.clone(), default));
     }
     let (anthropic, opencode) = keys;
+    // The plans' model lists, shared by the probe and the catalogs.
+    let listings = opencode
+        .as_deref()
+        .map(|key| crate::opencode::PlanListings::new(key, &providers))
+        .transpose()
+        .map_err(|err| anyhow!("cannot create the OpenCode client: {err}"))?;
     // A plan left unknown (offline, a timeout) is asked again at each start.
-    let access = match (&opencode, preferences.opencode_access) {
-        (Some(key), saved) if saved.is_none_or(|a| !a.is_complete()) => {
-            opencode_access(key, &providers, preferences_path, warnings).await
+    let access = match (&opencode, &listings, preferences.opencode_access) {
+        (Some(key), Some(listings), saved) if saved.is_none_or(|a| !a.is_complete()) => {
+            opencode_access(key, &providers, listings, preferences_path, warnings).await
         }
-        (_, saved) => saved.unwrap_or_default(),
+        (_, _, saved) => saved.unwrap_or_default(),
     };
     let mut with_key = Vec::new();
     if anthropic.is_some() {
@@ -1154,13 +1163,13 @@ async fn model_ports(
             ProviderId::Anthropic,
             Provider {
                 backend: Arc::new(AnthropicBackend::new(client.clone())),
-                catalog: Arc::new(AnthropicCatalog::new(client)),
+                catalog: Arc::new(CachedCatalog::new(Arc::new(AnthropicCatalog::new(client)))),
             },
         );
     }
-    if let Some(key) = opencode {
+    if let (Some(key), Some(listings)) = (opencode, &listings) {
         for plan in [ProviderId::OpencodeGo, ProviderId::OpencodeZen] {
-            let provider = crate::opencode::provider(&key, plan, &providers, access)
+            let provider = crate::opencode::provider(&key, plan, &providers, access, listings)
                 .map_err(|err| anyhow!("cannot create the OpenCode client: {err}"))?;
             router = router.with(plan, provider);
         }

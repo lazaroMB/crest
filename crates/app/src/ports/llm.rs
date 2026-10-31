@@ -476,6 +476,11 @@ pub struct ModelInfo {
 pub trait ModelCatalogPort: Send + Sync {
     /// Every available model, following pagination to the end.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError>;
+
+    /// Forgets any listing kept from an earlier call, so the next one asks
+    /// the provider again (after `/login` or `/logout`). Catalogs that keep
+    /// nothing do nothing.
+    fn invalidate(&self) {}
 }
 
 /// Error turning an event stream into a message: the stream broke the
