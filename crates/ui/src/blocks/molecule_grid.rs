@@ -13,7 +13,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind, ImageData};
+use domain::block::{BlockId, BlockKind};
 use domain::science::molecule_grid::{GridMolecule, MoleculeGridSpec};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
@@ -25,6 +25,7 @@ use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use super::computed::provenance_text;
 use super::molecule::{subscript_formula, svg_data, tinted_picture};
+use super::svg::SvgData;
 use crate::timeline::TimelineEntry;
 use crate::widgets::{readout, register_input, tool_button};
 
@@ -213,7 +214,7 @@ pub fn visible(
 /// Per-block state: the depictions, the filter and the sort.
 pub struct MoleculeGridView {
     spec: Rc<MoleculeGridSpec>,
-    pictures: Rc<Vec<Option<ImageData>>>,
+    pictures: Rc<Vec<Option<SvgData>>>,
     input: Entity<InputState>,
     clauses: Vec<Clause>,
     sort: SortKey,
@@ -222,7 +223,7 @@ pub struct MoleculeGridView {
     _input_events: Subscription,
 }
 
-fn pictures(spec: &MoleculeGridSpec) -> Rc<Vec<Option<ImageData>>> {
+fn pictures(spec: &MoleculeGridSpec) -> Rc<Vec<Option<SvgData>>> {
     Rc::new(
         spec.molecules
             .iter()

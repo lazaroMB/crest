@@ -40,7 +40,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use self::map::{MapColors, plasmid_svg};
-use super::svg::{SvgState, hex};
+use super::svg::{SvgData, SvgState, hex};
 use crate::timeline::TimelineEntry;
 use crate::widgets::{palette, readout, register_input, tool_button};
 
@@ -219,7 +219,7 @@ pub struct SequenceView {
     lanes: Rc<Vec<Vec<usize>>>,
     left_out: usize,
     translations: Rc<[String; 3]>,
-    map: Option<(MapColors, ImageData)>,
+    map: Option<(MapColors, SvgData)>,
     scroll: UniformListScrollHandle,
     _input_events: Subscription,
 }
@@ -648,7 +648,7 @@ impl SequenceView {
             .into_any_element()
     }
 
-    fn map_image(&mut self, cx: &App) -> ImageData {
+    fn map_image(&mut self, cx: &App) -> SvgData {
         let colors = MapColors {
             foreground: hex(cx.theme().foreground),
             muted: hex(cx.theme().muted_foreground),
@@ -660,9 +660,9 @@ impl SequenceView {
             return data.clone();
         }
         let svg = plasmid_svg(&self.spec, &colors);
-        let data = ImageData::Base64 {
+        let data = SvgData::new(ImageData::Base64 {
             data: base64::engine::general_purpose::STANDARD.encode(svg),
-        };
+        });
         self.map = Some((colors, data.clone()));
         data
     }
@@ -854,7 +854,7 @@ impl Render for SequenceView {
         let height = (rows as f32 * row_height).clamp(row_height, MAX_HEIGHT);
         let map = (self.show_map && spec.is_circular() && spec.alphabet.is_nucleic()).then(|| {
             let data = self.map_image(cx);
-            match super::svg::use_svg(&data, 1.0, window, cx) {
+            match super::svg::use_svg_data(&data, 1.0, None, window, cx) {
                 SvgState::Ready(raster) => {
                     let (w, h) = raster.size;
                     img(ImageSource::Render(raster.image.clone()))
