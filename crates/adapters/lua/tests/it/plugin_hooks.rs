@@ -1,14 +1,12 @@
 //! `before_tool` and `after_tool` hooks written in Lua, run by the agent
 //! loop around a built-in tool.
 
+use crate::common::Agent;
 #[cfg(test)]
-mod common;
-
 use application::ports::approval::ApprovalResponse;
 use application::tools::registry::{PreparedCall, Tool, ToolContext, ToolError, ToolOutput};
 use application_testing::llm::ScriptedResponse;
 use async_trait::async_trait;
-use common::Agent;
 use domain::permission::ToolEffect;
 use serde_json::{Value, json};
 

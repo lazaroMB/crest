@@ -170,7 +170,7 @@ The fakes live in `crates/app-testing` (package `application-testing`). Another 
 | `testing::fs` | `InMemoryFs` (in-memory `FileSystemPort`, `FileSearchPort` and `ContentSearchPort`, with `with_file`), `ScriptedShell`. |
 | `testing::system` | `RecordingSink` (records the `DomainEvent`s), `ScriptedApproval` (scripted answers), `InMemorySessionStore`, `FakePluginHost`, `RecordingTelemetry`. |
 
-The integration tests in `crates/bin/tests/` bring up the real composition root with a scripted model through `root::Overrides`, which lets you replace the LLM, the catalog, the config paths, the database and the MCP trust file:
+The integration tests in `crates/bin/tests/it/` bring up the real composition root with a scripted model through `root::Overrides`, which lets you replace the LLM, the catalog, the config paths, the database and the MCP trust file:
 
 - `headless_demo.rs`
 - `resume.rs`
@@ -178,6 +178,8 @@ The integration tests in `crates/bin/tests/` bring up the real composition root 
 - `ui_session.rs`
 - `research_demo.rs`
 - `implement_demo.rs`
+
+The integration tests of `crest`, `adapter-formats` and `adapter-lua` are modules of a single test binary per crate (`tests/it/main.rs`): every test binary links the whole dependency tree, so one binary instead of a dozen saves most of the link time of `cargo test`. A new test file goes into `tests/it/` with its `mod` line in `main.rs`; run one file with `cargo test -p crest --test it resume::`.
 
 For the UI there are runnable examples in `crates/ui/examples/`, for example `cargo run -p ui --example chart_blocks`.
 

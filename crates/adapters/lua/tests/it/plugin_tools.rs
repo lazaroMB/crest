@@ -1,11 +1,9 @@
 //! A tool written in Lua, called by the model through the agent loop.
 
+use crate::common::Agent;
 #[cfg(test)]
-mod common;
-
 use application::ports::approval::ApprovalResponse;
 use application_testing::llm::ScriptedResponse;
-use common::Agent;
 use domain::permission::ToolEffect;
 use serde_json::json;
 

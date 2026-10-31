@@ -4,7 +4,7 @@
 //! [`build_app`] takes the parsed [`Config`], the [`Frontend`] that shows
 //! events and answers approvals (the terminal in headless mode, the UI
 //! later) and [`Overrides`] that replace external services in tests (the
-//! model above all, see `tests/headless_demo.rs`).
+//! model above all, see `tests/it/headless_demo.rs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};

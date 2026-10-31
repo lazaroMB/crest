@@ -1,11 +1,9 @@
 //! A Lua tool that answers with a `Custom` block built with `app.ui`.
 
+use crate::common::Agent;
 #[cfg(test)]
-mod common;
-
 use application::ports::events::DomainEvent;
 use application_testing::llm::ScriptedResponse;
-use common::Agent;
 use domain::block::{BlockKind, Cell, CustomNode};
 use serde_json::json;
 
