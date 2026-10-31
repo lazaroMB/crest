@@ -758,6 +758,10 @@ impl PluginHostPort for FakePluginHost {
         }
         Ok(replaced.map_or(HookOutcome::Continue, HookOutcome::ReplaceInput))
     }
+
+    fn has_hooks(&self, kind: HookKind) -> bool {
+        self.hooks.iter().any(|(k, _)| *k == kind)
+    }
 }
 
 #[cfg(test)]

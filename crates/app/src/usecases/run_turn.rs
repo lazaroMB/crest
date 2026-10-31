@@ -79,7 +79,7 @@ use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
     SystemBlock, ToolDefinition,
 };
-use crate::ports::plugin::{HookEvent, HookOutcome, PluginError, PluginHostPort};
+use crate::ports::plugin::{HookEvent, HookKind, HookOutcome, PluginError, PluginHostPort};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 use crate::privacy;
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, ToolRegistry};
@@ -1498,7 +1498,7 @@ impl TurnRun<'_> {
     /// Runs the `before_tool` hooks and returns the input to prepare the
     /// call with, or the denial to send to the model.
     async fn before_tool(&self, name: &str, input: Value) -> Result<Value, String> {
-        let Some(host) = &self.service.plugins else {
+        let Some(host) = self.hooks(HookKind::BeforeTool) else {
             return Ok(input);
         };
         let event = HookEvent::BeforeTool {
@@ -1519,7 +1519,7 @@ impl TurnRun<'_> {
     /// Runs the `after_tool` hooks of a call that ran. They only observe:
     /// what they return is ignored.
     async fn after_tool(&self, name: &str, input: &Value, output: &ToolOutput) {
-        let Some(host) = &self.service.plugins else {
+        let Some(host) = self.hooks(HookKind::AfterTool) else {
             return;
         };
         let event = HookEvent::AfterTool {
@@ -1530,6 +1530,16 @@ impl TurnRun<'_> {
         if let Err(err) = host.run_hook(event).await {
             self.hook_failed("after_tool", name, &err);
         }
+    }
+
+    /// The plugin host when it has hooks of `kind`: without any, the call
+    /// skips the round trip to the VM thread and the copies of its input
+    /// and output.
+    fn hooks(&self, kind: HookKind) -> Option<&Arc<dyn PluginHostPort>> {
+        self.service
+            .plugins
+            .as_ref()
+            .filter(|host| host.has_hooks(kind))
     }
 
     /// Reports a hook that failed; the turn goes on.
