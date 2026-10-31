@@ -614,8 +614,8 @@ pub fn snapshot(
             };
             ToolRow {
                 schema: serde_json::to_string_pretty(&def.input_schema).unwrap_or_default(),
-                name: def.name,
-                description: def.description,
+                name: def.name.clone(),
+                description: def.description.clone(),
                 source,
                 effect,
             }

@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -258,6 +259,9 @@ pub struct McpToolSource {
     port: Arc<dyn McpPort>,
     effects: HashMap<String, ToolEffect>,
     tools: RwLock<Vec<Arc<dyn Tool>>>,
+    /// Bumped after every refresh, so the registry builds the tool
+    /// definitions again.
+    revision: AtomicU64,
 }
 
 impl std::fmt::Debug for McpToolSource {
@@ -289,6 +293,7 @@ impl McpToolSource {
             })
             .collect();
         *self.tools.write().unwrap_or_else(PoisonError::into_inner) = tools;
+        self.revision.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -298,6 +303,10 @@ impl ToolSource for McpToolSource {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    fn revision(&self) -> Option<u64> {
+        Some(self.revision.load(Ordering::Acquire))
     }
 }
 
@@ -459,6 +468,7 @@ pub async fn start(
         port: Arc::clone(&port),
         effects,
         tools: RwLock::new(Vec::new()),
+        revision: AtomicU64::new(0),
     });
     source.refresh().await;
     changes.mark_unchanged();

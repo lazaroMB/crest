@@ -41,7 +41,7 @@ fn opus_5_5_degrades_forced_tool_choice_and_budget_thinking() {
             budget_tokens: 8000,
         },
     );
-    req.tools = vec![tool("read_file")];
+    req.tools = vec![tool("read_file")].into();
     req.tool_choice = ToolChoice::Tool("read_file".into());
     let (body, warnings) = build_for(&req);
     insta::assert_json_snapshot!(body);
@@ -68,7 +68,7 @@ fn opus_5_5_degrades_forced_tool_choice_and_budget_thinking() {
 #[test]
 fn opus_5_keeps_forced_tool_choice() {
     let mut req = request("claude-opus-5", ThinkingConfig::Disabled);
-    req.tools = vec![tool("read_file")];
+    req.tools = vec![tool("read_file")].into();
     req.tool_choice = ToolChoice::Any;
     let (body, warnings) = build_for(&req);
     assert_eq!(body.tool_choice, Some(WireToolChoice::Any));
@@ -141,7 +141,7 @@ fn thinking_budget_is_kept_within_api_limits() {
 #[test]
 fn cache_plan_caps_breakpoints_and_caches_the_conversation() {
     let mut req = request("claude-sonnet-5-5", ThinkingConfig::Adaptive);
-    req.tools = vec![tool("grep").cached(), tool("read_file")];
+    req.tools = vec![tool("grep").cached(), tool("read_file")].into();
     req.system = vec![
         SystemBlock::cached("You are crest, a coding agent."),
         SystemBlock::cached("Project conventions: ..."),

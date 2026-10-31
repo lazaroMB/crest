@@ -318,6 +318,23 @@ pub struct AgentService {
     system_prompt: String,
     max_iterations: u32,
     clock: fn() -> u64,
+    /// The tools sent last, kept while the registry and the routing
+    /// choice stay the same: every model call of a turn sends them.
+    offered: Mutex<Option<OfferedTools>>,
+}
+
+/// The tools a request offers, built from one registry snapshot.
+#[derive(Clone)]
+struct OfferedTools {
+    /// The [`ToolRegistry::definitions`] they come from.
+    all: Arc<[ToolDefinition]>,
+    /// The tools the decision model chose, if it did.
+    chosen: Option<BTreeSet<String>>,
+    /// What [`LlmRequest::tools`] gets: the offered tools, the last one
+    /// with a cache breakpoint.
+    request: Arc<[ToolDefinition]>,
+    /// Bytes of the offered tools as JSON, for the context estimate.
+    json_len: usize,
 }
 
 impl std::fmt::Debug for AgentService {
@@ -358,6 +375,7 @@ impl AgentService {
             system_prompt: String::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
             clock: system_now_ms,
+            offered: Mutex::new(None),
         }
     }
 
@@ -452,6 +470,38 @@ impl AgentService {
 
     fn emit(&self, event: DomainEvent) {
         self.deps.events.emit(event);
+    }
+
+    /// The tools a request offers: all of them, or those in `chosen`.
+    fn offered_tools(&self, chosen: Option<&BTreeSet<String>>) -> OfferedTools {
+        let all = self.tools.definitions();
+        let mut cache = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(offered) = cache.as_ref()
+            && Arc::ptr_eq(&offered.all, &all)
+            && offered.chosen.as_ref() == chosen
+        {
+            return offered.clone();
+        }
+        let mut tools: Vec<ToolDefinition> = match chosen {
+            Some(chosen) => all
+                .iter()
+                .filter(|d| chosen.contains(&d.name))
+                .cloned()
+                .collect(),
+            None => all.to_vec(),
+        };
+        let json_len = serde_json::to_string(&tools).map_or(0, |s| s.len());
+        if let Some(last) = tools.pop() {
+            tools.push(last.cached());
+        }
+        let offered = OfferedTools {
+            all,
+            chosen: chosen.cloned(),
+            request: tools.into(),
+            json_len,
+        };
+        *cache = Some(offered.clone());
+        offered
     }
 
     /// The prompt with its secrets and personal data masked, before the
@@ -1048,27 +1098,12 @@ impl TurnRun<'_> {
         if !self.service.system_prompt.is_empty() {
             req.system = vec![SystemBlock::cached(self.service.system_prompt.clone())];
         }
-        req.tools = self.tool_definitions();
-        if let Some(last) = req.tools.pop() {
-            req.tools.push(last.cached());
-        }
+        req.tools = self.service.offered_tools(self.tools.as_ref()).request;
         req.metadata = RequestMetadata {
             session_id: Some(self.session_id()),
             turn_id: Some(self.turn.id),
         };
         req
-    }
-
-    /// The definitions of the tools this turn offers.
-    fn tool_definitions(&self) -> Vec<ToolDefinition> {
-        let all = self.service.tools.definitions();
-        match &self.tools {
-            Some(offered) => all
-                .into_iter()
-                .filter(|d| offered.contains(&d.name))
-                .collect(),
-            None => all,
-        }
     }
 
     /// One model call: streams the answer into events and assembles it.
@@ -1169,7 +1204,7 @@ impl TurnRun<'_> {
             return mark.tokens.saturating_add(estimate_tokens(added));
         }
         let history = estimate_tokens(self.session.history().chain(&self.turn.messages));
-        let tools = serde_json::to_string(&self.tool_definitions()).map_or(0, |s| s.len());
+        let tools = self.service.offered_tools(self.tools.as_ref()).json_len;
         let fixed = self.service.system_prompt.len() + tools;
         history.saturating_add(u64::try_from(fixed.div_ceil(4)).unwrap_or(u64::MAX))
     }

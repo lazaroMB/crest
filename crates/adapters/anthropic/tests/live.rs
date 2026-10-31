@@ -101,7 +101,8 @@ async fn live_simple_tool_use() {
             "properties": {"city": {"type": "string"}},
             "required": ["city"]
         }),
-    )];
+    )]
+    .into();
     let out = run(&llm, req).await.unwrap();
     assert_eq!(out.stop_reason, StopReason::ToolUse);
     let input = out.message.content.iter().find_map(|part| match part {
