@@ -424,10 +424,15 @@ pub trait ToolSource: Send + Sync {
     }
 }
 
-/// The definitions the registry built last, and the source revisions they
-/// were built from.
+/// The definitions the registry built last, if it may keep them.
 #[derive(Default)]
-struct DefinitionsCache(Mutex<Option<(Vec<u64>, Arc<[ToolDefinition]>)>>);
+struct DefinitionsCache(Mutex<Option<CachedDefinitions>>);
+
+/// Definitions and the source revisions they were built from.
+struct CachedDefinitions {
+    revisions: Vec<u64>,
+    definitions: Arc<[ToolDefinition]>,
+}
 
 /// The tools offered to the model, by name, the redactor their results
 /// go through and the budget they are truncated to.
@@ -579,17 +584,20 @@ impl ToolRegistry {
             .0
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if let (Some(revisions), Some((cached, definitions))) = (&revisions, cache.as_ref())
-            && revisions == cached
+        if let (Some(revisions), Some(cached)) = (&revisions, cache.as_ref())
+            && *revisions == cached.revisions
         {
-            return Arc::clone(definitions);
+            return Arc::clone(&cached.definitions);
         }
         let definitions: Arc<[ToolDefinition]> = self
             .all()
             .values()
             .map(|tool| ToolDefinition::new(tool.name(), tool.description(), tool.input_schema()))
             .collect();
-        *cache = revisions.map(|revisions| (revisions, Arc::clone(&definitions)));
+        *cache = revisions.map(|revisions| CachedDefinitions {
+            revisions,
+            definitions: Arc::clone(&definitions),
+        });
         definitions
     }
 
