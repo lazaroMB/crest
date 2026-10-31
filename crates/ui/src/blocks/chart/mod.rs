@@ -16,7 +16,7 @@ pub mod scale;
 
 use std::rc::Rc;
 
-use domain::block::{BlockKind, ChartKind, ChartSpec};
+use domain::block::{BlockId, BlockKind, ChartKind, ChartSpec, TableSpec};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
@@ -25,6 +25,7 @@ use gpui_component::chart::PieChart;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use self::layout::ChartData;
+use self::plot::ChartMemo;
 use crate::timeline::TimelineEntry;
 
 /// Height of a pie chart.
@@ -62,12 +63,11 @@ pub fn legend_names(spec: &ChartSpec) -> Vec<String> {
 }
 
 /// A pie of the single series of `data`, one slice per label.
-fn pie_chart(data: ChartData, id: ElementId, cx: &App) -> AnyElement {
+fn pie_chart(data: Rc<ChartData>, id: ElementId, cx: &App) -> AnyElement {
     let colors: Vec<Hsla> = (0..data.labels.len())
         .map(|ix| series_color(ix, cx))
         .collect();
     let count = data.labels.len();
-    let data = Rc::new(data);
     let (value_data, name_data) = (data.clone(), data);
     let pie = PieChart::new(0..count)
         .id(id)
@@ -106,9 +106,56 @@ fn legend(spec: &ChartSpec, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn chart_body(spec: &ChartSpec, id: &str, window: &Window, cx: &App) -> AnyElement {
+/// What a chart block keeps across frames: its data checked and copied
+/// once per revision of the block, the layouts of that data by width, and
+/// the data as a table once `t` showed it.
+pub struct ChartState {
+    /// Why the spec cannot be drawn, if it cannot.
+    invalid: Option<String>,
+    data: Rc<ChartData>,
+    memo: Rc<ChartMemo>,
+    table: Option<Rc<TableSpec>>,
+}
+
+impl ChartState {
+    fn new(spec: &ChartSpec) -> Self {
+        Self {
+            invalid: spec.validate().err().map(|err| err.to_string()),
+            data: Rc::new(ChartData::from_spec(spec)),
+            memo: Rc::default(),
+            table: None,
+        }
+    }
+
+    /// Takes `spec` (a new revision of the block): the layouts are kept
+    /// while the data is the same.
+    fn sync(&mut self, spec: &ChartSpec) {
+        let data = ChartData::from_spec(spec);
+        if *self.data != data {
+            self.data = Rc::new(data);
+            self.memo = Rc::default();
+        }
+        self.invalid = spec.validate().err().map(|err| err.to_string());
+        self.table = None;
+    }
+
+    /// The data as a table, made on first use.
+    fn table(&mut self, spec: &ChartSpec) -> Rc<TableSpec> {
+        self.table
+            .get_or_insert_with(|| Rc::new(spec.to_table()))
+            .clone()
+    }
+}
+
+fn chart_body(
+    spec: &ChartSpec,
+    state: &ChartState,
+    id: &str,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
-    if let Err(err) = spec.validate() {
+    if let Some(err) = &state.invalid {
         return div()
             .text_color(theme.danger)
             .child(format!("Invalid chart: {err}. Press t to see the data."))
@@ -124,9 +171,9 @@ fn chart_body(spec: &ChartSpec, id: &str, window: &Window, cx: &App) -> AnyEleme
     let id = ElementId::Name(SharedString::from(format!("chart-{id}")));
     let chart = match spec.kind {
         ChartKind::Bar | ChartKind::Line | ChartKind::Area => {
-            plot::chart_frame(ChartData::from_spec(spec), id, window, cx)
+            plot::chart_frame(state.data.clone(), state.memo.clone(), id, window, cx)
         }
-        ChartKind::Pie => pie_chart(ChartData::from_spec(spec), id, cx),
+        ChartKind::Pie => pie_chart(state.data.clone(), id, cx),
     };
     let show_legend = spec.kind == ChartKind::Pie || spec.series.len() >= 2;
     v_flex()
@@ -141,14 +188,35 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Chart(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let id = entry.block.id;
-    let body = if entry.alt_view {
-        super::table::render_spec(id, &spec.to_table(), window, cx)
+    render_spec(entry.block.id, spec, entry.alt_view, entry.rev, window, cx)
+}
+
+/// Draws `spec` as the chart of `id` (a block, or a node of a custom
+/// block at its block's revision `rev`); `as_table` shows its data.
+pub fn render_spec(
+    id: BlockId,
+    spec: &ChartSpec,
+    as_table: bool,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let state = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| ChartState::new(spec),
+        |state, _, _| state.sync(spec),
+    );
+    let body = if as_table {
+        let table = state.update(cx, |state, _| state.table(spec));
+        super::table::render_spec(id, &table, rev, window, cx)
     } else {
-        chart_body(spec, &id.to_string(), window, cx)
+        chart_body(spec, state.read(cx), &id.to_string(), window, cx)
     };
     let theme = cx.theme();
-    let hint = if entry.alt_view {
+    let hint = if as_table {
         "table · t: chart"
     } else {
         "t: table"

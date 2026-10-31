@@ -67,6 +67,9 @@ pub fn summary_text(spec: &DiagramSpec) -> String {
 /// tables tree.
 pub struct DiagramView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<DiagramSpec>,
     graph: Rc<GraphSpec>,
     tables: Option<Rc<TreeSpec>>,
@@ -90,6 +93,7 @@ impl DiagramView {
         let tables = (!spec.tables.is_empty()).then(|| Rc::new(spec.tables_tree()));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             graph: Rc::new(graph),
             tables,
@@ -116,11 +120,11 @@ impl DiagramView {
 impl Render for DiagramView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = self.graph.clone();
-        let widget = widgets::graph::render(node_id(self.id, 0), &graph, window, cx);
+        let widget = widgets::graph::render(node_id(self.id, 0), &graph, self.rev, window, cx);
         let tables = self
             .tables
             .clone()
-            .map(|tree| widgets::tree::render(node_id(self.id, 1), &tree, window, cx));
+            .map(|tree| widgets::tree::render(node_id(self.id, 1), &tree, self.rev, window, cx));
         let theme = cx.theme();
         let warnings = &self.spec.warnings;
         let notes = warnings
@@ -161,12 +165,18 @@ impl Render for DiagramView {
 pub fn view(
     id: BlockId,
     spec: &DiagramSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<DiagramView> {
-    let view = super::block_state(id, window, cx, |_, _| DiagramView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| DiagramView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -174,7 +184,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Diagram(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -246,7 +256,8 @@ mod tests {
         for selector in ["diagram", "diagram-summary", "diagram-warnings", "tree"] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let diagram = cx.update(|window, cx| super::view(id, &er(), window, cx));
+        let diagram =
+            cx.update(|window, cx| super::view(id, &er(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             diagram
                 .read_with(cx, |d, _| d.graph().title.clone())

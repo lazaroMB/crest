@@ -29,6 +29,9 @@ use crate::widgets;
 /// Per-block state: the spec and its tree.
 pub struct TerraformView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<TerraformPlanSpec>,
     tree: Rc<TreeSpec>,
 }
@@ -43,6 +46,7 @@ impl TerraformView {
         ));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             tree: Rc::new(tree),
         }
@@ -107,7 +111,7 @@ impl TerraformView {
 impl Render for TerraformView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = self.tree.clone();
-        let widget = widgets::tree::render(node_id(self.id, 0), &tree, window, cx);
+        let widget = widgets::tree::render(node_id(self.id, 0), &tree, self.rev, window, cx);
         v_flex()
             .w_full()
             .gap_1()
@@ -121,12 +125,18 @@ impl Render for TerraformView {
 pub fn view(
     id: BlockId,
     spec: &TerraformPlanSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TerraformView> {
-    let view = super::block_state(id, window, cx, |_, _| TerraformView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| TerraformView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -134,7 +144,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::TerraformPlan(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -178,7 +188,8 @@ mod tests {
         for selector in ["terraform", "terraform-summary", "tree", "tree-row-1"] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let plan = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let plan =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             plan.read_with(cx, |p, _| p.tree().title.clone()).as_deref(),
             Some("plan.json")

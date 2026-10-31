@@ -909,6 +909,8 @@ impl SysBoardView {
                     expanded: true,
                     alt_view: false,
                     numbers: Default::default(),
+                    // Made on every frame: compared every time.
+                    rev: crate::timeline::NO_REV,
                 };
                 section = section.child(crate::blocks::mermaid::render(&entry, window, cx));
                 panel = panel.child(section);

@@ -403,15 +403,20 @@ pub fn image_view(
     media_type: Option<&str>,
     alt: Option<&str>,
     fit: ImageFit,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<ImageView> {
-    let view = super::block_state(id, window, cx, |_, cx| {
-        ImageView::new(data, media_type, alt, fit, cx)
-    });
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| ImageView::new(data, media_type, alt, fit, cx),
+        |view, _, cx| view.sync(data, media_type, alt, fit, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(data, media_type, alt, fit, cx));
     view
 }
 
@@ -444,6 +449,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -468,6 +474,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -481,6 +488,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Actual,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -506,6 +514,7 @@ mod tests {
                 Some("image/svg+xml"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             );

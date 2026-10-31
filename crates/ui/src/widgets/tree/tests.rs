@@ -46,9 +46,13 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(render(self.id, &self.spec, window, cx))
+        div().size_full().child(render(
+            self.id,
+            &self.spec,
+            crate::timeline::NO_REV,
+            window,
+            cx,
+        ))
     }
 }
 
@@ -63,7 +67,7 @@ fn host(
     let id = BlockId::new();
     let (host, cx) = cx.add_window_view(|_, _| Host { id, spec: plan() });
     draw(cx, &host);
-    let view = cx.update(|window, cx| view(id, &plan(), window, cx));
+    let view = cx.update(|window, cx| view(id, &plan(), crate::timeline::NO_REV, window, cx));
     (host, view, cx)
 }
 
@@ -120,7 +124,7 @@ fn a_new_spec_resets_the_open_rows(cx: &mut TestAppContext) {
     });
     draw(cx, &host);
     let id = host.read_with(cx, |host, _| host.id);
-    let view2 = cx.update(|window, cx| view(id, &next, window, cx));
+    let view2 = cx.update(|window, cx| view(id, &next, crate::timeline::NO_REV, window, cx));
     assert_eq!(view2, tree);
     assert_eq!(tree.read_with(cx, |v, _| v.visible()), [0, 1, 2, 3]);
 }

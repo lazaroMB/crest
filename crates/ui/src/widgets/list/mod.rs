@@ -686,18 +686,37 @@ impl Render for ListView {
 }
 
 /// The list entity of `id`, in sync with `spec`.
-pub fn view(id: BlockId, spec: &ListSpec, window: &mut Window, cx: &mut App) -> Entity<ListView> {
-    let view =
-        crate::blocks::block_state(id, window, cx, |window, cx| ListView::new(spec, window, cx));
+pub fn view(
+    id: BlockId,
+    spec: &ListSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ListView> {
+    let view = crate::blocks::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| ListView::new(spec, window, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus_handle.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
 /// The whole widget (header, filter, chips, rows) of `id`.
-pub fn render(id: BlockId, spec: &ListSpec, window: &mut Window, cx: &mut App) -> AnyElement {
-    view(id, spec, window, cx).into_any_element()
+/// `rev` is the revision of what `spec` was made from ([`crate::timeline::NO_REV`]
+/// when unknown): the spec is compared only when it is new.
+pub fn render(
+    id: BlockId,
+    spec: &ListSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    view(id, spec, rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

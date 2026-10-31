@@ -1008,14 +1008,18 @@ impl Render for SequenceView {
 pub fn view(
     id: BlockId,
     spec: &SequenceSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<SequenceView> {
-    let view = super::block_state(id, window, cx, |window, cx| {
-        SequenceView::new(spec, window, cx)
-    });
-    view.update(cx, |view, cx| view.sync(spec, cx));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| SequenceView::new(spec, window, cx),
+        |view, _, cx| view.sync(spec, cx),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -1023,7 +1027,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Sequence(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -1134,7 +1138,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let seq = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let seq =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         seq.update(cx, |v, cx| v.set_query("GAATTC", cx));
         assert_eq!(seq.read_with(cx, |v, _| v.hits().len()), 1);
         assert_eq!(seq.read_with(cx, |v, _| v.selection()), Some((9, 15)));

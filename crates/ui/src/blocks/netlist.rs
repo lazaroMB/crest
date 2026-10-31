@@ -85,6 +85,9 @@ pub fn open_text(spec: &NetlistSpec) -> Option<String> {
 /// Per-block state: the spec, its graph (titled) and its table.
 pub struct NetlistView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<NetlistSpec>,
     graph: Rc<GraphSpec>,
     table: Rc<TreeSpec>,
@@ -102,6 +105,7 @@ impl NetlistView {
             .or_else(|| Some("Netlist".to_owned()));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             graph: Rc::new(graph),
             table: Rc::new(spec.to_tree()),
@@ -128,9 +132,9 @@ impl NetlistView {
 impl Render for NetlistView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = self.graph.clone();
-        let widget = widgets::graph::render(node_id(self.id, 0), &graph, window, cx);
+        let widget = widgets::graph::render(node_id(self.id, 0), &graph, self.rev, window, cx);
         let table = self.table.clone();
-        let table = widgets::tree::render(node_id(self.id, 1), &table, window, cx);
+        let table = widgets::tree::render(node_id(self.id, 1), &table, self.rev, window, cx);
         let theme = cx.theme();
         let warnings = &self.spec.warnings;
         v_flex()
@@ -174,12 +178,18 @@ impl Render for NetlistView {
 pub fn view(
     id: BlockId,
     spec: &NetlistSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<NetlistView> {
-    let view = super::block_state(id, window, cx, |_, _| NetlistView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| NetlistView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -187,7 +197,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Netlist(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -261,7 +271,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let netlist = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let netlist =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             netlist
                 .read_with(cx, |n, _| n.graph().title.clone())

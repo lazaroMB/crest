@@ -66,6 +66,9 @@ pub fn missing_text(spec: &IfcScheduleSpec) -> Option<String> {
 /// Per-block state: the schedule and its tree.
 pub struct IfcView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<IfcScheduleSpec>,
     tree: Rc<TreeSpec>,
 }
@@ -74,6 +77,7 @@ impl IfcView {
     fn new(id: BlockId, spec: &IfcScheduleSpec) -> Self {
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             tree: Rc::new(spec.to_tree()),
         }
@@ -94,7 +98,7 @@ impl IfcView {
 impl Render for IfcView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = self.tree.clone();
-        let table = widgets::tree::render(node_id(self.id, 0), &tree, window, cx);
+        let table = widgets::tree::render(node_id(self.id, 0), &tree, self.rev, window, cx);
         let theme = cx.theme();
         let (muted, warning) = (theme.muted_foreground, theme.warning);
         let warnings = &self.spec.warnings;
@@ -141,12 +145,18 @@ impl Render for IfcView {
 pub fn view(
     id: BlockId,
     spec: &IfcScheduleSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<IfcView> {
-    let view = super::block_state(id, window, cx, |_, _| IfcView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| IfcView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -154,7 +164,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::IfcSchedule(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -237,7 +247,8 @@ mod tests {
         for selector in ["ifc", "ifc-summary", "ifc-missing", "ifc-warnings", "tree"] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let ifc = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let ifc =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             ifc.read_with(cx, |v, _| v.tree().nodes[0].children.len()),
             2
