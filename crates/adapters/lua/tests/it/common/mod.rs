@@ -1,7 +1,7 @@
 //! A real Lua host loaded from a temporary `init.lua`, wired into the agent
 //! loop with a scripted model.
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used)]
 
 use std::sync::{Arc, Mutex};
 
