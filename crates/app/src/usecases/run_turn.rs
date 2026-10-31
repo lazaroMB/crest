@@ -4,11 +4,20 @@
 //! Everything visible happens through [`DomainEvent`]s, in this order for
 //! each model call: `BlockAdded` (`Text`, `Thinking` or `ToolCall`) when a
 //! content block starts, its `TextDelta`s / `ThinkingDelta`s, and
-//! `UsageUpdated` when the answer is complete. Then, for each tool call in
-//! order: `BlockUpdated` with its input and summary, the optional extra
-//! block of the tool (e.g. a `Diff`), `ToolStatusChanged` to `Running` and
-//! to its final status. The turn is framed by `TurnStarted` and
-//! `TurnFinished` (or `TurnFailed`).
+//! `UsageUpdated` when the answer is complete. Then, for each tool call:
+//! `BlockUpdated` with its input and summary, the optional extra block of
+//! the tool (e.g. a `Diff`), `ToolStatusChanged` to `Running` and to its
+//! final status. The turn is framed by `TurnStarted` and `TurnFinished`
+//! (or `TurnFailed`).
+//!
+//! Calls are prepared in order. A run of consecutive calls that only read
+//! or fetch and that the policy allows then runs together (up to
+//! [`MAX_PARALLEL_TOOLS`] at once), so the `Running` and final statuses
+//! of those calls (and their `after_tool` hooks) interleave, while the
+//! `BlockUpdated` of every call of the run comes first. Any other call
+//! (a write, a command, one that asks the user or waits on them) waits
+//! for the run before it and runs alone. The results go back to the model
+//! in the order of the calls either way.
 //!
 //! Between preparing and running a call the [`PermissionPolicy`] decides:
 //! `Allow` runs it, `Deny` answers the model with an error without asking,
@@ -66,7 +75,7 @@ use domain::conversation::{
     SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
 };
 use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel, SpecSource};
-use domain::permission::{ActionRequest, Decision};
+use domain::permission::{ActionRequest, Decision, ToolEffect};
 use futures::StreamExt;
 use serde_json::{Value, json};
 
@@ -104,6 +113,10 @@ pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
 /// [`Session::close_pending_tool_uses`]).
 pub const RESTART_INTERRUPTED: &str =
     "the turn was interrupted by a restart before this call finished";
+
+/// Most calls of one run of read-only tool calls that run at once (see
+/// [`TurnRun::run_calls`]).
+const MAX_PARALLEL_TOOLS: usize = 8;
 
 /// Longest output summary sent in `ToolStatusChanged`, in characters.
 const OUTPUT_SUMMARY_CHARS: usize = 120;
@@ -632,7 +645,7 @@ impl AgentService {
             context: None,
             cancel: opts.cancel,
             sent: Mutex::default(),
-            running: Mutex::new(None),
+            running: Mutex::default(),
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
@@ -708,7 +721,7 @@ impl AgentService {
             context: None,
             cancel: opts.cancel,
             sent: Mutex::default(),
-            running: Mutex::new(None),
+            running: Mutex::default(),
         };
         let result = run.resume(pending).await;
         let model_calls = run.model_calls;
@@ -844,10 +857,11 @@ struct TurnRun<'a> {
     /// The messages the requests of this turn share (see
     /// [`SentMessages`]).
     sent: Mutex<SentMessages>,
-    /// The tool call being awaited, while it is. An interruption drops
-    /// the future at that await and finds the entry still here: it says
-    /// what to tell the model and how its extra block ends.
-    running: Mutex<Option<RunningCall>>,
+    /// The tool calls being awaited, while they are, by tool use. An
+    /// interruption drops the futures at that await and finds the entries
+    /// still here: they say what to tell the model and how the extra
+    /// blocks end.
+    running: Mutex<HashMap<ToolUseId, RunningCall>>,
 }
 
 /// The history as the requests of one turn send it. Each message is
@@ -868,6 +882,53 @@ struct RunningCall {
     extra: Option<Block>,
     /// What the call prepared for an interruption, if anything.
     on_interrupt: Option<ToolOutput>,
+}
+
+/// A tool call taken up to the point where it runs ([`TurnRun::gate`]).
+struct GatedCall {
+    ctx: ToolContext,
+    name: String,
+    /// Its `ToolCall` block.
+    block_id: BlockId,
+    step: GateStep,
+}
+
+impl GatedCall {
+    /// Whether it may run at the same time as its neighbours: an allowed
+    /// call that only reads or fetches and does not wait on the user
+    /// (`ask_user`).
+    fn runs_alongside(&self) -> bool {
+        match &self.step {
+            GateStep::Allowed {
+                prepared, effect, ..
+            } => {
+                matches!(effect, ToolEffect::Read | ToolEffect::Network)
+                    && prepared.on_interrupt.is_none()
+                    && self.name != crate::tools::form::ASK_USER
+            }
+            GateStep::Answered(..) | GateStep::Ask { .. } => false,
+        }
+    }
+}
+
+/// Where the hooks, the preparation and the policy left a call.
+enum GateStep {
+    /// Answered without running: unknown tool, bad input or a denial.
+    Answered(ToolOutput, ToolStatus),
+    /// Allowed by the policy; `extra` is its extra block, already shown.
+    Allowed {
+        input: Value,
+        prepared: PreparedCall,
+        extra: Option<Block>,
+        effect: ToolEffect,
+    },
+    /// The user must approve it first.
+    Ask {
+        input: Value,
+        prepared: PreparedCall,
+        extra: Option<Block>,
+        pending: PendingApproval,
+    },
 }
 
 /// Context size reported by a model call.
@@ -980,47 +1041,93 @@ impl TurnRun<'_> {
         }
     }
 
-    /// Runs `tool_uses` in order, after `results` already in hand, and
-    /// pushes the message with every result. `blocks` has the `ToolCall`
-    /// block of each use. Interrupted, every use still gets a result (the
-    /// history could not be sent to the model again otherwise) and the
-    /// turn stops.
+    /// Runs `tool_uses`, after `results` already in hand, and pushes the
+    /// message with every result, in the order of the uses. `blocks` has
+    /// the `ToolCall` block of each use. Interrupted, every use still gets
+    /// a result (the history could not be sent to the model again
+    /// otherwise) and the turn stops: the calls that finished keep theirs,
+    /// the ones running or not started get a cancellation.
     async fn run_tools(
         &mut self,
         tool_uses: Vec<(ToolUseId, String, Value)>,
         blocks: &HashMap<ToolUseId, BlockId>,
         mut results: Vec<ContentPart>,
     ) -> Option<StopReason> {
-        let mut tool_uses = tool_uses.into_iter();
-        while let Some((id, name, input)) = tool_uses.next() {
-            let block_id = blocks.get(&id).copied();
-            let run = self.execute_tool(id.clone(), name, input, block_id);
-            if let Ok(result) = self.cancel.run(run).await {
+        let ids: Vec<ToolUseId> = tool_uses.iter().map(|(id, ..)| id.clone()).collect();
+        // Filled as calls finish, so an interruption keeps what is done.
+        let slots = Mutex::new(ids.iter().map(|_| None).collect::<Vec<_>>());
+        let finished = self
+            .cancel
+            .run(self.run_calls(tool_uses, blocks, &slots))
+            .await
+            .is_ok();
+        let slots = slots.into_inner().unwrap_or_else(PoisonError::into_inner);
+        for (id, slot) in ids.into_iter().zip(slots) {
+            if let Some(result) = slot {
                 results.push(result);
                 continue;
             }
-            // The call that was running may have left what to say; the
-            // ones after it never started.
-            let mut interrupted = Some(self.interrupted_output());
-            let unanswered = std::iter::once(id).chain(tool_uses.map(|(id, ..)| id));
-            for id in unanswered {
-                if let Some(block_id) = blocks.get(&id) {
-                    self.emit_cancelled(*block_id);
-                }
-                let output = interrupted
-                    .take()
-                    .unwrap_or_else(|| ToolOutput::from(ToolError::Cancelled));
-                results.push(ContentPart::ToolResult {
-                    tool_use_id: id,
-                    content: output.content,
-                    is_error: true,
-                });
+            if let Some(block_id) = blocks.get(&id) {
+                self.emit_cancelled(*block_id);
             }
-            self.turn.messages.push(Message::new(Role::User, results));
-            return Some(StopReason::Interrupted);
+            // A call that was running may have left what to say; the ones
+            // that never started did not.
+            let output = self.interrupted_output(&id);
+            results.push(ContentPart::ToolResult {
+                tool_use_id: id,
+                content: output.content,
+                is_error: true,
+            });
         }
         self.turn.messages.push(Message::new(Role::User, results));
-        None
+        (!finished).then_some(StopReason::Interrupted)
+    }
+
+    /// Runs `tool_uses` and stores the result of each in its slot.
+    ///
+    /// Each call goes through its hooks, its preparation and the policy in
+    /// order. A run of consecutive calls that only read (or fetch) and the
+    /// policy allows then runs together, at most [`MAX_PARALLEL_TOOLS`] at
+    /// once; any other call (a write, a command, one that asks the user
+    /// or waits on them) first waits for that run to end and then runs
+    /// alone, so it acts as a barrier: what it changes is never seen half
+    /// way by a call around it.
+    async fn run_calls(
+        &self,
+        tool_uses: Vec<(ToolUseId, String, Value)>,
+        blocks: &HashMap<ToolUseId, BlockId>,
+        slots: &Mutex<Vec<Option<ContentPart>>>,
+    ) {
+        let store = |index: usize, result: ContentPart| {
+            if let Some(slot) = slots
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_mut(index)
+            {
+                *slot = Some(result);
+            }
+        };
+        let mut batch = Vec::new();
+        for (index, (id, name, input)) in tool_uses.into_iter().enumerate() {
+            let call = self.gate(id, name, input, blocks).await;
+            if call.runs_alongside() {
+                batch.push((index, call));
+                continue;
+            }
+            self.run_batch(std::mem::take(&mut batch), &store).await;
+            store(index, self.finish(call).await);
+        }
+        self.run_batch(batch, &store).await;
+    }
+
+    /// Runs the allowed read-only calls of `batch` at the same time and
+    /// stores each result in the slot of its index.
+    async fn run_batch(&self, batch: Vec<(usize, GatedCall)>, store: &impl Fn(usize, ContentPart)) {
+        futures::stream::iter(batch)
+            .for_each_concurrent(MAX_PARALLEL_TOOLS, |(index, call)| async move {
+                store(index, self.finish(call).await);
+            })
+            .await;
     }
 
     /// Continues a turn cut while its tools ran: the `ask_user` calls run
@@ -1075,15 +1182,15 @@ impl TurnRun<'_> {
         });
     }
 
-    /// The result of the call that was running when the turn was
-    /// interrupted: what it prepared for that case, with its extra block
-    /// updated, or a plain cancellation.
-    fn interrupted_output(&self) -> ToolOutput {
+    /// The result of the call `id` when the turn was interrupted before it
+    /// finished: what it prepared for that case if it was running, with
+    /// its extra block updated, or a plain cancellation.
+    fn interrupted_output(&self, id: &ToolUseId) -> ToolOutput {
         let running = self
             .running
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take();
+            .remove(id);
         let Some(RunningCall {
             extra,
             on_interrupt: Some(mut output),
@@ -1429,15 +1536,16 @@ impl TurnRun<'_> {
         })
     }
 
-    /// Runs one tool call and returns its `tool_result`.
-    async fn execute_tool(
+    /// Takes one tool call through its hooks, its preparation and the
+    /// policy, up to the point where it runs (see [`Self::finish`]).
+    async fn gate(
         &self,
         tool_use_id: ToolUseId,
         name: String,
         input: Value,
-        block_id: Option<BlockId>,
-    ) -> ContentPart {
-        let block_id = block_id.unwrap_or_else(|| {
+        blocks: &HashMap<ToolUseId, BlockId>,
+    ) -> GatedCall {
+        let block_id = blocks.get(&tool_use_id).copied().unwrap_or_else(|| {
             let block = Block::new(tool_call_kind(
                 &tool_use_id,
                 &name,
@@ -1448,43 +1556,98 @@ impl TurnRun<'_> {
             self.emit(DomainEvent::BlockAdded { block });
             id
         });
-        let ctx = ToolContext::new(self.session_id(), self.turn.id, tool_use_id.clone());
-        let (output, status) = self.prepare_and_run(&ctx, &name, input, block_id).await;
+        let ctx = ToolContext::new(self.session_id(), self.turn.id, tool_use_id);
+        let step = self.gate_step(&ctx, &name, input, block_id).await;
+        GatedCall {
+            ctx,
+            name,
+            block_id,
+            step,
+        }
+    }
+
+    /// Runs `call` (asking the user first if the policy said so) and
+    /// returns its `tool_result`.
+    async fn finish(&self, call: GatedCall) -> ContentPart {
+        let GatedCall {
+            ctx,
+            name,
+            block_id,
+            step,
+        } = call;
+        let (output, status) = match step {
+            GateStep::Answered(output, status) => (output, status),
+            GateStep::Allowed {
+                input,
+                prepared,
+                extra,
+                ..
+            } => {
+                self.run_prepared(&ctx, &name, &input, prepared, block_id, extra)
+                    .await
+            }
+            GateStep::Ask {
+                input,
+                prepared,
+                mut extra,
+                pending,
+            } => {
+                let verdict = self
+                    .service
+                    .gate
+                    .ask(pending, self.service.deps.events.as_ref())
+                    .await;
+                match verdict {
+                    UserVerdict::Approved => {
+                        if let Some(block) = &mut extra {
+                            self.set_diff_approval(block, ApprovalState::Approved);
+                        }
+                        self.run_prepared(&ctx, &name, &input, prepared, block_id, extra)
+                            .await
+                    }
+                    UserVerdict::Rejected(message) => {
+                        if let Some(block) = &mut extra {
+                            self.set_diff_approval(block, ApprovalState::Rejected);
+                        }
+                        (ToolOutput::error(message), ToolStatus::Denied)
+                    }
+                }
+            }
+        };
         self.emit(DomainEvent::ToolStatusChanged {
             block_id,
             status,
             output: Some(summarize(&output.text_content())),
         });
         ContentPart::ToolResult {
-            tool_use_id,
+            tool_use_id: ctx.tool_use_id,
             content: output.content,
             is_error: output.is_error,
         }
     }
 
-    /// Prepares the call, gets it approved and runs it; returns its output
-    /// and final status.
-    async fn prepare_and_run(
+    /// Runs the hooks, prepares the call and asks the policy.
+    async fn gate_step(
         &self,
         ctx: &ToolContext,
         name: &str,
         input: Value,
         block_id: BlockId,
-    ) -> (ToolOutput, ToolStatus) {
-        let failed = |err: ToolError| (ToolOutput::from(err), ToolStatus::Failed);
+    ) -> GateStep {
+        let failed = |err: ToolError| GateStep::Answered(ToolOutput::from(err), ToolStatus::Failed);
         let Some(tool) = self.service.tools.get(name) else {
             return failed(ToolError::UnknownTool(name.to_owned()));
         };
-        let input = match self.before_tool(name, input.clone()).await {
+        let input = match self.before_tool(name, input).await {
             Ok(input) => input,
-            Err(denial) => {
+            Err((denial, input)) => {
                 self.emit(DomainEvent::BlockUpdated {
                     block: Block {
                         id: block_id,
                         kind: tool_call_kind(&ctx.tool_use_id, name, input, String::new()),
                     },
                 });
-                return (ToolOutput::error(denial), ToolStatus::Denied);
+                return GateStep::Answered(ToolOutput::error(denial), ToolStatus::Denied);
             }
         };
         let effect = tool.effect(&input);
@@ -1512,14 +1675,18 @@ impl TurnRun<'_> {
         let mut action = ActionRequest::new(name, effect, prepared.subject.clone());
         action.argv.clone_from(&prepared.argv);
         match self.service.gate.decide(&action) {
-            Decision::Deny { reason } => (
+            Decision::Deny { reason } => GateStep::Answered(
                 ToolOutput::error(policy_denial(&reason)),
                 ToolStatus::Denied,
             ),
             Decision::Allow => {
                 let extra = self.add_extra_block(&mut prepared);
-                self.run_prepared(name, &input, prepared, block_id, extra)
-                    .await
+                GateStep::Allowed {
+                    input,
+                    prepared,
+                    extra,
+                    effect,
+                }
             }
             Decision::Ask => {
                 let mut extra = self.add_extra_block(&mut prepared);
@@ -1533,33 +1700,20 @@ impl TurnRun<'_> {
                     tool_block: block_id,
                     shown_in: extra.as_ref().map_or(block_id, |block| block.id),
                 };
-                let verdict = self
-                    .service
-                    .gate
-                    .ask(pending, self.service.deps.events.as_ref())
-                    .await;
-                match verdict {
-                    UserVerdict::Approved => {
-                        if let Some(block) = &mut extra {
-                            self.set_diff_approval(block, ApprovalState::Approved);
-                        }
-                        self.run_prepared(name, &input, prepared, block_id, extra)
-                            .await
-                    }
-                    UserVerdict::Rejected(message) => {
-                        if let Some(block) = &mut extra {
-                            self.set_diff_approval(block, ApprovalState::Rejected);
-                        }
-                        (ToolOutput::error(message), ToolStatus::Denied)
-                    }
+                GateStep::Ask {
+                    input,
+                    prepared,
+                    extra,
+                    pending,
                 }
             }
         }
     }
 
     /// Runs the `before_tool` hooks and returns the input to prepare the
-    /// call with, or the denial to send to the model.
-    async fn before_tool(&self, name: &str, input: Value) -> Result<Value, String> {
+    /// call with, or the denial to send to the model with the input the
+    /// call had.
+    async fn before_tool(&self, name: &str, input: Value) -> Result<Value, (String, Value)> {
         let Some(host) = self.hooks(HookKind::BeforeTool) else {
             return Ok(input);
         };
@@ -1570,7 +1724,7 @@ impl TurnRun<'_> {
         match host.run_hook(event).await {
             Ok(HookOutcome::Continue) => Ok(input),
             Ok(HookOutcome::ReplaceInput(replaced)) => Ok(replaced),
-            Ok(HookOutcome::Deny { reason }) => Err(hook_denial(reason.as_deref())),
+            Ok(HookOutcome::Deny { reason }) => Err((hook_denial(reason.as_deref()), input)),
             Err(err) => {
                 self.hook_failed("before_tool", name, &err);
                 Ok(input)
@@ -1639,6 +1793,7 @@ impl TurnRun<'_> {
     /// Runs an approved call, then its `after_tool` hooks.
     async fn run_prepared(
         &self,
+        ctx: &ToolContext,
         name: &str,
         input: &Value,
         mut prepared: PreparedCall,
@@ -1660,15 +1815,21 @@ impl TurnRun<'_> {
         }
         // Noted while awaited; an interruption drops this future here and
         // `interrupted_output` finds the note.
-        *self.running.lock().unwrap_or_else(PoisonError::into_inner) = Some(RunningCall {
-            extra: extra.clone(),
-            on_interrupt: prepared.on_interrupt.take(),
-        });
+        self.running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                ctx.tool_use_id.clone(),
+                RunningCall {
+                    extra: extra.clone(),
+                    on_interrupt: prepared.on_interrupt.take(),
+                },
+            );
         let output = prepared.run.await.unwrap_or_else(ToolOutput::from);
         self.running
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take();
+            .remove(&ctx.tool_use_id);
         // Masked before anyone reads it: the model, the timeline, the
         // store and the `after_tool` hooks.
         let mut output = self.service.tools.finish(output);

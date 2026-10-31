@@ -203,12 +203,168 @@ async fn two_tool_calls_then_end_turn_emit_events_in_order() {
     expected.push("added:text");
     expected.extend(["text_delta"; 3]);
     expected.extend(["added:tool_call", "added:tool_call", "usage_updated"]);
-    expected.extend(["updated:tool_call", "status:running", "status:succeeded"]);
-    expected.extend(["updated:tool_call", "status:running", "status:failed"]);
+    // Both reads are prepared first, then run together: their statuses
+    // interleave (each call's own come in order, see below).
+    expected.extend(["updated:tool_call", "updated:tool_call"]);
+    let tools = expected.len();
+    expected.extend(["status:"; 4]);
     expected.push("added:text");
     expected.extend(["text_delta"; 3]);
     expected.extend(["usage_updated", "turn_finished"]);
-    assert_eq!(h.trace(), expected);
+    let mut trace = h.trace();
+    let mut statuses: Vec<_> = trace[tools..tools + 4].to_vec();
+    for status in &mut trace[tools..tools + 4] {
+        status.truncate("status:".len());
+    }
+    assert_eq!(trace, expected);
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [
+            "status:failed",
+            "status:running",
+            "status:running",
+            "status:succeeded"
+        ]
+    );
+    for (tool_use, last) in [
+        ("toolu_1", ToolStatus::Succeeded),
+        ("toolu_2", ToolStatus::Failed),
+    ] {
+        let block_id = BlockId::for_tool_use(tool_use, "tool_call");
+        let of_call: Vec<_> = h
+            .sink
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DomainEvent::ToolStatusChanged {
+                    block_id: id,
+                    status,
+                    ..
+                } if id == block_id => Some(status),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(of_call, [ToolStatus::Running, last], "{tool_use}");
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProbeInput {
+    label: String,
+    #[serde(default)]
+    write: bool,
+    /// Times the call yields to the runtime before it ends.
+    #[serde(default)]
+    yields: u32,
+}
+
+/// Logs when each call starts and ends, yielding in between so that calls
+/// running together interleave. A write when `write` is set.
+struct Probe(Arc<Mutex<Vec<String>>>);
+
+#[async_trait]
+impl TypedTool for Probe {
+    type Input = ProbeInput;
+
+    fn name(&self) -> &str {
+        "probe"
+    }
+
+    fn description(&self) -> &str {
+        "Logs its runs."
+    }
+
+    fn effect(&self, input: &ProbeInput) -> ToolEffect {
+        if input.write {
+            ToolEffect::Write
+        } else {
+            ToolEffect::Read
+        }
+    }
+
+    async fn prepare(
+        &self,
+        input: ProbeInput,
+        _ctx: &ToolContext,
+    ) -> Result<PreparedCall, ToolError> {
+        let log = Arc::clone(&self.0);
+        let label = input.label.clone();
+        Ok(PreparedCall::new(
+            label.clone(),
+            async move {
+                log.lock().unwrap().push(format!("start {label}"));
+                for _ in 0..=input.yields {
+                    tokio::task::yield_now().await;
+                }
+                log.lock().unwrap().push(format!("end {label}"));
+                Ok(ToolOutput::text(label))
+            }
+            .boxed(),
+        ))
+    }
+}
+
+/// A harness with [`Probe`] (writes allowed) answering `calls` with one
+/// model call, and its log.
+fn probe_harness(calls: &[Value]) -> (Harness, Arc<Mutex<Vec<String>>>) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut uses = ScriptedResponse::text("Voy.");
+    for (i, input) in calls.iter().enumerate() {
+        uses = uses.then_tool_use(format!("toolu_{i}"), "probe", input.clone());
+    }
+    let probe = Arc::clone(&log);
+    let h = Harness::with(
+        vec![uses, ScriptedResponse::text("Listo.")],
+        PermissionMode::AutoEdit,
+        move |tools| tools.register_typed(Probe(probe)).unwrap(),
+    );
+    (h, log)
+}
+
+#[tokio::test]
+async fn consecutive_reads_run_together_and_answer_in_order() {
+    // The first read is the slowest: it ends last.
+    let (mut h, log) = probe_harness(&[
+        json!({ "label": "a", "yields": 5 }),
+        json!({ "label": "b" }),
+        json!({ "label": "c" }),
+    ]);
+    h.run("hola").await.unwrap();
+
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log[..3], ["start a", "start b", "start c"]);
+    assert_eq!(log.last().unwrap(), "end a");
+    let results: Vec<_> = h.tool_results().into_iter().map(|(text, _)| text).collect();
+    assert_eq!(results, ["a", "b", "c"]);
+    let ids: Vec<_> = h.session.turns[0].messages[2]
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["toolu_0", "toolu_1", "toolu_2"]);
+}
+
+#[tokio::test]
+async fn a_write_waits_for_the_reads_before_it_and_holds_back_the_ones_after() {
+    let (mut h, log) = probe_harness(&[
+        json!({ "label": "r1", "yields": 2 }),
+        json!({ "label": "r2" }),
+        json!({ "label": "w", "write": true, "yields": 2 }),
+        json!({ "label": "r3" }),
+        json!({ "label": "r4" }),
+    ]);
+    h.run("hola").await.unwrap();
+
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log[..2], ["start r1", "start r2"]);
+    assert_eq!(log[4..6], ["start w", "end w"]);
+    assert_eq!(log[6..8], ["start r3", "start r4"]);
+    let results: Vec<_> = h.tool_results().into_iter().map(|(text, _)| text).collect();
+    assert_eq!(results, ["r1", "r2", "w", "r3", "r4"]);
 }
 
 #[tokio::test]
