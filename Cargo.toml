@@ -251,3 +251,21 @@ expect_used = "deny"
 [profile.release]
 lto = "thin"
 strip = "symbols"
+
+# Debug builds (`cargo build`, `cargo test`, `make run`). Line tables keep
+# file:line in backtraces at a fraction of the full debug info, which made the
+# GPUI tree's target/ huge and its links slow. Dependencies get no debug info
+# and opt-level 1: they are rebuilt only when Cargo.lock or the toolchain
+# changes, and the UI is usable in a debug build. Build scripts and proc
+# macros run on every build of their dependents, so they are optimized.
+# `split-debuginfo` is left at the platform default: windows-msvc only
+# accepts `packed`, and with line tables the saving on Linux is small.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.dev.build-override]
+opt-level = 3
