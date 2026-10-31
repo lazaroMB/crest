@@ -92,27 +92,66 @@ fn highlight(style: Style, base: Hsla, cx: &App) -> HighlightStyle {
     }
 }
 
-/// `text` with its ANSI styling, drawn in `base` where it has none.
-fn output(text: &str, base: Hsla, cx: &App) -> AnyElement {
-    let container = div().text_color(base).whitespace_normal();
-    if !ansi::has_escapes(text) {
-        return container
-            .child(SharedString::from(text.to_owned()))
-            .into_any_element();
+/// One stream as drawn: its shown lines without escapes, and their ANSI
+/// runs (`None` when it has no escapes).
+struct Shown {
+    stderr: bool,
+    text: SharedString,
+    runs: Option<Vec<ansi::Run>>,
+}
+
+/// The output of a shell block cut to `limit` lines per stream and parsed,
+/// with how many lines were left out. Made once per revision of the block
+/// and expansion ([`super::derived`]), not on every frame.
+struct Output {
+    streams: Vec<Shown>,
+    hidden: usize,
+}
+
+fn shown_output(stdout: &str, stderr: &str, limit: usize) -> Output {
+    let mut streams = Vec::new();
+    let mut hidden = 0;
+    for (text, is_stderr) in [(stdout, false), (stderr, true)] {
+        if text.trim().is_empty() {
+            continue;
+        }
+        let (shown, left) = head(text, limit);
+        hidden += left;
+        streams.push(if ansi::has_escapes(&shown) {
+            let styled = ansi::parse(&shown);
+            Shown {
+                stderr: is_stderr,
+                text: styled.text.into(),
+                runs: Some(styled.runs),
+            }
+        } else {
+            Shown {
+                stderr: is_stderr,
+                text: shown.into(),
+                runs: None,
+            }
+        });
     }
-    let styled = ansi::parse(text);
-    let highlights: Vec<_> = styled
-        .runs
+    Output { streams, hidden }
+}
+
+/// A stream with its ANSI styling, drawn in `base` where it has none.
+fn output(shown: &Shown, base: Hsla, cx: &App) -> AnyElement {
+    let container = div().text_color(base).whitespace_normal();
+    let Some(runs) = &shown.runs else {
+        return container.child(shown.text.clone()).into_any_element();
+    };
+    let highlights: Vec<_> = runs
         .iter()
         .map(|run| (run.range.clone(), highlight(run.style, base, cx)))
         .collect();
     container
-        .child(StyledText::new(styled.text).with_highlights(highlights))
+        .child(StyledText::new(shown.text.clone()).with_highlights(highlights))
         .into_any_element()
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Shell {
         command,
         exit_code,
@@ -124,6 +163,21 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
     else {
         return super::placeholder(entry, cx);
     };
+    let shown = super::derived(
+        entry.block.id,
+        entry.rev,
+        entry.expanded,
+        window,
+        cx,
+        |&expanded| {
+            let limit = if expanded {
+                usize::MAX
+            } else {
+                COLLAPSED_LINES
+            };
+            shown_output(stdout, stderr, limit)
+        },
+    );
     let theme = cx.theme();
     let ok = *exit_code == Some(0) && !timed_out;
     let status_color = if ok { theme.success } else { theme.danger };
@@ -147,20 +201,15 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                 .text_color(status_color)
                 .child(SharedString::from(status_label(*exit_code, *timed_out))),
         );
-    let limit = if entry.expanded {
-        usize::MAX
-    } else {
-        COLLAPSED_LINES
-    };
-    let mut hidden = 0;
+    let hidden = shown.hidden;
     let mut body = v_flex().pl_4().text_sm();
-    for (text, color) in [(stdout, theme.foreground), (stderr, theme.danger)] {
-        if text.trim().is_empty() {
-            continue;
-        }
-        let (shown, left) = head(text, limit);
-        hidden += left;
-        body = body.child(output(&shown, color, cx));
+    for stream in &shown.streams {
+        let color = if stream.stderr {
+            theme.danger
+        } else {
+            theme.foreground
+        };
+        body = body.child(output(stream, color, cx));
     }
     let mut notes = Vec::new();
     if hidden > 0 {
