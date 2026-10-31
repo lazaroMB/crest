@@ -369,6 +369,12 @@ impl<K: std::hash::Hash + Eq + Clone, V: Clone> Lru<K, V> {
     pub(crate) fn contains(&self, key: &K) -> bool {
         self.entries.contains_key(key)
     }
+
+    /// Every key and value, in no order.
+    #[cfg(test)]
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.entries.iter().map(|(k, (v, _, _))| (k, v))
+    }
 }
 
 struct SvgCache(Lru<Key, SvgState>);
