@@ -1,6 +1,6 @@
 //! Opens the crest main window with the placeholder layout.
 //!
-//! `cargo run -p ui --example window [workspace-label]`; quit with Cmd/Ctrl+Q.
+//! `cargo run -p ui --features examples --example window [workspace-label]`; quit with Cmd/Ctrl+Q.
 
 fn main() {
     let workspace_label = std::env::args()

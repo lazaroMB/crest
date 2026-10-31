@@ -181,7 +181,7 @@ The integration tests in `crates/bin/tests/it/` bring up the real composition ro
 
 The integration tests of `crest`, `adapter-formats` and `adapter-lua` are modules of a single test binary per crate (`tests/it/main.rs`): every test binary links the whole dependency tree, so one binary instead of a dozen saves most of the link time of `cargo test`. A new test file goes into `tests/it/` with its `mod` line in `main.rs`; run one file with `cargo test -p crest --test it resume::`.
 
-For the UI there are runnable examples in `crates/ui/examples/`, for example `cargo run -p ui --example chart_blocks`.
+For the UI there are runnable examples in `crates/ui/examples/`, for example `cargo run -p ui --features examples --example chart_blocks`. They sit behind the `examples` feature so that `cargo test` does not build them; `make lint` checks them.
 
 ## Adding a tool
 

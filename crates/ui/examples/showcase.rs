@@ -2,7 +2,7 @@
 //! status bar, modals, approval dialog, help) driven by a scripted fake
 //! controller, so no API key is needed.
 //!
-//! `cargo run -p ui --example showcase -- --scene <name>`
+//! `cargo run -p ui --features examples --example showcase -- --scene <name>`
 //!
 //! Scenes: `hero` (a turn with tool calls, a diff, a chart and an answer),
 //! `research` (the research flow at work), `approval` (an edit waiting for

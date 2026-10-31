@@ -1,7 +1,7 @@
 //! A `Custom` block as a Lua plugin would return it: a column with text, a
 //! list, a table, code and markdown side by side, and a chart.
 //!
-//! `cargo run -p ui --example custom_block [--quit]`
+//! `cargo run -p ui --features examples --example custom_block [--quit]`
 
 #[path = "support/demo.rs"]
 mod demo;

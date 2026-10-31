@@ -12,6 +12,12 @@ publish.workspace = true
 [lib]
 doctest = false
 
+[features]
+# Builds the runnable examples (examples/), e.g.
+# `cargo run -p ui --example showcase --features examples`. Behind a feature
+# so that `cargo test` does not compile and link the 15 GPUI windows.
+examples = []
+
 [dependencies]
 anstyle-parse.workspace = true
 application.workspace = true
@@ -62,6 +68,66 @@ wgpu.workspace = true
 application-testing.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+
+[[example]]
+name = "activity"
+required-features = ["examples"]
+
+[[example]]
+name = "chart_blocks"
+required-features = ["examples"]
+
+[[example]]
+name = "custom_block"
+required-features = ["examples"]
+
+[[example]]
+name = "help"
+required-features = ["examples"]
+
+[[example]]
+name = "markdown_block"
+required-features = ["examples"]
+
+[[example]]
+name = "mermaid_block"
+required-features = ["examples"]
+
+[[example]]
+name = "modal"
+required-features = ["examples"]
+
+[[example]]
+name = "panels"
+required-features = ["examples"]
+
+[[example]]
+name = "research_blocks"
+required-features = ["examples"]
+
+[[example]]
+name = "shell"
+required-features = ["examples"]
+
+[[example]]
+name = "showcase"
+required-features = ["examples"]
+
+[[example]]
+name = "sysboard"
+required-features = ["examples"]
+
+[[example]]
+name = "table_stress"
+required-features = ["examples"]
+
+[[example]]
+name = "timeline_stress"
+required-features = ["examples"]
+
+[[example]]
+name = "window"
+required-features = ["examples"]
 
 [lints]
 workspace = true

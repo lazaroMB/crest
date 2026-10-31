@@ -2,7 +2,7 @@
 //! then a scripted scroll (moving the selection up to the first block and
 //! back down) while the frame interval is logged.
 //!
-//! `cargo run -p ui --release --example timeline_stress [--quit]`
+//! `cargo run -p ui --release --features examples --example timeline_stress [--quit]`
 //!
 //! With `--quit` the app exits after the sweep; quit any time with
 //! Cmd/Ctrl+Q. The summary line reports the frame interval (time between

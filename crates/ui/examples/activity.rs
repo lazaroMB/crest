@@ -3,7 +3,7 @@
 //! for about eight seconds (stage headers, activity lines, tool calls and
 //! a flowchart with long labels) and each prompt streams a short answer.
 //!
-//! `cargo run -p ui --example activity [--demo]`
+//! `cargo run -p ui --features examples --example activity [--demo]`
 //!
 //! Run `/research`, then type prompts while it works: they are listed under
 //! the activity line and sent one by one when it ends; `Up` in an empty

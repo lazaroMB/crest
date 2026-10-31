@@ -2,7 +2,7 @@
 //! ctrl+wheel or +/- to zoom), then invalid sources that show their code
 //! and the error. The script toggles each block's source view with `t`.
 //!
-//! `cargo run -p ui --example mermaid_block [--quit]`
+//! `cargo run -p ui --features examples --example mermaid_block [--quit]`
 
 #[path = "support/demo.rs"]
 mod demo;
