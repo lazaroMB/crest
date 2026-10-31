@@ -722,13 +722,8 @@ impl Session {
         });
         let login = cx.new(|cx| LoginView::new(window, cx));
 
-        let mut watch_error = None;
         if let Some(dir) = &workspace_dir {
-            tree.update(cx, |tree, cx| {
-                if let Err(err) = tree.watch_dir(dir, cx) {
-                    watch_error = Some(format!("the tree will not refresh by itself: {err}"));
-                }
-            });
+            tree.update(cx, |tree, cx| tree.watch_dir(dir, cx));
         }
 
         let mut subscriptions = vec![
@@ -736,9 +731,13 @@ impl Session {
             cx.subscribe_in(
                 &tree,
                 window,
-                |this, _, event: &TreePanelEvent, window, cx| {
-                    let TreePanelEvent::Open(path) = event;
-                    this.insert_reference(&file_reference(path, None), window, cx);
+                |this, _, event: &TreePanelEvent, window, cx| match event {
+                    TreePanelEvent::Open(path) => {
+                        this.insert_reference(&file_reference(path, None), window, cx);
+                    }
+                    TreePanelEvent::WatchFailed(message) => {
+                        this.notice(NoticeLevel::Warning, message.clone(), cx);
+                    }
                 },
             ),
             cx.subscribe_in(
@@ -819,9 +818,6 @@ impl Session {
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
             _subscriptions: subscriptions,
         };
-        if let Some(message) = watch_error {
-            this.notice(NoticeLevel::Warning, message, cx);
-        }
         this.load_commands(window, cx);
         this.refresh_git(cx);
         if resume_pending {
@@ -4128,6 +4124,7 @@ mod tests {
                 cx,
             );
         });
+        cx.run_until_parked();
     }
 
     fn image_blocks(h: &Harness, cx: &mut VisualTestContext) -> usize {
