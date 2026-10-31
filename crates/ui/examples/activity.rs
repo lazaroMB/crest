@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::fs::InMemoryFs;
-use application::testing::system::RecordingSink;
+use application_testing::fs::InMemoryFs;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, MermaidSpec, ToolStatus};
 use domain::conversation::{SessionId, StopReason, TurnId};
 use domain::model::{ModelId, ModelRole};

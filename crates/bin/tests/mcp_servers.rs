@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use application::ports::mcp::McpServerState;
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
 use application::usecases::cancel::CancelToken;
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};
 use crest::root::{App, Config, Overrides, build_app};

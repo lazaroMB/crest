@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::ScriptedLlm;
+use application_testing::llm::ScriptedLlm;
 use crest::gui::UiController;
 use crest::headless::run::frontend;
 use crest::headless::{StdinApproval, Terminal};

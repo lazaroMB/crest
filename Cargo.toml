@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/domain",
     "crates/app",
+    "crates/app-testing",
     "crates/adapters/anthropic",
     "crates/adapters/openai",
     "crates/adapters/cloudflare",
@@ -33,6 +34,7 @@ publish = false
 # Internal crates
 domain = { path = "crates/domain" }
 application = { path = "crates/app" }
+application-testing = { path = "crates/app-testing" }
 adapter-anthropic = { path = "crates/adapters/anthropic" }
 adapter-openai = { path = "crates/adapters/openai" }
 adapter-cloudflare = { path = "crates/adapters/cloudflare" }

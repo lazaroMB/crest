@@ -4,7 +4,7 @@
 mod common;
 
 use application::ports::approval::ApprovalResponse;
-use application::testing::llm::ScriptedResponse;
+use application_testing::llm::ScriptedResponse;
 use common::Agent;
 use domain::permission::ToolEffect;
 use serde_json::json;

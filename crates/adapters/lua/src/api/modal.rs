@@ -185,7 +185,7 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
 
 #[cfg(test)]
 mod tests {
-    use application::testing::system::RecordingSink;
+    use application_testing::system::RecordingSink;
     use domain::modal::{HorizontalAnchor, VerticalAnchor};
 
     use super::*;

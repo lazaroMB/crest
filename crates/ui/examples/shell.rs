@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use application::keymap::Action;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::system::RecordingSink;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, ToolStatus};
 use domain::conversation::{SessionId, StopReason, TurnId, Usage};
 use domain::model::{ModelId, ModelRole};

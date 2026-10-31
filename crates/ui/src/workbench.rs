@@ -823,8 +823,8 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
 
     use application::ports::events::DomainEvent;
-    use application::testing::fs::{InMemoryFs, test_root};
-    use application::testing::projects::InMemoryDirs;
+    use application_testing::fs::{InMemoryFs, test_root};
+    use application_testing::projects::InMemoryDirs;
     use domain::conversation::StopReason;
     use domain::permission::PermissionMode;
 

@@ -25,8 +25,8 @@ use application::ports::approval::{
 };
 use application::ports::events::{DomainEvent, EventSink};
 use application::ports::form::{FormPort as _, FormRequest, FormRequestId};
-use application::testing::fs::InMemoryFs;
-use application::testing::system::RecordingSink;
+use application_testing::fs::InMemoryFs;
+use application_testing::system::RecordingSink;
 use domain::block::{
     Block, BlockKind, Cell, ChartKind, ChartSpec, Column, CustomNode, DiffSpec, MermaidSpec,
     Series, TableSpec, ToolStatus,

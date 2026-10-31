@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use application::ports::plugin::ConfigSources;
 use application::ports::web::{SearchHit, WebPage, WebPort};
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
-use application::testing::web::ScriptedWeb;
 use application::usecases::cancel::CancelToken;
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::web::ScriptedWeb;
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};
 use crest::root::{App, Config, Overrides, build_app};

@@ -155,14 +155,14 @@ Code rules, enforced by the workspace lints:
 
 Tests use no network, no `rg` and no window, except where they are adapter integration tests:
 
-- Use cases are tested with the fakes from `application::testing`.
+- Use cases are tested with the fakes of the `application-testing` crate (`application::testing` inside `application`'s own unit tests).
 - The Anthropic API is tested with `wiremock`.
 - GPUI tests use `gpui`'s `TestAppContext` (`test-support` feature), which opens no windows.
 - Snapshots of the tools' JSON schemas are stored with `insta` (`crates/app/src/tools/snapshots/`). If you change a schema, review the snapshot with `cargo insta review`.
 
-## Fakes in `application::testing`
+## Fakes in `application-testing`
 
-To use the fakes from another crate, enable the feature: `application = { workspace = true, features = ["testing"] }` under `[dev-dependencies]`.
+The fakes live in `crates/app-testing` (package `application-testing`). Another crate uses them as a dev-dependency only, `application-testing.workspace = true` under `[dev-dependencies]`, and imports them as `application_testing::llm::ScriptedLlm`; `scripts/check-arch.sh` rejects it anywhere else. `application` mounts the same files as its `testing` module for its own unit tests (`crate::testing::llm::…`). They are not a feature of `application`: a feature turned on by dev-dependencies would build `application` and every crate above it twice, once for `cargo build` and once for `cargo test`.
 
 | Module | Fakes |
 | --- | --- |

@@ -556,7 +556,7 @@ mod tests {
 
     // -- panel --------------------------------------------------------------
 
-    use application::testing::fs::{InMemoryFs, test_root};
+    use application_testing::fs::{InMemoryFs, test_root};
 
     use gpui::{TestAppContext, VisualTestContext};
 

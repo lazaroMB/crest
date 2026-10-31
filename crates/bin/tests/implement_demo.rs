@@ -15,7 +15,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::headless::implement::run_flow;
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal};

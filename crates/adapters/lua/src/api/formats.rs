@@ -916,8 +916,8 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
 #[cfg(test)]
 mod tests {
     use application::ports::plugin::PluginOutput;
-    use application::testing::formats::FakeFormats;
-    use application::testing::fs::{InMemoryFs, test_root};
+    use application_testing::formats::FakeFormats;
+    use application_testing::fs::{InMemoryFs, test_root};
 
     use super::*;
     use crate::callbacks::{self, CallbackIds};
@@ -953,7 +953,7 @@ mod tests {
             ctx.provide_formats(FormatsServices {
                 formats,
                 fs: Arc::new(fs),
-                web: Some(Arc::new(application::testing::web::ScriptedWeb::new())),
+                web: Some(Arc::new(application_testing::web::ScriptedWeb::new())),
             });
         }
         lua.set_app_data(Arc::new(ctx));

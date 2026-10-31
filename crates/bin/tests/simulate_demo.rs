@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
-use application::testing::sim::{self, FOLDER, SOURCES_JSON, SPEC_MD};
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::sim::{self, FOLDER, SOURCES_JSON, SPEC_MD};
 use crest::headless::run::frontend;
 use crest::headless::simulate::run_simulation;
 use crest::headless::{Exit, StdinApproval, Terminal};

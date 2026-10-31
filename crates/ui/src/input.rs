@@ -1555,7 +1555,7 @@ mod tests {
 
     #[gpui::test]
     fn at_words_complete_workspace_paths_level_by_level(cx: &mut TestAppContext) {
-        use application::testing::fs::{InMemoryFs, test_root};
+        use application_testing::fs::{InMemoryFs, test_root};
 
         let (view, cx, events) = input(cx);
         let fs = InMemoryFs::new(test_root())

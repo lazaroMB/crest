@@ -997,7 +997,7 @@ mod tests {
     use super::*;
     use crate::timeline::{PROSE_MAX_WIDTH, WIDE_MAX_WIDTH};
     use application::ports::events::EventSink as _;
-    use application::testing::system::RecordingSink;
+    use application_testing::system::RecordingSink;
     use domain::block::{Block, BlockKind};
     use gpui::{Entity, TestAppContext, VisualTestContext};
 

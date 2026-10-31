@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::headless::research::run_flow;
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal};

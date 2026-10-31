@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 
 use adapter_lua::{HostOptions, LuaHandle, LuaHost};
 use application::ports::plugin::{ConfigSources, LoadedConfig, PluginHostPort};
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
-use application::testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
 use domain::conversation::{ContentPart, Session, ToolResultContent};
 use domain::model::ModelPolicy;
 use domain::permission::{PermissionMode, PermissionPolicy};

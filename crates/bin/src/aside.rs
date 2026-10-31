@@ -165,7 +165,7 @@ mod tests {
 
     use application::decide::DecisionOptions;
     use application::flows::aside::FlowKind;
-    use application::testing::decision::{ScriptedDecider, choice};
+    use application_testing::decision::{ScriptedDecider, choice};
 
     use super::*;
 

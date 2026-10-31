@@ -121,7 +121,7 @@
 //! ```
 //!
 //! A node is tested alone with [`NodeContext::new`](node::NodeContext::new)
-//! over a `ScriptedLlm` (feature `testing`), and inside a graph with
+//! over a `ScriptedLlm` (crate `application-testing`), and inside a graph with
 //! [`fake::FakeNode`] neighbours.
 
 pub mod agents;
@@ -129,7 +129,7 @@ pub mod builder;
 pub mod commands;
 pub mod depth;
 pub mod error;
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod fake;
 pub mod flow;
 pub mod gate;

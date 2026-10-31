@@ -54,7 +54,7 @@ uuid.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
-application = { workspace = true, features = ["testing"] }
+application-testing.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

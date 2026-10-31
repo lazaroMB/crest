@@ -27,8 +27,8 @@ use application::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::fs::{InMemoryFs, unified_diff};
-use application::testing::system::RecordingSink;
+use application_testing::fs::{InMemoryFs, unified_diff};
+use application_testing::system::RecordingSink;
 use domain::block::{ApprovalState, Block, BlockKind, DiffSpec};
 use domain::conversation::ToolUseId;
 use domain::permission::ToolEffect;

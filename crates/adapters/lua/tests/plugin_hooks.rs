@@ -5,8 +5,8 @@
 mod common;
 
 use application::ports::approval::ApprovalResponse;
-use application::testing::llm::ScriptedResponse;
 use application::tools::registry::{PreparedCall, Tool, ToolContext, ToolError, ToolOutput};
+use application_testing::llm::ScriptedResponse;
 use async_trait::async_trait;
 use common::Agent;
 use domain::permission::ToolEffect;

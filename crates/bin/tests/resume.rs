@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::gui::session_parts;
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};

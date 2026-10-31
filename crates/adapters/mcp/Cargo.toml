@@ -21,7 +21,7 @@ tokio = { workspace = true, features = ["net"] }
 tracing.workspace = true
 
 [dev-dependencies]
-application = { workspace = true, features = ["testing"] }
+application-testing.workspace = true
 # The example server (`examples/echo_server.rs`) is an rmcp server.
 hyper.workspace = true
 hyper-util.workspace = true

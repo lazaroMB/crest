@@ -55,7 +55,7 @@ pub enum ScriptBlock {
 /// combined with the `then_*` methods.
 ///
 /// ```ignore
-/// # use application::testing::llm::ScriptedResponse;
+/// # use application_testing::llm::ScriptedResponse;
 /// let answer = ScriptedResponse::text("Busco la función.")
 ///     .then_tool_use("toolu_1", "grep", serde_json::json!({ "pattern": "fn main" }));
 /// ```

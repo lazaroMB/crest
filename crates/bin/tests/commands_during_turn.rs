@@ -9,8 +9,8 @@ use std::io::{self, Cursor, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
 use application::usecases::cancel::CancelToken;
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::gui::UiController;
 use crest::headless::run::frontend;
 use crest::headless::{StdinApproval, Terminal};

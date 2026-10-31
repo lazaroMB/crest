@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use adapter_store::SqliteSessionStore;
 use application::ports::plugin::ConfigSources;
 use application::ports::store::SessionStorePort;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::gui::session_parts;
 use crest::root::{Config, Overrides};
 use domain::block::{BlockKind, ToolStatus};

@@ -358,14 +358,14 @@ pub async fn web_tools(
 #[cfg(test)]
 mod tests {
     use application::ports::llm::LlmError;
-    use application::testing::llm::FakeModelCatalog;
+    use application_testing::llm::FakeModelCatalog;
     use domain::model::{ModelRole, ResolveRequest, default_spec};
 
     use super::*;
 
     #[tokio::test]
     async fn web_tools_follow_the_options() {
-        use application::testing::web::ScriptedWeb;
+        use application_testing::web::ScriptedWeb;
         use serde_json::json;
 
         let scripted = || Some(Arc::new(ScriptedWeb::new()) as Arc<dyn WebPort>);

@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex};
 
 use application::ports::events::{DomainEvent, EventSink};
 use application::ports::plugin::ConfigSources;
-use application::testing::llm::{ScriptedLlm, ScriptedResponse};
-use application::testing::system::{RecordingSink, ScriptedApproval};
 use application::usecases::cancel::CancelToken;
+use application_testing::llm::{ScriptedLlm, ScriptedResponse};
+use application_testing::system::{RecordingSink, ScriptedApproval};
 use crest::headless::run::frontend;
 use crest::headless::{Exit, StdinApproval, Terminal, run_turn};
 use crest::root::{App, Config, Frontend, Overrides, build_app};

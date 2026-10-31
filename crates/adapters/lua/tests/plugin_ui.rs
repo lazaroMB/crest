@@ -4,7 +4,7 @@
 mod common;
 
 use application::ports::events::DomainEvent;
-use application::testing::llm::ScriptedResponse;
+use application_testing::llm::ScriptedResponse;
 use common::Agent;
 use domain::block::{BlockKind, Cell, CustomNode};
 use serde_json::json;

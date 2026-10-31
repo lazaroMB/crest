@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use application::keymap::Action;
 use application::ports::events::{DomainEvent, EventSink};
-use application::testing::system::RecordingSink;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, ToolStatus};
 use gpui::{App, AppContext as _, Entity, Window};
 use serde_json::json;

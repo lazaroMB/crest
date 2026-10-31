@@ -1,5 +1,5 @@
 use application::ports::events::DomainEvent;
-use application::testing::sim;
+use application_testing::sim;
 use domain::sysmodel::{Board, SysModel, run_all};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, size};
 

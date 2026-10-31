@@ -7,7 +7,7 @@ use std::sync::Arc;
 use adapter_lua::{HostOptions, LuaHost};
 use application::ports::events::{DomainEvent, EventSink};
 use application::ports::plugin::{ConfigSources, PluginAction, PluginHostPort, PluginOutput};
-use application::testing::system::RecordingSink;
+use application_testing::system::RecordingSink;
 use domain::block::{BlockKind, CustomNode};
 use serde_json::json;
 

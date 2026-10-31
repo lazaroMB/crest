@@ -2389,15 +2389,15 @@ mod tests {
 
     use application::ports::events::EventSink;
     use application::ports::form::FormPort;
-    use application::testing::fs::{InMemoryFs, ScriptedShell, test_root};
-    use application::testing::llm::{ScriptedLlm, ScriptedResponse};
-    use application::testing::permissions::MemoryPermissionStore;
-    use application::testing::system::{RecordingSink, RecordingTelemetry};
     use application::tools::files::{FileToolPorts, register_file_tools};
     use application::tools::registry::ToolRegistry;
     use application::usecases::approval::SharedPermissions;
     use application::usecases::permissions::ProjectRules;
     use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
+    use application_testing::fs::{InMemoryFs, ScriptedShell, test_root};
+    use application_testing::llm::{ScriptedLlm, ScriptedResponse};
+    use application_testing::permissions::MemoryPermissionStore;
+    use application_testing::system::{RecordingSink, RecordingTelemetry};
     use domain::block::ToolStatus;
     use domain::conversation::ContentPart;
     use domain::conversation::Session as Conversation;

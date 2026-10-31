@@ -226,8 +226,8 @@ pub(crate) fn function(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<mlua::Fu
 
 #[cfg(test)]
 mod tests {
-    use application::testing::form::ScriptedForm;
-    use application::testing::system::RecordingSink;
+    use application_testing::form::ScriptedForm;
+    use application_testing::system::RecordingSink;
     use serde_json::json;
 
     use super::*;
