@@ -68,7 +68,7 @@ use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::block::Block;
 use domain::conversation::{Session, SessionId};
-use domain::model::{Account, BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
+use domain::model::{BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -568,8 +568,11 @@ pub async fn build_app(
     *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
     let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
-    warnings.extend(search.check_tools().await.problems());
 
+    // The steps below do not depend on each other: they run together, and
+    // their warnings are added in a fixed order afterwards. Files and the
+    // keyring are read on the blocking pool; the keyring in one task (see
+    // `SecretsWanted::read`).
     // A scripted model (tests) only sees the preferences it is given.
     let preferences_path = overrides.preferences_path.clone().or_else(|| {
         overrides
@@ -578,43 +581,100 @@ pub async fn build_app(
             .then(preferences::default_path)
             .flatten()
     });
-    let preferences = match preferences_path.as_deref().map(Preferences::load) {
-        Some(Ok(preferences)) => preferences,
-        Some(Err(err)) => {
-            warnings.push(format!("the saved preferences were ignored: {err}"));
-            Preferences::default()
-        }
-        None => Preferences::default(),
+    let preferences_task = tokio::task::spawn_blocking({
+        let path = preferences_path.clone();
+        move || path.as_deref().map(Preferences::load)
+    });
+    let store_task = tokio::task::spawn_blocking({
+        let path = overrides.db_path.clone();
+        move || open_store(path.as_deref())
+    });
+    let wanted = startup::SecretsWanted {
+        models: overrides.llm.is_none(),
+        ..startup::SecretsWanted::for_options(
+            &loaded.options,
+            overrides.decision.as_ref(),
+            overrides.web.as_ref(),
+        )
     };
-    let (llm, catalog, default_provider) = model_ports(
-        &overrides,
-        &loaded.options,
-        &preferences,
-        preferences_path.as_deref(),
-        &mut warnings,
-    )
-    .await?;
-    let defaults = if default_provider == ProviderId::Anthropic {
-        BuiltinDefaults::Claude
-    } else {
-        BuiltinDefaults::None
-    };
-    let selected = preferences.models.get(&default_provider).cloned();
-    let mut policy = loaded.model_policy().with_selection(selected, defaults);
-    if policy.needs_selection() {
-        warnings.push(format!(
-            "no model is selected for {default_provider}: pick one with /model"
-        ));
+    let secrets_task = tokio::task::spawn_blocking(move || wanted.read());
+    let (tool_report, secrets) = tokio::join!(search.check_tools(), secrets_task);
+    let secrets = secrets.context("reading the API keys")?;
+    if overrides.llm.is_none() && secrets.anthropic.is_none() && secrets.opencode.is_none() {
+        return Err(MissingApiKey.into());
     }
-    let catalog_for_picker = catalog.clone();
-    if let Some(catalog) = catalog {
-        let (checked, model_warnings) =
-            startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
-        policy = checked;
-        warnings.extend(model_warnings);
-    }
+    warnings.extend(tool_report.problems());
 
-    let store = match open_store(overrides.db_path.as_deref()) {
+    let mcp_trust = TrustOptions {
+        store: overrides
+            .mcp_trust_path
+            .clone()
+            .or_else(mcp::default_trust_path),
+        trust_now: config.trust_mcp.clone(),
+    };
+    let startup::StartupSecrets {
+        anthropic,
+        opencode,
+        decision: decision_secrets,
+        brave,
+    } = secrets;
+    let models = async {
+        let mut warnings = Vec::new();
+        let preferences = match preferences_task.await.ok().flatten() {
+            Some(Ok(preferences)) => preferences,
+            Some(Err(err)) => {
+                warnings.push(format!("the saved preferences were ignored: {err}"));
+                Preferences::default()
+            }
+            None => Preferences::default(),
+        };
+        let (llm, catalog, default_provider) = model_ports(
+            &overrides,
+            &loaded.options,
+            &preferences,
+            preferences_path.as_deref(),
+            (anthropic, opencode),
+            &mut warnings,
+        )
+        .await?;
+        let defaults = if default_provider == ProviderId::Anthropic {
+            BuiltinDefaults::Claude
+        } else {
+            BuiltinDefaults::None
+        };
+        let selected = preferences.models.get(&default_provider).cloned();
+        let mut policy = loaded.model_policy().with_selection(selected, defaults);
+        if policy.needs_selection() {
+            warnings.push(format!(
+                "no model is selected for {default_provider}: pick one with /model"
+            ));
+        }
+        if let Some(catalog) = &catalog {
+            let (checked, model_warnings) =
+                startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
+            policy = checked;
+            warnings.extend(model_warnings);
+        }
+        anyhow::Ok((llm, catalog, default_provider, policy, warnings))
+    };
+    let mcp_servers = mcp::connect(
+        loaded.mcp_servers.clone(),
+        root.as_path(),
+        &mcp_trust,
+        mcp::READY_TIMEOUT,
+        Some(Arc::clone(&events)),
+    );
+    let (models, (web, web_warnings), (connected_mcp, mcp_warnings), store) = tokio::join!(
+        models,
+        startup::web_tools(&loaded.options, overrides.web.clone(), brave),
+        mcp_servers,
+        store_task,
+    );
+    let (llm, catalog, default_provider, policy, model_warnings) = models?;
+    warnings.extend(model_warnings);
+    let catalog_for_picker = catalog;
+
+    let store = match store.context("opening the session store")? {
         Ok(store) => Some(Arc::new(store) as Arc<dyn SessionStorePort>),
         Err(err) => {
             warnings.push(format!("the session will not be saved: {err}"));
@@ -639,10 +699,12 @@ pub async fn build_app(
     let shell: Arc<dyn ShellPort> =
         Arc::new(LocalShell::new(root.clone()).with_line_shell(line_shell));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
-    let (web, web_warnings) = startup::web_tools(&loaded.options, overrides.web.clone()).await;
     warnings.extend(web_warnings);
-    let (decider, decider_warnings) =
-        startup::decider(&loaded.options, overrides.decision.clone()).await;
+    let (decider, decider_warnings) = startup::decider(
+        &loaded.options,
+        overrides.decision.clone(),
+        decision_secrets,
+    );
     warnings.extend(decider_warnings);
     let (redactor, privacy_warning) = startup::redactor(&loaded.options);
     warnings.extend(privacy_warning);
@@ -736,23 +798,11 @@ pub async fn build_app(
         }
     }
 
-    let trust = TrustOptions {
-        store: overrides
-            .mcp_trust_path
-            .clone()
-            .or_else(mcp::default_trust_path),
-        trust_now: config.trust_mcp.clone(),
-    };
-    let mcp_trust_path = trust.store.clone();
-    let (mcp, mcp_warnings) = mcp::start(
-        loaded.mcp_servers.clone(),
-        root.as_path(),
-        &trust,
-        mcp::READY_TIMEOUT,
-        &mut tools,
-        Some(Arc::clone(&events)),
-    )
-    .await;
+    let mcp_trust_path = mcp_trust.store;
+    let mcp = connected_mcp.map(|(servers, source)| {
+        tools.add_source(source);
+        servers
+    });
     warnings.extend(mcp_warnings);
 
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
@@ -1055,6 +1105,7 @@ async fn model_ports(
     options: &AppOptions,
     preferences: &Preferences,
     preferences_path: Option<&Path>,
+    keys: (Option<ApiKey>, Option<String>),
     warnings: &mut Vec<String>,
 ) -> anyhow::Result<ModelPorts> {
     let providers = ProvidersOptions::from_options(options).unwrap_or_else(|err| {
@@ -1066,15 +1117,7 @@ async fn model_ports(
         let default = effective_default(providers.default, None, &[]);
         return Ok((Arc::clone(llm), overrides.catalog.clone(), default));
     }
-    // The keyring may block (D-Bus, Keychain).
-    let (anthropic, opencode) = tokio::task::spawn_blocking(|| {
-        (
-            ApiKey::from_env_or_keyring().ok(),
-            crate::credentials::stored_key(Account::OpenCode),
-        )
-    })
-    .await
-    .context("reading the API keys")?;
+    let (anthropic, opencode) = keys;
     // A plan left unknown (offline, a timeout) is asked again at each start.
     let access = match (&opencode, preferences.opencode_access) {
         (Some(key), saved) if saved.is_none_or(|a| !a.is_complete()) => {
