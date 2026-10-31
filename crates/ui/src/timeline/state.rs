@@ -86,6 +86,20 @@ fn has_slots(markdown: &str) -> bool {
     markdown.contains('⟦') || markdown.contains("[[calc:")
 }
 
+/// Whether the last `appended` bytes of a text block, with the few bytes
+/// before them a slot marker may have started in, hold a slot marker.
+fn appended_slot(kind: &BlockKind, appended: usize) -> bool {
+    let BlockKind::Text { markdown } = kind else {
+        return false;
+    };
+    // The longest marker, `[[calc:`, can start 6 bytes before the delta.
+    let mut start = markdown.len().saturating_sub(appended + 6);
+    while !markdown.is_char_boundary(start) {
+        start -= 1;
+    }
+    has_slots(&markdown[start..])
+}
+
 /// Whether blocks of this kind have an alternate view for `t`.
 pub fn has_alt_view(kind: &BlockKind) -> bool {
     matches!(
@@ -231,7 +245,13 @@ impl TimelineState {
                     }
                     _ => false,
                 });
-                if let TimelineChange::Updated(ix) = change {
+                // A text without slots so far gains one only if the new
+                // tail has one: only that is scanned, not the whole reply on
+                // every delta.
+                if let TimelineChange::Updated(ix) = change
+                    && (self.entries[ix].numbers.resolved.is_some()
+                        || appended_slot(&self.entries[ix].block.kind, text.len()))
+                {
                     self.resolve(ix);
                 }
                 change
@@ -880,6 +900,39 @@ mod tests {
         let plain = text("no slots here");
         state.apply(&added(&plain));
         assert_eq!(numbers(&state, 3).resolved, None);
+    }
+
+    #[test]
+    fn streamed_slots_resolve_even_when_a_delta_splits_the_marker() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&computed("st_1", "p_value", ".030")));
+        let reply = text("");
+        state.apply(&added(&reply));
+        let mut delta = |text: &str| {
+            state.apply(&DomainEvent::TextDelta {
+                block_id: reply.id,
+                text: text.into(),
+            });
+        };
+        delta("p is ");
+        delta("[[ca");
+        delta("lc:st_1.p_value]] ");
+        delta("and that is all");
+        assert_eq!(
+            numbers(&state, 1).resolved.as_deref(),
+            Some("p is .030 and that is all")
+        );
+
+        let mut state = TimelineState::new();
+        let reply = text("");
+        state.apply(&added(&reply));
+        for piece in ["plain ", "é", "text"] {
+            state.apply(&DomainEvent::TextDelta {
+                block_id: reply.id,
+                text: piece.into(),
+            });
+        }
+        assert_eq!(numbers(&state, 0).resolved, None);
     }
 
     #[test]
