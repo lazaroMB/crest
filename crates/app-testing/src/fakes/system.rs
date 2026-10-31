@@ -400,9 +400,9 @@ impl InMemorySessionStore {
 
 #[async_trait]
 impl SessionStorePort for InMemorySessionStore {
-    async fn save(&self, session: &StoredSession) -> Result<(), StoreError> {
+    async fn save(&self, session: StoredSession) -> Result<(), StoreError> {
         self.check_failure()?;
-        lock(&self.sessions).insert(session.session.id, session.clone());
+        lock(&self.sessions).insert(session.session.id, session);
         Ok(())
     }
 
@@ -476,7 +476,7 @@ mod store_tests {
     async fn recent_workspaces_are_grouped_and_newest_first() {
         let store = InMemorySessionStore::new();
         for (root, at) in [("/a", 5), ("/b", 9), ("/a", 12), ("/c", 1)] {
-            store.save(&stored(root, at)).await.unwrap();
+            store.save(stored(root, at)).await.unwrap();
         }
         let recent = store.recent_workspaces(2).await.unwrap();
         let roots: Vec<(&str, u64)> = recent
@@ -490,7 +490,7 @@ mod store_tests {
     async fn save_then_load_round_trips() {
         let store: Arc<dyn SessionStorePort> = Arc::new(InMemorySessionStore::new());
         let session = stored("/ws", 1);
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
         assert_eq!(store.load(session.session.id).await.unwrap(), session);
     }
 
@@ -498,9 +498,9 @@ mod store_tests {
     async fn save_replaces_the_same_id() {
         let store = InMemorySessionStore::new();
         let mut session = stored("/ws", 1);
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
         session.session.title = Some("renamed".into());
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
         assert_eq!(store.len(), 1);
         let loaded = store.load(session.session.id).await.unwrap();
         assert_eq!(loaded.session.title.as_deref(), Some("renamed"));
@@ -521,7 +521,7 @@ mod store_tests {
         let new = stored("/ws", 5);
         let other = stored("/other", 9);
         for s in [&old, &new, &other] {
-            store.save(s).await.unwrap();
+            store.save(s.clone()).await.unwrap();
         }
         let ids: Vec<_> = store
             .list("/ws")
@@ -540,7 +540,7 @@ mod store_tests {
     async fn delete_removes_the_session() {
         let store = InMemorySessionStore::new();
         let session = stored("/ws", 1);
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
         store.delete(session.session.id).await.unwrap();
         assert!(store.is_empty());
         assert!(store.list("/ws").await.unwrap().is_empty());
@@ -552,11 +552,11 @@ mod store_tests {
         store.fail_next(StoreError::Backend("disk full".into()));
         let session = stored("/ws", 1);
         assert_eq!(
-            store.save(&session).await,
+            store.save(session.clone()).await,
             Err(StoreError::Backend("disk full".into()))
         );
         assert!(store.is_empty());
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
     }
 }
 

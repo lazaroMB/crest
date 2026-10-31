@@ -2128,7 +2128,7 @@ impl ProjectOpener for Launcher {
                 };
                 let mut stored = store.load(id).await.map_err(|err| err.to_string())?;
                 stored.session.title = Some(title);
-                store.save(&stored).await.map_err(|err| err.to_string())
+                store.save(stored).await.map_err(|err| err.to_string())
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()
