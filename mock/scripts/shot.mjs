@@ -7,11 +7,12 @@
 //
 // The last argument is typed into the prompt, or run in the page when it starts with "js:".
 // Writes shots/<name>.png and prints the page's console errors. Needs `npm run dev`.
+// CHROME=/usr/bin/chromium picks another browser (the default is macOS Chrome).
 
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9333;
 const [name = "shot", query = "", wait = "2000", keys = ""] = process.argv.slice(2);
 

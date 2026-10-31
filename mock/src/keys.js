@@ -6,10 +6,34 @@
 //   Ctrl+G …       the leader: s chats · e tree · O outline · p permission mode
 //   in the timeline: j/k ↑/↓ move · gg/G ends · o/Enter expand · t chart/table · y copy
 //   in an approval: y s p e n answer · ↑/↓ + Enter · Esc rejects
+//   Ctrl+G m       the MCP servers modal: ↑↓ server · Tab tabs · a e d t r l · Space on/off · Esc close
 //
 // Browsers keep Ctrl+Tab for their own tabs, so F6 does the same.
 
-import { approve, copySelected, cycleMode, interrupt, moveSelection, notice, selectEdge, toggleAltView, toggleExpanded } from "./actions.js";
+import {
+  approve,
+  askDeleteMcp,
+  cancelDeleteMcp,
+  cancelMcpForm,
+  closeMcp,
+  copySelected,
+  cycleMcpTab,
+  cycleMode,
+  deleteMcp,
+  interrupt,
+  loginMcp,
+  moveMcp,
+  moveSelection,
+  notice,
+  runMcp,
+  saveMcpForm,
+  selectEdge,
+  startMcpForm,
+  toggleAltView,
+  toggleExpanded,
+  toggleMcpEnabled,
+  toggleMcpModal,
+} from "./actions.js";
 import { APPROVAL_OPTIONS } from "./components/approval-dialog/approval-dialog.js";
 import { setUi, state } from "./store.js";
 
@@ -39,12 +63,54 @@ function onApproval(e) {
   if (e.key === "Escape") return approve("reject");
 }
 
+/** The MCP modal takes the keys while it is open; inputs keep theirs except Esc and Ctrl+Enter. */
+function onMcp(e, typing) {
+  const ui = state.ui.mcp;
+  const name = ui.selected;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    if (typing) return document.activeElement.blur();
+    if (ui.form) return cancelMcpForm();
+    if (ui.confirmDelete) return cancelDeleteMcp();
+    return closeMcp();
+  }
+  if (ui.form) {
+    if (e.ctrlKey && e.key === "Enter") {
+      e.preventDefault();
+      saveMcpForm();
+    }
+    return;
+  }
+  if (typing) return;
+  if (ui.confirmDelete && e.key === "Enter") return deleteMcp(name);
+  const keys = {
+    ArrowDown: () => moveMcp(1),
+    j: () => moveMcp(1),
+    ArrowUp: () => moveMcp(-1),
+    k: () => moveMcp(-1),
+    Tab: () => cycleMcpTab(e.shiftKey ? -1 : 1),
+    a: () => startMcpForm(),
+    e: () => name && startMcpForm(name),
+    d: askDeleteMcp,
+    t: () => name && runMcp(name, "test"),
+    r: () => name && runMcp(name, "restart"),
+    l: () => name && loginMcp(name),
+    " ": () => name && toggleMcpEnabled(name),
+    "/": () => document.querySelector('[data-key="mcp-filter"]')?.focus(),
+  };
+  const action = keys[e.key];
+  if (!action || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  action();
+}
+
 function onLeader(e) {
   const actions = {
     s: () => setUi({ chatsShown: !state.ui.chatsShown }),
     e: () => setUi({ treeShown: !state.ui.treeShown }),
     O: () => setUi({ outlineOpen: !state.ui.outlineOpen }),
     p: cycleMode,
+    m: toggleMcpModal,
   };
   (actions[e.key] ?? (() => notice("warning", `<C-g>${e.key} is not in the mock yet`)))();
 }
@@ -83,6 +149,8 @@ export function bindKeys(prompt) {
       e.preventDefault();
       return onApproval(e);
     }
+
+    if (state.ui.mcp.open && !leader && !(e.ctrlKey && e.key === "g")) return onMcp(e, typing);
 
     if (e.ctrlKey && e.key === "c" && !window.getSelection()?.toString()) {
       e.preventDefault();

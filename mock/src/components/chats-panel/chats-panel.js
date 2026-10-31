@@ -1,8 +1,10 @@
 // The Chats sidebar (crates/ui/src/chats.rs): every project and its chats.
 // A click opens a chat, a right click opens its menu (rename, delete).
+// Its footer, as tall as the prompt and status bar beside it, opens the MCP servers.
 
 import { h } from "../../lib/h.js";
-import { deleteChat, newChat, openChat, renameChat, toggleProject } from "../../actions.js";
+import { deleteChat, newChat, openChat, openMcp, renameChat, toggleProject } from "../../actions.js";
+import { Dot } from "../mcp-manager/mcp-manager.js";
 import { setUi } from "../../store.js";
 import "./chats-panel.scss";
 
@@ -82,6 +84,43 @@ function ProjectGroup(project, state) {
   );
 }
 
+/** The worst state of the enabled servers decides the footer's dot. */
+function mcpSummary(servers) {
+  const count = (state) => servers.filter((s) => s.state === state).length;
+  const ready = count("ready");
+  const login = count("needs-login") + count("untrusted");
+  const failed = count("failed");
+  const starting = count("starting");
+  const dot = failed ? "failed" : login ? "needs-login" : starting ? "starting" : ready ? "ready" : "disabled";
+  const parts = [
+    ready && `${ready} ok`,
+    starting && `${starting} starting`,
+    login && h("span", { class: "chats-dock__warn" }, `${login} need you`),
+    failed && h("span", { class: "chats-dock__error" }, `${failed} failed`),
+  ].filter(Boolean);
+  return { dot, parts };
+}
+
+function McpDock(state) {
+  const { dot, parts } = mcpSummary(state.mcp);
+  return h(
+    "div",
+    { class: "chats-dock" },
+    h(
+      "button",
+      { class: ["chats-dock__button", state.ui.mcp.open && "chats-dock__button--open"], title: "MCP servers (<C-g>m · /mcp)", onClick: () => openMcp() },
+      Dot(dot),
+      h("span", { class: "chats-dock__label" }, "MCP servers"),
+      h("span", { class: "chats-dock__count" }, state.mcp.length),
+    ),
+    h(
+      "div",
+      { class: "chats-dock__status" },
+      parts.length ? parts.flatMap((p, i) => (i ? [h("span", { class: "sep" }, " · "), p] : [p])) : h("span", { class: "muted" }, "none yet · add one"),
+    ),
+  );
+}
+
 export function ChatsPanel(state) {
   return h(
     "aside",
@@ -95,5 +134,6 @@ export function ChatsPanel(state) {
         ? state.projects.map((project) => ProjectGroup(project, state))
         : h("div", { class: "chats__empty" }, "No chats yet"),
     ),
+    McpDock(state),
   );
 }

@@ -10,8 +10,10 @@
 //   POST   /api/approval/:id        { choice: once|session|project|all-edits|reject }
 //   POST   /api/interrupt/:chatId
 //   PATCH  /api/status              { mode?, model? }
+//   /api/mcp…                       the MCP servers (server/mcp.js)
 
 import { chats, commands, projects, status } from "./data.js";
+import { mcpRoutes } from "./mcp.js";
 import { pickScenario } from "./scenarios.js";
 
 class Interrupted extends Error {}
@@ -186,6 +188,7 @@ const routes = [
       send(res, status);
     },
   ],
+  ...mcpRoutes({ send, readBody }),
 ];
 
 export function mockApi() {
@@ -198,7 +201,7 @@ export function mockApi() {
           const match = path.match(pattern);
           if (!match || req.method !== method) continue;
           try {
-            await handler(req, res, match[1]);
+            await handler(req, res, ...match.slice(1));
           } catch (error) {
             server.config.logger.error(String(error?.stack ?? error));
             if (!res.headersSent) send(res, { error: String(error) }, 500);

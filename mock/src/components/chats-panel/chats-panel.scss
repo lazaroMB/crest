@@ -135,3 +135,62 @@
     color: var(--muted-fg);
   }
 }
+
+// The MCP footer. `--dock-height` (set by app.js) is the height of the prompt
+// row and the status bar beside it, so the borders line up across the window.
+.chats-dock {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  height: var(--dock-height, 64px);
+  border-top: 1px solid var(--border);
+
+  &__button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    margin: 4px;
+    padding: 0 8px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+
+    &:hover,
+    &--open {
+      background: var(--list-selected-bg);
+    }
+  }
+
+  &__label {
+    flex: 1;
+  }
+
+  &__count {
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--button-bg);
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  // As tall as the status bar, in its colors.
+  &__status {
+    height: var(--status-height, 26px);
+    padding: 4px 8px;
+    border-top: 1px solid var(--border);
+    background: var(--title-bar-bg);
+    font-size: var(--text-sm);
+    color: var(--muted-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__warn {
+    color: var(--warning);
+  }
+
+  &__error {
+    color: var(--error);
+  }
+}

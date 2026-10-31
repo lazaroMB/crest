@@ -344,9 +344,164 @@ export const commands = [
   { usage: "/flow [answer]", description: "Back to the waiting flow: answers it" },
   { usage: "/permissions", description: "List and remove the permission rules" },
   { usage: "/theme", description: "Pick a theme, previewed in the window" },
-  { usage: "/mcp [tools|restart|login|trust <name>]", description: "List the MCP servers with their state" },
+  { usage: "/mcp", description: "Manage the MCP servers: add, edit, test, log in, enable…" },
+  { usage: "/mcp add", description: "Add an MCP server (stdio or http), applied without a restart" },
+  { usage: "/mcp tools <name>", description: "The tools of an MCP server" },
+  { usage: "/mcp [test|restart|login|logout|trust|enable|disable|remove] <name>", description: "Act on one MCP server" },
   { usage: "/plugin list", description: "List the plugins that declare capabilities" },
   { usage: "/login", description: "Store your API key in the system keyring" },
   { usage: "/logout", description: "Delete the API key from the system keyring" },
   { usage: "/q", description: "Quit crest (also /quit and /qa)" },
+];
+
+// MCP servers (crates/adapters/mcp): what `/mcp` lists, with their tools.
+// `source` says who declared it: "init.lua" (read-only here) or "crest" (made in the UI).
+
+const tool = (name, description, params = []) => ({ name, description, params });
+const param = (name, type, description, required = true) => ({ name, type, description, required });
+
+export const MCP_TOOLS = {
+  github: [
+    tool("search_repositories", "Search GitHub repositories", [param("query", "string", "GitHub search syntax"), param("per_page", "number", "Results per page", false)]),
+    tool("get_file_contents", "Read a file or directory from a repository", [param("owner", "string", "Repository owner"), param("repo", "string", "Repository name"), param("path", "string", "Path in the repository")]),
+    tool("create_issue", "Open an issue", [param("owner", "string", "Repository owner"), param("repo", "string", "Repository name"), param("title", "string", "Issue title"), param("body", "string", "Markdown body", false)]),
+    tool("list_issues", "List the issues of a repository", [param("owner", "string", "Repository owner"), param("repo", "string", "Repository name"), param("state", "open | closed | all", "Filter by state", false)]),
+    tool("create_pull_request", "Open a pull request", [param("owner", "string", "Repository owner"), param("repo", "string", "Repository name"), param("head", "string", "Branch with the changes"), param("base", "string", "Branch to merge into")]),
+    tool("get_pull_request_diff", "The unified diff of a pull request", [param("owner", "string", "Repository owner"), param("repo", "string", "Repository name"), param("number", "number", "Pull request number")]),
+    tool("add_issue_comment", "Comment on an issue or pull request", [param("number", "number", "Issue number"), param("body", "string", "Markdown body")]),
+    tool("list_commits", "Commits of a branch", [param("sha", "string", "Branch or commit", false)]),
+  ],
+  filesystem: [
+    tool("read_file", "Read a file as text", [param("path", "string", "Path inside an allowed directory")]),
+    tool("write_file", "Create or overwrite a file", [param("path", "string", "Path"), param("content", "string", "New contents")]),
+    tool("list_directory", "Entries of a directory", [param("path", "string", "Directory")]),
+    tool("search_files", "Find files by glob", [param("path", "string", "Where to start"), param("pattern", "string", "Glob")]),
+    tool("get_file_info", "Size, times and permissions", [param("path", "string", "Path")]),
+    tool("move_file", "Move or rename", [param("source", "string", "From"), param("destination", "string", "To")]),
+  ],
+  linear: [
+    tool("list_issues", "Issues assigned to you or matching a filter", [param("filter", "string", "Linear filter", false)]),
+    tool("create_issue", "Create an issue in a team", [param("team", "string", "Team key"), param("title", "string", "Title")]),
+    tool("update_issue", "Change status, assignee or estimate", [param("id", "string", "Issue id")]),
+  ],
+  postgres: [
+    tool("query", "Run a read-only SQL query", [param("sql", "string", "SQL")]),
+    tool("list_tables", "Tables of a schema", [param("schema", "string", "Schema", false)]),
+  ],
+  "repo-tools": [
+    tool("run_migrations", "Apply the pending database migrations"),
+    tool("seed", "Load the development fixtures", [param("profile", "string", "Fixture profile", false)]),
+  ],
+  browser: [
+    tool("navigate", "Open a URL", [param("url", "string", "URL")]),
+    tool("screenshot", "Capture the page", [param("full_page", "boolean", "Whole page", false)]),
+    tool("click", "Click an element", [param("selector", "string", "CSS selector")]),
+  ],
+};
+
+const at = (minutesAgo) => Date.now() - minutesAgo * 60_000;
+
+export const mcpServers = [
+  {
+    name: "github",
+    transport: "http",
+    origin: "global",
+    source: "crest",
+    effect: "network",
+    timeout: 60,
+    startupTimeout: 30,
+    config: {
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: [],
+      oauth: { clientId: "", clientSecret: "", scopes: "repo read:org", callbackPort: "" },
+    },
+    state: "ready",
+    authed: true,
+    log: [
+      { at: at(42), level: "info", text: "connected · 8 tools" },
+      { at: at(43), level: "info", text: "logged in as lazaro (oauth)" },
+    ],
+  },
+  {
+    name: "filesystem",
+    transport: "stdio",
+    origin: "global",
+    source: "init.lua",
+    effect: "write",
+    timeout: 30,
+    startupTimeout: 10,
+    config: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "~/Projects"],
+      env: [],
+      cwd: "",
+    },
+    state: "ready",
+    log: [{ at: at(42), level: "info", text: "connected · 6 tools" }],
+  },
+  {
+    name: "linear",
+    transport: "http",
+    origin: "global",
+    source: "crest",
+    effect: "network",
+    timeout: 60,
+    startupTimeout: 30,
+    config: { url: "https://mcp.linear.app/mcp", headers: [], oauth: { clientId: "", clientSecret: "", scopes: "", callbackPort: "" } },
+    state: "needs-login",
+    message: "the server answered 401: log in to authorize crest",
+    log: [{ at: at(42), level: "warning", text: "401 Unauthorized · needs login" }],
+  },
+  {
+    name: "postgres",
+    transport: "stdio",
+    origin: "workspace",
+    source: "crest",
+    effect: "read",
+    timeout: 30,
+    startupTimeout: 10,
+    config: {
+      command: "uvx",
+      args: ["mcp-server-postgres", "${DATABASE_URL}"],
+      env: [{ key: "DATABASE_URL", value: "${DATABASE_URL:-postgres://localhost:5432/app}" }],
+      cwd: "",
+    },
+    state: "failed",
+    message: "the server exited during startup (code 1)",
+    stderr: [
+      "Traceback (most recent call last):",
+      '  File "server.py", line 31, in connect',
+      "psycopg.OperationalError: connection to server at \"localhost\" (::1), port 5432 failed:",
+      "Connection refused. Is the server running on that host and accepting TCP/IP connections?",
+    ],
+    log: [
+      { at: at(41), level: "error", text: "retry failed: exited with code 1" },
+      { at: at(42), level: "error", text: "exited with code 1 · connection refused" },
+    ],
+  },
+  {
+    name: "repo-tools",
+    transport: "stdio",
+    origin: "workspace",
+    source: "init.lua",
+    effect: "execute",
+    timeout: 120,
+    startupTimeout: 20,
+    config: { command: "./scripts/mcp-server", args: ["--stdio"], env: [{ key: "APP_ENV", value: "development" }], cwd: "." },
+    state: "untrusted",
+    message: "declared by this workspace (.crest/init.lua): approve the command before it runs",
+    log: [],
+  },
+  {
+    name: "browser",
+    transport: "stdio",
+    origin: "global",
+    source: "crest",
+    effect: "network",
+    timeout: 60,
+    startupTimeout: 20,
+    config: { command: "npx", args: ["-y", "@playwright/mcp@latest", "--headless"], env: [], cwd: "" },
+    state: "disabled",
+    log: [{ at: at(60 * 24), level: "info", text: "disabled" }],
+  },
 ];

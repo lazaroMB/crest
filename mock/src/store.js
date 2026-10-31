@@ -7,6 +7,7 @@ export const state = {
   status: null, // { model, mode, cost, git, workspace }
   commands: [],
   notice: null, // { level, text }
+  mcp: [], // the MCP servers: { name, transport, origin, source, state, message, config, tools, log, … }
 
   turn: {
     chatId: null,
@@ -30,6 +31,19 @@ export const state = {
     altView: {}, // block id -> true when a chart shows its table
     outlineOpen: false,
     approvalIndex: 0,
+    mcp: {
+      open: false,
+      selected: null, // server name
+      tab: "overview", // overview | tools | log
+      filter: "",
+      toolFilter: "",
+      openTool: null, // the tool name whose arguments are shown
+      form: null, // { mode: "add" | "edit", name, draft, error, test, testing, oauthOpen }
+      confirmDelete: false,
+      pending: {}, // server name -> "test" | "login" | "restart" | …
+      results: {}, // server name -> { ok, text } of its last test or login
+      revealed: {}, // "server/key" -> true when a secret value is shown
+    },
   },
 };
 
