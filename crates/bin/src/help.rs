@@ -595,7 +595,7 @@ pub fn snapshot(
     let registry = &source.tools;
     let mut tools: Vec<ToolRow> = registry
         .definitions()
-        .into_iter()
+        .iter()
         .map(|def| {
             let plugin = source.plugin_tools.iter().find(|t| t.name == def.name);
             let (source, effect) = if let Some(spec) = plugin {

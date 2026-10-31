@@ -927,7 +927,7 @@ enum GateStep {
         input: Value,
         prepared: PreparedCall,
         extra: Option<Block>,
-        pending: PendingApproval,
+        pending: Box<PendingApproval>,
     },
 }
 
@@ -1595,7 +1595,7 @@ impl TurnRun<'_> {
                 let verdict = self
                     .service
                     .gate
-                    .ask(pending, self.service.deps.events.as_ref())
+                    .ask(*pending, self.service.deps.events.as_ref())
                     .await;
                 match verdict {
                     UserVerdict::Approved => {
@@ -1693,13 +1693,13 @@ impl TurnRun<'_> {
                 if let Some(block) = &mut extra {
                     self.set_diff_approval(block, ApprovalState::Pending);
                 }
-                let pending = PendingApproval {
+                let pending = Box::new(PendingApproval {
                     action,
                     tool_use_id: ctx.tool_use_id.clone(),
                     preview: prepared.preview.take(),
                     tool_block: block_id,
                     shown_in: extra.as_ref().map_or(block_id, |block| block.id),
-                };
+                });
                 GateStep::Ask {
                     input,
                     prepared,
