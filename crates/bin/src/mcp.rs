@@ -363,6 +363,24 @@ pub async fn start(
     registry: &mut ToolRegistry,
     events: Option<Arc<dyn EventSink>>,
 ) -> (Option<McpServers>, Vec<String>) {
+    let (connected, warnings) = connect(specs, workspace, trust, ready_timeout, events).await;
+    let servers = connected.map(|(servers, source)| {
+        registry.add_source(source);
+        servers
+    });
+    (servers, warnings)
+}
+
+/// [`start`] without a registry: the servers and the source of their
+/// tools, for the caller to add once its registry is built (startup
+/// connects while it does other work).
+pub async fn connect(
+    specs: Vec<McpServerSpec>,
+    workspace: &Path,
+    trust: &TrustOptions,
+    ready_timeout: Duration,
+    events: Option<Arc<dyn EventSink>>,
+) -> (Option<(McpServers, Arc<dyn ToolSource>)>, Vec<String>) {
     let mut warnings = Vec::new();
     let mut store = match trust.store.as_deref().map(TrustStore::load) {
         Some(Ok(store)) => store,
@@ -472,7 +490,7 @@ pub async fn start(
     });
     source.refresh().await;
     changes.mark_unchanged();
-    registry.add_source(source.clone());
+    let tools: Arc<dyn ToolSource> = source.clone();
 
     let watched = Arc::clone(&port);
     let mut last: HashMap<String, McpServerState> = statuses
@@ -496,11 +514,14 @@ pub async fn start(
         }
     });
     (
-        Some(McpServers {
-            manager,
-            port,
-            statuses,
-        }),
+        Some((
+            McpServers {
+                manager,
+                port,
+                statuses,
+            },
+            tools,
+        )),
         warnings,
     )
 }
