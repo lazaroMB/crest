@@ -38,9 +38,15 @@ fmt: ## Format all the code (cargo fmt)
 fmt-check: ## Check formatting without changing files
 	$(CARGO) fmt --all -- --check
 
+# Without --all-features: the default feature set is the one `cargo build`
+# and `cargo test` use, so clippy shares their dependency builds. The two
+# optional features are checked on their own: langfuse (crest and
+# adapter-telemetry) and the UI examples.
 .PHONY: lint
 lint: ## Strict clippy over the whole workspace (-D warnings)
-	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy -p $(PACKAGE) --all-targets --features langfuse -- -D warnings
+	$(CARGO) clippy -p ui --examples --features examples -- -D warnings
 
 # Uses cargo-nextest when installed (faster); nextest does not run
 # doctests, so in that case they run separately with `cargo test --doc`.
@@ -126,3 +132,18 @@ uninstall: ## Remove what `make install` installed (PREFIX=~/.local)
 .PHONY: clean
 clean: ## Delete the build artifacts (cargo clean)
 	$(CARGO) clean
+
+# cargo-sweep (`cargo install cargo-sweep`) deletes the artifacts that no
+# build has used in SWEEP_DAYS days. After a toolchain update, all of
+# target/ is stale: `cargo sweep --installed` keeps only what the installed
+# toolchain built (see docs/development.md).
+SWEEP_DAYS ?= 14
+
+.PHONY: sweep
+sweep: ## Delete build artifacts unused for SWEEP_DAYS days (needs cargo-sweep)
+	@if $(CARGO) sweep --version >/dev/null 2>&1; then \
+		$(CARGO) sweep --time $(SWEEP_DAYS); \
+	else \
+		echo "cargo-sweep is not installed: cargo install cargo-sweep" >&2; \
+		exit 1; \
+	fi

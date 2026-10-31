@@ -118,6 +118,18 @@ docs/                   user and developer guides
 | `make package` | Release tarball in `dist/`. |
 | `make install` / `make uninstall` | Packages the release build and installs it with `scripts/install.sh`: `$(PREFIX)/bin/crest` plus the app menu entry on Linux, `~/Applications/crest.app` on macOS (`PREFIX=~/.local`). |
 | `make clean` | `cargo clean`. |
+| `make sweep` | `cargo sweep --time 14` (`SWEEP_DAYS`): deletes the artifacts no build has used in two weeks. Needs `cargo install cargo-sweep`. |
+
+### Build times and disk
+
+GPUI makes `target/` big and links slow, so the workspace trims both:
+
+- `[profile.dev]` in the root `Cargo.toml`: line tables only for the workspace crates (file and line in backtraces), no debug info and `opt-level = 1` for the dependencies, and optimized build scripts and proc macros.
+- The fakes are a crate of their own (`application-testing`), not a feature, so `cargo build` and `cargo test` build `application` and the crates above it once. `gpui`'s `test-support` feature cannot get the same treatment: it would put test code in the release binary, so `gpui`, `ui` and `crest` are still built twice (once with it, for tests).
+- One integration test binary per crate (`tests/it/`), no doctest pass in `ui`, `crest` and `adapter-formats`, and the UI examples behind `--features examples`.
+- The linker is already LLD: Rust's `x86_64-unknown-linux-gnu` target links with its bundled `rust-lld` (Arch's `rust` package included), so there is no `.cargo/config.toml`.
+
+`make sweep` deletes the artifacts unused for two weeks. If your `rustc` comes from the distribution (Arch's `rust` package rather than rustup), every package update changes the compiler and makes all of `target/` stale: run `cargo sweep --installed` after it, which keeps only what the installed toolchain built.
 
 ### Screenshots
 
@@ -139,7 +151,7 @@ make check   # fmt-check + lint + test + arch + test-arch + test-deps
 | Target | What it runs |
 | --- | --- |
 | `make fmt` / `make fmt-check` | `cargo fmt --all` |
-| `make lint` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
+| `make lint` | `cargo clippy --workspace --all-targets -- -D warnings`, then the optional features on their own: `-p crest --features langfuse` and `-p ui --examples --features examples`. Without `--all-features` clippy builds the same feature set as `cargo build` and `cargo test`. |
 | `make test` | `cargo nextest run --workspace` plus the doctests, if nextest is installed. Otherwise `cargo test --workspace`. |
 | `make test-live` | The `#[ignore]` tests whose name contains `live`, with `ANTHROPIC_LIVE_TEST=1`. Needs `ANTHROPIC_API_KEY` in the environment. |
 | `make arch` / `make test-arch` | `scripts/check-arch.sh` and its fixtures. |
@@ -263,7 +275,7 @@ column range. "context" events are attached to the previous hit.
 
 | Workflow | When | What it does |
 | --- | --- | --- |
-| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
+| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`, split into a lint job (`fmt-check`, `lint`, `arch`, `test-arch`) and a test job that run in parallel, with a Rust cache per job and OS saved only from `main`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
 | `live.yml` | Manual (`workflow_dispatch`) | `make test-live` with the `ANTHROPIC_API_KEY` secret. |
 | `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64`/`aarch64-unknown-linux-gnu` (on ubuntu-22.04 and 22.04-arm, because of glibc) and for `aarch64`/`x86_64-apple-darwin` (signed and notarized by `scripts/sign-macos.sh`), and a zip (`scripts/package.ps1`) for `x86_64-pc-windows-msvc` (signed by SignPath) whose `install.ps1` is tested on the runner. With a tag, it publishes a GitHub Release with checksums, then the Homebrew cask (`scripts/publish-homebrew.sh`) and the winget update (Komac). Each signing or publishing step is skipped without its secret (see the workflow's header). |
 
