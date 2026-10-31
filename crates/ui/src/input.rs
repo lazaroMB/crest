@@ -54,6 +54,8 @@ pub mod paths;
 pub mod theme_popup;
 pub mod tray;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use application::keymap::{
@@ -230,6 +232,14 @@ pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
 /// with what follows the `/`, then names containing it. Empty unless
 /// `text` is a `/` and a partial name (no arguments yet).
 pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a CommandRow> {
+    palette_indices(commands, text)
+        .into_iter()
+        .map(|ix| &commands[ix])
+        .collect()
+}
+
+/// [`palette_matches`] as indices into `commands`.
+fn palette_indices(commands: &[CommandRow], text: &str) -> Vec<usize> {
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
     };
@@ -242,24 +252,26 @@ pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a Co
         // (`/mode ` lists `mode plan`...).
         return commands
             .iter()
-            .filter(|row| {
+            .enumerate()
+            .filter(|(_, row)| {
                 let name = row.name.to_lowercase();
                 name.contains(' ') && name.starts_with(&typed)
             })
+            .map(|(ix, _)| ix)
             .collect();
     }
-    let mut starts: Vec<&CommandRow> = Vec::new();
-    let mut contains: Vec<&CommandRow> = Vec::new();
-    for row in commands {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut contains: Vec<usize> = Vec::new();
+    for (ix, row) in commands.iter().enumerate() {
         let name = row.name.to_lowercase();
         // A row named with its argument (`mode plan`) waits for the space.
         if name.contains(' ') {
             continue;
         }
         if name.starts_with(&typed) {
-            starts.push(row);
+            starts.push(ix);
         } else if name.contains(&typed) {
-            contains.push(row);
+            contains.push(ix);
         }
     }
     starts.append(&mut contains);
@@ -385,7 +397,14 @@ pub struct InputView {
     focus_handle: FocusHandle,
     timeout: Option<Task<()>>,
     queued: bool,
+    /// The editor's text as last read, so that a frame that reads it a few
+    /// times (palette, popups) copies it out of the editor only once per
+    /// change.
+    text: RefCell<SharedString>,
     commands: Vec<CommandRow>,
+    /// The palette rows (indices into `commands`) for a text, worked out
+    /// once per text and command list.
+    palette_rows: RefCell<Option<(SharedString, Rc<[usize]>)>>,
     palette_selected: usize,
     /// First visible row of the `/model ` popup, which scrolls.
     palette_top: usize,
@@ -402,6 +421,8 @@ pub struct InputView {
     /// Whether the `/theme ` popup is showing another theme.
     theme_previewing: bool,
     tray: ImageTray,
+    /// The last paste of images being prepared for the tray.
+    attaching: Option<Task<()>>,
     history: PromptHistory,
     blink: Blink,
     _blink: Task<()>,
@@ -466,7 +487,9 @@ impl InputView {
             focus_handle,
             timeout: None,
             queued: false,
+            text: RefCell::default(),
             commands: Vec::new(),
+            palette_rows: RefCell::default(),
             palette_selected: 0,
             palette_top: 0,
             wheel_rest: 0.0,
@@ -478,6 +501,7 @@ impl InputView {
             current_theme: String::new(),
             theme_previewing: false,
             tray: ImageTray::default(),
+            attaching: None,
             history: PromptHistory::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
@@ -525,7 +549,19 @@ impl InputView {
 
     /// Text of the prompt editor.
     pub fn text(&self, cx: &App) -> String {
-        self.editor.read(cx).value().to_string()
+        self.shared_text(cx).to_string()
+    }
+
+    /// [`Self::text`] without a copy: the editor's text is copied out of
+    /// it only when it differs from the last read (a comparison that
+    /// allocates nothing).
+    fn shared_text(&self, cx: &App) -> SharedString {
+        let editor = self.editor.read(cx);
+        let mut cached = self.text.borrow_mut();
+        if editor.text() != cached.as_ref() {
+            *cached = editor.value();
+        }
+        cached.clone()
     }
 
     /// The keymap in use.
@@ -547,6 +583,7 @@ impl InputView {
     /// The commands the `/` palette offers.
     pub fn set_commands(&mut self, commands: Vec<CommandRow>, cx: &mut Context<Self>) {
         self.commands = commands;
+        self.palette_rows.take();
         cx.notify();
     }
 
@@ -555,7 +592,19 @@ impl InputView {
         if self.palette_hidden {
             return Vec::new();
         }
-        palette_matches(&self.commands, &self.text(cx))
+        let text = self.shared_text(cx);
+        let mut cached = self.palette_rows.borrow_mut();
+        let rows = match cached.as_ref() {
+            Some((key, rows)) if *key == text => Rc::clone(rows),
+            _ => {
+                let rows: Rc<[usize]> = palette_indices(&self.commands, &text).into();
+                *cached = Some((text, Rc::clone(&rows)));
+                rows
+            }
+        };
+        rows.iter()
+            .filter_map(|&ix| self.commands.get(ix))
+            .collect()
     }
 
     /// Lists the directories `@` words name; without it they get no
@@ -569,7 +618,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.paths.popup(&self.text(cx))
+        self.paths.popup(&self.shared_text(cx))
     }
 
     /// Hands the `/model ` popup the models of the providers, or why they
@@ -603,7 +652,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.themes.popup(&self.text(cx))
+        self.themes.popup(&self.shared_text(cx))
     }
 
     fn end_theme_preview(&mut self, cx: &mut Context<Self>) {
@@ -617,7 +666,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.models.popup(&self.text(cx))
+        self.models.popup(&self.shared_text(cx))
     }
 
     /// The images waiting in the tray, in paste order.
@@ -638,10 +687,25 @@ impl InputView {
     }
 
     /// Adds pasted images to the tray; an image that cannot be attached
-    /// is reported with [`InputEvent::Notice`].
+    /// is reported with [`InputEvent::Notice`]. They are checked and
+    /// converted (a bmp re-encoded as png, the base64 of every one) on the
+    /// background executor and land in the tray a moment later, in paste
+    /// order.
     pub fn attach_images(&mut self, images: Vec<gpui::Image>, cx: &mut Context<Self>) {
-        let problems = self.tray.attach(images);
-        self.report(problems, cx);
+        let prepared = cx.background_spawn(async move { tray::prepare(&images) });
+        let previous = self.attaching.take();
+        self.attaching = Some(cx.spawn(async move |this, cx| {
+            let prepared = prepared.await;
+            // An earlier paste lands first.
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            this.update(cx, |this, cx| {
+                let problems = this.tray.add(prepared);
+                this.report(problems, cx);
+            })
+            .ok();
+        }));
     }
 
     /// Puts images back in the tray (a queued prompt taken back to edit).
@@ -1638,6 +1702,8 @@ mod tests {
         cx.simulate_keystrokes("secondary-v");
         clipboard_png(5, cx);
         cx.simulate_keystrokes("secondary-v");
+        // They are prepared in the background.
+        cx.run_until_parked();
         view.read_with(cx, |view, cx| {
             // The typed text stays; the images are in the tray.
             assert_eq!(view.text(cx), "describe");
@@ -1677,6 +1743,7 @@ mod tests {
         // An image that cannot be attached is reported.
         clipboard_png(domain::conversation::MAX_IMAGE_SIDE + 1, cx);
         cx.simulate_keystrokes("secondary-v");
+        cx.run_until_parked();
         assert!(matches!(take(&events).as_slice(), [InputEvent::Notice(m)] if m.contains("px")));
         view.read_with(cx, |view, _| assert!(view.images().is_empty()));
     }
@@ -1686,6 +1753,7 @@ mod tests {
         let (view, cx, _events) = input(cx);
         clipboard_png(4, cx);
         cx.simulate_keystrokes("secondary-v");
+        cx.run_until_parked();
         cx.draw(
             gpui::point(gpui::px(0.), gpui::px(0.)),
             gpui::size(gpui::px(800.), gpui::px(400.)),
