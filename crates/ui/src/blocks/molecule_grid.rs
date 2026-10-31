@@ -527,14 +527,18 @@ impl Render for MoleculeGridView {
 pub fn view(
     id: BlockId,
     spec: &MoleculeGridSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<MoleculeGridView> {
-    let view = super::block_state(id, window, cx, |window, cx| {
-        MoleculeGridView::new(spec, window, cx)
-    });
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| MoleculeGridView::new(spec, window, cx),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -542,7 +546,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::MoleculeGrid(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -672,7 +676,8 @@ mod tests {
         }
         let button = cx.debug_bounds("molecule-grid-sort-mw").unwrap().center();
         cx.simulate_click(button, Modifiers::none());
-        let grid = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let grid =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(grid.read_with(cx, |g, _| g.visible()), [2, 0, 1]);
         grid.update(cx, |g, cx| g.set_filter("logp > 1.5", cx));
         assert_eq!(grid.read_with(cx, |g, _| g.visible()), [0, 1]);

@@ -219,8 +219,8 @@ pub struct ComputedCard {
     recomputing: bool,
     /// Why the last recompute failed.
     error: Option<String>,
-    /// The envelope as JSON, built when first shown.
-    json: Option<Value>,
+    /// The envelope as JSON, built when first shown, and its revision.
+    json: Option<(Value, u64)>,
 }
 
 impl ComputedCard {
@@ -718,11 +718,11 @@ impl Render for ComputedCard {
             );
         }
         if self.raw {
-            let json = self
-                .json
-                .get_or_insert_with(|| serde_json::to_value(&self.envelope).unwrap_or_default())
-                .clone();
-            let view = super::json::json_view(self.id, &json, 2, window, cx);
+            let (json, rev) = self.json.get_or_insert_with(|| {
+                let json = serde_json::to_value(&self.envelope).unwrap_or_default();
+                (json, crate::timeline::next_rev())
+            });
+            let view = super::json::json_view(self.id, json, 2, *rev, window, cx);
             card = card.child(view);
         } else if !failed {
             card = card.children(self.assumptions(cx));
@@ -765,14 +765,18 @@ pub fn card(
     id: BlockId,
     envelope: &Computed,
     body: &ComputedBody,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ComputedCard> {
-    let card = super::block_state(id, window, cx, |_, _| {
-        ComputedCard::new(id, envelope.clone(), body.clone())
-    });
-    card.update(cx, |card, cx| card.sync(envelope, body, cx));
-    card
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| ComputedCard::new(id, envelope.clone(), body.clone()),
+        |card, _, cx| card.sync(envelope, body, cx),
+    )
 }
 
 /// Tells the card of block `id`, if it was drawn, that its recompute
@@ -788,7 +792,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Computed { envelope, body } = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    card(entry.block.id, envelope, body, window, cx).into_any_element()
+    card(entry.block.id, envelope, body, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

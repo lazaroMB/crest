@@ -89,6 +89,9 @@ pub fn misestimate_text(spec: &QueryPlanSpec) -> Vec<String> {
 /// Per-block state: the spec and its tree.
 pub struct QueryPlanView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<QueryPlanSpec>,
     tree: Rc<TreeSpec>,
 }
@@ -103,6 +106,7 @@ impl QueryPlanView {
         ));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             tree: Rc::new(tree),
         }
@@ -174,7 +178,7 @@ impl QueryPlanView {
 impl Render for QueryPlanView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = self.tree.clone();
-        let widget = widgets::tree::render(node_id(self.id, 0), &tree, window, cx);
+        let widget = widgets::tree::render(node_id(self.id, 0), &tree, self.rev, window, cx);
         v_flex()
             .w_full()
             .gap_1()
@@ -188,12 +192,18 @@ impl Render for QueryPlanView {
 pub fn view(
     id: BlockId,
     spec: &QueryPlanSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<QueryPlanView> {
-    let view = super::block_state(id, window, cx, |_, _| QueryPlanView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| QueryPlanView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -201,7 +211,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::QueryPlan(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -283,7 +293,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let plan = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let plan =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             plan.read_with(cx, |p, _| p.tree().title.clone()).as_deref(),
             Some("q.json")

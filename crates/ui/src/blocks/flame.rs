@@ -703,13 +703,23 @@ impl gpui::Focusable for FlameView {
 }
 
 /// The flame graph entity of block `id`, in sync with `spec`.
-pub fn view(id: BlockId, spec: &FlameSpec, window: &mut Window, cx: &mut App) -> Entity<FlameView> {
-    let view = super::block_state(id, window, cx, |window, cx| {
-        FlameView::new(spec, window, cx)
-    });
+pub fn view(
+    id: BlockId,
+    spec: &FlameSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<FlameView> {
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| FlameView::new(spec, window, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
@@ -718,7 +728,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::FlameGraph(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -787,7 +797,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let flame = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let flame =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         // A click on the right half of the depth-1 row hits `main`.
         let canvas = cx.debug_bounds("flame-canvas").unwrap_or_default();
         let at = point(

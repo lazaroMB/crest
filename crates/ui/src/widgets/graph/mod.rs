@@ -918,21 +918,34 @@ impl Render for GraphView {
 pub fn view(
     id: BlockId,
     spec: &GraphSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<GraphView> {
-    let view = crate::blocks::block_state(id, window, cx, |window, cx| {
-        GraphView::new(spec, window, cx)
-    });
+    let view = crate::blocks::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| GraphView::new(spec, window, cx),
+        |view, window, cx| view.sync(spec, window, cx),
+    );
     let focus = view.read(cx).focus_handle.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, window, cx));
     view
 }
 
 /// The whole widget (header, canvas, detail line) of `id`.
-pub fn render(id: BlockId, spec: &GraphSpec, window: &mut Window, cx: &mut App) -> AnyElement {
-    view(id, spec, window, cx).into_any_element()
+/// `rev` is the revision of what `spec` was made from ([`crate::timeline::NO_REV`]
+/// when unknown): the spec is compared only when it is new.
+pub fn render(
+    id: BlockId,
+    spec: &GraphSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    view(id, spec, rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

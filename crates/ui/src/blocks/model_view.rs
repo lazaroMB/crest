@@ -873,13 +873,20 @@ fn number(v: f32) -> String {
 pub fn model_view(
     id: BlockId,
     spec: &ModelSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ModelView> {
-    let view = super::block_state(id, window, cx, |_, cx| ModelView::new(spec, cx));
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| ModelView::new(spec, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
@@ -888,11 +895,12 @@ pub fn model_view(
 pub fn model_view_inline(
     id: BlockId,
     spec: &ModelSpec,
+    rev: u64,
     height: f32,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ModelView> {
-    let view = model_view(id, spec, window, cx);
+    let view = model_view(id, spec, rev, window, cx);
     view.update(cx, |view, _| view.set_height(Some(height)));
     view
 }
@@ -944,7 +952,7 @@ mod tests {
             crate::sysboard::disable_gpu(cx);
         });
         let (host, cx) = cx.add_window_view(|window, cx| Host {
-            view: model_view(BlockId::new(), &spec, window, cx),
+            view: model_view(BlockId::new(), &spec, crate::timeline::NO_REV, window, cx),
         });
         cx.run_until_parked();
         let view = host.read_with(cx, |host, _| host.view.clone());

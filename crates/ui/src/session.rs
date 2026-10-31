@@ -3800,7 +3800,9 @@ mod tests {
         let id = block.id;
         let (h, cx) = harness_with(Vec::new(), vec![block], cx);
         cx.run_until_parked();
-        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let flame = cx.update(|window, cx| {
+            crate::blocks::flame::view(id, &spec, crate::timeline::NO_REV, window, cx)
+        });
         flame.update_in(cx, |f, window, cx| {
             f.zoom_to(1, cx);
             window.focus(&f.focus_handle(cx), cx);
@@ -3849,7 +3851,13 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         let list = cx.update(|window, cx| {
-            crate::widgets::list::view(crate::blocks::custom::node_id(id, 0), &list, window, cx)
+            crate::widgets::list::view(
+                crate::blocks::custom::node_id(id, 0),
+                &list,
+                crate::timeline::NO_REV,
+                window,
+                cx,
+            )
         });
         list.update_in(cx, |l, window, cx| {
             window.focus(&l.focus_handle().clone(), cx);
@@ -4288,7 +4296,9 @@ mod tests {
         let (h, cx) = harness_with(Vec::new(), vec![block], cx);
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let flame = cx.update(|window, cx| {
+            crate::blocks::flame::view(id, &spec, crate::timeline::NO_REV, window, cx)
+        });
         let focused = |cx: &mut VisualTestContext| {
             cx.update(|window, cx| {
                 let s = h.session.read(cx);

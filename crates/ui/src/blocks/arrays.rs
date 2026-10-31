@@ -136,6 +136,9 @@ fn ramp(base: Hsla, t: f64, dark: bool) -> Hsla {
 /// hovered heatmap cell.
 pub struct ArrayFileView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<ArrayFileSpec>,
     tree: Rc<TreeSpec>,
     shown: usize,
@@ -147,6 +150,7 @@ impl ArrayFileView {
     fn new(id: BlockId, spec: &ArrayFileSpec) -> Self {
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             tree: Rc::new(spec.to_tree()),
             spec: Rc::new(spec.clone()),
             shown: 0,
@@ -359,7 +363,7 @@ impl ArrayFileView {
 impl Render for ArrayFileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree = Rc::clone(&self.tree);
-        let tree = widgets::tree::render(node_id(self.id, 0), &tree, window, cx);
+        let tree = widgets::tree::render(node_id(self.id, 0), &tree, self.rev, window, cx);
         let preview = self.preview(window, cx);
         let theme = cx.theme();
         let muted = theme.muted_foreground;
@@ -430,12 +434,18 @@ impl Render for ArrayFileView {
 pub fn view(
     id: BlockId,
     spec: &ArrayFileSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<ArrayFileView> {
-    let view = super::block_state(id, window, cx, |_, _| ArrayFileView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| ArrayFileView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -443,7 +453,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::ArrayFile(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -564,7 +574,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let heat = cx.debug_bounds("array-heatmap").unwrap();
         cx.simulate_mouse_move(
             heat.origin + point(px(5.0), px(5.0)),

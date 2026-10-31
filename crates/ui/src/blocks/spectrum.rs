@@ -352,12 +352,18 @@ impl Render for SpectrumView {
 pub fn view(
     id: BlockId,
     spec: &SpectrumSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<SpectrumView> {
-    let view = super::block_state(id, window, cx, |_, _| SpectrumView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| SpectrumView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -365,7 +371,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Spectrum(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -468,7 +474,8 @@ mod tests {
         }
         let peak = cx.debug_bounds("spectrum-peak-0").unwrap().center();
         cx.simulate_click(peak, Modifiers::none());
-        let s = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let s =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let (lo, hi) = s.read_with(cx, |v, _| v.view());
         assert!(lo < 1716.0 && hi > 1716.0 && hi - lo < 200.0, "{lo} {hi}");
         s.update(cx, |v, cx| v.fit(cx));

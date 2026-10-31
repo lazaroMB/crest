@@ -307,17 +307,23 @@ pub fn json_view(
     id: BlockId,
     value: &Value,
     depth: u32,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<JsonView> {
-    let view = super::block_state(id, window, cx, |_, _| JsonView::new(value, depth));
-    view.update(cx, |view, cx| {
-        if &view.value != value || view.depth != depth {
-            *view = JsonView::new(value, depth);
-            cx.notify();
-        }
-    });
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| JsonView::new(value, depth),
+        |view, _, cx| {
+            if &view.value != value || view.depth != depth {
+                *view = JsonView::new(value, depth);
+                cx.notify();
+            }
+        },
+    )
 }
 
 #[cfg(test)]

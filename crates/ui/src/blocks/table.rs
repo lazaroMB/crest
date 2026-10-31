@@ -78,6 +78,13 @@ pub fn column_align(spec: &TableSpec, col: usize) -> Align {
     }
 }
 
+/// [`column_align`] of every column of `spec`.
+fn column_aligns(spec: &TableSpec) -> Vec<Align> {
+    (0..spec.columns.len())
+        .map(|col| column_align(spec, col))
+        .collect()
+}
+
 /// How wide a column wants to be.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColSize {
@@ -201,6 +208,9 @@ pub struct TableView {
     table: SpecTable,
     /// Measured on the first frame, when the window's font is known.
     sizes: Option<Vec<ColSize>>,
+    /// Alignment of each column ([`column_align`]), worked out once per
+    /// spec: finding a numeric column reads every row.
+    aligns: Vec<Align>,
     expanded: bool,
     scroll: ScrollHandle,
 }
@@ -210,6 +220,7 @@ impl TableView {
     pub fn new(id: BlockId, spec: TableSpec) -> Self {
         Self {
             id,
+            aligns: column_aligns(&spec),
             table: SpecTable::new(spec),
             sizes: None,
             expanded: false,
@@ -252,9 +263,14 @@ impl TableView {
     fn sync(&mut self, spec: &TableSpec, cx: &mut Context<Self>) {
         if self.table.spec() != spec {
             self.table = SpecTable::new(spec.clone());
+            self.aligns = column_aligns(spec);
             self.sizes = None;
             cx.notify();
         }
+    }
+
+    fn align(&self, col: usize) -> Align {
+        self.aligns.get(col).copied().unwrap_or(Align::Left)
     }
 
     fn click_header(&mut self, col: usize, cx: &mut Context<Self>) {
@@ -292,8 +308,7 @@ impl TableView {
                     _ => "",
                 };
                 let label = SharedString::from(format!("{}{arrow}", c.name));
-                let align = column_align(self.table.spec(), col);
-                cell_box(sizes[col], align)
+                cell_box(sizes[col], self.align(col))
                     .id(("table-head", col))
                     .cursor_pointer()
                     .whitespace_normal()
@@ -316,7 +331,7 @@ impl TableView {
         let columns = self.table.spec().columns.len();
         let cells = (0..columns).map(|col| {
             let text = self.table.cell(row, col).map(cell_text).unwrap_or_default();
-            let cell = cell_box(sizes[col], column_align(self.table.spec(), col));
+            let cell = cell_box(sizes[col], self.align(col));
             if sizes[col].numeric {
                 cell.whitespace_nowrap().text_ellipsis()
             } else {
@@ -430,17 +445,29 @@ impl Render for TableView {
 pub fn table_view(
     id: BlockId,
     spec: &TableSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TableView> {
-    let view = super::block_state(id, window, cx, |_, _| TableView::new(id, spec.clone()));
-    view.update(cx, |view, cx| view.sync(spec, cx));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| TableView::new(id, spec.clone()),
+        |view, _, cx| view.sync(spec, cx),
+    )
 }
 
 /// Draws `spec` as the table of block `id`, with a caption line.
-pub fn render_spec(id: BlockId, spec: &TableSpec, window: &mut Window, cx: &mut App) -> AnyElement {
-    let view = table_view(id, spec, window, cx);
+pub fn render_spec(
+    id: BlockId,
+    spec: &TableSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let view = table_view(id, spec, rev, window, cx);
     let rows = spec.rows.len();
     let caption = format!(
         "{rows} {} × {} {}",
@@ -470,7 +497,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Table(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    render_spec(entry.block.id, spec, window, cx)
+    render_spec(entry.block.id, spec, entry.rev, window, cx)
 }
 
 #[cfg(test)]

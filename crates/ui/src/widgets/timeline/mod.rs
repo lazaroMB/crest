@@ -936,19 +936,34 @@ impl Render for TimelineView {
 pub fn view(
     id: BlockId,
     spec: &TimelineSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TimelineView> {
-    let view = crate::blocks::block_state(id, window, cx, |_, cx| TimelineView::new(spec, cx));
+    let view = crate::blocks::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| TimelineView::new(spec, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
 /// The whole widget (header, timeline, detail line) of `id`.
-pub fn render(id: BlockId, spec: &TimelineSpec, window: &mut Window, cx: &mut App) -> AnyElement {
-    view(id, spec, window, cx).into_any_element()
+/// `rev` is the revision of what `spec` was made from ([`crate::timeline::NO_REV`]
+/// when unknown): the spec is compared only when it is new.
+pub fn render(
+    id: BlockId,
+    spec: &TimelineSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    view(id, spec, rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

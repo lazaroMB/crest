@@ -88,6 +88,8 @@ pub fn failed_text(spec: &CadModelSpec) -> Option<String> {
 /// solids.
 pub struct CadView {
     id: BlockId,
+    /// Revision of `model`, new whenever it is made again.
+    rev: u64,
     spec: Rc<CadModelSpec>,
     model: Rc<ModelSpec>,
     hidden: BTreeSet<usize>,
@@ -97,6 +99,7 @@ impl CadView {
     fn new(id: BlockId, spec: &CadModelSpec) -> Self {
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             model: Rc::new(spec.model()),
             hidden: BTreeSet::new(),
@@ -204,7 +207,14 @@ impl CadView {
 
 impl Render for CadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = model_view_inline(node_id(self.id, 0), &self.model, VIEW_HEIGHT, window, cx);
+        let model = model_view_inline(
+            node_id(self.id, 0),
+            &self.model,
+            self.rev,
+            VIEW_HEIGHT,
+            window,
+            cx,
+        );
         let ranges = self.hidden_ranges();
         model.update(cx, |view, cx| view.set_hidden(ranges, cx));
         let rows = self.solid_rows(cx);
@@ -258,12 +268,18 @@ impl Render for CadView {
 pub fn view(
     id: BlockId,
     spec: &CadModelSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<CadView> {
-    let view = super::block_state(id, window, cx, |_, _| CadView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| CadView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -271,7 +287,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::CadModel(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -360,12 +376,14 @@ mod tests {
         }
         let row = cx.debug_bounds("cad-solid-1").unwrap().center();
         cx.simulate_click(row, Modifiers::none());
-        let cad = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let cad =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert!(cad.read_with(cx, |c, _| c.hidden().contains(&1)));
         let model = cx.update(|window, cx| {
             model_view_inline(
                 node_id(id, 0),
                 &cad.read(cx).model.clone(),
+                crate::timeline::NO_REV,
                 VIEW_HEIGHT,
                 window,
                 cx,

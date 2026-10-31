@@ -45,6 +45,9 @@ pub(crate) fn caption(title: Option<&str>, path: Option<&str>, fallback: &str) -
 /// path) and which one shows.
 pub struct TraceView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<TraceSpec>,
     full: Rc<TimelineSpec>,
     critical: Rc<TimelineSpec>,
@@ -60,6 +63,7 @@ impl TraceView {
         critical.title = Some(format!("{title} · critical path"));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             full: Rc::new(full),
             critical: Rc::new(critical),
@@ -168,7 +172,8 @@ impl Render for TraceView {
         } else {
             (0, self.full.clone())
         };
-        let timeline = widgets::timeline::render(node_id(self.id, ordinal), &shown, window, cx);
+        let timeline =
+            widgets::timeline::render(node_id(self.id, ordinal), &shown, self.rev, window, cx);
         v_flex()
             .w_full()
             .gap_1()
@@ -182,12 +187,18 @@ impl Render for TraceView {
 pub fn view(
     id: BlockId,
     spec: &TraceSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TraceView> {
-    let view = super::block_state(id, window, cx, |_, _| TraceView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| TraceView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -195,7 +206,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Trace(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -282,7 +293,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let trace = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let trace =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(trace.read_with(cx, |t, _| t.shown().rows.len()), 4);
         let at = cx
             .debug_bounds("trace-critical")

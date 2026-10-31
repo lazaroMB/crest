@@ -22,7 +22,7 @@ pub const MARKER_RING: f32 = 2.0;
 
 /// The font labels are drawn and measured with, captured when the chart is
 /// rendered.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct LabelFont {
     pub font: Font,
     pub size: Pixels,

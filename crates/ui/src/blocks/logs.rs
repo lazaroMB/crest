@@ -52,6 +52,9 @@ pub fn bucket_text(histogram: &LogHistogram, ix: usize) -> String {
 /// Per-block state: the spec and the list it shows (titled).
 pub struct LogsView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<LogSpec>,
     list: Rc<ListSpec>,
 }
@@ -62,6 +65,7 @@ impl LogsView {
         list.title = Some(caption(list.title.as_deref(), spec.path.as_deref(), "Log"));
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             list: Rc::new(list),
         }
@@ -173,7 +177,7 @@ impl LogsView {
 impl Render for LogsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let list = self.list.clone();
-        let widget = widgets::list::render(node_id(self.id, 0), &list, window, cx);
+        let widget = widgets::list::render(node_id(self.id, 0), &list, self.rev, window, cx);
         v_flex()
             .w_full()
             .gap_1()
@@ -188,12 +192,18 @@ impl Render for LogsView {
 pub fn view(
     id: BlockId,
     spec: &LogSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<LogsView> {
-    let view = super::block_state(id, window, cx, |_, _| LogsView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| LogsView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -201,7 +211,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Logs(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -290,7 +300,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let logs = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let logs =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             logs.read_with(cx, |l, _| l.list().title.clone()).as_deref(),
             Some("app.log")
@@ -303,7 +314,7 @@ mod tests {
         cx.run_until_parked();
         let list = cx.update(|window, cx| {
             let list = logs.read(cx).list().clone();
-            widgets::list::view(node_id(id, 0), &list, window, cx)
+            widgets::list::view(node_id(id, 0), &list, crate::timeline::NO_REV, window, cx)
         });
         assert_eq!(list.read_with(cx, |l, _| l.visible().to_vec()), [1, 2]);
     }
