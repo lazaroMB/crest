@@ -397,7 +397,10 @@ impl Render for ImageView {
     }
 }
 
-/// The view of the image node `id`, in sync with its data.
+/// The view of the image node `id`, in sync with its data at revision
+/// `rev`. The node's fields come one by one, as the custom node and the
+/// picker's preview hold them.
+#[allow(clippy::too_many_arguments)]
 pub fn image_view(
     id: BlockId,
     data: &ImageData,
