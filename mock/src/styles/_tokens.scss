@@ -1,0 +1,123 @@
+// The twocrest themes (crates/app/src/theme/builtin.rs), as CSS variables.
+// Names follow crest's theme tokens: `muted.fg` -> --muted-fg.
+
+[data-theme="twocrest"] {
+  --background: #0b0b0c;
+  --foreground: #f4f1ec;
+  --text-2: #b9b5ae;
+  --border: #2a2a2d;
+  --border-strong: #3a3a3e; // input.border
+
+  --accent: #d9604a; // accent.bg
+  --accent-fg: #0b0b0c;
+  --accent-hover: #e2745f;
+  --accent-active: #ae3a25;
+
+  --muted-bg: #161618;
+  --muted-fg: #8e8a84;
+  --selection: #d9604a59;
+  --overlay: #0b0b0cb3;
+
+  --button-bg: #161618;
+  --button-fg: #d6d2cb;
+  --button-hover-bg: #1d1d20;
+
+  --list-even-bg: #0e0e10;
+  --list-header-bg: #111113;
+  --list-header-fg: #d6d2cb;
+  --list-hover-bg: #161618;
+  --list-selected-bg: #d9604a26;
+  --list-selected-border: #d9604a;
+
+  --popover-bg: #111113;
+  --sidebar-bg: #111113;
+  --sidebar-fg: #d6d2cb;
+  --title-bar-bg: #0b0b0c;
+  --scrollbar: #3a3a3e;
+
+  --info: #b9b5ae;
+  --success: #8fc27a;
+  --warning: #ffae42;
+  --error: #f0524a;
+  --link: #d9604a;
+
+  --chart-1: #d9604a;
+  --chart-2: #ffae42;
+  --chart-3: #d6d2cb;
+  --chart-4: #ae3a25;
+  --chart-5: #8e8a84;
+
+  --syntax-keyword: #d9604a;
+  --syntax-string: #8fc27a;
+  --syntax-number: #ffae42;
+}
+
+[data-theme="twocrest-light"] {
+  --background: #f4f1ec;
+  --foreground: #3d3a35;
+  --text-2: #57534c;
+  --border: #ddd8cf;
+  --border-strong: #ddd8cf;
+
+  --accent: #ae3a25;
+  --accent-fg: #f4f1ec;
+  --accent-hover: #d9604a;
+  --accent-active: #8f2e1c;
+
+  --muted-bg: #ece7df;
+  --muted-fg: #57534c;
+  --selection: #d9604a40;
+  --overlay: #0b0b0c40;
+
+  --button-bg: #ece7df;
+  --button-fg: #3d3a35;
+  --button-hover-bg: #e6e1d8;
+
+  --list-even-bg: #f0ece5;
+  --list-header-bg: #ece7df;
+  --list-header-fg: #3d3a35;
+  --list-hover-bg: #ece7df;
+  --list-selected-bg: #d9604a22;
+  --list-selected-border: #ae3a25;
+
+  --popover-bg: #ffffff;
+  --sidebar-bg: #ece7df;
+  --sidebar-fg: #3d3a35;
+  --title-bar-bg: #f4f1ec;
+  --scrollbar: #ddd8cf;
+
+  --info: #57534c;
+  --success: #3f7d3a;
+  --warning: #b8740c;
+  --error: #c0392b;
+  --link: #ae3a25;
+
+  --chart-1: #d9604a;
+  --chart-2: #d08a1a;
+  --chart-3: #3d3a35;
+  --chart-4: #ae3a25;
+  --chart-5: #57534c;
+
+  --syntax-keyword: #ae3a25;
+  --syntax-string: #3f7d3a;
+  --syntax-number: #b8740c;
+}
+
+// Sizes. crest sets 14px as the rem, so gpui's text-sm and text-xs are 0.875 and 0.75 of it.
+:root {
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --text-base: 14px;
+  --text-sm: 12.25px;
+  --text-xs: 10.5px;
+  --line-height: 1.35;
+
+  --radius: 6px; // theme.radius
+  --radius-sm: 2px;
+  --radius-lg: 8px;
+
+  --prose-width: 760px;
+  --wide-width: 1100px;
+  --gutter: 16px;
+  --chats-width: 240px;
+  --tree-width: 280px;
+}

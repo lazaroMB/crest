@@ -1,0 +1,35 @@
+.prompt {
+  padding: 0 8px 4px;
+  border-top: 1px solid var(--border);
+
+  &__row {
+    display: flex;
+    gap: 8px;
+  }
+
+  &__glyph {
+    padding-top: 8px;
+    font-weight: 700;
+    color: var(--muted-fg);
+
+    &--focused {
+      color: var(--accent);
+    }
+  }
+
+  &__text {
+    flex: 1;
+    padding: 8px 0 4px;
+    resize: none;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--foreground);
+    font: inherit;
+    caret-color: var(--accent);
+
+    &::placeholder {
+      color: var(--muted-fg);
+    }
+  }
+}

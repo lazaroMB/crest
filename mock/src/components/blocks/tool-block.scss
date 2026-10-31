@@ -1,0 +1,46 @@
+.tool-block {
+  &__head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  &__marker {
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  &__summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted-fg);
+  }
+
+  &__status {
+    flex: none;
+
+    &--muted { color: var(--muted-fg); }
+    &--warning { color: var(--warning); }
+    &--info { color: var(--info); }
+    &--success { color: var(--success); }
+    &--error { color: var(--error); }
+  }
+
+  &__detail {
+    padding-left: 16px;
+
+    pre {
+      margin: 4px 0 0;
+      font: inherit;
+      white-space: pre-wrap;
+    }
+  }
+
+  &__input {
+    color: var(--muted-fg);
+  }
+}

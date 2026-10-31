@@ -13,3 +13,10 @@
 # Local env files (may contain secrets such as API keys)
 .env
 .env.*
+
+# Specky3 worktrees
+/.worktrees/
+/.cursor
+/.aos 
+AGENTS.md
+evals/

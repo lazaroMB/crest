@@ -1,0 +1,61 @@
+.status {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--title-bar-bg);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+
+  // The model, mode and cost keep their size; the right side gives way first.
+  &__side {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+
+    > * {
+      flex-shrink: 0;
+    }
+
+    &--right {
+      flex-shrink: 1;
+      min-width: 0;
+      justify-content: flex-end;
+    }
+  }
+
+  &__busy {
+    color: var(--info);
+  }
+
+  &__mode:hover {
+    color: var(--accent);
+  }
+
+  &__notice,
+  &__git {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status__side--right > &__notice,
+  .status__side--right > &__git {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  &__notice {
+    &--info { color: var(--info); }
+    &--warning { color: var(--warning); }
+    &--error { color: var(--error); }
+  }
+
+  &__git {
+    &--success { color: var(--success); }
+    &--warning { color: var(--warning); }
+    &--error { color: var(--error); }
+  }
+}

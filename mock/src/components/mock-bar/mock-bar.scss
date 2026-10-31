@@ -1,0 +1,41 @@
+// Deliberately not crest's look: system font, neutral grays.
+.mockbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 6px 12px;
+  background: #26262a;
+  color: #c9c9cf;
+  font: 12px/1.4 system-ui, sans-serif;
+  border-bottom: 1px solid #333338;
+
+  &__group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #8a8a93;
+  }
+
+  &__button {
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #323237;
+    color: #c9c9cf;
+
+    &:hover {
+      background: #3c3c42;
+    }
+
+    &--on {
+      background: #5a5a63;
+      color: #fff;
+    }
+  }
+
+  &__hint {
+    flex: 1;
+    color: #8a8a93;
+    text-align: right;
+  }
+}

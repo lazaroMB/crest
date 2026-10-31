@@ -1,0 +1,21 @@
+.activity {
+  padding: 4px 8px 0;
+  font-size: var(--text-sm);
+
+  &__line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__verb {
+    color: var(--accent);
+  }
+
+  &__queued {
+    padding-left: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

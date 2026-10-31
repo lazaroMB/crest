@@ -1,0 +1,196 @@
+.chart {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  &__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  &__title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__hint {
+    flex: none;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  &__copy {
+    flex: none;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+    white-space: nowrap;
+
+    &:hover {
+      background: var(--muted-bg);
+      color: var(--foreground);
+    }
+  }
+
+  // While rasterizing for the clipboard, hide the controls so the copied
+  // image is just the title and the plot.
+  &--capturing &__copy,
+  &--capturing &__hint {
+    visibility: hidden;
+  }
+
+  &__grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  &__gridline {
+    position: absolute;
+    background: var(--border);
+  }
+}
+
+// Horizontal bars: a label column, then the plot.
+.hbars {
+  --label-width: 120px;
+  font-size: var(--text-xs);
+
+  &__plot {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--label-width) 1fr;
+    row-gap: 10px;
+
+    .chart__grid {
+      left: calc(var(--label-width) + 8px);
+    }
+
+    .chart__gridline {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+  }
+
+  &__label {
+    padding-right: 8px;
+    text-align: right;
+    color: var(--muted-fg);
+    align-self: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__track {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    height: 20px;
+  }
+
+  &__bar {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--chart-1);
+  }
+
+  &__value {
+    color: var(--foreground);
+  }
+
+  &__axis {
+    position: relative;
+    height: 16px;
+    margin: 8px 0 0 calc(var(--label-width) + 8px);
+    color: var(--muted-fg);
+
+    span {
+      position: absolute;
+      transform: translateX(-50%);
+    }
+  }
+}
+
+// Vertical bars: a value axis, then one slot per category.
+.vbars {
+  display: flex;
+  height: 300px;
+  padding: 8px 0 24px;
+  font-size: var(--text-xs);
+
+  &__axis {
+    position: relative;
+    width: 40px;
+    color: var(--muted-fg);
+
+    span {
+      position: absolute;
+      right: 8px;
+      transform: translateY(50%);
+    }
+  }
+
+  &__plot {
+    position: relative;
+    display: flex;
+    flex: 1;
+    justify-content: center;
+    gap: 16px;
+    max-width: 640px;
+    margin: 0 auto;
+    border-bottom: 1px solid var(--border);
+
+    .chart__gridline {
+      left: 0;
+      right: 0;
+      height: 1px;
+    }
+  }
+
+  &__slot {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    width: 48px;
+  }
+
+  &__bar {
+    position: relative;
+    border-radius: 3px 3px 0 0;
+    background: var(--chart-1);
+  }
+
+  &__value {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translate(-50%, -4px);
+    color: var(--foreground);
+  }
+
+  &__label {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translate(-50%, 6px);
+    color: var(--muted-fg);
+    white-space: nowrap;
+  }
+}

@@ -1,0 +1,32 @@
+.thinking-block {
+  color: var(--muted-fg);
+
+  &__head {
+    display: flex;
+    gap: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  &__marker {
+    font-size: var(--text-xs);
+    line-height: inherit;
+  }
+
+  &__label {
+    font-weight: 500;
+  }
+
+  &__summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__body {
+    margin: 4px 0 0 4px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+    white-space: pre-wrap;
+  }
+}

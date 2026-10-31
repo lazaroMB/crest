@@ -1,0 +1,54 @@
+.timeline {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid transparent;
+
+  &--focused {
+    border-top-color: var(--accent); // list.focused.border
+  }
+
+  &__scroll {
+    height: 100%;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  &__list {
+    padding-bottom: 16px;
+  }
+
+  &__overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+
+    > * {
+      pointer-events: auto;
+    }
+  }
+}
+
+// One block: a centered row, 760px for prose and 1100px for rich blocks.
+.tblock {
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--gutter);
+
+  &__inner {
+    width: 100%;
+    max-width: var(--prose-width);
+    min-width: 0;
+    padding: 4px 8px;
+    border-left: 2px solid transparent;
+
+    &--wide {
+      max-width: var(--wide-width);
+    }
+
+    &--selected {
+      border-left-color: var(--list-selected-border);
+      background: var(--list-selected-bg);
+    }
+  }
+}
