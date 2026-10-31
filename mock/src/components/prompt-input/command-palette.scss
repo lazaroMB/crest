@@ -1,0 +1,40 @@
+.palette {
+  margin: 0 0 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  font-size: var(--text-sm);
+
+  &__row {
+    display: flex;
+    gap: 16px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+
+    &--selected {
+      background: var(--list-selected-bg);
+    }
+  }
+
+  &__usage {
+    flex: none;
+    color: var(--accent);
+  }
+
+  &__description {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted-fg);
+  }
+
+  &__footer {
+    padding: 4px 6px 0;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+}

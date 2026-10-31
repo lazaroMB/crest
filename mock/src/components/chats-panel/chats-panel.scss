@@ -1,0 +1,137 @@
+.chats {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--chats-width);
+  height: 100%;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  color: var(--sidebar-fg);
+
+  &__header {
+    padding: 4px 8px;
+    color: var(--muted-fg);
+  }
+
+  &__new {
+    margin: 0 4px;
+    padding: 4px;
+    text-align: left;
+    border-radius: var(--radius-sm);
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 4px 8px;
+  }
+
+  &__empty {
+    padding: 4px 8px;
+    font-size: var(--text-sm);
+    color: var(--muted-fg);
+
+    &--nested {
+      padding-left: 22px;
+    }
+  }
+}
+
+.project__row {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--list-selected-bg);
+  }
+}
+
+.project__marker {
+  width: 12px;
+  color: var(--muted-fg);
+}
+
+.project__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 22px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover,
+  &--open {
+    background: var(--list-selected-bg);
+  }
+
+  &__title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__badge {
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+}
+
+.chat-menu {
+  margin: 0 8px 4px;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  font-size: var(--text-sm);
+
+  &__row {
+    display: block;
+    width: 100%;
+    padding: 4px 8px;
+    text-align: left;
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+
+    &--danger {
+      color: var(--error);
+    }
+
+    &--static:hover {
+      background: none;
+    }
+  }
+
+  &__input {
+    width: calc(100% - 16px);
+    margin: 0 8px;
+    padding: 2px 4px;
+    font: inherit;
+    color: var(--foreground);
+    background: var(--background);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    outline: none;
+  }
+
+  &__hint {
+    padding: 4px 8px 0;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+}

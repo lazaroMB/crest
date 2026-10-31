@@ -1,0 +1,42 @@
+.diff-block__head {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.diff-block__added {
+  color: var(--success);
+}
+
+.diff-block__removed {
+  color: var(--error);
+}
+
+.diff-lines {
+  border-left: 2px solid var(--border);
+}
+
+.diff-line {
+  padding: 0 4px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &--header {
+    color: var(--muted-fg);
+  }
+
+  &--hunk {
+    color: var(--info);
+  }
+
+  &--add {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+  }
+
+  &--del {
+    color: var(--error);
+    background: color-mix(in srgb, var(--error) 12%, transparent);
+  }
+}

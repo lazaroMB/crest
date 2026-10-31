@@ -1,0 +1,111 @@
+@use "tokens";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: #1c1c1f; // around the crest window, outside the mock
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+}
+
+// Where the crest window sits; with a fixed width it is centered in a frame.
+.stage {
+  flex: 1;
+  min-height: 0;
+}
+
+// A region of the window; its component's element takes part in the layout directly.
+.slot {
+  display: contents;
+}
+
+// The crest window.
+.window {
+  &--framed {
+    border-left: 1px solid #333338;
+    border-right: 1px solid #333338;
+  }
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+
+  ::selection {
+    background: var(--selection);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+.workbench {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.root {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.session {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+// Shared bits.
+.muted {
+  color: var(--muted-fg);
+}
+
+.sep {
+  color: var(--muted-fg);
+}
+
+.kbd {
+  color: var(--accent);
+}
