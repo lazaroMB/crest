@@ -445,6 +445,15 @@ pub trait PluginHostPort: Send + Sync {
     /// stops the chain; each `ReplaceInput` feeds the next hook.
     async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError>;
 
+    /// Whether any hook of `kind` is registered right now. The tool loop
+    /// skips [`run_hook`](Self::run_hook) (a round trip to the VM thread
+    /// and a copy of the input) when it is `false`. A host that cannot
+    /// tell answers `true`.
+    fn has_hooks(&self, kind: HookKind) -> bool {
+        let _ = kind;
+        true
+    }
+
     /// Activates the capabilities of the declarations in `granted` (as
     /// found in [`LoadedConfig::plugin_capabilities`], compared exactly)
     /// and deactivates every other one. Until this is called nothing is

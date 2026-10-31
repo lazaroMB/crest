@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use application::ports::plugin::{
     CallbackId, HookEvent, HookKind, HookOutcome, PluginCapabilities, PluginError, PluginOutput,
@@ -23,6 +24,35 @@ pub(crate) struct Hook {
     pub(crate) callback: CallbackId,
 }
 
+/// Which kinds of hook the VM has, readable from any thread: the tool loop
+/// asks before every call and must not wait on the VM thread for it.
+#[derive(Debug, Default)]
+pub(crate) struct HookFlags {
+    before_tool: AtomicBool,
+    after_tool: AtomicBool,
+}
+
+impl HookFlags {
+    fn flag(&self, kind: HookKind) -> &AtomicBool {
+        match kind {
+            HookKind::BeforeTool => &self.before_tool,
+            HookKind::AfterTool => &self.after_tool,
+        }
+    }
+
+    /// Whether a hook of `kind` is registered.
+    pub(crate) fn has(&self, kind: HookKind) -> bool {
+        self.flag(kind).load(Ordering::Acquire)
+    }
+
+    fn update(&self, hooks: &[Hook]) {
+        for kind in [HookKind::BeforeTool, HookKind::AfterTool] {
+            let has = hooks.iter().any(|hook| hook.kind == kind);
+            self.flag(kind).store(has, Ordering::Release);
+        }
+    }
+}
+
 /// The Lua state plus what the loaded config registered in it.
 pub(crate) struct Vm {
     pub(crate) lua: Lua,
@@ -31,8 +61,11 @@ pub(crate) struct Vm {
     ids: CallbackIds,
     /// Handler of each plugin tool.
     pub(crate) tools: BTreeMap<String, CallbackId>,
-    /// Hooks, in the order they run.
+    /// Hooks, in the order they run. Changed through [`Vm::set_hooks`],
+    /// which keeps `hook_flags` in step.
     pub(crate) hooks: Vec<Hook>,
+    /// Which kinds of hook `hooks` has, shared with every handle.
+    hook_flags: Arc<HookFlags>,
     /// What the capability APIs need; survives [`Vm::reset`].
     ctx: Arc<Context>,
     /// The capability declarations of the loaded files.
@@ -57,6 +90,7 @@ impl Vm {
             ids,
             tools: BTreeMap::new(),
             hooks: Vec::new(),
+            hook_flags: Arc::default(),
             ctx,
             grants: Vec::new(),
         })
@@ -67,9 +101,20 @@ impl Vm {
     pub(crate) fn reset(&mut self) -> Result<(), PluginError> {
         (self.lua, self.limiter) = new_lua(&self.options, &self.ids, &self.ctx)?;
         self.tools.clear();
-        self.hooks.clear();
+        self.set_hooks(Vec::new());
         self.grants.clear();
         Ok(())
+    }
+
+    /// Replaces the hooks, in the order they run.
+    pub(crate) fn set_hooks(&mut self, hooks: Vec<Hook>) {
+        self.hook_flags.update(&hooks);
+        self.hooks = hooks;
+    }
+
+    /// The flags of the hooks registered, for the handles.
+    pub(crate) fn hook_flags(&self) -> &Arc<HookFlags> {
+        &self.hook_flags
     }
 
     /// What the capability APIs and `app.compute` share.
