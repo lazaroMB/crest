@@ -189,6 +189,10 @@ impl DirWatcher {
             Arc::downgrade(&shared),
             root.to_owned(),
         );
+        // macOS's FSEvents reports canonical paths (`/private/var/...` for
+        // a root opened as `/var/...`): events are rebased onto the root
+        // as given before they are compared with it.
+        let canonical_root = root.canonicalize().ok().filter(|c| c != root);
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                 let event = match event {
@@ -203,8 +207,12 @@ impl DirWatcher {
                 if !changes_tree(&event) {
                     return;
                 }
-                let wanted: Vec<&PathBuf> = event
+                let paths: Vec<PathBuf> = event
                     .paths
+                    .iter()
+                    .map(|path| rebase(path, &handler_root, canonical_root.as_deref()))
+                    .collect();
+                let wanted: Vec<&PathBuf> = paths
                     .iter()
                     .filter(|path| !handler_ignored.is_ignored(path))
                     .collect();
@@ -247,6 +255,14 @@ impl DirWatcher {
         *shared.lock().unwrap_or_else(PoisonError::into_inner) = Some(watcher);
         Ok((Self { _watcher: shared }, rx))
     }
+}
+
+/// `path` under `root` when the watcher reported it under `canonical`,
+/// the root's canonical form; any other path as it is.
+fn rebase(path: &Path, root: &Path, canonical: Option<&Path>) -> PathBuf {
+    canonical
+        .and_then(|canonical| path.strip_prefix(canonical).ok())
+        .map_or_else(|| path.to_owned(), |relative| root.join(relative))
 }
 
 /// What the panel asks the rest of the UI to do.
@@ -1058,6 +1074,21 @@ mod tests {
         let bare = tempfile::tempdir().unwrap();
         let none = Ignored::new(bare.path());
         assert!(!none.is_ignored(&bare.path().join("target/x")));
+    }
+
+    #[test]
+    fn events_under_the_canonical_root_are_rebased_onto_the_given_one() {
+        let root = Path::new("/var/folders/x/proj");
+        let canonical = Path::new("/private/var/folders/x/proj");
+        assert_eq!(
+            rebase(&canonical.join("docs/a.md"), root, Some(canonical)),
+            root.join("docs/a.md")
+        );
+        assert_eq!(
+            rebase(&root.join("src"), root, Some(canonical)),
+            root.join("src")
+        );
+        assert_eq!(rebase(&root.join("src"), root, None), root.join("src"));
     }
 
     /// Waits up to `wait` for a ping.
