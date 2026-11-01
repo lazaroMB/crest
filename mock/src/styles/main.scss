@@ -79,8 +79,31 @@ button {
 
 .workbench {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+// The sidebar column ends where the prompt starts. The prompt and the status
+// bar span the window, so a closed rail does not leave an empty strip beside them.
+.workbench__body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+// Closed rail: the conversation uses the full width and starts below the mark,
+// so there is no empty column. Hovering the mark shifts the text aside.
+.workbench__body:has(.sidebar-hover-zone) .timeline__scroll {
+  padding-top: 40px;
+}
+
+.workbench__body:has(.sidebar-hover-zone:hover) .timeline__scroll,
+.workbench__body:has(.sidebar-hover-zone:focus-within) .timeline__scroll {
+  padding-top: 8px;
+  padding-left: 44px;
 }
 
 .root {
@@ -94,6 +117,7 @@ button {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
   height: 100%;
 }
 

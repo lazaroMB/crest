@@ -5,8 +5,8 @@
 //   ┌ window ──────────────────────────────────────────────┐
 //   │ chats │ tree │ timeline                              │
 //   │       │      │ activity line                         │
-//   │       │      │ prompt                                │
-//   │       │      │ status bar                            │
+//   │ prompt                                                │
+//   │ status bar                                            │
 //   └──────────────────────────────────────────────────────┘
 //   approval dialog (over everything)
 
@@ -53,7 +53,13 @@ export function mountApp(root) {
   const win = h(
     "div",
     { class: "window" },
-    h("div", { class: "workbench" }, chats, h("div", { class: "root" }, tree, h("div", { class: "session" }, timeline, activity, prompt, status))),
+    h(
+      "div",
+      { class: "workbench" },
+      h("div", { class: "workbench__body" }, chats, h("div", { class: "root" }, tree, h("div", { class: "session" }, timeline, activity))),
+      prompt,
+      status,
+    ),
     overlay,
     info,
   );

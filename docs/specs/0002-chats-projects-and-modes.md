@@ -101,10 +101,19 @@ person for a directory (S01 criterion 4) instead of resolving against the proces
 - The standalone chats follow under "Chats".
 - A search query filters chats by title.
 
-A `SidebarWidth { Full, Strip, Hidden }` replaces the boolean behind `panel.chats`. `Full` keeps
-`PANEL_WIDTH` 240, `Strip` is 48 px of icon buttons (new chat, search, projects, one initial per
-project), and `Hidden` is 0. `panel.chats` cycles `Full`, `Strip`, `Hidden`, and back to `Full` (`nextSidebar`
-in `mock/src/modes.js`); the existing keymap binding stays.
+A `SidebarWidth { Full, Strip, Hidden }` replaces the boolean behind `panel.chats`. The window opens
+`Hidden`. `Full` keeps `PANEL_WIDTH` 240. `Strip` is 48 px and shows its rows all the time: the Crest
+mark, new chat, search, projects, and one initial per project.
+
+`Hidden` holds only the Crest mark, in the top left, and the rail ends where the prompt starts
+(`mock/src/app.js` lays the prompt under the whole window). While it is closed the session uses the
+full width and starts below the mark, so there is no empty column and the mark never paints over a
+block. Pointer hover or keyboard focus on the mark reveals the strip's rows and shifts the session
+aside; the rows stay inside the body's height and never cross the prompt. Leaving hides them again
+without changing the state. Clicking the mark sets `Full`. The mark in the full sidebar sets
+`Hidden`, not `Strip`. A project initial shows the project's name beside it while the pointer is on it.
+`<C-g>s` still cycles `Full`, `Strip`, `Hidden`, and back to `Full` (`nextSidebar`); the existing keymap
+binding stays.
 
 The chat and project menus follow `mock/src/components/chats-panel/chats-panel.js`:
 
@@ -182,7 +191,8 @@ the menus, and `mock/src/components/prompt-input/` for the mode button, chip, an
 Screenshots of each state are in `mock/spikes/evidence/` (`S05-full-1280.png`, `S05-strip-1280.png`,
 `S05-hidden-1280.png`, `S05-strip-1024.png`, `S06-mode-menu.png`, `S06-deep-chip.png`,
 `extra-promote-menu.png`, `extra-project-menu.png`, `extra-palette-groups.png`, `menu-check-chat.png`,
-`menu-check-project.png`, `menu-check-archived.png`, `branch-chat.png`, `palette-shell-fix.png`). A strip icon is a
+`menu-check-project.png`, `menu-check-archived.png`, `branch-chat.png`, `palette-shell-fix.png`,
+`sidebar-rail-hidden.png`, `sidebar-rail-hover.png`). A strip icon is a
 `gpui-component` icon button; nothing in the mock needs a layout GPUI cannot draw.
 
 ## Acceptance
@@ -195,8 +205,12 @@ Screenshots of each state are in `mock/spikes/evidence/` (`S05-full-1280.png`, `
 - `add_root` with two directories in different locations gives 3 roots, a duplicate leaves 3, and
   `remove_root` on the last root is an error (S02 criteria 2 and 3). A path under any root resolves,
   and a path under none fails with "outside the workspace".
-- `panel.chats` cycles full, strip, and hidden. The strip is at most 56 px with new chat, search, and
-  projects, and at 1024 px the session keeps at least 90 percent of the window (S05).
+- The window opens hidden. The hidden mark sits in the top left and the session uses the full width,
+  starting below the mark. Hovering the mark shows new chat, search, and projects and shifts the
+  session aside; the rows end at the prompt, and leaving hides them. The
+  Crest mark opens the full sidebar, and the mark in the full sidebar returns to hidden. `<C-g>s` still
+  cycles full, strip, and hidden. The strip is at most 56 px, and at 1024 px the session keeps at least
+  90 percent of the window (S05, refined in the mock after that spike).
 - Choosing Deep research shows a "Deep research" chip, and submitting `why` sends
   `/research --deep why`. The button and the chip take at most 160 px at 1280 px (S06).
 - Every `CATALOG` entry has a group. `/` alone shows at most 8 group rows, a plugin command lands in
@@ -221,6 +235,7 @@ Screenshots of each state are in `mock/spikes/evidence/` (`S05-full-1280.png`, `
 | Grouped commands | 3 | 0004 | Pathway 4 | S03 (4 of 4) |
 | Prompt mode control | 4 | 0005 | Pathway 5 | S04 (3 of 4, not satisfactory), S06 (4 of 4) |
 | Three sidebar widths | 5 | 0006, 0007 | Pathways 6, 7 | S05 (4 of 4) |
+| Hidden mark, no empty column | After the mock review | FR-23 | An empty column beside the chat | `sidebar-rail-hidden.png`, `sidebar-rail-hover.png` |
 | Archive and restore | After review | Source facts 6 | None recorded | `sidebar-extras-check.mjs` (3 checks) |
 | Branch a chat | After review | Source facts 7 | None recorded | `sidebar-extras-check.mjs` (2 checks) |
 | Bare `!` shell line | After review | Source facts 8 | None recorded | `sidebar-extras-check.mjs` (4 checks) |

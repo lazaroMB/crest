@@ -4,7 +4,8 @@
 //           chats), Chats (the standalone ones), and, if anything is
 //           archived, a folded "Archived" section at the bottom
 //   strip   icons only: expand, new chat, search, projects, one initial per project
-//   hidden  nothing; a small button at the top left brings it back
+//   hidden  the logo only, over the top left; the conversation starts below it.
+//           Hovering the logo reveals the strip's rows, which stop at the prompt
 //
 // A click opens a chat; a right click or ⋯ opens its menu: New chat (in the
 // same project), Rename, Move to project (or a new one: promoting the chat),
@@ -300,7 +301,7 @@ function Full(state) {
     h(
       "div",
       { class: "chats__top" },
-      logoButton("Collapse the sidebar (<C-g>s)", () => setSidebar("strip")),
+      logoButton("Collapse the sidebar (<C-g>s)", () => setSidebar("hidden")),
       h("span", { class: "chats__brand" }, "Crest"),
     ),
     h(
@@ -328,14 +329,12 @@ function Full(state) {
   );
 }
 
-function Strip(state) {
+/** The rows below the logo: new chat, search, projects, one initial per project. Shared by the strip and the hidden state's hover flyout. */
+function StripRows(state) {
   const { projects } = sidebarModel(state.organization);
   const openProject = (p) => (p.chats[0] ? openChat(p.chats[0].id) : newChat(p.id));
   const current = state.organization.chats.find((c) => c.id === state.openChatId)?.projectId;
-  return h(
-    "aside",
-    { class: ["chats", "chats--strip", state.ui.focus === "chats" && "chats--focused"], "data-sidebar": "strip" },
-    logoButton("Expand the sidebar (<C-g>s)", () => setSidebar("full")),
+  return [
     iconButton("chat", "New chat", () => newChat(null), { class: "strip-new" }),
     iconButton("search", "Search", () => setSearch(""), { class: "strip-search" }),
     iconButton("folder", "Projects", () => setSidebar("full"), { class: "strip-projects" }),
@@ -353,13 +352,33 @@ function Strip(state) {
         h("span", { class: "strip-project__name" }, p.name),
       ),
     ),
+  ];
+}
+
+function Strip(state) {
+  return h(
+    "aside",
+    { class: ["chats", "chats--strip", state.ui.focus === "chats" && "chats--focused"], "data-sidebar": "strip" },
+    logoButton("Expand the sidebar (<C-g>s)", () => setSidebar("full")),
+    ...StripRows(state),
+  );
+}
+
+/** Hidden: the logo sits over the top left and the conversation starts below it, full width, so a
+ * closed rail leaves no empty column. Hovering it, or tabbing in, reveals the strip's rows and the
+ * conversation shifts aside; the rows stop where the prompt starts. Moving away closes them. The
+ * logo itself always opens the full sidebar. */
+function HiddenReveal(state) {
+  return h(
+    "div",
+    { class: "sidebar-hover-zone", "data-sidebar": "hidden" },
+    logoButton("Show the sidebar (<C-g>s)", () => setSidebar("full")),
+    h("div", { class: "sidebar-hover-reveal" }, ...StripRows(state)),
   );
 }
 
 export function ChatsPanel(state) {
-  if (state.ui.sidebar === "hidden") {
-    return h("button", { class: "sidebar-reveal", title: "Show the sidebar (<C-g>s)", "aria-label": "Show the sidebar", onClick: () => setSidebar("full") }, icon("panel"));
-  }
+  if (state.ui.sidebar === "hidden") return HiddenReveal(state);
   return state.ui.sidebar === "strip" ? Strip(state) : Full(state);
 }
 

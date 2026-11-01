@@ -196,24 +196,60 @@
   }
 }
 
-// Hidden: a button over the top left of the session, taking no width.
-.sidebar-reveal {
+// Hidden: a slim 36 px rail holds only the logo, reserved like any other
+// sidebar width so the session never starts underneath it. Hovering the rail
+// (or tabbing in) reveals the rest of the strip's rows further down the same
+// rail, never past its width, so the session keeps its margin at every step.
+.sidebar-hover-zone {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 0;
+  left: 0;
   z-index: 5;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius);
-  color: var(--muted-fg);
-  opacity: 0.6;
+  width: 36px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6px;
+  border-right: 1px solid transparent;
 
-  &:hover {
-    opacity: 1;
-    background: var(--list-selected-bg);
+  .chats__logo {
+    opacity: 0.75;
   }
+
+  &:hover,
+  &:focus-within {
+    background: var(--sidebar-bg);
+    border-right-color: var(--border);
+    padding-bottom: 6px;
+
+    .chats__logo {
+      opacity: 1;
+    }
+  }
+}
+
+.sidebar-hover-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.12s ease, opacity 0.1s ease;
+
+  .icon-button {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.sidebar-hover-zone:hover .sidebar-hover-reveal,
+.sidebar-hover-zone:focus-within .sidebar-hover-reveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 4px;
 }
 
 .project__row {

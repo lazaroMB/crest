@@ -20,8 +20,9 @@ export function modeCommand(mode, text) {
 
 export const nextMode = (id) => CHAT_MODES[(CHAT_MODES.findIndex((m) => m.id === id) + 1) % CHAT_MODES.length].id;
 
-/** The sidebar's widths in pixels; the strip keeps only icons. */
-export const SIDEBAR_WIDTH = { full: 240, strip: 48, hidden: 0 };
+/** The sidebar's widths in pixels. Hidden draws only the Crest mark; the session stays full
+ * width until hover, when the rows use this width and the session shifts aside. */
+export const SIDEBAR_WIDTH = { full: 240, strip: 48, hidden: 36 };
 
 /** `<C-g>s`: full → strip → hidden → full. */
 export const nextSidebar = (state) => ({ full: "strip", strip: "hidden", hidden: "full" })[state] ?? "full";

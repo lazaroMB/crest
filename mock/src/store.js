@@ -24,7 +24,7 @@ export const state = {
     width: "fill", // the mock bar's window width: fill | 1440 | 1024 | 720
     mockBar: true,
     focus: "prompt", // prompt | timeline | chats | tree
-    sidebar: "full", // full | strip | hidden (src/modes.js)
+    sidebar: "hidden", // full | strip | hidden (src/modes.js); closed until the person opens it
     search: null, // the sidebar's search text while its field is open
     treeShown: false,
     folded: {}, // project id -> true when folded
