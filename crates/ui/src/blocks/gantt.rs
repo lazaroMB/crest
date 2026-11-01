@@ -72,6 +72,9 @@ pub fn critical_text(spec: &GanttSpec) -> String {
 /// Per-block state: the spec, its timeline and its table.
 pub struct GanttView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<GanttSpec>,
     timeline: Rc<TimelineSpec>,
     table: Rc<TreeSpec>,
@@ -81,6 +84,7 @@ impl GanttView {
     fn new(id: BlockId, spec: &GanttSpec) -> Self {
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             timeline: Rc::new(spec.timeline()),
             table: Rc::new(spec.table()),
             spec: Rc::new(spec.clone()),
@@ -107,9 +111,9 @@ impl GanttView {
 impl Render for GanttView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let timeline = Rc::clone(&self.timeline);
-        let chart = widgets::timeline::render(node_id(self.id, 0), &timeline, window, cx);
+        let chart = widgets::timeline::render(node_id(self.id, 0), &timeline, self.rev, window, cx);
         let table = Rc::clone(&self.table);
-        let table = widgets::tree::render(node_id(self.id, 1), &table, window, cx);
+        let table = widgets::tree::render(node_id(self.id, 1), &table, self.rev, window, cx);
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let warnings = self.spec.warnings.clone();
@@ -157,12 +161,18 @@ impl Render for GanttView {
 pub fn view(
     id: BlockId,
     spec: &GanttSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<GanttView> {
-    let view = super::block_state(id, window, cx, |_, _| GanttView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| GanttView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -170,7 +180,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Gantt(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -271,7 +281,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let gantt = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let gantt =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let (critical, slack) = gantt.read_with(cx, |g, _| {
             let rows = &g.timeline().rows;
             (rows[0].spans[0].status, rows[2].spans[1].status)

@@ -1280,6 +1280,7 @@ impl PickerView {
                     None,
                     path.file_name(),
                     ImageFit::Contain,
+                    crate::timeline::NO_REV,
                     window,
                     cx,
                 );
@@ -1289,6 +1290,7 @@ impl PickerView {
                 let view = crate::blocks::model_view::model_view_inline(
                     PREVIEW_MODEL,
                     spec,
+                    crate::timeline::NO_REV,
                     MODEL_PREVIEW_HEIGHT,
                     window,
                     cx,

@@ -739,13 +739,20 @@ impl Render for DrawingView {
 pub fn view(
     id: BlockId,
     spec: &DrawingSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<DrawingView> {
-    let view = super::block_state(id, window, cx, |_, cx| DrawingView::new(spec, cx));
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| DrawingView::new(spec, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
@@ -754,7 +761,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Drawing(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -902,7 +909,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         // The holes layer is off in the file: the fit is the outline's.
         let fitted = view.read_with(cx, |v, _| v.viewport());
         assert!((fitted.center[0] - 50.0).abs() < 1e-9, "{fitted:?}");

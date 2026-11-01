@@ -118,6 +118,8 @@ pub fn pick_text(spec: &Molecule3dSpec, atoms: &[usize]) -> Option<String> {
 /// Per-block state: the molecule, its mesh and colours.
 pub struct Molecule3dView {
     id: BlockId,
+    /// Revision of `model`, new whenever it is made again.
+    rev: u64,
     spec: Rc<Molecule3dSpec>,
     model: Rc<ModelSpec>,
     colors: Rc<[Rgb]>,
@@ -147,6 +149,7 @@ impl Molecule3dView {
             .collect();
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             spec: Rc::new(spec.clone()),
             model: Rc::new(model),
             colors,
@@ -164,7 +167,14 @@ impl Molecule3dView {
 
 impl Render for Molecule3dView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = model_view_inline(node_id(self.id, 0), &self.model, VIEW_HEIGHT, window, cx);
+        let model = model_view_inline(
+            node_id(self.id, 0),
+            &self.model,
+            self.rev,
+            VIEW_HEIGHT,
+            window,
+            cx,
+        );
         let (colors, snap, arm) = (Rc::clone(&self.colors), Rc::clone(&self.snap), !self.armed);
         model.update(cx, |view, cx| {
             view.set_colors(Some(colors), cx);
@@ -223,12 +233,18 @@ impl Render for Molecule3dView {
 pub fn view(
     id: BlockId,
     spec: &Molecule3dSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Molecule3dView> {
-    let view = super::block_state(id, window, cx, |_, _| Molecule3dView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| Molecule3dView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -236,7 +252,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Molecule3d(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -323,10 +339,18 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let mol = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let mol =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let viewer = cx.update(|window, cx| {
             let model = Rc::clone(&mol.read(cx).model);
-            model_view_inline(node_id(id, 0), &model, VIEW_HEIGHT, window, cx)
+            model_view_inline(
+                node_id(id, 0),
+                &model,
+                crate::timeline::NO_REV,
+                VIEW_HEIGHT,
+                window,
+                cx,
+            )
         });
         assert!(viewer.read_with(cx, |v, _| v.measuring()));
         // The mesh is coloured: oxygen red, not clay.

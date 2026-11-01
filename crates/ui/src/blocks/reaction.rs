@@ -9,7 +9,9 @@
 //! charge), the suggested coefficients come as an equation, and the
 //! envelope's provenance and warnings close the card.
 
-use domain::block::{BlockKind, ImageData};
+use std::rc::Rc;
+
+use domain::block::BlockKind;
 use domain::science::reaction::{ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry};
 use gpui::{
     AnyElement, App, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
@@ -20,13 +22,26 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::computed::grid::{Grid, GridCell};
 use super::computed::provenance_text;
 use super::molecule::{subscript_formula, svg_data, tinted_picture};
+use super::svg::SvgData;
 use crate::timeline::TimelineEntry;
 
 /// Tallest a depiction in the scheme is drawn.
 const MAX_HEIGHT: f32 = 150.0;
 
-/// The depictions of a block as image data, made once.
-struct Depictions(Vec<Option<ImageData>>);
+/// The depictions of a block as image data, hashed, made once per
+/// revision of the block.
+struct Depictions(Rc<[Option<SvgData>]>);
+
+impl Depictions {
+    fn new(spec: &ReactionSpec) -> Self {
+        Self(
+            spec.components
+                .iter()
+                .map(|c| c.molecule.svg.as_deref().map(svg_data))
+                .collect(),
+        )
+    }
+}
 
 /// The balance table: element, reactants, products, Δ; mismatches in
 /// `danger`, then the charge.
@@ -82,7 +97,7 @@ pub fn verdict(spec: &ReactionSpec) -> (String, bool) {
 fn molecule_card(
     ix: usize,
     c: &ReactionComponent,
-    data: Option<&ImageData>,
+    data: Option<&SvgData>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -134,14 +149,14 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Reaction(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let svgs: Vec<Option<String>> = spec
-        .components
-        .iter()
-        .map(|c| c.molecule.svg.clone())
-        .collect();
-    let depictions = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Depictions(svgs.iter().map(|s| s.as_deref().map(svg_data)).collect())
-    });
+    let depictions = super::synced_state(
+        entry.block.id,
+        entry.rev,
+        window,
+        cx,
+        |_, _| Depictions::new(spec),
+        |depictions, _, _| *depictions = Depictions::new(spec),
+    );
     let data = depictions.read(cx).0.clone();
     let mut card = v_flex()
         .w_full()

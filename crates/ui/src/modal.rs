@@ -49,6 +49,9 @@ use crate::sysboard::SysBoardView;
 /// A modal on screen.
 struct Open {
     spec: ModalSpec,
+    /// Revision of `spec.content` ([`crate::timeline::next_rev`]), new
+    /// with each update, so its nodes compare their specs only then.
+    rev: u64,
     /// Parent id of its stateful nodes (tables, images...).
     node_id: BlockId,
     scroll: ScrollHandle,
@@ -211,6 +214,7 @@ impl ModalHost {
             self.restore_focus = window.focused(cx);
         }
         self.stack.push(Open {
+            rev: crate::timeline::next_rev(),
             node_id: modal_node_id(&spec.id),
             spec,
             scroll,
@@ -266,6 +270,7 @@ impl ModalHost {
     fn update(&mut self, id: &ModalId, content: CustomNode, cx: &mut Context<Self>) {
         if let Some(open) = self.stack.iter_mut().find(|open| &open.spec.id == id) {
             open.spec.content = content;
+            open.rev = crate::timeline::next_rev();
             cx.notify();
         }
     }
@@ -391,6 +396,7 @@ impl ModalHost {
             (None, None) => Some(crate::blocks::custom::render_node(
                 open.node_id,
                 &open.spec.content,
+                open.rev,
                 window,
                 cx,
             )),
@@ -523,6 +529,9 @@ impl Render for ModalHost {
             .on_key_down(cx.listener(Self::on_key))
             .absolute()
             .inset_0()
+            // The host is a cached view, laid out on its own: it fills the
+            // window by its size, not by its insets.
+            .size_full()
             .child(
                 div()
                     .id("modal-backdrop")

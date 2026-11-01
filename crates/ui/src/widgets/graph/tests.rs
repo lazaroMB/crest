@@ -36,9 +36,13 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(render(self.id, &self.spec, window, cx))
+        div().size_full().child(render(
+            self.id,
+            &self.spec,
+            crate::timeline::NO_REV,
+            window,
+            cx,
+        ))
     }
 }
 
@@ -62,7 +66,7 @@ fn draw(cx: &mut VisualTestContext, host: &gpui::Entity<Host>) -> gpui::Entity<G
     frame(cx);
     frame(cx);
     let (id, spec) = host.read_with(cx, |host, _| (host.id, host.spec.clone()));
-    cx.update(|window, cx| view(id, &spec, window, cx))
+    cx.update(|window, cx| view(id, &spec, crate::timeline::NO_REV, window, cx))
 }
 
 /// Window point over the centre of node `ix`.

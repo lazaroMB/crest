@@ -10,12 +10,60 @@
 //! visible rows again each frame, so a resized window lays the block out
 //! anew without extra bookkeeping.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Size, Style, Window, px, relative, size,
 };
+
+/// Widths a [`LayoutMemo`] remembers: layout may measure a row at a few
+/// widths in one frame (a probe at [`FALLBACK_WIDTH`], then the real one).
+const MEMO_WIDTHS: usize = 4;
+
+/// The layouts last planned at a few widths, with the key (the font) they
+/// were measured with. The height of a [`measured`] element and the paint
+/// of its child ask for the same layout, so a frame plans it once; a block
+/// that keeps the memo across frames plans again only when the width or
+/// the key changes. A memo is for one content: make a new one when the
+/// content changes.
+pub struct LayoutMemo<K, L> {
+    plans: RefCell<Vec<(f32, K, Rc<L>)>>,
+}
+
+impl<K, L> Default for LayoutMemo<K, L> {
+    fn default() -> Self {
+        Self {
+            plans: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl<K: PartialEq, L> LayoutMemo<K, L> {
+    /// The layout at `width` for `key`, planned with `plan` when it is not
+    /// remembered.
+    pub fn get(&self, width: f32, key: K, plan: impl FnOnce() -> L) -> Rc<L> {
+        let found = self
+            .plans
+            .borrow()
+            .iter()
+            .find(|(w, k, _)| *w == width && *k == key)
+            .map(|(_, _, layout)| layout.clone());
+        if let Some(layout) = found {
+            return layout;
+        }
+        let layout = Rc::new(plan());
+        let mut plans = self.plans.borrow_mut();
+        // Another key (the font changed) makes every remembered plan stale.
+        plans.retain(|(_, k, _)| *k == key);
+        if plans.len() >= MEMO_WIDTHS {
+            plans.remove(0);
+        }
+        plans.push((width, key, layout.clone()));
+        layout
+    }
+}
 
 /// Width assumed when layout asks for the natural (max-content) size, where
 /// no width is offered yet.

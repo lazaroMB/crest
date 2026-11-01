@@ -628,12 +628,13 @@ pub fn open(
         root.set_activity(activity, cx);
         root.set_input(input.clone(), cx);
         root.set_status(status, cx);
-        root.set_side_panel(tree, cx);
+        let panel = tree.clone();
+        root.set_side_panel(tree, move |cx| panel.read(cx).width(), cx);
         root.push_overlay(picker, cx);
         root.push_overlay(session.clone(), cx);
         // Plugin modals sit below the approval dialog, which must stay
         // reachable while one is open.
-        root.push_overlay(modal, cx);
+        root.push_cached_overlay(modal, cx);
         root.push_overlay(login, cx);
         root.push_overlay(approval, cx);
     });
@@ -3800,7 +3801,9 @@ mod tests {
         let id = block.id;
         let (h, cx) = harness_with(Vec::new(), vec![block], cx);
         cx.run_until_parked();
-        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let flame = cx.update(|window, cx| {
+            crate::blocks::flame::view(id, &spec, crate::timeline::NO_REV, window, cx)
+        });
         flame.update_in(cx, |f, window, cx| {
             f.zoom_to(1, cx);
             window.focus(&f.focus_handle(cx), cx);
@@ -3849,7 +3852,13 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         let list = cx.update(|window, cx| {
-            crate::widgets::list::view(crate::blocks::custom::node_id(id, 0), &list, window, cx)
+            crate::widgets::list::view(
+                crate::blocks::custom::node_id(id, 0),
+                &list,
+                crate::timeline::NO_REV,
+                window,
+                cx,
+            )
         });
         list.update_in(cx, |l, window, cx| {
             window.focus(&l.focus_handle().clone(), cx);
@@ -4288,7 +4297,9 @@ mod tests {
         let (h, cx) = harness_with(Vec::new(), vec![block], cx);
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        let flame = cx.update(|window, cx| crate::blocks::flame::view(id, &spec, window, cx));
+        let flame = cx.update(|window, cx| {
+            crate::blocks::flame::view(id, &spec, crate::timeline::NO_REV, window, cx)
+        });
         let focused = |cx: &mut VisualTestContext| {
             cx.update(|window, cx| {
                 let s = h.session.read(cx);

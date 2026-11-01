@@ -377,6 +377,10 @@ fn key_text(key: &Key) -> Option<char> {
 /// The prompt input.
 pub struct InputView {
     sequencer: KeySequencer<Action>,
+    /// The keys of the image mode for the tray, looked up in the keymap
+    /// once rather than on every frame; dropped by [`Self::sequencer_mut`],
+    /// the only way the keymap changes.
+    image_mode_keys: Option<Option<String>>,
     editor: Entity<TextareaState>,
     focus_handle: FocusHandle,
     timeout: Option<Task<()>>,
@@ -457,6 +461,7 @@ impl InputView {
         });
         Self {
             sequencer: KeySequencer::new(keymap),
+            image_mode_keys: None,
             editor,
             focus_handle,
             timeout: None,
@@ -535,6 +540,7 @@ impl InputView {
 
     /// The sequencer, e.g. to change `timeoutlen` or add mappings.
     pub fn sequencer_mut(&mut self) -> &mut KeySequencer<Action> {
+        self.image_mode_keys = None;
         &mut self.sequencer
     }
 
@@ -1232,7 +1238,12 @@ impl Focusable for InputView {
 
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mode_keys = crate::help::action_keys(self.keymap(), IMAGE_MODE_ACTION);
+        let mode_keys = self
+            .image_mode_keys
+            .get_or_insert_with(|| {
+                crate::help::action_keys(self.sequencer.keymap(), IMAGE_MODE_ACTION)
+            })
+            .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
         let which_key = self.render_which_key(cx);
         let paths = self.path_popup(cx).map(|popup| {

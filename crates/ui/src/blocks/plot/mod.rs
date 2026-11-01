@@ -37,7 +37,7 @@ use self::paint::{paint_grid, paint_labels, paint_layers};
 use self::sample::{Mark, Scene, scene};
 use super::chart::paint::LabelFont;
 use super::chart::series_color;
-use super::measured::measured;
+use super::measured::{LayoutMemo, measured};
 use crate::timeline::TimelineEntry;
 
 /// Pixels from the cursor within which a data point is read out.
@@ -66,8 +66,10 @@ pub struct PlotCanvas {
     titles: Titles,
     colors: Rc<[Hsla]>,
     font: LabelFont,
+    /// This frame's layouts by width, shared with its height.
+    memo: Rc<LayoutMemo<LabelFont, PlotLayout>>,
     /// The layout for this frame's bounds, set in prepaint.
-    layout: Option<PlotLayout>,
+    layout: Option<Rc<PlotLayout>>,
 }
 
 impl PlotCanvas {
@@ -157,15 +159,18 @@ impl Plot for PlotCanvas {
         _cx: &mut App,
     ) -> Vec<AnyElement> {
         let window: &Window = window;
+        let width = bounds.size.width.as_f32();
         let measure = |text: &str| self.font.measure(text, window);
-        self.layout = Some(plan(
-            self.scene.view,
-            self.titles.x.as_deref(),
-            self.titles.y.as_deref(),
-            bounds.size.width.as_f32(),
-            &measure,
-            self.scene.axes,
-        ));
+        self.layout = Some(self.memo.get(width, self.font.clone(), || {
+            plan(
+                self.scene.view,
+                self.titles.x.as_deref(),
+                self.titles.y.as_deref(),
+                width,
+                &measure,
+                self.scene.axes,
+            )
+        }));
         vec![]
     }
 
@@ -298,26 +303,33 @@ fn plot_frame(
         .max(1);
     let colors: Rc<[Hsla]> = (0..slots).map(|ix| series_color(ix, cx)).collect();
     let (view, axes) = (scene.view, scene.axes);
+    // The scene changes with the sliders: the memo lasts one frame, where
+    // the height and the paint share one plan per width.
+    let memo: Rc<LayoutMemo<LabelFont, PlotLayout>> = Rc::default();
     let canvas = PlotCanvas {
         id,
         scene,
         titles: titles.clone(),
         colors,
         font: font.clone(),
+        memo: memo.clone(),
         layout: None,
     };
     measured(
         move |width, window, _| {
             let window: &Window = window;
+            let width = width.as_f32();
             let measure = |text: &str| font.measure(text, window);
-            let layout = plan(
-                view,
-                titles.x.as_deref(),
-                titles.y.as_deref(),
-                width.as_f32(),
-                &measure,
-                axes,
-            );
+            let layout = memo.get(width, font.clone(), || {
+                plan(
+                    view,
+                    titles.x.as_deref(),
+                    titles.y.as_deref(),
+                    width,
+                    &measure,
+                    axes,
+                )
+            });
             px(layout.height)
         },
         canvas,
@@ -632,10 +644,21 @@ impl Render for PlotView {
 }
 
 /// The view of block `id`, in sync with `spec`.
-pub fn view(id: BlockId, spec: &PlotSpec, window: &mut Window, cx: &mut App) -> Entity<PlotView> {
-    let view = super::block_state(id, window, cx, |_, cx| PlotView::new(id, spec.clone(), cx));
-    view.update(cx, |view, cx| view.sync(spec, cx));
-    view
+pub fn view(
+    id: BlockId,
+    spec: &PlotSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<PlotView> {
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| PlotView::new(id, spec.clone(), cx),
+        |view, _, cx| view.sync(spec, cx),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -643,7 +666,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Plot(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

@@ -19,13 +19,11 @@ use gpui_component::plot::{Plot, PlotElement, TooltipState};
 
 use domain::block::ChartKind;
 
-use super::layout::{
-    ChartData, ChartLayout, Orientation, height_for, hit_bar, nearest_index, plan,
-};
+use super::layout::{ChartData, ChartLayout, Orientation, hit_bar, nearest_index, plan};
 use super::paint::{LabelFont, paint_bars, paint_grid, paint_labels, paint_lines};
 use super::scale::format_full;
 use super::series_color;
-use crate::blocks::measured::measured;
+use crate::blocks::measured::{LayoutMemo, measured};
 
 /// Extra width of the hover band on each side of a bar group.
 const BAND_PAD: f32 = 4.0;
@@ -40,9 +38,14 @@ pub struct ChartPlot {
     data: Rc<ChartData>,
     colors: Rc<[Hsla]>,
     font: LabelFont,
+    /// Layouts by width, shared with the frame's height.
+    memo: Rc<ChartMemo>,
     /// The layout for this frame's bounds, set in prepaint.
-    layout: Option<ChartLayout>,
+    layout: Option<Rc<ChartLayout>>,
 }
+
+/// The chart layouts of one [`ChartData`] by width and font.
+pub type ChartMemo = LayoutMemo<LabelFont, ChartLayout>;
 
 impl ChartPlot {
     fn color(&self, series: usize) -> Hsla {
@@ -80,8 +83,11 @@ impl Plot for ChartPlot {
         _cx: &mut App,
     ) -> Vec<AnyElement> {
         let window: &Window = window;
+        let width = bounds.size.width.as_f32();
         let measure = |text: &str| self.font.measure(text, window);
-        self.layout = Some(plan(&self.data, bounds.size.width.as_f32(), &measure));
+        self.layout = Some(self.memo.get(width, self.font.clone(), || {
+            plan(&self.data, width, &measure)
+        }));
         vec![]
     }
 
@@ -219,13 +225,20 @@ impl ChartPlot {
 }
 
 /// The chart element for `data`: as wide as its container and as tall as
-/// its layout needs at that width.
-pub fn chart_frame(data: ChartData, id: ElementId, window: &Window, cx: &App) -> AnyElement {
+/// its layout needs at that width. `memo` keeps the layouts of `data`
+/// (one plan per width for the height and the paint, and none on frames
+/// where nothing changed).
+pub fn chart_frame(
+    data: Rc<ChartData>,
+    memo: Rc<ChartMemo>,
+    id: ElementId,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
     let font = LabelFont {
         font: window.text_style().font(),
         size: window.rem_size() * 0.75,
     };
-    let data = Rc::new(data);
     let colors: Rc<[Hsla]> = (0..data.series_count())
         .map(|ix| series_color(ix, cx))
         .collect();
@@ -234,13 +247,17 @@ pub fn chart_frame(data: ChartData, id: ElementId, window: &Window, cx: &App) ->
         data: data.clone(),
         colors,
         font: font.clone(),
+        memo: memo.clone(),
         layout: None,
     };
     measured(
         move |width, window, _| {
             let window: &Window = window;
+            let width = width.as_f32();
             let measure = |text: &str| font.measure(text, window);
-            px(height_for(&data, width.as_f32(), &measure))
+            px(memo
+                .get(width, font.clone(), || plan(&data, width, &measure))
+                .height)
         },
         plot,
     )

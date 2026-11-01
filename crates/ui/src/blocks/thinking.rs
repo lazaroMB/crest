@@ -34,10 +34,16 @@ pub fn summary_line(text: &str) -> &str {
 }
 
 /// Draws the block held by `entry`.
-pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Thinking { text, .. } = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
+    // The whole reasoning, copied once per revision rather than per frame.
+    let full = entry.expanded.then(|| {
+        super::derived(entry.block.id, entry.rev, (), window, cx, |()| {
+            SharedString::from(text.clone())
+        })
+    });
     let theme = cx.theme();
     let marker = if entry.expanded { "▾" } else { "▸" };
     let mut header = h_flex()
@@ -45,7 +51,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
         .text_color(theme.muted_foreground)
         .child(marker)
         .child(div().font_weight(FontWeight::MEDIUM).italic().child(LABEL));
-    if !entry.expanded {
+    let Some(full) = full else {
         let summary = summary_line(text);
         if !summary.is_empty() {
             header = header.child(
@@ -59,7 +65,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
             );
         }
         return header.into_any_element();
-    }
+    };
     v_flex()
         .gap_1()
         .child(header)
@@ -70,7 +76,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                 .border_l_1()
                 .border_color(theme.border)
                 .text_color(theme.muted_foreground)
-                .child(SharedString::from(text.clone())),
+                .child((*full).clone()),
         )
         .into_any_element()
 }

@@ -525,12 +525,18 @@ impl Render for FindingsView {
 pub fn view(
     id: BlockId,
     spec: &FindingsSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<FindingsView> {
-    let view = super::block_state(id, window, cx, |_, _| FindingsView::new(id, spec));
-    view.update(cx, |view, cx| view.sync(spec, cx));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| FindingsView::new(id, spec),
+        |view, _, cx| view.sync(spec, cx),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -538,7 +544,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Findings(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]

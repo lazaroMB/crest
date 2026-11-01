@@ -152,7 +152,7 @@ fn frame(
             if let Some(interval) = interval {
                 s.toggle.push(interval);
             }
-            let view = table_view(s.id, &s.spec, window, cx);
+            let view = table_view(s.id, &s.spec, ui::timeline::NO_REV, window, cx);
             // End expanded, so the sorts lay out the most rows.
             view.update(cx, |view, cx| view.set_expanded(done % 2 == 0, cx));
             s.phase = if done + 1 >= TOGGLES {
@@ -166,7 +166,7 @@ fn frame(
             if let Some(interval) = interval {
                 s.sort.push(interval);
             }
-            let view = table_view(s.id, &s.spec, window, cx);
+            let view = table_view(s.id, &s.spec, ui::timeline::NO_REV, window, cx);
             let started = Instant::now();
             let sort = if ascending {
                 Direction::Ascending

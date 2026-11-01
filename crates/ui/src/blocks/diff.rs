@@ -88,29 +88,49 @@ fn line_color(kind: DiffLineKind, cx: &App) -> Hsla {
     }
 }
 
+/// The lines of a unified diff, classified and ready to draw.
+type DiffLines = Vec<(DiffLineKind, SharedString)>;
+
+fn diff_lines(unified: &str) -> DiffLines {
+    unified
+        .lines()
+        .map(|line| {
+            // An empty context line still takes one row.
+            let text = if line.is_empty() { " " } else { line };
+            (classify_line(line), SharedString::from(text.to_owned()))
+        })
+        .collect()
+}
+
 /// The unified diff, one colored row per line. An empty diff shows a muted
 /// "no changes" line.
 pub fn render_unified(unified: &str, cx: &App) -> AnyElement {
-    let theme = cx.theme();
     if unified.trim().is_empty() {
-        return div()
-            .text_color(theme.muted_foreground)
-            .child("(no changes)")
-            .into_any_element();
+        return no_changes(cx);
     }
+    render_lines(&diff_lines(unified), cx)
+}
+
+fn no_changes(cx: &App) -> AnyElement {
+    div()
+        .text_color(cx.theme().muted_foreground)
+        .child("(no changes)")
+        .into_any_element()
+}
+
+fn render_lines(lines: &DiffLines, cx: &App) -> AnyElement {
+    let theme = cx.theme();
     let added_bg = crate::theme::token(cx, "diff.added.bg");
     let removed_bg = crate::theme::token(cx, "diff.removed.bg");
     v_flex()
         .font_family(theme.mono_font_family.clone())
-        .children(unified.lines().map(|line| {
-            let kind = classify_line(line);
-            // An empty context line still takes one row.
-            let text = if line.is_empty() { " " } else { line };
+        .children(lines.iter().map(|(kind, text)| {
+            let kind = *kind;
             let row = div()
                 .px_1()
                 .whitespace_nowrap()
                 .text_color(line_color(kind, cx))
-                .child(SharedString::from(text.to_owned()));
+                .child(text.clone());
             match kind {
                 DiffLineKind::Added => row.bg(added_bg),
                 DiffLineKind::Removed => row.bg(removed_bg),
@@ -122,8 +142,11 @@ pub fn render_unified(unified: &str, cx: &App) -> AnyElement {
 
 /// Header of a diff: path, `+a −r`, "new file" and the approval state.
 pub fn render_header(spec: &DiffSpec, cx: &App) -> AnyElement {
+    header_with(spec, line_stats(&spec.unified), cx)
+}
+
+fn header_with(spec: &DiffSpec, (added, removed): (usize, usize), cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (added, removed) = line_stats(&spec.unified);
     let mut header = h_flex()
         .gap_2()
         .child(
@@ -185,21 +208,26 @@ fn render_buttons(entry: &TimelineEntry, path: &str) -> AnyElement {
 
 /// Draws the block held by `entry`: the header, and the diff while the
 /// block is expanded.
-pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
     let BlockKind::Diff(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let mut block = v_flex().gap_1().child(render_header(spec, cx));
+    // Counted and split once per revision of the block, not per frame.
+    let (id, rev) = (entry.block.id, entry.rev);
+    let stats = *super::derived(id, rev, (), window, cx, |()| line_stats(&spec.unified));
+    let lines = (entry.expanded && !spec.unified.trim().is_empty())
+        .then(|| super::derived(id, rev, (), window, cx, |()| diff_lines(&spec.unified)));
+    let mut block = v_flex().gap_1().child(header_with(spec, stats, cx));
     if spec.approval == Some(ApprovalState::Pending) {
         block = block.child(render_buttons(entry, &spec.path));
     }
     if entry.expanded {
-        block = block.child(
-            div()
-                .border_l_2()
-                .border_color(cx.theme().border)
-                .child(render_unified(&spec.unified, cx)),
-        );
+        block = block.child(div().border_l_2().border_color(cx.theme().border).child(
+            match &lines {
+                Some(lines) => render_lines(lines, cx),
+                None => no_changes(cx),
+            },
+        ));
     }
     block.into_any_element()
 }

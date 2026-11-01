@@ -31,7 +31,7 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::custom::node_id;
 use super::trace::caption;
-use crate::timeline::TimelineEntry;
+use crate::timeline::{NO_REV, TimelineEntry};
 use crate::widgets::list::{ListEvent, ListView};
 use crate::widgets::timeline::axis::color_slot;
 use crate::widgets::timeline::{TimelineEvent, TimelineView};
@@ -125,8 +125,8 @@ impl HarView {
         timeline_spec.title = Some(title);
         let mut list_spec: ListSpec = spec.list();
         list_spec.title = Some("Requests".to_owned());
-        let timeline = widgets::timeline::view(node_id(id, 0), &timeline_spec, window, cx);
-        let list = widgets::list::view(node_id(id, 1), &list_spec, window, cx);
+        let timeline = widgets::timeline::view(node_id(id, 0), &timeline_spec, NO_REV, window, cx);
+        let list = widgets::list::view(node_id(id, 1), &list_spec, NO_REV, window, cx);
         let on_timeline = cx.subscribe(&timeline, |this: &mut Self, _, event, cx| {
             let TimelineEvent::Selected(span) = event;
             if let Some(span) = span {
@@ -503,12 +503,21 @@ impl Render for HarView {
 }
 
 /// The HAR entity of block `id`, in sync with `spec`.
-pub fn view(id: BlockId, spec: &HarSpec, window: &mut Window, cx: &mut App) -> Entity<HarView> {
-    let view = super::block_state(id, window, cx, |window, cx| {
-        HarView::new(id, spec, window, cx)
-    });
-    view.update(cx, |view, cx| view.sync(spec, window, cx));
-    view
+pub fn view(
+    id: BlockId,
+    spec: &HarSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<HarView> {
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |window, cx| HarView::new(id, spec, window, cx),
+        |view, window, cx| view.sync(spec, window, cx),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -516,7 +525,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Har(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -601,7 +610,8 @@ mod tests {
         for selector in ["har", "har-summary", "timeline-canvas", "filter-list-input"] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let har = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let har =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         har.update(cx, |har, cx| har.select(Some(1), cx));
         cx.run_until_parked();
         cx.draw(point(px(0.), px(0.)), size(px(900.), px(1200.)), |_, _| {

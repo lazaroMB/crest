@@ -21,7 +21,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::image::{ImageError, image_source};
-use super::svg::SvgState;
+use super::svg::{SvgData, SvgState};
 
 /// Zoom step of the keys, the buttons and one wheel notch.
 const ZOOM_STEP: f32 = 1.25;
@@ -44,7 +44,8 @@ pub fn clamp_zoom(zoom: f32) -> f32 {
 
 /// Per-node state: the decoded source, the zoom level and the pan.
 pub struct ImageView {
-    data: ImageData,
+    /// Hashed once, for the SVG cache.
+    data: SvgData,
     media_type: Option<String>,
     fit: ImageFit,
     decoded: Result<ImageSource, ImageError>,
@@ -74,7 +75,7 @@ impl ImageView {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            data: data.clone(),
+            data: SvgData::new(data.clone()),
             media_type: media_type.map(str::to_owned),
             fit,
             decoded: image_source(media_type.unwrap_or_default(), data),
@@ -96,7 +97,7 @@ impl ImageView {
         fit: ImageFit,
         cx: &mut Context<Self>,
     ) {
-        if &self.data != data || self.media_type.as_deref() != media_type || self.fit != fit {
+        if self.data.data() != data || self.media_type.as_deref() != media_type || self.fit != fit {
             *self = Self {
                 focus: self.focus.clone(),
                 ..Self::new(data, media_type, alt, fit, cx)
@@ -217,7 +218,7 @@ impl ImageView {
             None => "fit".to_owned(),
             Some(zoom) => format!("{:.0}%", zoom * 100.0),
         };
-        let label = self.alt.clone().unwrap_or_else(|| match &self.data {
+        let label = self.alt.clone().unwrap_or_else(|| match self.data.data() {
             ImageData::Path { path } => path
                 .rsplit(|c| c == '/' || (cfg!(windows) && c == '\\'))
                 .next()
@@ -256,7 +257,7 @@ impl ImageView {
     }
 
     fn fallback(&self, danger: Hsla, border: Hsla) -> impl Fn() -> AnyElement + 'static {
-        let message = match (&self.alt, &self.data) {
+        let message = match (&self.alt, self.data.data()) {
             (Some(alt), _) => format!("cannot load image: {alt}"),
             (None, ImageData::Path { path }) => format!("cannot load {path}"),
             (None, ImageData::Base64 { .. }) => "cannot load inline image".to_owned(),
@@ -282,8 +283,8 @@ impl Render for ImageView {
         let (danger, border, radius) = (theme.danger, theme.border, theme.radius);
         let media_type = self.media_type.as_deref().unwrap_or_default();
         let tint = super::svg::wants_tint(media_type).then(|| super::svg::Tint::from_theme(cx));
-        let svg = super::svg::is_svg(media_type, &self.data).then(|| {
-            super::svg::use_svg_tinted(&self.data, self.zoom.unwrap_or(1.0), tint, window, cx)
+        let svg = super::svg::is_svg(media_type, self.data.data()).then(|| {
+            super::svg::use_svg_data(&self.data, self.zoom.unwrap_or(1.0), tint, window, cx)
         });
         let is_svg = svg.is_some();
         let (source, natural) = match (svg, &self.decoded) {
@@ -396,22 +397,30 @@ impl Render for ImageView {
     }
 }
 
-/// The view of the image node `id`, in sync with its data.
+/// The view of the image node `id`, in sync with its data at revision
+/// `rev`. The node's fields come one by one, as the custom node and the
+/// picker's preview hold them.
+#[allow(clippy::too_many_arguments)]
 pub fn image_view(
     id: BlockId,
     data: &ImageData,
     media_type: Option<&str>,
     alt: Option<&str>,
     fit: ImageFit,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<ImageView> {
-    let view = super::block_state(id, window, cx, |_, cx| {
-        ImageView::new(data, media_type, alt, fit, cx)
-    });
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| ImageView::new(data, media_type, alt, fit, cx),
+        |view, _, cx| view.sync(data, media_type, alt, fit, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(data, media_type, alt, fit, cx));
     view
 }
 
@@ -444,6 +453,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -468,6 +478,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -481,6 +492,7 @@ mod tests {
                 Some("image/png"),
                 None,
                 ImageFit::Actual,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             )
@@ -506,6 +518,7 @@ mod tests {
                 Some("image/svg+xml"),
                 None,
                 ImageFit::Contain,
+                crate::timeline::NO_REV,
                 window,
                 cx,
             );

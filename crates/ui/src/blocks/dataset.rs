@@ -276,7 +276,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     let id = format!("dataset-{}", entry.block.id);
-    let table = super::table::table_view(entry.block.id, &spec.preview, window, cx);
+    let table = super::table::table_view(entry.block.id, &spec.preview, entry.rev, window, cx);
     let theme = cx.theme();
     let header = h_flex()
         .gap_2()

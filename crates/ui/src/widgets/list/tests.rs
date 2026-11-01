@@ -30,9 +30,13 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(render(self.id, &self.spec, window, cx))
+        div().size_full().child(render(
+            self.id,
+            &self.spec,
+            crate::timeline::NO_REV,
+            window,
+            cx,
+        ))
     }
 }
 
@@ -42,7 +46,7 @@ fn host(cx: &mut TestAppContext, spec: ListSpec) -> (Entity<ListView>, &mut Visu
     let lookup = spec.clone();
     let (_, cx) = cx.add_window_view(|_, _| Host { id, spec });
     draw(cx);
-    let view = cx.update(|window, cx| view(id, &lookup, window, cx));
+    let view = cx.update(|window, cx| view(id, &lookup, crate::timeline::NO_REV, window, cx));
     (view, cx)
 }
 

@@ -17,7 +17,7 @@ pub mod wrap;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use domain::block::{BlockKind, MermaidSpec};
+use domain::block::{BlockId, BlockKind, MermaidSpec};
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
@@ -69,15 +69,19 @@ impl MermaidView {
         }
     }
 
-    /// Reparses when the source changed (resetting the camera) and switches
-    /// between diagram and source.
-    fn sync(&mut self, source: &str, show_source: bool, cx: &mut Context<Self>) {
+    /// Reparses when the source changed, resetting the camera.
+    fn sync_source(&mut self, source: &str, cx: &mut Context<Self>) {
         if self.source != source {
             self.source = source.to_owned();
             self.diagram = diagram::parse_with(source, &self.colors).map(Rc::new);
             self.camera = Camera::default();
             cx.notify();
         }
+    }
+
+    /// Follows the theme and switches between diagram and source, on
+    /// every frame.
+    fn sync_view(&mut self, show_source: bool, cx: &mut Context<Self>) {
         // Another theme (a `/theme` preview): lay it out in its colors.
         let colors = crate::theme::crest_theme(cx);
         if !std::sync::Arc::ptr_eq(&colors, &self.colors) {
@@ -338,14 +342,37 @@ pub fn mermaid_view(
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<MermaidView> {
-    let view = super::block_state(entry.block.id, window, cx, |_, cx| {
-        MermaidView::new(&spec.source, cx)
-    });
+    source_view(
+        entry.block.id,
+        &spec.source,
+        entry.alt_view,
+        entry.rev,
+        window,
+        cx,
+    )
+}
+
+/// The diagram view of `id` for `source` at revision `rev`: the source is
+/// compared only when the revision is new.
+fn source_view(
+    id: BlockId,
+    source: &str,
+    show_source: bool,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui::Entity<MermaidView> {
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| MermaidView::new(source, cx),
+        |view, _, cx| view.sync_source(source, cx),
+    );
     let focus = view.read(cx).focus.clone();
-    crate::blocks::remember_focus(entry.block.id, &focus, cx);
-    view.update(cx, |view, cx| {
-        view.sync(&spec.source, entry.alt_view, cx);
-    });
+    crate::blocks::remember_focus(id, &focus, cx);
+    view.update(cx, |view, cx| view.sync_view(show_source, cx));
     view
 }
 
@@ -354,19 +381,37 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Mermaid(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let view = mermaid_view(entry, spec, window, cx);
+    render_source(
+        entry.block.id,
+        &spec.source,
+        spec.title.as_deref(),
+        entry.alt_view,
+        entry.rev,
+        window,
+        cx,
+    )
+}
+
+/// Draws `source` as the diagram of `id` (a block, or a node of a custom
+/// block at its block's revision `rev`), titled `title`.
+pub fn render_source(
+    id: BlockId,
+    source: &str,
+    title: Option<&str>,
+    show_source: bool,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let view = source_view(id, source, show_source, rev, window, cx);
     let theme = cx.theme();
     let state = view.read(cx);
-    let hint = match (state.error(), entry.alt_view) {
+    let hint = match (state.error(), show_source) {
         (Some(_), _) => "diagram · invalid",
         (None, true) => "diagram · source · t: diagram",
         (None, false) => "diagram · drag to pan · ctrl+wheel, +/- to zoom · t: source",
     };
-    let title = spec
-        .title
-        .as_deref()
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or("Mermaid");
+    let title = title.filter(|t| !t.trim().is_empty()).unwrap_or("Mermaid");
     v_flex()
         .gap_1()
         .child(
@@ -426,6 +471,7 @@ mod tests {
             expanded: true,
             alt_view: false,
             numbers: Default::default(),
+            rev: crate::timeline::NO_REV,
         };
         let spec = MermaidSpec {
             source: source.to_owned(),
