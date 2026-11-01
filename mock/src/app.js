@@ -64,10 +64,14 @@ export function mountApp(root) {
 
   const regions = [
     region(mockBar, (s) => s.ui, MockBar),
-    region(chats, (s) => [s.ui.chatsShown && s.projects, s.openChatId, s.ui.menu, s.ui.folded, s.ui.focus], (s) => s.ui.chatsShown && ChatsPanel(s)),
+    region(
+      chats,
+      (s) => [s.organization, s.openChatId, s.ui.sidebar, s.ui.search, s.ui.menu, s.ui.folded, s.ui.focus, s.ui.archivedOpen],
+      ChatsPanel,
+    ),
     region(tree, (s) => [s.ui.treeShown, s.ui.focus], (s) => s.ui.treeShown && TreePanel(s)),
     region(activity, (s) => [s.turn.activity, s.turn.queue, Math.floor(Date.now() / 100)], (s) => ActivityLine(s)),
-    region(status, (s) => [s.status, s.notice, s.turn.busy], StatusBar),
+    region(status, (s) => [s.status, s.notice, s.turn.busy, s.organization, s.openChatId], StatusBar),
     region(info, (s) => [s.notices, s.notice, s.turn.steps, s.toast, s.ui.infoOpen], InfoCorner),
     region(overlay, (s) => [s.turn.approval, s.turn.chatId, s.chat?.id, s.ui.approvalIndex], ApprovalDialog),
   ];

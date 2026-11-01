@@ -4,6 +4,7 @@ import { toBlob } from "html-to-image";
 import { api } from "./api.js";
 import { setState, setTurn, setUi, state } from "./store.js";
 import { NOTICE_TTL_MS, SHOW_AFTER_MS, recordStep } from "./visibility.js";
+import { nextMode, nextSidebar } from "./modes.js";
 
 let noticeTimer;
 let toastTimer;
@@ -51,6 +52,7 @@ export function toggleInfo() {
 /**
  * Loads the workbench. The URL can pick the starting point:
  *   ?chat=c-release  ?chat=new  ?theme=twocrest-light  ?width=1024  ?prompt=fix the bug
+ *   ?sidebar=strip|hidden  ?mode=research|deep
  */
 export async function init() {
   const params = new URLSearchParams(location.search);
@@ -58,6 +60,8 @@ export async function init() {
   setUi({
     theme: params.get("theme") ?? state.ui.theme,
     width: width && width !== "fill" ? Number(width) : "fill",
+    sidebar: params.get("sidebar") ?? state.ui.sidebar,
+    chatMode: params.get("mode") ?? state.ui.chatMode,
   });
 
   const [workbench, commands] = await Promise.all([api.workbench(), api.commands()]);
@@ -71,8 +75,20 @@ export async function init() {
 }
 
 async function refreshProjects() {
-  const { projects } = await api.workbench();
-  setState({ projects });
+  const { organization } = await api.workbench();
+  setState({ organization });
+}
+
+/** Runs an organization change on the server; a refusal shows as a warning and changes nothing. */
+async function organize(call) {
+  try {
+    const { organization } = await call();
+    setState({ organization });
+    return true;
+  } catch (error) {
+    notice("warning", error.message);
+    return false;
+  }
 }
 
 export async function openChat(id) {
@@ -94,11 +110,12 @@ function showVisibility() {
   flash({ id: step.id, level: "info", text: "grep · 40ms" });
 }
 
-export async function newChat(projectId = state.chat?.projectId) {
+/** A new chat: in `projectId`, or standalone with `null`. "New chat" with no argument is standalone. */
+export async function newChat(projectId = null) {
   const chat = await api.newChat(projectId);
   await refreshProjects();
   setState({ chat, openChatId: chat.id });
-  setUi({ selected: null, focus: "prompt" });
+  setUi({ selected: null, focus: "prompt", menu: null });
 }
 
 export async function renameChat(id, title) {
@@ -113,15 +130,103 @@ export async function deleteChat(id) {
   setUi({ menu: null });
   await refreshProjects();
   if (state.chat?.id === id) {
-    const next = state.projects.flatMap((p) => p.chats)[0];
+    const next = state.organization.chats[0];
     if (next) await openChat(next.id);
     else setState({ chat: null });
   }
 }
 
+/** Promotes a chat into a project, or takes it out with `null`. The chat keeps its history. */
+export async function moveChat(chatId, projectId) {
+  if (await organize(() => api.moveChat(chatId, projectId))) {
+    if (state.chat?.id === chatId) state.chat.projectId = projectId;
+    const name = state.organization.projects.find((p) => p.id === projectId)?.name;
+    notice("info", projectId ? `moved to ${name}` : "now a standalone chat");
+    setUi({ menu: null });
+  }
+}
+
+/** A new project of one directory, with `chatId` promoted into it when given. */
+export async function createProject(name, root, chatId) {
+  if (await organize(() => api.createProject({ name, roots: [root], chatId }))) {
+    if (chatId && state.chat?.id === chatId) state.chat.projectId = state.organization.chats.find((c) => c.id === chatId)?.projectId;
+    notice("info", `project ${name} created`);
+    setUi({ menu: null });
+  }
+}
+
+export async function addProjectRoot(projectId, root) {
+  if (await organize(() => api.patchProject(projectId, { addRoot: root }))) setUi({ menu: { projectId, mode: "menu" } });
+}
+
+export const removeProjectRoot = (projectId, root) => organize(() => api.patchProject(projectId, { removeRoot: root }));
+
+export async function renameProject(projectId, name) {
+  if (await organize(() => api.patchProject(projectId, { name }))) setUi({ menu: null });
+}
+
+export function pinProject(projectId) {
+  const pinned = !state.organization.projects.find((p) => p.id === projectId)?.pinned;
+  organize(() => api.patchProject(projectId, { pinned }));
+  setUi({ menu: null });
+}
+
 export function toggleProject(projectId) {
   setUi({ folded: { ...state.ui.folded, [projectId]: !state.ui.folded[projectId] } });
 }
+
+/** Takes a chat or a project out of the sidebar's lists without deleting it. */
+export async function archiveChat(chatId) {
+  if (await organize(() => api.patchChat(chatId, { archived: true }))) {
+    notice("info", "chat archived");
+    setUi({ menu: null });
+  }
+}
+
+/** A branch of a chat: a new chat in the same project, with the history copied up to now. */
+export async function branchChat(chatId) {
+  const chat = await api.branchChat(chatId);
+  await refreshProjects();
+  setState({ chat, openChatId: chat.id });
+  setUi({ selected: null, focus: "prompt", menu: null });
+  notice("info", `branched from "${chat.branchedFrom?.title ?? "chat"}"`);
+}
+
+export async function unarchiveChat(chatId) {
+  if (await organize(() => api.patchChat(chatId, { archived: false }))) notice("info", "chat restored");
+}
+
+export async function archiveProject(projectId) {
+  if (await organize(() => api.patchProject(projectId, { archived: true }))) {
+    notice("info", "project archived");
+    setUi({ menu: null });
+  }
+}
+
+export async function unarchiveProject(projectId) {
+  if (await organize(() => api.patchProject(projectId, { archived: false }))) notice("info", "project restored");
+}
+
+export const toggleArchived = () => setUi({ archivedOpen: !state.ui.archivedOpen, menu: null });
+
+// The sidebar's widths and its search.
+
+export const setSidebar = (sidebar) => setUi({ sidebar, menu: null, focus: sidebar === "hidden" && state.ui.focus === "chats" ? "prompt" : state.ui.focus });
+
+export const cycleSidebar = () => setSidebar(nextSidebar(state.ui.sidebar));
+
+/** Opens the search field (from the strip it opens the full sidebar first); `null` closes it. */
+export function setSearch(search) {
+  setUi({ search, sidebar: search === null ? state.ui.sidebar : "full" });
+}
+
+// The prompt's chat mode.
+
+export const setChatMode = (chatMode) => setUi({ chatMode, modeMenu: false });
+
+export const cycleChatMode = () => setChatMode(nextMode(state.ui.chatMode));
+
+export const toggleModeMenu = (open = !state.ui.modeMenu) => setUi({ modeMenu: open });
 
 // Turns.
 
@@ -176,9 +281,8 @@ function onTurnEvent(chatId, event) {
 }
 
 function markChat(chatId, activity) {
-  const chat = state.projects.flatMap((p) => p.chats).find((c) => c.id === chatId);
-  if (chat) chat.activity = activity;
-  setState({ projects: state.projects });
+  const chats = state.organization.chats.map((c) => (c.id === chatId ? { ...c, activity } : c));
+  setState({ organization: { ...state.organization, chats } });
 }
 
 export function approve(choice) {
@@ -195,12 +299,17 @@ export function interrupt() {
   return true;
 }
 
-/** The / commands the mock runs itself; the rest go to the server as prompts. Returns true when handled. */
+/** The / commands and `!` shell lines the mock runs itself; the rest go to the server as prompts. Returns true when handled. */
 export function runCommand(text) {
+  if (text.startsWith("!") || text.startsWith("/!")) {
+    const shell = text.replace(/^\/?!/, "").trim();
+    notice(shell ? "info" : "warning", shell ? `shell: ${shell} (the mock does not run it)` : "usage: ! <command>");
+    return true;
+  }
   const [name, ...args] = text.split(/\s+/);
   switch (name) {
     case "/clear":
-      newChat();
+      newChat(state.chat?.projectId ?? null);
       return true;
     case "/mode":
       if (["ask", "auto-edit", "plan"].includes(args[0])) setMode(args[0]);

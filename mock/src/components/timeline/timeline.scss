@@ -18,6 +18,14 @@
     padding-bottom: 16px;
   }
 
+  &__branch {
+    margin: 0 4px 8px;
+    padding: 4px 8px;
+    border-left: 2px solid var(--accent);
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
   &__overlay {
     position: absolute;
     inset: 0;
