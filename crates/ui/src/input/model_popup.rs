@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn the_window_moves_only_to_keep_the_choice_in_view() {
-        use super::super::palette_top;
+        use super::super::completion::palette_top;
         assert_eq!(palette_top(3, 0, 12), 0, "inside the window");
         assert_eq!(palette_top(8, 0, 12), 1, "down past the bottom");
         assert_eq!(palette_top(9, 1, 12), 2);
