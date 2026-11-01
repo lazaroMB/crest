@@ -209,6 +209,17 @@ For the UI there are runnable examples in `crates/ui/examples/`, for example `ca
 
 If a tool should show something rich in the timeline, return `ToolOutput::text(confirmation).with_block_update(BlockKind::…)`. The model only gets the confirmation, as with `show_chart` and friends.
 
+## Adding a `/` command
+
+Commands are read and routed in `application_core::usecases::commands` (`crates/app-core/src/usecases/commands.rs`); the window and the headless loops share that parse.
+
+1. Add a `Command` variant and its arm in `Command::from_line`, with its aliases. If its arguments have forms, give it a typed sub-command with a `parse` (as `ImplementCommand`, `McpCommand`), and let the parse, not the handler, pick the usage text of a bad form.
+2. Add its row (or one row per form) to `CATALOG` in `commands/catalog.rs`, with `Handler::Ui` or `Handler::Controller`: the help's Commands section and the unknown-command hint come from there, and a test checks that every name and alias parses to a command of that handler.
+3. A session command: handle the variant in `Session::command_at` (`crates/ui/src/session/commands.rs`) and return `None` for it in `dispatch`. A controller command: add a `CommandHandler` method, its arm in `dispatch`, and implement it on `UiController` (`crates/bin/src/gui.rs`), usually through `spawn_command` so `Ctrl+C` stops it.
+4. Test the parse and the routing in `commands/tests.rs` (the fake handler records what it is asked to run); test what the command does next to its implementation.
+
+Commands of `init.lua` need none of this: they arrive as `Command::Other` and `CommandHandler::callback` runs them.
+
 ## Adding a block type
 
 1. **Domain**: add the variant to `BlockKind` in `crates/domain/src/block.rs`, with its serializable `JsonSchema` payload. If it has invariants, add a `validate`. Update the `match` in `Block::validate` and the snapshots.

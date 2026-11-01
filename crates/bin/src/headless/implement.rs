@@ -1,6 +1,8 @@
 //! `crest --headless --implement <ruta>`: the implementation flow of a
 //! Spec in the terminal. The gates are answered on stdin, one line each,
-//! on the same input as the approvals.
+//! on the same input as the approvals. Its notices are the window's
+//! (`/implement`), except that a stopped flow is resumed by running the same
+//! command again.
 
 use application::flows::implement::flow::FlowReply;
 use application::flows::implement::graph::status_notice;
@@ -11,6 +13,7 @@ use super::run::frontend;
 use super::terminal::{Style, Terminal};
 use super::{Exit, StdinApproval};
 use crate::args::Args;
+use crate::gui::{resumed_notice, stopped_notice};
 use crate::root::{App, Config, Overrides, build_app};
 
 /// Runs the implementation flow of `target` (a Spec folder, its name or a
@@ -34,7 +37,7 @@ pub async fn run_flow(app: &App, target: &str, input: &StdinApproval, terminal: 
     if session.resumed() {
         app.emit(DomainEvent::Notice {
             level: NoticeLevel::Info,
-            message: format!("implementation flow of {} resumed", session.plan_path()),
+            message: resumed_notice(&session),
         });
     }
     let mut status = session.run().await;
@@ -42,9 +45,10 @@ pub async fn run_flow(app: &App, target: &str, input: &StdinApproval, terminal: 
         let current = match status {
             Ok(current) => current,
             Err(err) => {
-                terminal
-                    .lock()
-                    .line(Some(Style::Red), &format!("error: {err}"));
+                terminal.lock().line(
+                    Some(Style::Red),
+                    &stopped_notice(&err, "running the same command again"),
+                );
                 return Exit::TurnFailed;
             }
         };

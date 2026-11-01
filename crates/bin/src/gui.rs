@@ -63,11 +63,17 @@ use application::ports::search::{
 use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
+use application::usecases::commands::{
+    Command, CommandHandler, ImplementCommand, MCP_USAGE, McpCommand, PLUGIN_USAGE, PluginCommand,
+    ReplyFuture, ResearchCommand, dispatch,
+};
 use application::usecases::permissions::{
     ProjectRules, RuleListing, load_rules, promote_rule, remove_rule,
 };
 use application::usecases::run_turn::{SharedPermissions, UserInput};
-use application::usecases::simulate::{SimulateRequest, SimulationReport, Simulator};
+use application::usecases::simulate::{
+    SimulateError, SimulateRequest, SimulationReport, Simulator,
+};
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
 use async_trait::async_trait;
 use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
@@ -95,7 +101,6 @@ use crate::aside::{Aside, Route, opened_notice};
 use crate::help::HelpSource;
 use crate::plugin_trust::PluginTrust;
 use crate::preferences::Preferences;
-use crate::research::ResearchCommand;
 use crate::root::{
     App, Config, Frontend, MissingApiKey, Overrides, SharedPromptHistory, SharedShellContext,
     build_app,
@@ -332,7 +337,7 @@ type SharedResearch = Arc<tokio::sync::Mutex<Option<crate::research::Research>>>
 async fn research_command(
     app: Arc<tokio::sync::Mutex<App>>,
     research: SharedResearch,
-    args: String,
+    command: ResearchCommand,
 ) -> Reply {
     let mut guard = research.lock().await;
     let Some(session) = guard.as_mut() else {
@@ -341,12 +346,7 @@ async fn research_command(
             "/research is unavailable: the crest database did not open".into(),
         );
     };
-    let result = crate::research::command(
-        session,
-        ResearchCommand::parse(&args),
-        crate::root::now_ms(),
-    )
-    .await;
+    let result = crate::research::command(session, command, crate::root::now_ms()).await;
     drop(guard);
     save_later(app);
     match result {
@@ -368,8 +368,13 @@ async fn simulate_command(simulator: Simulator, spec: String) -> Reply {
             title: Some(format!("Simulation of {}", report.folder)),
             source: simulation_markdown(&report),
         })),
-        Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/simulate: {err}")),
+        Err(err) => Reply::Notice(NoticeLevel::Warning, simulate_failed_notice(&err)),
     }
+}
+
+/// What the status bar says when a simulation could not be produced.
+pub fn simulate_failed_notice(err: &SimulateError) -> String {
+    format!("/simulate: {err}")
 }
 
 /// The verdicts of a simulation as markdown.
@@ -423,11 +428,26 @@ fn settle(
         // last checkpoint.
         Err(err) => Some((
             NoticeLevel::Warning,
-            format!(
-                "the implementation flow stopped: {err}; `/implement resume` runs the step again"
-            ),
+            stopped_notice(&err, "`/implement resume`"),
         )),
     }
+}
+
+/// What the status bar says when the implementation flow could not open.
+pub fn open_failed_notice(err: &anyhow::Error) -> String {
+    format!("/implement: {err:#}")
+}
+
+/// What the status bar says when `session` continues a stored flow.
+pub fn resumed_notice(session: &ImplementSession) -> String {
+    format!("implementation flow of {} resumed", session.plan_path())
+}
+
+/// What the window says when a step of the implementation flow failed: the
+/// flow stays stored at its last checkpoint and `resume` (how this front end
+/// continues it) runs the step again.
+pub fn stopped_notice(err: &FlowError, resume: &str) -> String {
+    format!("the implementation flow stopped: {err}; {resume} runs the step again")
 }
 
 /// `/implement <target>`: opens the flow of `target` and runs it to its
@@ -435,10 +455,10 @@ fn settle(
 async fn start_implementation(
     app: Arc<tokio::sync::Mutex<App>>,
     flow: ActiveFlow,
-    target: String,
+    command: ImplementCommand,
 ) -> Reply {
     let mut active = flow.lock().await;
-    if matches!(target.trim(), "cancel" | "cancelar" | "descartar" | "drop") {
+    if command == ImplementCommand::Cancel {
         return cancel_implementation(&app, &mut active).await;
     }
     if let Some(session) = active.as_ref() {
@@ -451,8 +471,9 @@ async fn start_implementation(
             ),
         );
     }
-    let target = match target.trim() {
-        "" | "resume" | "retry" | "continue" | "retomar" | "reanudar" => {
+    let target = match command {
+        ImplementCommand::Start(target) => target,
+        ImplementCommand::Resume | ImplementCommand::Cancel => {
             match app.lock().await.pending_implementation().await {
                 Some(plan) => plan,
                 None => {
@@ -463,16 +484,13 @@ async fn start_implementation(
                 }
             }
         }
-        target => target.to_owned(),
     };
     let opened = app.lock().await.open_implementation(&target).await;
     let session = match opened {
         Ok(session) => session,
-        Err(err) => return Reply::Notice(NoticeLevel::Warning, format!("/implement: {err:#}")),
+        Err(err) => return Reply::Notice(NoticeLevel::Warning, open_failed_notice(&err)),
     };
-    let resumed = session
-        .resumed()
-        .then(|| format!("implementation flow of {} resumed", session.plan_path()));
+    let resumed = session.resumed().then(|| resumed_notice(&session));
     let result = session.run().await;
     match settle(&mut active, session, result) {
         Some((level, message)) => Reply::Notice(level, message),
@@ -495,9 +513,7 @@ async fn cancel_implementation(
             };
             match app.open_implementation(&plan).await {
                 Ok(session) => session,
-                Err(err) => {
-                    return Reply::Notice(NoticeLevel::Warning, format!("/implement: {err:#}"));
-                }
+                Err(err) => return Reply::Notice(NoticeLevel::Warning, open_failed_notice(&err)),
             }
         }
     };
@@ -535,10 +551,6 @@ async fn answer_gate(active: &mut Option<ImplementSession>, line: &str, events: 
     }
 }
 
-/// Usage of `/mcp`.
-const MCP_USAGE: &str = "usage: /mcp [list] | /mcp tools <name> | /mcp restart|enable|disable \
-                         <name> | /mcp login|logout <name> | /mcp trust <name>";
-
 /// What `/mcp` needs: the declared servers, the approvals store and the
 /// running servers.
 struct McpCommands {
@@ -550,17 +562,13 @@ struct McpCommands {
 
 impl McpCommands {
     /// `/mcp <args>`.
-    async fn run(self: Arc<Self>, args: String) -> Reply {
-        let words: Vec<&str> = args.split_whitespace().collect();
-        match words.as_slice() {
-            [] | ["list"] => self.list().await,
-            ["tools", name] => self.tools(name).await,
-            ["trust", name] => self.trust(name).await,
-            [
-                verb @ ("restart" | "enable" | "disable" | "login" | "logout"),
-                name,
-            ] => self.manage(verb, name).await,
-            _ => Reply::Notice(NoticeLevel::Warning, MCP_USAGE.into()),
+    async fn run(self: Arc<Self>, command: McpCommand) -> Reply {
+        match command {
+            McpCommand::List => self.list().await,
+            McpCommand::Tools(name) => self.tools(&name).await,
+            McpCommand::Trust(name) => self.trust(&name).await,
+            McpCommand::Manage { verb, name } => self.manage(verb.as_str(), &name).await,
+            McpCommand::Invalid => Reply::Notice(NoticeLevel::Warning, MCP_USAGE.into()),
         }
     }
 
@@ -720,20 +728,16 @@ impl McpCommands {
 }
 
 /// `/plugin <args>`: `trust <name>` or `list`.
-async fn plugin_command(trust: Arc<PluginTrust>, args: String) -> Reply {
-    let words: Vec<&str> = args.split_whitespace().collect();
-    match words.as_slice() {
-        ["list"] => Reply::Notice(NoticeLevel::Info, trust.list()),
-        ["trust", name] => match trust.trust(name).await {
+async fn plugin_command(trust: Arc<PluginTrust>, command: PluginCommand) -> Reply {
+    match command {
+        PluginCommand::List => Reply::Notice(NoticeLevel::Info, trust.list()),
+        PluginCommand::Trust(name) => match trust.trust(&name).await {
             Ok(message) => Reply::Notice(NoticeLevel::Info, message),
             Err(message) => {
                 Reply::Notice(NoticeLevel::Warning, format!("/plugin trust: {message}"))
             }
         },
-        _ => Reply::Notice(
-            NoticeLevel::Warning,
-            "usage: /plugin list | /plugin trust <name>".into(),
-        ),
+        PluginCommand::Invalid => Reply::Notice(NoticeLevel::Warning, PLUGIN_USAGE.into()),
     }
 }
 
@@ -1292,6 +1296,78 @@ pub fn command_turn(prompt: &str) -> TurnRequest {
     }
 }
 
+/// The controller's `/` commands, each on the runtime and stopped by
+/// `Ctrl+C` ([`SessionController::interrupt_commands`]).
+impl CommandHandler for UiController {
+    fn implement(&self, command: ImplementCommand) -> ReplyFuture {
+        let start = start_implementation(Arc::clone(&self.app), Arc::clone(&self.flow), command);
+        self.spawn_command("implement", start)
+    }
+
+    fn research(&self, command: ResearchCommand) -> ReplyFuture {
+        let start = research_command(Arc::clone(&self.app), Arc::clone(&self.research), command);
+        self.spawn_command("research", start)
+    }
+
+    fn aside(&self, question: String) -> ReplyFuture {
+        self.spawn_command("aside", self.router().aside_command(question))
+    }
+
+    fn flow(&self, answer: String) -> ReplyFuture {
+        self.spawn_command("flow", self.router().flow_command(answer))
+    }
+
+    fn flow_line(&self, line: String) -> ReplyFuture {
+        let task = flow_line(
+            Arc::clone(&self.app),
+            Arc::clone(&self.flow),
+            Arc::clone(&self.research),
+            Arc::clone(&self.events),
+            Arc::clone(&self.aside),
+            line,
+        );
+        self.spawn_command("research", task)
+    }
+
+    fn shell(&self, command: String) -> ReplyFuture {
+        let task = shell_command(
+            Arc::clone(&self.shell),
+            Arc::clone(&self.shell_context),
+            Arc::clone(&self.events),
+            Arc::clone(&self.app),
+            command,
+        );
+        self.spawn_command("!", task)
+    }
+
+    fn simulate(&self, spec: String) -> ReplyFuture {
+        self.spawn_command("simulate", simulate_command(self.simulator.clone(), spec))
+    }
+
+    fn mcp(&self, command: McpCommand) -> ReplyFuture {
+        self.spawn_command("mcp", Arc::clone(&self.mcp).run(command))
+    }
+
+    fn plugin(&self, command: PluginCommand) -> ReplyFuture {
+        let task = plugin_command(Arc::clone(&self.plugin_trust), command);
+        self.spawn_command("plugin", task)
+    }
+
+    fn open(&self, arg: String) -> ReplyFuture {
+        let step = application::usecases::open_file::StepReader {
+            formats: Arc::clone(&self.formats),
+            offload: Arc::clone(&self.compute.offload),
+        };
+        let task = open_command(Arc::clone(&self.fs), step, Arc::clone(&self.events), arg);
+        self.spawn_command("open", task)
+    }
+
+    fn callback(&self, name: &str, arg: String) -> Option<ReplyFuture> {
+        let id = self.commands.get(name)?;
+        Some(self.run_callback(id.0, serde_json::Value::String(arg)))
+    }
+}
+
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let router = self.router();
@@ -1422,84 +1498,8 @@ impl SessionController for UiController {
         .boxed()
     }
 
-    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
-        let args = args.to_owned();
-        match name {
-            "implement" => {
-                let start =
-                    start_implementation(Arc::clone(&self.app), Arc::clone(&self.flow), args);
-                Some(self.spawn_command("implement", start))
-            }
-            "research" => {
-                let start =
-                    research_command(Arc::clone(&self.app), Arc::clone(&self.research), args);
-                Some(self.spawn_command("research", start))
-            }
-            "aside" | "aparte" => {
-                Some(self.spawn_command("aside", self.router().aside_command(args)))
-            }
-            "flow" | "volver" => Some(self.spawn_command("flow", self.router().flow_command(args))),
-            "!" if args.trim().is_empty() => Some(
-                futures::future::ready(Reply::Notice(
-                    NoticeLevel::Warning,
-                    "usage: /!<command> [args], e.g. /!git status".into(),
-                ))
-                .boxed(),
-            ),
-            "!" => {
-                let task = shell_command(
-                    Arc::clone(&self.shell),
-                    Arc::clone(&self.shell_context),
-                    Arc::clone(&self.events),
-                    Arc::clone(&self.app),
-                    args,
-                );
-                Some(self.spawn_command("!", task))
-            }
-            "stage" | "back" | "skip" | "abort" | "retry" | "reopen" => {
-                let line = format!("/{name} {args}").trim_end().to_owned();
-                let task = flow_line(
-                    Arc::clone(&self.app),
-                    Arc::clone(&self.flow),
-                    Arc::clone(&self.research),
-                    Arc::clone(&self.events),
-                    Arc::clone(&self.aside),
-                    line,
-                );
-                Some(self.spawn_command("research", task))
-            }
-            "simulate" => {
-                let spec = args.trim().to_owned();
-                if spec.is_empty() {
-                    return Some(
-                        futures::future::ready(Reply::Notice(
-                            NoticeLevel::Warning,
-                            "usage: /simulate <spec> (a folder of .crest/specs/ or its number)"
-                                .into(),
-                        ))
-                        .boxed(),
-                    );
-                }
-                Some(self.spawn_command("simulate", simulate_command(self.simulator.clone(), spec)))
-            }
-            "mcp" => Some(self.spawn_command("mcp", Arc::clone(&self.mcp).run(args))),
-            "plugin" => {
-                let task = plugin_command(Arc::clone(&self.plugin_trust), args);
-                Some(self.spawn_command("plugin", task))
-            }
-            "open" => {
-                let step = application::usecases::open_file::StepReader {
-                    formats: Arc::clone(&self.formats),
-                    offload: Arc::clone(&self.compute.offload),
-                };
-                let task = open_command(Arc::clone(&self.fs), step, Arc::clone(&self.events), args);
-                Some(self.spawn_command("open", task))
-            }
-            _ => {
-                let id = self.commands.get(name)?;
-                Some(self.run_callback(id.0, serde_json::Value::String(args)))
-            }
-        }
+    fn run_command(&self, command: Command) -> Option<BoxFuture<'static, Reply>> {
+        dispatch(self, command)
     }
 
     fn interrupt_commands(&self) -> bool {
@@ -2502,19 +2502,19 @@ mod tests {
             host: None,
         });
         let Reply::Notice(NoticeLevel::Info, list) =
-            plugin_command(Arc::clone(&trust), "list".into()).await
+            plugin_command(Arc::clone(&trust), PluginCommand::parse("list")).await
         else {
             panic!("list is informative");
         };
         assert!(list.contains("no plugin declares capabilities"), "{list}");
         let Reply::Notice(NoticeLevel::Warning, usage) =
-            plugin_command(Arc::clone(&trust), "approve x".into()).await
+            plugin_command(Arc::clone(&trust), PluginCommand::parse("approve x")).await
         else {
             panic!("a bad subcommand warns");
         };
         assert!(usage.contains("/plugin trust <name>"), "{usage}");
         let Reply::Notice(NoticeLevel::Warning, missing) =
-            plugin_command(trust, "trust x".into()).await
+            plugin_command(trust, PluginCommand::parse("trust x")).await
         else {
             panic!("an unknown plugin warns");
         };
@@ -2544,7 +2544,7 @@ mod tests {
             servers: None,
         });
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let run = |args: &str| runtime.block_on(Arc::clone(&trust).run(args.to_owned()));
+        let run = |args: &str| runtime.block_on(Arc::clone(&trust).run(McpCommand::parse(args)));
         assert!(matches!(
             run("trust git"),
             Reply::Notice(NoticeLevel::Info, _)

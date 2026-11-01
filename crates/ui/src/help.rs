@@ -24,10 +24,10 @@ use application_core::keymap::{
     Action, Key, KeyCode, Keymap, KeymapEntry, Platform, action_description, default_keymap_with,
     parse_keys,
 };
+use application_core::usecases::commands::{Handler, commands_of};
 use domain::modal::ModalId;
 use domain::permission::PermissionMode;
 
-use crate::commands::BUILTIN_COMMANDS;
 use crate::session::ModelChoice;
 
 pub mod panel_keys;
@@ -306,8 +306,7 @@ impl HelpSnapshot {
 
 /// The builtin `/` commands as rows.
 pub fn builtin_command_rows() -> Vec<CommandRow> {
-    BUILTIN_COMMANDS
-        .iter()
+    commands_of(Handler::Ui)
         .map(|info| CommandRow {
             name: info.name.into(),
             usage: info.usage.into(),

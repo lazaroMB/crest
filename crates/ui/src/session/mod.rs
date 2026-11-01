@@ -53,7 +53,7 @@
 //!   (closes the front plugin modal), `/help [section|search]`, `/login`
 //!   and `/logout` (the API key in the system keyring, through the
 //!   [`LoginView`] dialog; the window then reopens the workspace) and `/q`
-//!   (see [`BUILTIN_COMMANDS`](crate::commands::BUILTIN_COMMANDS)).
+//!   (see [`CATALOG`](application_core::usecases::commands::CATALOG)).
 //! - `F1`, `<leader>h` (`help.open`) and `/help` open the help modal with
 //!   what [`SessionController::help`] reports.
 //! - Any other `/name args` goes to [`SessionController::run_command`]
@@ -77,9 +77,9 @@ use std::time::{Duration, Instant};
 use application_core::keymap::{Action, Keymap, default_keymap};
 use application_core::ports::events::{DomainEvent, NoticeLevel};
 use application_core::ports::fs::FileSystemPort;
-use application_core::ports::plugin::PluginAction;
 use application_core::ports::search::{ContentSearchPort, FileSearchPort};
 use application_core::usecases::cancel::CancelToken;
+use application_core::usecases::commands::Command;
 use application_core::usecases::permissions::RuleListing;
 use domain::block::Block;
 use domain::conversation::{ImageAttachment, StopReason};
@@ -179,25 +179,7 @@ pub enum TurnEnd {
 
 /// What a command or a Lua callback run by the controller asks the
 /// session to do once it finished.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Reply {
-    /// Nothing to show.
-    Done,
-    /// A message for the status bar.
-    Notice(NoticeLevel, String),
-    /// A block for the timeline (boxed: blocks are large).
-    Block(Box<Block>),
-    /// Actions requested by Lua (`app.cmd`, `app.send`), in order.
-    Actions(Vec<PluginAction>),
-}
-
-impl Reply {
-    /// A reply that shows `block`.
-    #[must_use]
-    pub fn block(block: Block) -> Self {
-        Self::Block(Box::new(block))
-    }
-}
+pub use application_core::usecases::commands::Reply;
 
 /// A model the menu offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,10 +338,12 @@ pub trait SessionController: Send + Sync {
         .boxed()
     }
 
-    /// Runs the `/name args` command, if the controller has one by that
-    /// name; `None` means there is none.
-    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
-        let _ = (name, args);
+    /// Runs `command`, one the session does not run itself, if the
+    /// controller has it (see [`dispatch`]); `None` means it has not.
+    ///
+    /// [`dispatch`]: application_core::usecases::commands::dispatch
+    fn run_command(&self, command: Command) -> Option<BoxFuture<'static, Reply>> {
+        let _ = command;
         None
     }
 

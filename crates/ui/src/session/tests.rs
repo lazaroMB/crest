@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application_core::ports::events::EventSink;
 use application_core::ports::form::FormPort;
+use application_core::ports::plugin::PluginAction;
 use application_core::tools::registry::ToolRegistry;
 use application_core::usecases::approval::SharedPermissions;
 use application_core::usecases::permissions::ProjectRules;
@@ -227,9 +228,10 @@ impl SessionController for AgentController {
 
     /// `/review` sends a prompt with the plan role; `/loop` calls itself;
     /// `/slow` answers after 2 s, like a flow running to its gate.
-    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
-        let reply = match name {
-            "slow" => {
+    fn run_command(&self, command: Command) -> Option<BoxFuture<'static, Reply>> {
+        let reply = match command {
+            Command::Shell(args) => Reply::Notice(NoticeLevel::Info, format!("ran [{args}]")),
+            Command::Other { name, .. } if name == "slow" => {
                 let (tx, rx) = oneshot::channel();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(2));
@@ -238,14 +240,17 @@ impl SessionController for AgentController {
                 });
                 return Some(rx.map(|reply| reply.unwrap_or(Reply::Done)).boxed());
             }
-            "review" => Reply::Actions(vec![PluginAction::Send {
-                text: format!("revisa {args}"),
-                role: Some(ModelRole::Plan),
-            }]),
-            "loop" => Reply::Actions(vec![PluginAction::Cmd {
-                command: "loop".into(),
-            }]),
-            "!" => Reply::Notice(NoticeLevel::Info, format!("ran [{args}]")),
+            Command::Other { name, arg } if name == "review" => {
+                Reply::Actions(vec![PluginAction::Send {
+                    text: format!("revisa {arg}"),
+                    role: Some(ModelRole::Plan),
+                }])
+            }
+            Command::Other { name, .. } if name == "loop" => {
+                Reply::Actions(vec![PluginAction::Cmd {
+                    command: "loop".into(),
+                }])
+            }
             _ => return None,
         };
         Some(futures::future::ready(reply).boxed())

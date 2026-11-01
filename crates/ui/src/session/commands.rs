@@ -3,16 +3,17 @@
 use application_core::keymap::Action;
 use application_core::ports::events::{DomainEvent, NoticeLevel};
 use application_core::ports::plugin::PluginAction;
+use application_core::usecases::commands::{
+    Command, ModelCommand, ThemeCommand, parse, unknown_command_hint,
+};
 use domain::block::{BlockId, CustomNode, ImageData, ImageFit};
 use domain::conversation::ImageAttachment;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::ModelId;
-use domain::permission::PermissionMode;
 use futures::future::BoxFuture;
 use gpui::{AppContext as _, Context, Window};
 
 use super::{ModelChoice, Reply, Session};
-use crate::commands::unknown_command_hint;
 use crate::timeline::TimelineView;
 
 /// Share of the window an inspected image takes, in percent.
@@ -30,56 +31,43 @@ impl Session {
 
     fn command_at(
         &mut self,
-        command: &str,
+        command_text: &str,
         depth: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // `/!cmd args` and `/! cmd args` are the shell command `!`.
-        let (name, arg) = match command.strip_prefix('!') {
-            Some(line) => ("!", line),
-            None => command.split_once(' ').unwrap_or((command, "")),
-        };
-        let arg = arg.trim();
-        match name {
-            "q" | "quit" | "qa" => self.quit(window, cx),
-            "model" => match arg
-                .split_once(' ')
-                .map_or((arg, ""), |(a, b)| (a, b.trim()))
-            {
-                ("", _) => self.open_model_popup(window, cx),
-                ("clear", "") => self.set_model_override(None, cx),
-                ("set", "") => self.notice(NoticeLevel::Warning, "usage: /model set <id>", cx),
-                ("set", id) => {
+        let line = parse(command_text);
+        match Command::from_line(line) {
+            Command::Quit => self.quit(window, cx),
+            Command::Model(model) => match model {
+                ModelCommand::Popup => self.open_model_popup(window, cx),
+                ModelCommand::Clear => self.set_model_override(None, cx),
+                ModelCommand::Set(id) => {
                     let choice = ModelChoice {
-                        alias: id.to_owned(),
-                        model: ModelId::new(id),
+                        model: ModelId::new(&id),
+                        alias: id,
                     };
                     self.select_model(choice, window, cx);
                 }
-                _ => self.set_model_override(Some(arg.to_owned()), cx),
+                ModelCommand::Override(model) => self.set_model_override(Some(model), cx),
+                ModelCommand::Invalid(usage) => self.notice(NoticeLevel::Warning, usage, cx),
             },
-            "theme" => match arg
-                .split_once(' ')
-                .map_or((arg, ""), |(a, b)| (a, b.trim()))
-            {
-                ("", _) => self.open_theme_popup(window, cx),
-                ("set", "") => self.notice(NoticeLevel::Warning, "usage: /theme set <name>", cx),
-                ("set", name) => self.save_theme(name.to_owned(), window, cx),
-                (name, "") => self.save_theme(name.to_owned(), window, cx),
-                _ => self.notice(NoticeLevel::Warning, "usage: /theme [set] <name>", cx),
+            Command::Theme(theme) => match theme {
+                ThemeCommand::Popup => self.open_theme_popup(window, cx),
+                ThemeCommand::Save(name) => self.save_theme(name, window, cx),
+                ThemeCommand::Invalid(usage) => self.notice(NoticeLevel::Warning, usage, cx),
             },
-            "mode" => match arg.parse::<PermissionMode>() {
-                Ok(mode) => self.set_permission_mode(mode, cx),
-                Err(err) => self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx),
-            },
-            "clear" => self.clear(window, cx),
-            "project" => self.switch_project(window, cx),
-            "login" => self.open_login(arg, window, cx),
-            "logout" => self.logout(arg, window, cx),
-            "help" | "h" => self.open_help(arg, window, cx),
-            "permissions" => self.open_permissions(window, cx),
-            "modal" if arg == "close" => {
+            Command::Mode(Ok(mode)) => self.set_permission_mode(mode, cx),
+            Command::Mode(Err(err)) => {
+                self.notice(NoticeLevel::Warning, format!("/mode: {err}"), cx);
+            }
+            Command::Clear => self.clear(window, cx),
+            Command::Project => self.switch_project(window, cx),
+            Command::Login(account) => self.open_login(&account, window, cx),
+            Command::Logout(account) => self.logout(&account, window, cx),
+            Command::Help(search) => self.open_help(&search, window, cx),
+            Command::Permissions => self.open_permissions(window, cx),
+            Command::ModalClose => {
                 let closed = self
                     .modal
                     .update(cx, |modal, cx| modal.close_top(window, cx));
@@ -87,26 +75,28 @@ impl Session {
                     self.notice(NoticeLevel::Info, "no modal is open", cx);
                 }
             }
-            "modal" => self.notice(
+            Command::Modal(arg) => self.notice(
                 NoticeLevel::Warning,
                 format!("/modal {arg}: use /modal close"),
                 cx,
             ),
-            _ => {
-                if crate::picker::PickerMode::for_action(&Action::Builtin(name.to_owned()))
-                    .is_some()
-                {
-                    // `/picker.files` from the palette.
-                    self.action(&Action::Builtin(name.to_owned()), window, cx);
-                } else if let Some(reply) = self.controller.run_command(name, arg) {
-                    self.commands.push(name.to_owned());
+            // `/picker.files` from the palette.
+            Command::Other { name, .. }
+                if crate::picker::PickerMode::for_action(&Action::Builtin(name.clone()))
+                    .is_some() =>
+            {
+                self.action(&Action::Builtin(name), window, cx);
+            }
+            command => {
+                let name = line.name.to_owned();
+                if let Some(reply) = self.controller.run_command(command) {
+                    self.commands.push(name.clone());
                     self.sync_activity(cx);
-                    let name = name.to_owned();
                     self.await_reply_then(reply, depth, Some(name), window, cx);
                 } else if name.contains('.') {
-                    self.action(&Action::Builtin(name.to_owned()), window, cx);
+                    self.action(&Action::Builtin(name), window, cx);
                 } else {
-                    self.notice(NoticeLevel::Warning, unknown_command_hint(command), cx);
+                    self.notice(NoticeLevel::Warning, unknown_command_hint(command_text), cx);
                 }
             }
         }

@@ -10,6 +10,7 @@
 
 use application::flows::aside::{last_answer, preamble};
 use application::ports::events::{DomainEvent, NoticeLevel};
+use application::usecases::commands::{Command, parse};
 
 use super::run::frontend;
 use super::terminal::{Style, Terminal};
@@ -102,42 +103,44 @@ async fn side_line(
     line: &str,
 ) -> Option<Result<String, String>> {
     let gate = session.gate_info().await;
-    let (command, args) = match line.trim().strip_prefix('/') {
-        Some(rest) => rest.split_once(' ').unwrap_or((rest, "")),
-        None => ("", ""),
-    };
+    // The window's parse: `/aparte` is `/aside`, `/volver` is `/flow`. A
+    // bare `/` is no command.
+    let command = line
+        .trim()
+        .strip_prefix('/')
+        .map(parse)
+        .filter(|command| !command.name.is_empty())
+        .map(Command::from_line);
     let route = match (command, gate) {
-        ("aside" | "aparte", Some(gate)) => {
+        (Some(Command::Aside(question)), Some(gate)) => {
             let notice = opened_notice(&gate);
             let context = preamble(&gate);
             aside.open(gate);
-            if args.trim().is_empty() {
+            if question.is_empty() {
                 return Some(Ok(notice));
             }
             app.emit(DomainEvent::Notice {
                 level: NoticeLevel::Info,
                 message: notice,
             });
-            run_turn_in(app, command_turn(args.trim()), Some(context)).await;
+            run_turn_in(app, command_turn(&question), Some(context)).await;
             return None;
         }
-        ("flow" | "volver", gate) if !args.trim().is_empty() || !aside.is_open() => {
+        (Some(Command::Flow(answer)), gate) if !answer.is_empty() || !aside.is_open() => {
             aside.close();
             return match gate {
-                Some(_) if !args.trim().is_empty() => {
-                    Some(research::line(session, args.trim()).await)
-                }
+                Some(_) if !answer.is_empty() => Some(research::line(session, &answer).await),
                 Some(gate) => Some(Ok(format!("{gate}: {}", gate.prompt.trim()))),
                 None => Some(Err("no flow waits for an answer".to_owned())),
             };
         }
-        ("flow" | "volver", _) => aside.propose().map(Route::Propose),
+        (Some(Command::Flow(_)), _) => aside.propose().map(Route::Propose),
         // `/back`, `/stage`…: the flow takes them, and the side chat closes.
-        (command, _) if !command.is_empty() => {
+        (Some(_), _) => {
             aside.close();
             None
         }
-        (_, gate) => Some(aside.route(line, gate, &app.decider.clone(), false).await.0),
+        (None, gate) => Some(aside.route(line, gate, &app.decider.clone(), false).await.0),
     };
     match route {
         Some(Route::Aside(context)) => {

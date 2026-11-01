@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use application_core::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application_core::usecases::commands::Command;
 use application_testing::fs::InMemoryFs;
 use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, MermaidSpec, ToolStatus};
@@ -129,8 +130,8 @@ impl SessionController for Fake {
         futures::future::ready(()).boxed()
     }
 
-    fn run_command(&self, name: &str, _args: &str) -> Option<BoxFuture<'static, Reply>> {
-        if name != "research" {
+    fn run_command(&self, command: Command) -> Option<BoxFuture<'static, Reply>> {
+        if !matches!(command, Command::Research(_)) {
             return None;
         }
         let sink = Arc::clone(&self.sink);
