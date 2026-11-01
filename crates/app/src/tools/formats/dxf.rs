@@ -17,8 +17,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::{
-    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, read_report,
-    required_path, shown,
+    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, read, required_path,
+    shown,
 };
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
@@ -111,7 +111,7 @@ pub fn normalize_dxf(input: ShowDxf) -> Result<ShowDxf, String> {
 /// A message for the caller: the file cannot be read or parsed, or the
 /// result is not a valid block.
 pub async fn build_dxf(ports: &FormatToolPorts, input: ShowDxf) -> Result<DrawingSpec, String> {
-    let bytes = read_report(ports.fs.as_ref(), &input.path).await?;
+    let bytes = read(ports.fs.as_ref(), &input.path).await?;
     let formats = Arc::clone(&ports.formats);
     let path = input.path.clone();
     let mut spec = parse_off(ports, "the DXF reader", move || {

@@ -77,36 +77,17 @@
 
 use std::sync::Arc;
 
-use application::ports::formats::{
-    FormatsPort, LogRequest, ProfileRequest, SequenceRequest, StepRequest,
-};
+use application::ports::formats::FormatsPort;
 use application::ports::fs::FileSystemPort;
-use application::tools::formats::bench::{build_benchmarks, normalize_benchmarks};
-use application::tools::formats::devops::{
-    build_flamegraph, build_logs, build_trace, normalize_flamegraph, normalize_logs,
-    normalize_trace,
-};
-use application::tools::formats::diagram::{build_dot, build_er, normalize_dot, normalize_er};
-use application::tools::formats::dxf::{build_dxf, normalize_dxf};
-use application::tools::formats::har::{build_har, normalize_har};
-use application::tools::formats::ifc::{build_ifc_schedule, normalize_ifc_schedule};
-use application::tools::formats::molecule_grid::{build_molecule_grid, normalize_molecule_grid};
-use application::tools::formats::molecule3d::{build_molecule_3d, normalize_molecule_3d};
-use application::tools::formats::netlist::{build_netlist, normalize_netlist};
-use application::tools::formats::query_plan::{build_query_plan, normalize_query_plan};
-use application::tools::formats::reaction::{build_reaction, normalize_reaction};
-use application::tools::formats::sequence::{build_sequence, normalize_sequence};
-use application::tools::formats::spectrum::{build_spectrum, normalize_spectrum};
-use application::tools::formats::step::{build_step, normalize_step};
-use application::tools::formats::terraform::{build_terraform_plan, normalize_terraform_plan};
-use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
-    FormatToolPorts, build_dataset, build_molecule, grid_entries, normalize_dataset,
-    normalize_molecule, read_har, read_ifc, read_log, read_report, read_spectrum, read_step,
+    FormatToolPorts, arrays, bench, build_dataset, build_molecule, devops, diagram, dxf, gantt,
+    geomap, har, ifc, molecule_grid, molecule3d, netlist, network, normalize_dataset,
+    normalize_molecule, query_plan, reaction, sequence, spectrum, step, terraform, training,
+    waveform,
 };
+use application::tools::ghs::{ShowGhs, lookup, target};
 use application::usecases::compute::inline_offload;
 use domain::block::BlockKind;
-use domain::devops::logs::LogFormat;
 use mlua::{Lua, Table, Value};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -114,8 +95,6 @@ use serde_json::json;
 use super::ui::BLOCK_KEY;
 use crate::caps::context;
 use crate::convert;
-
-mod sciences;
 
 /// What `app.formats` runs on, handed to the host by the binary.
 #[derive(Clone)]
@@ -134,16 +113,6 @@ impl std::fmt::Debug for FormatsServices {
     }
 }
 
-fn error(function: &str, message: impl std::fmt::Display) -> mlua::Error {
-    mlua::Error::runtime(format!("app.formats.{function}: {message}"))
-}
-
-fn services(lua: &Lua, function: &str) -> mlua::Result<FormatsServices> {
-    context(lua)?
-        .formats()
-        .ok_or_else(|| error(function, "the format parsers are not available"))
-}
-
 impl FormatsServices {
     /// The ports the format builders run on. The Lua thread already
     /// blocks while a call runs, so the parsers run inline on it.
@@ -156,9 +125,19 @@ impl FormatsServices {
     }
 }
 
+fn error(function: &str, message: impl std::fmt::Display) -> mlua::Error {
+    mlua::Error::runtime(format!("app.formats.{function}: {message}"))
+}
+
+fn services(lua: &Lua, function: &str) -> mlua::Result<FormatsServices> {
+    context(lua)?
+        .formats()
+        .ok_or_else(|| error(function, "the format parsers are not available"))
+}
+
 /// The table of arguments of `function` as the tool's input `I`: unknown
 /// keys, missing fields and wrong types fail as they do for the tool,
-/// with the field's path (`signals[2]: invalid type …`).
+/// with the field's path (`signals[1]: invalid type …`, counted from 0).
 fn input<I: DeserializeOwned>(function: &str, args: Value) -> mlua::Result<I> {
     if !args.is_table() {
         return Err(error(function, "expected a table of arguments"));
@@ -192,9 +171,8 @@ fn show<I, C, S>(
 where
     I: DeserializeOwned,
 {
-    let services = services(lua, function)?;
+    let ports = services(lua, function)?.ports();
     let call = normalize(input(function, args)?).map_err(|e| error(function, e))?;
-    let ports = services.ports();
     let spec = context(lua)?
         .block_on(build(&ports, call))?
         .map_err(|e| error(function, e))?;
@@ -227,21 +205,6 @@ pub(crate) fn block_value(lua: &Lua, block: &BlockKind) -> mlua::Result<Value> {
     convert::to_lua(lua, &json!({ BLOCK_KEY: json }))
 }
 
-/// A non-empty string field.
-fn text(args: &Table, function: &str, key: &str) -> mlua::Result<Option<String>> {
-    match args.get::<Value>(key)? {
-        Value::Nil => Ok(None),
-        Value::String(s) => {
-            let s = s.to_str()?.trim().to_owned();
-            Ok((!s.is_empty()).then_some(s))
-        }
-        other => Err(error(
-            function,
-            format!("`{key}` must be a string, got {}", other.type_name()),
-        )),
-    }
-}
-
 /// `args` with `key` as a list: Lua also takes one item as a plain
 /// string (`signals = 'tb.*'`). A copy, so the caller's table is left
 /// as it was.
@@ -268,39 +231,10 @@ fn waveform(lua: &Lua, args: Value) -> mlua::Result<Value> {
         lua,
         "waveform",
         args,
-        normalize_waveform,
-        build_waveform,
+        waveform::normalize_waveform,
+        waveform::build_waveform,
         |spec| BlockKind::Waveform(Box::new(spec)),
     )
-}
-
-fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "ghs";
-    let services = services(lua, F)?;
-    let web = services
-        .web
-        .clone()
-        .ok_or_else(|| error(F, "the web is off (app.opt.web.enabled)"))?;
-    let cid = match args.get::<Option<i64>>("cid")? {
-        Some(n) if n >= 1 => Some(u64::try_from(n).unwrap_or(1)),
-        Some(_) => return Err(error(F, "`cid` must be positive")),
-        None => None,
-    };
-    let (query, cid) =
-        application::tools::ghs::target(text(args, F, "query")?, cid).map_err(|e| error(F, e))?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-    let spec = context(lua)?
-        .block_on(application::tools::ghs::lookup(
-            web.as_ref(),
-            &query,
-            cid,
-            now,
-        ))?
-        .map_err(|e| error(F, e))?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Ghs(Box::new(spec)))
 }
 
 fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
@@ -311,9 +245,9 @@ fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
         lua,
         "reaction",
         args,
-        normalize_reaction,
+        reaction::normalize_reaction,
         async |ports, input| {
-            let spec = build_reaction(ports, input).await?;
+            let spec = reaction::build_reaction(ports, input).await?;
             match spec.error {
                 Some(e) => Err(e),
                 None => Ok(spec),
@@ -323,50 +257,36 @@ fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
     )
 }
 
+fn ghs(lua: &Lua, args: Value) -> mlua::Result<Value> {
+    const F: &str = "ghs";
+    let web = services(lua, F)?
+        .web
+        .ok_or_else(|| error(F, "the web is off (app.opt.web.enabled)"))?;
+    let input: ShowGhs = input(F, args)?;
+    let (query, cid) = target(input.query, input.cid).map_err(|e| error(F, e))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let spec = context(lua)?
+        .block_on(lookup(web.as_ref(), &query, cid, now))?
+        .map_err(|e| error(F, e))?;
+    spec.validate().map_err(|e| error(F, e))?;
+    block_value(lua, &BlockKind::Ghs(Box::new(spec)))
+}
+
+/// `register`s each `"name" => Variant(normalize, build)`: the tool's
+/// builder, its spec boxed in `BlockKind::Variant`.
+macro_rules! boxed {
+    ($lua:expr, $formats:expr; $($name:literal => $variant:ident($normalize:path, $build:path)),* $(,)?) => {
+        $(register($lua, $formats, $name, $normalize, $build, |spec| {
+            BlockKind::$variant(Box::new(spec))
+        })?;)*
+    };
+}
+
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
-    sciences::add(lua, &formats)?;
-    formats.set(
-        "ghs",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => ghs(lua, &args),
-            _ => Err(error("ghs", "expected a table of arguments")),
-        })?,
-    )?;
-    register(
-        lua,
-        &formats,
-        "molecule_3d",
-        normalize_molecule_3d,
-        build_molecule_3d,
-        |spec| BlockKind::Molecule3d(Box::new(spec)),
-    )?;
-    register(
-        lua,
-        &formats,
-        "spectrum",
-        normalize_spectrum,
-        build_spectrum,
-        |spec| BlockKind::Spectrum(Box::new(spec)),
-    )?;
-    register(
-        lua,
-        &formats,
-        "molecule_grid",
-        normalize_molecule_grid,
-        build_molecule_grid,
-        |spec| BlockKind::MoleculeGrid(Box::new(spec)),
-    )?;
-    formats.set("reaction", lua.create_function(reaction)?)?;
-    register(
-        lua,
-        &formats,
-        "sequence",
-        normalize_sequence,
-        build_sequence,
-        |spec| BlockKind::Sequence(Box::new(spec)),
-    )?;
     register(
         lua,
         &formats,
@@ -391,81 +311,33 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         },
         BlockKind::Molecule,
     )?;
-    register(
-        lua,
-        &formats,
-        "trace",
-        normalize_trace,
-        build_trace,
-        |spec| BlockKind::Trace(Box::new(spec)),
-    )?;
-    register(
-        lua,
-        &formats,
-        "flamegraph",
-        normalize_flamegraph,
-        build_flamegraph,
-        |spec| BlockKind::FlameGraph(Box::new(spec)),
-    )?;
-    register(
-        lua,
-        &formats,
-        "benchmarks",
-        normalize_benchmarks,
-        build_benchmarks,
-        |spec| BlockKind::Benchmarks(Box::new(spec)),
-    )?;
+    boxed!(lua, &formats;
+        "trace" => Trace(devops::normalize_trace, devops::build_trace),
+        "flamegraph" => FlameGraph(devops::normalize_flamegraph, devops::build_flamegraph),
+        "logs" => Logs(devops::normalize_logs, devops::build_logs),
+        "query_plan" => QueryPlan(query_plan::normalize_query_plan, query_plan::build_query_plan),
+        "har" => Har(har::normalize_har, har::build_har),
+        "terraform_plan" => TerraformPlan(terraform::normalize_terraform_plan, terraform::build_terraform_plan),
+        "dot" => Diagram(diagram::normalize_dot, diagram::build_dot),
+        "er" => Diagram(diagram::normalize_er, diagram::build_er),
+        "benchmarks" => Benchmarks(bench::normalize_benchmarks, bench::build_benchmarks),
+        "netlist" => Netlist(netlist::normalize_netlist, netlist::build_netlist),
+        "step" => CadModel(step::normalize_step, step::build_step),
+        "dxf" => Drawing(dxf::normalize_dxf, dxf::build_dxf),
+        "ifc_schedule" => IfcSchedule(ifc::normalize_ifc_schedule, ifc::build_ifc_schedule),
+        "sequence" => Sequence(sequence::normalize_sequence, sequence::build_sequence),
+        "molecule_grid" => MoleculeGrid(molecule_grid::normalize_molecule_grid, molecule_grid::build_molecule_grid),
+        "spectrum" => Spectrum(spectrum::normalize_spectrum, spectrum::build_spectrum),
+        "molecule_3d" => Molecule3d(molecule3d::normalize_molecule_3d, molecule3d::build_molecule_3d),
+        "map" => GeoMap(geomap::normalize_map, geomap::build_map),
+        "gantt" => Gantt(gantt::normalize_gantt, gantt::build_gantt),
+        "array_file" => ArrayFile(arrays::normalize_array_file, arrays::build_array_file),
+        "network" => Network(network::normalize_network, network::build_network),
+        "training_curves" => TrainingCurves(training::normalize_training_curves, training::build_training_curves),
+    );
     formats.set("waveform", lua.create_function(waveform)?)?;
-    register(lua, &formats, "step", normalize_step, build_step, |spec| {
-        BlockKind::CadModel(Box::new(spec))
-    })?;
-    register(lua, &formats, "dxf", normalize_dxf, build_dxf, |spec| {
-        BlockKind::Drawing(Box::new(spec))
-    })?;
-    register(
-        lua,
-        &formats,
-        "ifc_schedule",
-        normalize_ifc_schedule,
-        build_ifc_schedule,
-        |spec| BlockKind::IfcSchedule(Box::new(spec)),
-    )?;
-    register(
-        lua,
-        &formats,
-        "netlist",
-        normalize_netlist,
-        build_netlist,
-        |spec| BlockKind::Netlist(Box::new(spec)),
-    )?;
-    register(lua, &formats, "dot", normalize_dot, build_dot, |spec| {
-        BlockKind::Diagram(Box::new(spec))
-    })?;
-    register(lua, &formats, "er", normalize_er, build_er, |spec| {
-        BlockKind::Diagram(Box::new(spec))
-    })?;
-    register(
-        lua,
-        &formats,
-        "terraform_plan",
-        normalize_terraform_plan,
-        build_terraform_plan,
-        |spec| BlockKind::TerraformPlan(Box::new(spec)),
-    )?;
-    register(lua, &formats, "har", normalize_har, build_har, |spec| {
-        BlockKind::Har(Box::new(spec))
-    })?;
-    register(
-        lua,
-        &formats,
-        "query_plan",
-        normalize_query_plan,
-        build_query_plan,
-        |spec| BlockKind::QueryPlan(Box::new(spec)),
-    )?;
-    register(lua, &formats, "logs", normalize_logs, build_logs, |spec| {
-        BlockKind::Logs(Box::new(spec))
-    })?;
+    formats.set("reaction", lua.create_function(reaction)?)?;
+    formats.set("ghs", lua.create_function(ghs)?)?;
     Ok(formats)
 }
 
@@ -474,6 +346,7 @@ mod tests {
     use application::ports::plugin::PluginOutput;
     use application_testing::formats::FakeFormats;
     use application_testing::fs::{InMemoryFs, test_root};
+    use domain::devops::logs::LogFormat;
 
     use super::*;
     use crate::callbacks::{self, CallbackIds};
@@ -878,6 +751,17 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(failing.contains("broken row"), "{failing}");
+        // One pattern may be a plain string, as before the shared builders.
+        let one = run_code(
+            "return app.formats.waveform{ path = 'sim/tb.vcd', signals = 'tb.*' }",
+            Some(Arc::new(FakeFormats::new())),
+        );
+        assert!(one.is_ok(), "{one:?}");
+        let many = format!(
+            "return app.formats.waveform{{ path = 'sim/tb.vcd', signals = {{ {} }} }}",
+            vec!["'a'"; 65].join(", ")
+        );
+        assert!(err(&many).contains("at most 64 signal patterns"));
         let none = run_code("return app.formats.molecule{ smiles = 'C' }", None)
             .unwrap_err()
             .to_string();

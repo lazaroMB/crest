@@ -16,10 +16,9 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line, read};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, read, shown};
 use crate::ports::formats::{TrainingFile, TrainingRequest};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Summaries listed to the model.
 const LISTED: usize = 40;
@@ -105,62 +104,89 @@ impl TypedTool for ShowTrainingCurvesTool {
         input: ShowTrainingCurves,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let mut paths: Vec<String> = input.path.into_iter().chain(input.paths).collect();
-        paths.retain(|p| !p.trim().is_empty());
-        if paths.is_empty() {
-            return Err(invalid(SHOW_TRAINING_CURVES, "give `path` or `paths`"));
-        }
-        if paths.len() > MAX_RUNS {
-            return Err(invalid(
-                SHOW_TRAINING_CURVES,
-                format!("at most {MAX_RUNS} logs"),
-            ));
-        }
-        if input.smoothing.is_some_and(|s| !(0.0..1.0).contains(&s)) {
-            return Err(invalid(
-                SHOW_TRAINING_CURVES,
-                "`smoothing` is from 0 to below 1",
-            ));
-        }
+        let input =
+            normalize_training_curves(input).map_err(|e| invalid(SHOW_TRAINING_CURVES, e))?;
         let ports = self.ports.clone();
-        let subject = paths.join(", ");
-        let title = input.title.filter(|t| !t.trim().is_empty());
+        let subject = input.paths.join(", ");
         let run = async move {
-            let mut files = Vec::new();
-            for path in &paths {
-                match read(ports.fs.as_ref(), path).await {
-                    Ok(bytes) => files.push(TrainingFile {
-                        path: path.clone(),
-                        bytes,
-                    }),
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                }
-            }
-            let request = TrainingRequest {
-                files,
-                metric: input.metric.filter(|m| !m.trim().is_empty()),
-                axis: input.x,
-                smoothing: input.smoothing,
-                log_y: input.log_y,
-                goal: input.goal,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let read = offloaded(&ports.offload, move || formats.training_curves(&request)).await;
-            let mut spec = match read {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the log reader did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = training_summary(&spec);
-            Ok(ToolOutput::text(summary)
-                .with_block_update(BlockKind::TrainingCurves(Box::new(spec))))
+            shown(
+                build_training_curves(&ports, input).await,
+                training_summary,
+                |spec| BlockKind::TrainingCurves(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_training_curves` input: `path` and `paths` merged into
+/// `paths` (1 to [`MAX_RUNS`], blanks dropped), a smoothing factor from 0
+/// to below 1, and the metric and title when not blank.
+///
+/// # Errors
+///
+/// A message for the caller: no log, too many, or a smoothing out of
+/// range.
+pub fn normalize_training_curves(input: ShowTrainingCurves) -> Result<ShowTrainingCurves, String> {
+    let paths: Vec<String> = input
+        .path
+        .into_iter()
+        .chain(input.paths)
+        .map(|p| p.trim().to_owned())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if paths.is_empty() {
+        return Err("give `path` or `paths`".to_owned());
+    }
+    if paths.len() > MAX_RUNS {
+        return Err(format!("at most {MAX_RUNS} logs"));
+    }
+    if input.smoothing.is_some_and(|s| !(0.0..1.0).contains(&s)) {
+        return Err("`smoothing` is from 0 to below 1".to_owned());
+    }
+    Ok(ShowTrainingCurves {
+        path: None,
+        paths,
+        metric: non_blank(input.metric),
+        title: non_blank(input.title),
+        ..input
+    })
+}
+
+/// The training curves block of a checked call
+/// ([`normalize_training_curves`]): reads the logs through the guard and
+/// parses them off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: a log cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_training_curves(
+    ports: &FormatToolPorts,
+    input: ShowTrainingCurves,
+) -> Result<TrainingSpec, String> {
+    let mut files = Vec::new();
+    for path in input.paths {
+        let bytes = read(ports.fs.as_ref(), &path).await?;
+        files.push(TrainingFile { path, bytes });
+    }
+    let request = TrainingRequest {
+        files,
+        metric: input.metric,
+        axis: input.x,
+        smoothing: input.smoothing,
+        log_y: input.log_y,
+        goal: input.goal,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the log reader", move || {
+        formats.training_curves(&request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_training_curves`.
@@ -228,7 +254,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

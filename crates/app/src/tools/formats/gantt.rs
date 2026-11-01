@@ -17,10 +17,9 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line, read};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, read, shown};
 use crate::ports::formats::{GanttRequest, GanttSource, GanttTaskInput};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Tasks with slack listed to the model.
 const LISTED: usize = 8;
@@ -95,55 +94,76 @@ impl TypedTool for ShowGanttTool {
         input: ShowGantt,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let path = input.path.filter(|p| !p.trim().is_empty());
-        let tasks = input.tasks.filter(|t| !t.is_empty());
-        match (&path, &tasks) {
-            (Some(_), Some(_)) => {
-                return Err(invalid(SHOW_GANTT, "give `path` or `tasks`, not both"));
-            }
-            (None, None) => return Err(invalid(SHOW_GANTT, "give `path` or `tasks`")),
-            (None, Some(t)) if t.len() > MAX_TASKS => {
-                return Err(invalid(SHOW_GANTT, format!("at most {MAX_TASKS} tasks")));
-            }
-            _ => {}
-        }
+        let input = normalize_gantt(input).map_err(|e| invalid(SHOW_GANTT, e))?;
         let ports = self.ports.clone();
-        let subject = path.clone().unwrap_or_else(|| "inline tasks".to_owned());
-        let start = input.start.filter(|s| !s.trim().is_empty());
-        let calendar = input.calendar.unwrap_or_default();
-        let title = input.title.filter(|t| !t.trim().is_empty());
+        let subject = input
+            .path
+            .clone()
+            .unwrap_or_else(|| "inline tasks".to_owned());
         let run = async move {
-            let source = match (&path, tasks) {
-                (Some(path), _) => match read(ports.fs.as_ref(), path).await {
-                    Ok(bytes) => GanttSource::File(bytes),
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                },
-                (None, tasks) => GanttSource::Tasks(tasks.unwrap_or_default()),
-            };
-            let request = GanttRequest {
-                path: path.clone(),
-                source,
-                start,
-                calendar,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let scheduled =
-                offloaded(&ports.offload, move || formats.schedule_gantt(&request)).await;
-            let name = path.as_deref().unwrap_or("the tasks");
-            let mut spec = match scheduled {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(format!("{name}: {err}"))),
-                None => return Ok(ToolOutput::error("the scheduler did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("{name}: {err}")));
-            }
-            let summary = gantt_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Gantt(Box::new(spec))))
+            shown(build_gantt(&ports, input).await, gantt_summary, |spec| {
+                BlockKind::Gantt(Box::new(spec))
+            })
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_gantt` input: exactly one of `path` and `tasks` (at
+/// most [`MAX_TASKS`]), and the start and title when not blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or too many tasks.
+pub fn normalize_gantt(input: ShowGantt) -> Result<ShowGantt, String> {
+    let path = non_blank(input.path);
+    let tasks = input.tasks.filter(|t| !t.is_empty());
+    match (&path, &tasks) {
+        (Some(_), Some(_)) => return Err("give `path` or `tasks`, not both".to_owned()),
+        (None, None) => return Err("give `path` or `tasks`".to_owned()),
+        (None, Some(t)) if t.len() > MAX_TASKS => {
+            return Err(format!("at most {MAX_TASKS} tasks"));
+        }
+        _ => {}
+    }
+    Ok(ShowGantt {
+        path,
+        tasks,
+        start: non_blank(input.start),
+        calendar: input.calendar,
+        title: non_blank(input.title),
+    })
+}
+
+/// The Gantt block of a checked call ([`normalize_gantt`]): reads the
+/// file through the guard (or takes the tasks) and schedules it off the
+/// executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read, the tasks not
+/// scheduled (a cycle), or the result is not a valid block.
+pub async fn build_gantt(ports: &FormatToolPorts, input: ShowGantt) -> Result<GanttSpec, String> {
+    let source = match &input.path {
+        Some(path) => GanttSource::File(read(ports.fs.as_ref(), path).await?),
+        None => GanttSource::Tasks(input.tasks.unwrap_or_default()),
+    };
+    let request = GanttRequest {
+        path: input.path.clone(),
+        source,
+        start: input.start,
+        calendar: input.calendar.unwrap_or_default(),
+    };
+    let formats = Arc::clone(&ports.formats);
+    let name = input.path.as_deref().unwrap_or("the tasks").to_owned();
+    let mut spec = parse_off(ports, "the scheduler", move || {
+        formats.schedule_gantt(&request)
+    })
+    .await?
+    .map_err(|e| format!("{name}: {e}"))?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| format!("{name}: {e}"))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_gantt`.
@@ -235,7 +255,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

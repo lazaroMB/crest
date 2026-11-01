@@ -78,36 +78,33 @@ pub mod terraform;
 pub mod training;
 pub mod waveform;
 
-pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary, read_array};
+pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary};
 pub use bench::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
-    collect_benchmarks,
 };
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
-    flame_summary, logs_summary, read_log, trace_summary,
+    flame_summary, logs_summary, trace_summary,
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
 pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
 pub use gantt::{SHOW_GANTT, ShowGanttTool, gantt_summary};
-pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, inline_geojson, map_summary, read_map};
-pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
-pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
+pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, map_summary};
+pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary};
+pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
-pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_entries, grid_summary};
+pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_summary};
 pub use molecule3d::{SHOW_MOLECULE_3D, ShowMolecule3dTool, molecule3d_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
-pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, edges_json, network_summary};
+pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, network_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
-pub use spectrum::{
-    MAX_SPECTRUM_BYTES, SHOW_SPECTRUM, ShowSpectrumTool, read_spectrum, spectrum_summary,
-};
-pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
+pub use spectrum::{MAX_SPECTRUM_BYTES, SHOW_SPECTRUM, ShowSpectrumTool, spectrum_summary};
+pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use training::{SHOW_TRAINING_CURVES, ShowTrainingCurvesTool, training_summary};
-pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
+pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, waveform_summary};
 
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
@@ -188,18 +185,6 @@ async fn read(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
     fs.read_bytes(&parsed, MAX_REPORT_BYTES)
         .await
         .map_err(|e| format!("cannot read `{path}`: {e}"))
-}
-
-/// Reads a report, trace or profile file of the workspace (up to
-/// [`MAX_REPORT_BYTES`]) through the guard, for callers outside the tools
-/// (Lua's `app.formats`).
-///
-/// # Errors
-///
-/// A message for the caller: a bad path, a file the guard refuses or one
-/// that cannot be read.
-pub async fn read_report(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
-    read(fs, path).await
 }
 
 /// `path` relative to `root` when it is an absolute path inside it;
