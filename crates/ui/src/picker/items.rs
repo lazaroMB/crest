@@ -2,11 +2,11 @@
 
 use std::ops::Range;
 
-use super::preview::valid_range;
 use application::keymap::Action;
 use application::ports::search::{ColumnRange, FileList, FindFileRequest, GrepRequest, GrepResult};
 use domain::workspace::WorkspacePath;
 
+use super::preview::valid_range;
 use super::{FILES_ACTION, GREP_ACTION};
 
 /// The request the file picker sends for `query`: the defaults of the

@@ -2,10 +2,6 @@
 
 use std::sync::Arc;
 
-use super::preview::{
-    PREVIEW_IMAGE_MAX_BYTES, PREVIEW_MODEL_MAX_BYTES, Preview, RichPreview, human_size,
-    preview_request,
-};
 use application::ports::fs::{FileSystemPort, FsError};
 use application::ports::search::{
     ContentSearchPort, FileSearchPort, ListFilesRequest, SearchError,
@@ -16,6 +12,10 @@ use domain::model3d::ModelSpec;
 use domain::workspace::WorkspacePath;
 use gpui::AppContext as _;
 
+use super::preview::{
+    PREVIEW_IMAGE_MAX_BYTES, PREVIEW_MODEL_MAX_BYTES, Preview, RichPreview, human_size,
+    preview_request,
+};
 use super::{
     EMPTY_QUERY_LIMIT, Found, GrepOptions, PickerItem, PickerMode, files_request, grep_request,
     items_for_empty_query, items_from_files, items_from_grep,

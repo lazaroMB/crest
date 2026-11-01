@@ -1,7 +1,5 @@
 //! Drawing the picker: its rows, option chips, preview and footer.
 
-use super::preview::{RichPreview, overlay, valid_range};
-use super::search::UNSUPPORTED_HINT;
 use domain::block::{ImageData, ImageFit};
 use domain::workspace::WorkspacePath;
 use gpui::prelude::FluentBuilder as _;
@@ -18,6 +16,8 @@ use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_component::v_flex;
 use gpui_component::{ActiveTheme as _, IconName, Selectable as _, Sizable as _};
 
+use super::preview::{RichPreview, overlay, valid_range};
+use super::search::UNSUPPORTED_HINT;
 use super::{
     CHAR_WIDTH, GrepToggle, MODEL_PREVIEW_HEIGHT, POPUP_HEIGHT, POPUP_WIDTH, PREVIEW_IMAGE,
     PREVIEW_MODEL, PickerItem, PickerMode, PickerView, RESULTS_SHARE, TWO_COLUMNS_MIN_WIDTH,
