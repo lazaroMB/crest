@@ -1220,7 +1220,8 @@ mod tests {
                 cx.simulate_click(item, gpui::Modifiers::none());
                 redraw(cx);
                 assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
-                cx.simulate_keystrokes("ctrl-a backspace");
+                // Select all: Cmd on macOS, where Ctrl+A goes to the line start.
+                cx.simulate_keystrokes("secondary-a backspace");
                 cx.simulate_input(name);
                 cx.simulate_keystrokes("enter");
                 cx.run_until_parked();
