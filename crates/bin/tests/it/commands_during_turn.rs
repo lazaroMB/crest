@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use application::usecases::cancel::CancelToken;
+use application::usecases::commands::Command;
 use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use crest::gui::UiController;
 use crest::headless::run::frontend;
@@ -87,11 +88,15 @@ async fn open_shell_and_help_do_not_wait_for_the_running_turn() {
     .await
     .expect("the turn reaches the model");
 
-    let open = controller.run_command("open", "@README.md").unwrap();
+    let open = controller
+        .run_command(Command::parse("open @README.md"))
+        .unwrap();
     let open = tokio::time::timeout(PROMPTLY, open).await;
     assert_eq!(open.expect("/open waited for the turn"), Reply::Done);
 
-    let shell = controller.run_command("!", "echo desde-shell").unwrap();
+    let shell = controller
+        .run_command(Command::parse("!echo desde-shell"))
+        .unwrap();
     let shell = tokio::time::timeout(PROMPTLY, shell).await;
     assert_eq!(shell.expect("/! waited for the turn"), Reply::Done);
 

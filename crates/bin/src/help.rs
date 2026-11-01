@@ -15,10 +15,10 @@ use application::ports::plugin::{
     KeymapSpec, McpServerSpec, McpTransport, PluginCapabilities, PluginToolSpec,
 };
 use application::tools::registry::ToolRegistry;
+use application::usecases::commands::{Handler, commands_of};
 use clap::CommandFactory as _;
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest};
 use domain::permission::ToolEffect;
-use ui::commands::CommandInfo;
 use ui::help::{
     BUILTIN_SOURCE, CliRow, CommandRow, HelpSnapshot, McpRow, ModelRow, PathRow, PluginRow,
     ToolRow, ToolSource, key_rows,
@@ -80,150 +80,6 @@ impl HelpSource {
         }
     }
 }
-
-/// The commands the binary runs ([`UiController::run_command`]).
-///
-/// [`UiController::run_command`]: crate::gui::UiController
-pub const BIN_COMMANDS: &[CommandInfo] = &[
-    CommandInfo {
-        name: "!",
-        usage: "/! <command>",
-        description: "Run a shell command in the workspace; its output is shown and goes to \
-                      the model with the next prompt (also /!cmd)",
-    },
-    CommandInfo {
-        name: "implement",
-        usage: "/implement <spec>",
-        description: "Run the plan of a Spec task by task, one commit per task, with gates you \
-                      answer from the input",
-    },
-    CommandInfo {
-        name: "implement",
-        usage: "/implement resume",
-        description: "Continue the last implementation where it stopped (also after an error)",
-    },
-    CommandInfo {
-        name: "implement",
-        usage: "/implement cancel",
-        description: "Stop the active or pending implementation for good (its journal is kept)",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research <problem>",
-        description: "Start the research flow on a problem (5 stages, depth picked by the \
-                      triage); it ends in a Spec",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research --quick <problem>",
-        description: "The 5-stage flow at quick depth: fewer explorers and a cheaper model \
-                      (also -q)",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research --deep <problem>",
-        description: "The full 14-stage flow, with experiments and a prototype (also -d)",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research",
-        description: "Where the research flow is and what it cost so far",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research resume [n]",
-        description: "Continue the last research flow (or number n of /research list), \
-                      running a failed or interrupted stage again",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research list [all]",
-        description: "The open research flows of this workspace, newest first, with their \
-                      pipeline and cost (all: also the finished and cancelled ones)",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research cancel [n|all]",
-        description: "Drop the last research flow (or number n of /research list, or every \
-                      open one) for good; it is no longer pending",
-    },
-    CommandInfo {
-        name: "research",
-        usage: "/research accept",
-        description: "Discovery engine: freeze the discovery once every section is approved \
-                      and derive spec.md and plan.json",
-    },
-    CommandInfo {
-        name: "reopen",
-        usage: "/reopen <section> [reason]",
-        description: "Discovery engine: reopen a section; it and every later one lose their \
-                      verdicts and are written again",
-    },
-    CommandInfo {
-        name: "retry",
-        usage: "/retry",
-        description: "Run the failed stage of the research flow again",
-    },
-    CommandInfo {
-        name: "stage",
-        usage: "/stage",
-        description: "Where the active flow is (research or implementation)",
-    },
-    CommandInfo {
-        name: "back",
-        usage: "/back <stage>",
-        description: "Take the research flow back to a stage, by number or name",
-    },
-    CommandInfo {
-        name: "skip",
-        usage: "/skip",
-        description: "Skip an optional stage of the research flow",
-    },
-    CommandInfo {
-        name: "abort",
-        usage: "/abort",
-        description: "Stop the active flow for good (its journal is kept)",
-    },
-    CommandInfo {
-        name: "aside",
-        usage: "/aside [question]",
-        description: "Chat aside while a flow waits at a gate: lines go to the chat, with the \
-                      gate as context, until /flow (also /aparte)",
-    },
-    CommandInfo {
-        name: "flow",
-        usage: "/flow [answer]",
-        description: "Back to the waiting flow: answers it, or proposes the answer from the \
-                      side chat for you to confirm (also /volver)",
-    },
-    CommandInfo {
-        name: "open",
-        usage: "/open @<path>",
-        description: "Show a workspace file in a modal, 3D models included (type @ to complete the path)",
-    },
-    CommandInfo {
-        name: "simulate",
-        usage: "/simulate <spec>",
-        description: "Simulate the solution of a Spec and open the 3D board with every scenario",
-    },
-    CommandInfo {
-        name: "mcp",
-        usage: "/mcp [tools|restart|enable|disable|login|logout|trust <name>]",
-        description: "List the MCP servers with their state, or show a server's tools, \
-                      restart, turn on or off, log in or out (OAuth) or approve one of the \
-                      workspace config",
-    },
-    CommandInfo {
-        name: "plugin",
-        usage: "/plugin list",
-        description: "List the plugins that declare capabilities and whether they are approved",
-    },
-    CommandInfo {
-        name: "plugin",
-        usage: "/plugin trust <name>",
-        description: "Approve the capabilities (network, shell) a plugin declares",
-    },
-];
 
 /// Name the Lua host gives the global `init.lua`.
 const GLOBAL_CONFIG: &str = "config";
@@ -565,8 +421,8 @@ pub fn snapshot(
     trust: &PluginTrust,
     statuses: &[McpServerStatus],
 ) -> HelpSnapshot {
-    let mut commands: Vec<CommandRow> = BIN_COMMANDS
-        .iter()
+    // The controller's commands (the catalog's), then those of `init.lua`.
+    let mut commands: Vec<CommandRow> = commands_of(Handler::Controller)
         .map(|info| CommandRow {
             name: info.name.into(),
             usage: info.usage.into(),

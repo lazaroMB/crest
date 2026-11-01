@@ -25,6 +25,7 @@ use application_core::ports::approval::{
 };
 use application_core::ports::events::{DomainEvent, EventSink};
 use application_core::ports::form::{FormPort as _, FormRequest, FormRequestId};
+use application_core::usecases::commands::{Command, ResearchCommand};
 use application_testing::fs::InMemoryFs;
 use application_testing::system::RecordingSink;
 use domain::block::{
@@ -914,11 +915,14 @@ impl SessionController for Fake {
         futures::future::ready(()).boxed()
     }
 
-    fn run_command(&self, name: &str, args: &str) -> Option<BoxFuture<'static, Reply>> {
+    fn run_command(&self, command: Command) -> Option<BoxFuture<'static, Reply>> {
         let sink = Arc::clone(&self.sink);
-        let args = args.to_owned();
-        let reply = match name {
-            "research" => on_thread(move || {
+        let reply = match command {
+            Command::Research(command) => on_thread(move || {
+                let args = match command {
+                    ResearchCommand::Start { problem, .. } => problem,
+                    _ => String::new(),
+                };
                 add(
                     &sink,
                     BlockKind::Text {
@@ -927,7 +931,7 @@ impl SessionController for Fake {
                 );
                 research(&sink)
             }),
-            "open" => on_thread(move || {
+            Command::Open(_) => on_thread(move || {
                 sink.emit(modal(
                     "open:models/gear.stl",
                     "models/gear.stl",
@@ -940,7 +944,7 @@ impl SessionController for Fake {
                 ));
                 Reply::Done
             }),
-            "demo" => on_thread(move || {
+            Command::Other { name, .. } if name == "demo" => on_thread(move || {
                 sink.emit(rich_modal());
                 Reply::Done
             }),
