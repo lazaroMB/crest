@@ -560,19 +560,36 @@ dependencies = [
 name = "application"
 version = "0.18.0"
 dependencies = [
+ "application-core",
  "async-trait",
  "base64 0.23.1",
- "blake3",
  "domain",
  "futures",
  "graph-flow",
+ "insta",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "application-core"
+version = "0.18.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "domain",
+ "futures",
  "insta",
  "regex",
  "schemars",
  "serde",
  "serde_json",
  "stl_io",
- "tempfile",
  "thiserror 2.0.21",
  "tobj",
  "tokio",
@@ -584,7 +601,7 @@ dependencies = [
 name = "application-testing"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "domain",
  "futures",

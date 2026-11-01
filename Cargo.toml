@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/domain",
+    "crates/app-core",
     "crates/app",
     "crates/app-testing",
     "crates/adapters/anthropic",
@@ -34,6 +35,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 domain = { path = "crates/domain" }
+application-core = { path = "crates/app-core" }
 application = { path = "crates/app" }
 application-testing = { path = "crates/app-testing" }
 adapter-anthropic = { path = "crates/adapters/anthropic" }
@@ -91,7 +93,7 @@ rmcp = { version = "3.5.1", default-features = false, features = ["client", "tra
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 similar = "3.2.0"
-# 3D models opened with `/open` (application). PLY is parsed in-house.
+# 3D models opened with `/open` (application-core). PLY is parsed in-house.
 stl_io = "0.11.0"
 tobj = { version = "4.0.5", default-features = false }
 tokio-util = "0.7.20"

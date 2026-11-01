@@ -1,15 +1,16 @@
-//! In-memory fakes of every port of `application`, for tests without
+//! In-memory fakes of every port of `application-core`, for tests without
 //! network, `rg` or UI.
 //!
-//! The fakes are written against `crate::ports`, so `application` mounts the
-//! same files (`src/fakes/`) as its own `testing` module for its unit tests.
-//! Here `crate::ports` resolves to `application::ports` through the import
-//! below. Keeping them out of `application` behind a feature avoids a second
-//! build of `application` and of every crate above it when tests run.
+//! The fakes are written against `crate::ports`, so `application-core` and
+//! `application` mount the same files (`src/fakes/`) as their own `testing`
+//! module for their unit tests. Here `crate::ports` resolves to
+//! `application_core::ports` through the import below. Keeping them out of
+//! the application crates behind a feature avoids a second build of them and
+//! of every crate above them when tests run.
 //!
 //! Use it only under `[dev-dependencies]` (`scripts/check-arch.sh` checks it).
 
-use application::ports;
+use application_core::ports;
 
 mod fakes;
 

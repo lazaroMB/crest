@@ -1,5 +1,5 @@
 ---
-source: crates/app/src/tools/form.rs
+source: crates/app-core/src/tools/form.rs
 expression: "json!({\n    \"name\": tool.name(), \"description\": tool.description(), \"input_schema\":\n    tool.input_schema(),\n})"
 ---
 {

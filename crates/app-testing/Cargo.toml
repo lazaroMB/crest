@@ -8,7 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 # Only ever a [dev-dependency]. The fakes' own unit tests run inside
-# application (which mounts the same files as `application::testing`), so
+# application-core and application (which mount the same files as their
+# `testing` module), so
 # `cargo test` does not run them a second time here. `--all-targets` still
 # compiles them (clippy), hence the tokio dev-dependency.
 [lib]
@@ -16,7 +17,7 @@ test = false
 doctest = false
 
 [dependencies]
-application.workspace = true
+application-core.workspace = true
 async-trait.workspace = true
 domain.workspace = true
 futures.workspace = true
