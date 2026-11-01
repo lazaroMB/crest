@@ -4,42 +4,25 @@
 //! resolved them ([`ThemeCompletion::set`]).
 //!
 //! Moving through the list previews each theme in the window
-//! ([`ThemeKey::Preview`]); `Enter` saves the chosen one (`/theme set
+//! ([`ThemeKey::Select`]); `Enter` saves the chosen one (`/theme set
 //! <name>`), `Tab` completes the line to it and `Esc` hides the popup and
 //! goes back to the theme in use.
 
-use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    Styled as _, div,
-};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui::{AnyElement, App, ParentElement as _, SharedString, Styled as _, div};
+use gpui_component::{ActiveTheme as _, h_flex};
 
-use super::{PALETTE_ROWS, window_note};
+use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
 use crate::session::ThemeChoice;
 
-/// What the popup shows for the current line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThemePopup {
-    /// The matching themes, by name.
-    Entries(Vec<ThemeChoice>),
-    /// Why there is nothing to choose (no match, still loading, an error).
-    Message(String),
-}
+/// What the popup shows for the current line: the matching themes, by
+/// name, or why there is nothing to choose (no match, still loading, an
+/// error).
+pub type ThemePopup = Popup<ThemeChoice>;
 
-/// What a key pressed while the popup shows asks the input to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThemeKey {
-    /// Choose the entry at this index and preview its theme.
-    Preview(usize),
-    /// Hide the popup and go back to the theme in use.
-    Hide,
-    /// Replace the prompt with this text.
-    SetText(String),
-    /// Run this command (without the slash).
-    Run(String),
-    /// Not the popup's key.
-    Ignored,
-}
+/// What a key pressed while the popup shows asks the input to do; choosing
+/// an entry ([`PopupKey::Select`]) previews its theme, and hiding the popup
+/// goes back to the theme in use.
+pub type ThemeKey = PopupKey;
 
 #[derive(Debug, Default)]
 enum Listing {
@@ -116,25 +99,16 @@ impl ThemeCompletion {
     }
 }
 
-/// What `key` does in `popup` with entry `selected` chosen.
+/// What `key` does in `popup` with entry `selected` chosen: `Tab`
+/// completes the line to the chosen theme and `Enter` saves it.
 #[must_use]
 pub fn theme_key(key: &application::keymap::Key, popup: &ThemePopup, selected: usize) -> ThemeKey {
-    use application::keymap::KeyCode;
-    let entries = match popup {
-        ThemePopup::Entries(entries) => entries,
-        ThemePopup::Message(_) if key.code == KeyCode::Esc => return ThemeKey::Hide,
-        ThemePopup::Message(_) => return ThemeKey::Ignored,
-    };
-    let len = entries.len();
-    let selected = selected.min(len - 1);
-    let name = &entries[selected].name;
-    match key.code {
-        KeyCode::Down => ThemeKey::Preview((selected + 1) % len),
-        KeyCode::Up => ThemeKey::Preview((selected + len - 1) % len),
-        KeyCode::Esc => ThemeKey::Hide,
-        KeyCode::Tab => ThemeKey::SetText(format!("/theme set {name}")),
-        KeyCode::Enter => ThemeKey::Run(format!("theme set {name}")),
-        _ => ThemeKey::Ignored,
+    match nav_key(key, popup, selected) {
+        Nav::Select(ix) => ThemeKey::Select(ix),
+        Nav::Hide => ThemeKey::Hide,
+        Nav::Complete(choice) => ThemeKey::SetText(format!("/theme set {}", choice.name)),
+        Nav::Accept(choice) => ThemeKey::Run(format!("theme set {}", choice.name)),
+        Nav::Ignored => ThemeKey::Ignored,
     }
 }
 
@@ -148,95 +122,55 @@ pub fn render(
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (rows, position) = match popup {
-        ThemePopup::Entries(entries) => {
-            let total = entries.len();
-            let selected = selected.min(total - 1);
-            let position = window_note(top, total);
-            let rows: Vec<_> = entries
-                .into_iter()
-                .enumerate()
-                .skip(top)
-                .take(PALETTE_ROWS)
-                .map(|(ix, choice)| {
-                    let marker = if choice.name == current { "●" } else { " " };
-                    // A swatch of the theme itself: background, accent, text.
-                    let swatch = |path: &str| {
-                        div()
-                            .size_3()
-                            .rounded_sm()
-                            .bg(crate::theme::hsla(choice.theme.color(path)))
-                    };
-                    let mut row =
-                        h_flex()
-                            .id(("theme", ix))
-                            .gap_2()
-                            .px_2()
-                            .child(div().text_color(theme.primary).child(marker))
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(swatch("background"))
-                                    .child(swatch("accent.bg"))
-                                    .child(swatch("foreground")),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(theme.foreground)
-                                    .child(SharedString::from(choice.name.clone())),
-                            )
-                            .child(div().text_color(theme.muted_foreground).child(
-                                SharedString::from(format!(
-                                    "{} · {}",
-                                    choice.theme.appearance.name(),
-                                    choice.origin
-                                )),
-                            ));
-                    if ix == selected {
-                        row = row.bg(theme.list_active).rounded_sm();
-                    }
-                    row.into_any_element()
-                })
-                .collect();
-            (rows, position)
-        }
-        ThemePopup::Message(message) => (
-            vec![
+    completion::render(
+        &Look {
+            id: "theme-palette",
+            row_id: "theme",
+            keys: "↑↓ preview · Enter save · Tab complete · Esc back",
+        },
+        popup,
+        selected,
+        top,
+        cx,
+        |choice| {
+            let marker = if choice.name == current { "●" } else { " " };
+            // A swatch of the theme itself: background, accent, text.
+            let swatch = |path: &str| {
                 div()
-                    .px_2()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(message))
-                    .into_any_element(),
-            ],
-            None,
-        ),
-    };
-    let mut footer = "↑↓ preview · Enter save · Tab complete · Esc back".to_owned();
-    if let Some(position) = position {
-        footer.push_str(&position);
-    }
-    v_flex()
-        .id("theme-palette")
-        .mb_1()
-        .py_1()
-        .border_1()
-        .border_color(theme.border)
-        .rounded_md()
-        .bg(theme.popover)
-        .text_sm()
-        .children(rows)
-        .child(
-            div()
+                    .size_3()
+                    .rounded_sm()
+                    .bg(crate::theme::hsla(choice.theme.color(path)))
+            };
+            h_flex()
+                .gap_2()
                 .px_2()
-                .pt_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SharedString::from(footer)),
-        )
-        .into_any_element()
+                .child(div().text_color(theme.primary).child(marker))
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(swatch("background"))
+                        .child(swatch("accent.bg"))
+                        .child(swatch("foreground")),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(choice.name.clone())),
+                )
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(format!(
+                            "{} · {}",
+                            choice.theme.appearance.name(),
+                            choice.origin
+                        ))),
+                )
+        },
+    )
 }
 
 #[cfg(test)]
@@ -297,12 +231,9 @@ mod tests {
         let key = |code| Key::plain(code);
         assert_eq!(
             theme_key(&key(KeyCode::Down), &popup, 0),
-            ThemeKey::Preview(1)
+            ThemeKey::Select(1)
         );
-        assert_eq!(
-            theme_key(&key(KeyCode::Up), &popup, 0),
-            ThemeKey::Preview(1)
-        );
+        assert_eq!(theme_key(&key(KeyCode::Up), &popup, 0), ThemeKey::Select(1));
         assert_eq!(
             theme_key(&key(KeyCode::Tab), &popup, 1),
             ThemeKey::SetText("/theme set b".into())

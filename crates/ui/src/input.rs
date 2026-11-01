@@ -46,6 +46,7 @@
 //! commits directly, without key events, bypasses the sequencer.
 
 pub mod attachments;
+pub mod completion;
 pub mod cursor;
 pub mod history;
 pub mod model_popup;
@@ -74,14 +75,15 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use application::ports::search::FileSearchPort;
 use attachments::{ImageMode, PendingImage};
+use completion::{PALETTE_ROWS, Popup, PopupKey, palette_top, scroll_window, window_note};
 use domain::conversation::ImageAttachment;
 use history::PromptHistory;
 pub use model_popup::ModelPopup;
-use model_popup::{ModelCompletion, ModelKey, model_key};
+use model_popup::{ModelCompletion, model_key};
 pub use path_popup::PathPopup;
-use path_popup::{PathCompletion, PathKey, path_key};
+use path_popup::{PathCompletion, path_key};
 pub use theme_popup::ThemePopup;
-use theme_popup::{ThemeCompletion, ThemeKey, theme_key, theme_query};
+use theme_popup::{ThemeCompletion, theme_key, theme_query};
 use tray::{ImageTray, paste_handler};
 
 use crate::help::CommandRow;
@@ -101,49 +103,28 @@ pub const CANCEL_ACTION: &str = "input.cancel";
 
 /// Rows of the editor before it starts scrolling.
 const MAX_ROWS: usize = 8;
-/// Rows of the command palette.
-const PALETTE_ROWS: usize = 8;
-
-/// First visible row of a scrolling popup of `len` entries with entry
-/// `selected` chosen, given the one shown so far: the window moves only
-/// to keep `selected` in it.
-fn palette_top(selected: usize, top: usize, len: usize) -> usize {
-    let top = if selected < top {
-        selected
-    } else if selected >= top + PALETTE_ROWS {
-        selected + 1 - PALETTE_ROWS
-    } else {
-        top
-    };
-    top.min(len.saturating_sub(PALETTE_ROWS))
-}
-
 /// Pixels of wheel that move a popup by one row.
 const WHEEL_ROW: f32 = 20.0;
 
-/// The footer note of a popup of `total` entries showing
-/// [`PALETTE_ROWS`] from `top`: `· 1–8 of 20 · 12 more`, or nothing when
-/// they all fit.
-fn window_note(top: usize, total: usize) -> Option<String> {
-    if total <= PALETTE_ROWS {
-        return None;
-    }
-    let last = (top + PALETTE_ROWS).min(total);
-    let below = total - last;
-    Some(if below > 0 {
-        format!(" · {}–{last} of {total} · {below} more", top + 1)
-    } else {
-        format!(" · {}–{last} of {total}", top + 1)
-    })
+/// The completion popup the input shows.
+enum Completion {
+    /// `@` paths.
+    Path(PathPopup),
+    /// `/model ` models.
+    Model(ModelPopup),
+    /// `/theme ` themes.
+    Theme(ThemePopup),
 }
 
-/// The window of a popup of `len` entries moved by `rows` (down when
-/// positive) from `top`, and the chosen entry pulled into it.
-fn scroll_window(top: usize, selected: usize, rows: isize, len: usize) -> (usize, usize) {
-    let max_top = len.saturating_sub(PALETTE_ROWS);
-    let top = top.saturating_add_signed(rows).min(max_top);
-    let last = (top + PALETTE_ROWS).min(len).saturating_sub(1);
-    (top, selected.clamp(top, last.max(top)))
+impl Completion {
+    /// Entries to choose from.
+    fn len(&self) -> usize {
+        match self {
+            Self::Path(popup) => popup.len(),
+            Self::Model(popup) => popup.len(),
+            Self::Theme(popup) => popup.len(),
+        }
+    }
 }
 
 /// A step of the paste chain of [`InputView`].
@@ -875,64 +856,42 @@ impl InputView {
         if !self.sequencer.pending().is_empty() || key.mods != Modifiers::default() {
             return false;
         }
-        if let Some(popup) = self.path_popup(cx) {
-            match path_key(key, &popup, &self.text(cx), self.palette_selected) {
-                PathKey::Select(ix) => {
-                    if let PathPopup::Entries(entries) = &popup {
-                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
-                    }
-                    self.palette_selected = ix;
+        if let Some(shown) = self.completion(cx) {
+            let pressed = match &shown {
+                Completion::Path(popup) => {
+                    path_key(key, popup, &self.text(cx), self.palette_selected)
                 }
-                PathKey::Hide => self.palette_hidden = true,
-                PathKey::SetText(text) => self.set_text(&text, window, cx),
-                PathKey::Ignored => return false,
-            }
-            return true;
-        }
-        if let Some(popup) = self.model_popup(cx) {
-            match model_key(key, &popup, self.palette_selected) {
-                ModelKey::Select(ix) => {
-                    if let ModelPopup::Entries(entries) = &popup {
-                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
-                    }
-                    self.palette_selected = ix;
-                }
-                ModelKey::Hide => self.palette_hidden = true,
-                ModelKey::SetText(text) => self.set_text(&text, window, cx),
-                ModelKey::Run(line) => {
-                    self.record(&format!("/{line}"), cx);
-                    self.editor
-                        .update(cx, |editor, cx| editor.set_value("", window, cx));
-                    cx.emit(InputEvent::Command(line));
-                }
-                ModelKey::Ignored => return false,
-            }
-            return true;
-        }
-        if let Some(popup) = self.theme_popup(cx) {
-            match theme_key(key, &popup, self.palette_selected) {
-                ThemeKey::Preview(ix) => {
-                    if let ThemePopup::Entries(entries) = &popup {
-                        self.palette_top = palette_top(ix, self.palette_top, entries.len());
+                Completion::Model(popup) => model_key(key, popup, self.palette_selected),
+                Completion::Theme(popup) => theme_key(key, popup, self.palette_selected),
+            };
+            let theme = matches!(shown, Completion::Theme(_));
+            match pressed {
+                PopupKey::Select(ix) => {
+                    self.palette_top = palette_top(ix, self.palette_top, shown.len());
+                    if let Completion::Theme(Popup::Entries(entries)) = &shown {
                         self.theme_previewing = true;
                         cx.emit(InputEvent::ThemePreview(entries[ix].name.clone()));
                     }
                     self.palette_selected = ix;
                 }
-                ThemeKey::Hide => {
+                PopupKey::Hide => {
                     self.palette_hidden = true;
-                    self.end_theme_preview(cx);
+                    if theme {
+                        self.end_theme_preview(cx);
+                    }
                 }
-                ThemeKey::SetText(text) => self.set_text(&text, window, cx),
-                ThemeKey::Run(line) => {
-                    // Saving replaces the preview.
-                    self.theme_previewing = false;
+                PopupKey::SetText(text) => self.set_text(&text, window, cx),
+                PopupKey::Run(line) => {
+                    if theme {
+                        // Saving replaces the preview.
+                        self.theme_previewing = false;
+                    }
                     self.record(&format!("/{line}"), cx);
                     self.editor
                         .update(cx, |editor, cx| editor.set_value("", window, cx));
                     cx.emit(InputEvent::Command(line));
                 }
-                ThemeKey::Ignored => return false,
+                PopupKey::Ignored => return false,
             }
             return true;
         }
@@ -1177,27 +1136,24 @@ impl InputView {
             .collect()
     }
 
-    /// Entries of the popup the input shows, the same one `render` picks.
-    fn popup_len(&self, cx: &App) -> usize {
+    /// The completion popup the input shows, if any: the `@` one first,
+    /// then `/model `, then `/theme ` (the same one `render` picks).
+    fn completion(&self, cx: &App) -> Option<Completion> {
         if let Some(popup) = self.path_popup(cx) {
-            return match popup {
-                PathPopup::Entries(entries) => entries.len(),
-                PathPopup::Message(_) => 0,
-            };
+            return Some(Completion::Path(popup));
         }
         if let Some(popup) = self.model_popup(cx) {
-            return match popup {
-                ModelPopup::Entries(entries) => entries.len(),
-                ModelPopup::Message(_) => 0,
-            };
+            return Some(Completion::Model(popup));
         }
-        if let Some(popup) = self.theme_popup(cx) {
-            return match popup {
-                ThemePopup::Entries(entries) => entries.len(),
-                ThemePopup::Message(_) => 0,
-            };
+        self.theme_popup(cx).map(Completion::Theme)
+    }
+
+    /// Entries of the popup the input shows, the same one `render` picks.
+    fn popup_len(&self, cx: &App) -> usize {
+        match self.completion(cx) {
+            Some(shown) => shown.len(),
+            None => self.palette(cx).len(),
         }
-        self.palette(cx).len()
     }
 
     /// The wheel over a popup scrolls its rows, carrying the chosen one
@@ -1221,9 +1177,7 @@ impl InputView {
         self.palette_top = top;
         self.palette_selected = selected;
         if selected != before
-            && let Some(ThemePopup::Entries(entries)) = self.theme_popup(cx)
-            && self.path_popup(cx).is_none()
-            && self.model_popup(cx).is_none()
+            && let Some(Completion::Theme(Popup::Entries(entries))) = self.completion(cx)
             && let Some(choice) = entries.get(selected)
         {
             self.theme_previewing = true;
@@ -1232,24 +1186,24 @@ impl InputView {
         cx.notify();
     }
 
-    fn render_palette(&self, cx: &App) -> Option<impl IntoElement> {
+    fn render_palette(&self, cx: &App) -> Option<gpui::AnyElement> {
         let rows = self.palette(cx);
         if rows.is_empty() {
             return None;
         }
         let theme = cx.theme();
         let total = rows.len();
-        let selected = self.palette_selected.min(total - 1);
         let top = self.palette_top;
         let note = window_note(top, total).unwrap_or_default();
-        let items = rows
-            .iter()
-            .enumerate()
-            .skip(top)
-            .take(PALETTE_ROWS)
-            .map(|(ix, row)| {
-                let mut item = h_flex()
-                    .id(("palette", ix))
+        let items = completion::render_rows(
+            "palette",
+            rows.iter(),
+            total,
+            self.palette_selected,
+            top,
+            theme,
+            |row| {
+                h_flex()
                     .gap_3()
                     .px_2()
                     .child(
@@ -1264,34 +1218,15 @@ impl InputView {
                             .truncate()
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(row.description.clone())),
-                    );
-                if ix == selected {
-                    item = item.bg(theme.list_active).rounded_sm();
-                }
-                item
-            });
-        Some(
-            v_flex()
-                .id("command-palette")
-                .mb_1()
-                .py_1()
-                .border_1()
-                .border_color(theme.border)
-                .rounded_md()
-                .bg(theme.popover)
-                .text_sm()
-                .children(items)
-                .child(
-                    div()
-                        .px_2()
-                        .pt_1()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(format!(
-                            "↑↓ choose · Tab complete · Enter run · Esc hide{note}"
-                        ))),
-                ),
-        )
+                    )
+            },
+        );
+        Some(completion::frame(
+            "command-palette",
+            items,
+            format!("↑↓ choose · Tab complete · Enter run · Esc hide{note}"),
+            theme,
+        ))
     }
 
     /// The keys that can follow the pending prefix (the leader), for the
@@ -1378,49 +1313,25 @@ impl Render for InputView {
             .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
         let which_key = self.render_which_key(cx);
-        let paths = self.path_popup(cx).map(|popup| {
-            if let PathPopup::Entries(entries) = &popup {
-                let selected = self.palette_selected.min(entries.len() - 1);
-                self.palette_top = palette_top(selected, self.palette_top, entries.len());
+        let completion = self.completion(cx).map(|shown| {
+            // The list may have arrived or shrunk since the last key.
+            let len = shown.len();
+            if len > 0 {
+                let selected = self.palette_selected.min(len - 1);
+                self.palette_top = palette_top(selected, self.palette_top, len);
             }
-            path_popup::render(popup, self.palette_selected, self.palette_top, cx)
+            let (selected, top) = (self.palette_selected, self.palette_top);
+            match shown {
+                Completion::Path(popup) => path_popup::render(popup, selected, top, cx),
+                Completion::Model(popup) => {
+                    model_popup::render(popup, selected, top, self.current_model.as_ref(), cx)
+                }
+                Completion::Theme(popup) => {
+                    theme_popup::render(popup, selected, top, &self.current_theme, cx)
+                }
+            }
         });
-        let models = if paths.is_none() {
-            self.model_popup(cx).map(|popup| {
-                // The list may have arrived or shrunk since the last key.
-                if let ModelPopup::Entries(entries) = &popup {
-                    let selected = self.palette_selected.min(entries.len() - 1);
-                    self.palette_top = palette_top(selected, self.palette_top, entries.len());
-                }
-                model_popup::render(
-                    popup,
-                    self.palette_selected,
-                    self.palette_top,
-                    self.current_model.as_ref(),
-                    cx,
-                )
-            })
-        } else {
-            None
-        };
-        let themes = if paths.is_none() && models.is_none() {
-            self.theme_popup(cx).map(|popup| {
-                if let ThemePopup::Entries(entries) = &popup {
-                    let selected = self.palette_selected.min(entries.len() - 1);
-                    self.palette_top = palette_top(selected, self.palette_top, entries.len());
-                }
-                theme_popup::render(
-                    popup,
-                    self.palette_selected,
-                    self.palette_top,
-                    &self.current_theme,
-                    cx,
-                )
-            })
-        } else {
-            None
-        };
-        let palette = if paths.is_none() && models.is_none() && themes.is_none() {
+        let palette = if completion.is_none() {
             let total = self.palette(cx).len();
             if total > 0 {
                 let selected = self.palette_selected.min(total - 1);
@@ -1495,9 +1406,7 @@ impl Render for InputView {
                     .id("input-popups")
                     .debug_selector(|| "input-popups".to_owned())
                     .on_scroll_wheel(cx.listener(Self::popup_wheel))
-                    .children(paths)
-                    .children(models)
-                    .children(themes)
+                    .children(completion)
                     .children(palette)
                     .children(which_key),
             )
