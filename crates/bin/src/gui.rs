@@ -426,7 +426,10 @@ fn settle(
         Ok(status) => status_notice(&status),
         // The step already showed its error; the flow stays stored at its
         // last checkpoint.
-        Err(err) => Some((NoticeLevel::Warning, stopped_notice(&err))),
+        Err(err) => Some((
+            NoticeLevel::Warning,
+            stopped_notice(&err, "`/implement resume`"),
+        )),
     }
 }
 
@@ -440,10 +443,11 @@ pub fn resumed_notice(session: &ImplementSession) -> String {
     format!("implementation flow of {} resumed", session.plan_path())
 }
 
-/// What the status bar says when a step of the implementation flow failed:
-/// the flow stays stored at its last checkpoint.
-pub fn stopped_notice(err: &FlowError) -> String {
-    format!("the implementation flow stopped: {err}; `/implement resume` runs the step again")
+/// What the window says when a step of the implementation flow failed: the
+/// flow stays stored at its last checkpoint and `resume` (how this front end
+/// continues it) runs the step again.
+pub fn stopped_notice(err: &FlowError, resume: &str) -> String {
+    format!("the implementation flow stopped: {err}; {resume} runs the step again")
 }
 
 /// `/implement <target>`: opens the flow of `target` and runs it to its
