@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use application::ports::plugin::McpOAuthClient;
 use async_trait::async_trait;
+use platform::KEYRING_SERVICE;
 use rmcp::transport::auth::{
     AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthClientConfig,
     OAuthState, StoredCredentials,
@@ -19,8 +20,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// Keyring service of every crest secret.
-const KEYRING_SERVICE: &str = "crest";
 /// Most characters of one keyring secret; a longer entry is split. Windows
 /// stores secrets as UTF-16 in at most 2560 bytes.
 const CHUNK_CHARS: usize = 1000;

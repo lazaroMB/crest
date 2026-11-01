@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+adapter-support = { path = "../support" }
 application = { path = "../../app" }
 domain = { path = "../../domain" }
 tokio = { path = "../../../../_vendor/tokio" }

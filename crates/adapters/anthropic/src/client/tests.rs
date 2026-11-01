@@ -207,6 +207,32 @@ async fn http_errors_are_typed() {
 }
 
 #[tokio::test]
+async fn bodies_outside_the_messages_shape_still_find_keys_and_contexts() {
+    let server = MockServer::start().await;
+    Mock::given(path("/403"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_json(json!({"error": {"message": "Invalid API key"}})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(path("/413"))
+        .respond_with(ResponseTemplate::new(413).set_body_string("prompt is too long"))
+        .mount(&server)
+        .await;
+    let client = client(&server);
+    let Err(LlmError::Auth { message }) = client.get_json::<serde_json::Value>("/403", &[]).await
+    else {
+        panic!("a 403 that names the key is a rejected key");
+    };
+    assert!(message.starts_with("ANTHROPIC_API_KEY is invalid or missing;"));
+    assert_eq!(
+        client.get_json::<serde_json::Value>("/413", &[]).await,
+        Err(LlmError::ContextTooLong)
+    );
+}
+
+#[tokio::test]
 async fn connection_refused_is_a_network_error() {
     // A port nobody listens on (MockServers are pooled, so do not reuse one).
     let addr = std::net::TcpListener::bind("127.0.0.1:0")
@@ -220,17 +246,4 @@ async fn connection_refused_is_a_network_error() {
     let client = AnthropicClient::new(&key(), config).unwrap();
     let err = client.stream_messages(&body()).await.err();
     assert!(matches!(err, Some(LlmError::Network(_))), "{err:?}");
-}
-
-#[test]
-fn retry_after_parsing() {
-    let mut headers = HeaderMap::new();
-    assert_eq!(retry_after_ms(&headers), None);
-    headers.insert("retry-after", HeaderValue::from_static("1.5"));
-    assert_eq!(retry_after_ms(&headers), Some(1500));
-    headers.insert(
-        "retry-after",
-        HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"),
-    );
-    assert_eq!(retry_after_ms(&headers), None);
 }

@@ -16,6 +16,7 @@ use application::decide::DecisionOptions;
 use application::ports::decision::{DecisionError, DecisionPort};
 use async_trait::async_trait;
 use domain::decision::{Answer, DecisionRequest, DecisionResponse, Question};
+use platform::KEYRING_SERVICE;
 use serde_json::{Map, Value, json};
 
 /// Cloudflare's API.
@@ -25,8 +26,6 @@ pub const TOKEN_NAME: &str = "CLOUDFLARE_API_TOKEN";
 /// Environment variable and keyring entry (service `crest`) of the
 /// account id.
 pub const ACCOUNT_NAME: &str = "CLOUDFLARE_ACCOUNT_ID";
-/// Keyring service of the credentials.
-const KEYRING_SERVICE: &str = "crest";
 /// Longest error text kept from a response.
 const MAX_ERROR_CHARS: usize = 300;
 

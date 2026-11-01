@@ -70,7 +70,8 @@ crates/
   domain/               pure types and rules
   app/                  `application`: ports, use cases, tools, workflows, fakes
   adapters/             anthropic, openai, cloudflare, search, fs, shell, web, store,
-                        lua, mcp, telemetry, export
+                        lua, mcp, telemetry, export, compute, formats, and support
+                        (what the model adapters share: SSE loop, HTTP errors)
                         (export/vendor/three/ holds the inlined three.js, MIT)
   platform/             OS glue shared by adapters, UI and bin: spawning and killing
                         processes, PATH lookup, crest's directories, the Windows console
