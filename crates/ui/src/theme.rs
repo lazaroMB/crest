@@ -209,6 +209,9 @@ pub fn config(theme: &CrestThemeData) -> ThemeConfig {
         "mode": theme.appearance.name(),
         "colors": colors,
         "highlight": highlight,
+        // gpui-component's own corners (buttons, inputs, popovers).
+        "radius": theme.size("radius.md"),
+        "radius.lg": theme.size("radius.lg"),
     });
     // Every value above is a valid hex color or style; covered by a test.
     serde_json::from_value(value).unwrap_or_default()
@@ -243,6 +246,8 @@ mod tests {
         assert!(config.mode.is_dark());
         let background = config.colors.background.expect("background");
         assert_eq!(background.as_ref(), theme.color("background").to_hex());
+        assert_eq!(config.radius, Some(6));
+        assert_eq!(config.radius_lg, Some(8));
         let highlight = config.highlight.expect("highlight");
         assert!(highlight.syntax.style("keyword").is_some());
         assert!(highlight.syntax.style("string.escape").is_some());

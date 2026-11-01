@@ -11,6 +11,10 @@
 //! in [`TOKENS`], so a theme only needs the colors it cares about: the
 //! three core tokens (`background`, `foreground`, `accent.bg`) and the
 //! terminal colors fall back to the TwoCrest values of the appearance.
+//!
+//! A theme may also set **shape** tokens ([`SHAPE`]): the spacing scale,
+//! corner radii and text sizes, in pixels at the default 16px rem. Those
+//! have a fixed default each, so a theme sets only the ones it changes.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -572,6 +576,48 @@ pub const SYNTAX: &[SyntaxSpec] = &[
     },
 ];
 
+/// A shape token: a size in pixels (at a 16px rem) with a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShapeSpec {
+    /// Path, such as `space.md`.
+    pub path: &'static str,
+    /// Its value when the theme does not set it, in pixels.
+    pub default: u16,
+    /// What it sizes, for the docs and diagnostics.
+    pub doc: &'static str,
+}
+
+const fn shape(path: &'static str, default: u16, doc: &'static str) -> ShapeSpec {
+    ShapeSpec { path, default, doc }
+}
+
+/// Largest value a shape token takes, in pixels.
+pub const MAX_SHAPE: u16 = 128;
+
+/// Every shape token. The defaults are the sizes the UI was drawn with
+/// before they were tokens, so a theme that sets none looks the same.
+pub const SHAPE: &[ShapeSpec] = &[
+    shape("space.xxs", 2, "Hairline gaps: between an icon and its label."),
+    shape("space.xs", 4, "Gaps inside a row of chips or a toolbar."),
+    shape("space.sm", 6, "Padding of chips and small buttons."),
+    shape("space.md", 8, "Gaps between the parts of a block."),
+    shape("space.lg", 12, "Padding of cards and dialogs."),
+    shape("space.xl", 16, "Gaps between sections."),
+    shape("radius.sm", 4, "Corners of chips, badges and small buttons."),
+    shape("radius.md", 6, "Corners of cards, inputs and popovers."),
+    shape("radius.lg", 8, "Corners of dialogs and large panels."),
+    shape("text.caption", 12, "Captions, readouts and chip labels."),
+    shape("text.body", 14, "Body text of blocks and lists."),
+    shape("text.title", 16, "Block and section titles."),
+    shape("text.heading", 18, "Dialog and page headings."),
+];
+
+/// The spec of a shape path, if crest knows it.
+#[must_use]
+pub fn shape_spec(path: &str) -> Option<&'static ShapeSpec> {
+    SHAPE.iter().find(|spec| spec.path == path)
+}
+
 /// The spec of a token path, if crest knows it.
 #[must_use]
 pub fn token_spec(path: &str) -> Option<&'static TokenSpec> {
@@ -615,6 +661,9 @@ pub struct Theme {
     pub appearance: Appearance,
     colors: BTreeMap<String, Color>,
     syntax: BTreeMap<String, TextStyle>,
+    /// The shape tokens the theme sets; the rest take their default.
+    #[serde(default)]
+    shape: BTreeMap<String, u16>,
 }
 
 impl Theme {
@@ -665,7 +714,38 @@ impl Theme {
             appearance,
             colors,
             syntax,
+            shape: BTreeMap::new(),
         }
+    }
+
+    /// The theme with these shape tokens set (paths from [`SHAPE`];
+    /// unknown ones are ignored, values capped at [`MAX_SHAPE`]).
+    #[must_use]
+    pub fn with_shape(mut self, set: &BTreeMap<String, u16>) -> Self {
+        for (path, value) in set {
+            if shape_spec(path).is_some() {
+                self.shape.insert(path.clone(), (*value).min(MAX_SHAPE));
+            }
+        }
+        self
+    }
+
+    /// The size of a shape token from [`SHAPE`], in pixels at a 16px
+    /// rem; 0 for an unknown path (a bug: every known token has a default).
+    #[must_use]
+    pub fn size(&self, path: &str) -> u16 {
+        let spec = shape_spec(path);
+        debug_assert!(spec.is_some(), "unknown shape token {path}");
+        self.shape
+            .get(path)
+            .copied()
+            .or_else(|| spec.map(|spec| spec.default))
+            .unwrap_or(0)
+    }
+
+    /// Every shape token and its size, in [`SHAPE`] order.
+    pub fn sizes(&self) -> impl Iterator<Item = (&'static str, u16)> + '_ {
+        SHAPE.iter().map(|spec| (spec.path, self.size(spec.path)))
     }
 
     /// The color of a token from [`TOKENS`]; transparent for an unknown
@@ -824,6 +904,26 @@ mod tests {
             Some(theme.color("muted.fg"))
         );
         assert_eq!(theme.colors().count(), TOKENS.len());
+    }
+
+    #[test]
+    fn shape_takes_defaults_and_what_is_set() {
+        let theme = Theme::derive("t", Appearance::Dark, &BTreeMap::new(), &BTreeMap::new())
+            .with_shape(&BTreeMap::from([
+                ("radius.md".to_owned(), 10),
+                ("space.xl".to_owned(), 999),
+                ("nope".to_owned(), 3),
+            ]));
+        assert_eq!(theme.size("radius.md"), 10);
+        assert_eq!(theme.size("space.xl"), MAX_SHAPE);
+        assert_eq!(theme.size("space.md"), 8);
+        assert_eq!(theme.sizes().count(), SHAPE.len());
+        let mut seen = Vec::new();
+        for spec in SHAPE {
+            assert!(spec.default <= MAX_SHAPE, "{}", spec.path);
+            assert!(!seen.contains(&spec.path), "{} listed twice", spec.path);
+            seen.push(spec.path);
+        }
     }
 
     #[test]

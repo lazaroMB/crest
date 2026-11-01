@@ -6,7 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use domain::theme::{Appearance, Color, StyleSpec, syntax_spec, token_spec};
+use domain::theme::{
+    Appearance, Color, MAX_SHAPE, StyleSpec, shape_spec, syntax_spec, token_spec,
+};
 use serde_json::{Map, Value};
 
 /// A color as a theme writes it: hex, or the name of a palette entry.
@@ -45,9 +47,19 @@ pub struct ThemeSpec {
     pub colors: BTreeMap<String, ColorRef>,
     /// `syntax`.
     pub syntax: BTreeMap<String, StyleRef>,
+    /// `shape`, flattened to shape token paths, in pixels.
+    pub shape: BTreeMap<String, u16>,
 }
 
-const FIELDS: [&str; 6] = ["name", "appearance", "extends", "palette", "ui", "syntax"];
+const FIELDS: [&str; 7] = [
+    "name",
+    "appearance",
+    "extends",
+    "palette",
+    "ui",
+    "syntax",
+    "shape",
+];
 const STYLE_FIELDS: [&str; 3] = ["fg", "italic", "bold"];
 
 /// Reads a theme table. Problems are returned as messages prefixed with
@@ -80,6 +92,7 @@ pub fn parse(value: &Value, origin: &str) -> (ThemeSpec, Vec<String>) {
             "palette" => spec.palette = palette(&value, &mut report),
             "ui" => flatten("", &value, &mut spec.colors, &mut report),
             "syntax" => spec.syntax = syntax(&value, &mut report),
+            "shape" => shape("", &value, &mut spec.shape, &mut report),
             other => report.push(
                 other,
                 &format!("unknown field (known: {})", FIELDS.join(", ")),
@@ -211,6 +224,46 @@ fn flatten(
         Some(_) => {}
         None if prefix.is_empty() => report.push("ui", "must be a table"),
         None => report.push(&shown(prefix), "must be a color or a table"),
+    }
+}
+
+/// Flattens `shape` (`{ space = { md = 8 }, radius = { md = 6 } }`)
+/// into shape token paths.
+fn shape(prefix: &str, value: &Value, out: &mut BTreeMap<String, u16>, report: &mut Report<'_>) {
+    let shown = |path: &str| format!("shape.{path}");
+    if value.is_number() {
+        if shape_spec(prefix).is_none() {
+            report.push(&shown(prefix), "unknown shape token");
+            return;
+        }
+        match value
+            .as_u64()
+            .and_then(|n| u16::try_from(n).ok())
+            .filter(|n| *n <= MAX_SHAPE)
+        {
+            Some(size) => {
+                out.insert(prefix.to_owned(), size);
+            }
+            None => report.push(
+                &shown(prefix),
+                &format!("must be a whole number of pixels from 0 to {MAX_SHAPE}"),
+            ),
+        }
+        return;
+    }
+    match as_table(value) {
+        Some(table) => {
+            for (key, value) in table {
+                let path = if prefix.is_empty() {
+                    key
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                shape(&path, &value, out, report);
+            }
+        }
+        None if prefix.is_empty() => report.push("shape", "must be a table"),
+        None => report.push(&shown(prefix), "must be a number or a table"),
     }
 }
 
@@ -376,6 +429,31 @@ mod tests {
             "t.lua: syntax.comment.italic: must be true or false",
             "t.lua: syntax.comment.under: unknown field",
             "t.lua: colours: unknown field",
+        ] {
+            assert!(all.contains(expected), "missing {expected:?} in\n{all}");
+        }
+    }
+
+    #[test]
+    fn reads_shape_tokens() {
+        let (spec, messages) = parse(
+            &json!({
+                "shape": {
+                    "space": { "md": 10 },
+                    "radius": { "md": 0, "huge": 4 },
+                    "text": { "body": 300, "title": 15.5 },
+                },
+            }),
+            "t.lua",
+        );
+        assert_eq!(spec.shape["space.md"], 10);
+        assert_eq!(spec.shape["radius.md"], 0);
+        assert_eq!(spec.shape.len(), 2);
+        let all = messages.join("\n");
+        for expected in [
+            "t.lua: shape.radius.huge: unknown shape token",
+            "t.lua: shape.text.body: must be a whole number",
+            "t.lua: shape.text.title: must be a whole number",
         ] {
             assert!(all.contains(expected), "missing {expected:?} in\n{all}");
         }
