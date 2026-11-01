@@ -119,7 +119,7 @@ pub(super) async fn resume_session(
                 if settle_orphan_forms(&mut stored) > 0 {
                     warnings.push("a form left unanswered by an earlier run was closed".into());
                 }
-                restore_permission_rules(&permissions, &stored.permission_rules);
+                restore_permission_rules(permissions, &stored.permission_rules);
                 let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
                 for block in stored.timeline {
                     state.apply(&DomainEvent::BlockAdded { block });
