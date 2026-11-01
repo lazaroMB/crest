@@ -6,6 +6,6 @@ publish = false
 
 [dependencies]
 adapter-support = { path = "../support" }
-application = { path = "../../app" }
+application-core = { path = "../../app-core" }
 domain = { path = "../../domain" }
 tokio = { path = "../../../../_vendor/tokio" }

@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 domain = { path = "../domain" }
 application = { path = "../app" }
+application-core = { path = "../app-core" }
 adapter-fs = { path = "../adapters/fs" }
 adapter-shell = { path = "../adapters/shell" }
 ui = { path = "../ui" }
