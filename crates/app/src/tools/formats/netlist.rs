@@ -18,9 +18,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::diagram::{one_of, source_text};
-use super::{FormatToolPorts, MAX_LISTED, one_line};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use super::{FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, shown};
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Components whose nets are listed to the model.
 pub const MAX_COMPONENTS_LISTED: usize = 60;
@@ -89,36 +88,61 @@ impl TypedTool for ShowNetlistTool {
         input: ShowNetlist,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(SHOW_NETLIST, input.path, input.source, "source")?;
-        let subject = path.clone().unwrap_or_else(|| "netlist".to_owned());
+        let input = normalize_netlist(input).map_err(|e| invalid(SHOW_NETLIST, e))?;
+        let subject = input.path.clone().unwrap_or_else(|| "netlist".to_owned());
         let ports = self.ports.clone();
-        let title = input.title.filter(|t| !t.trim().is_empty());
-        let format = input.format;
         let run = async move {
-            let text = match source_text(&ports, path.as_deref(), inline).await {
-                Ok(text) => text,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let at = path.clone();
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_netlist(&text, format, at.as_deref())
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the netlist reader did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = netlist_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Netlist(Box::new(spec))))
+            shown(
+                build_netlist(&ports, input).await,
+                netlist_summary,
+                |spec| BlockKind::Netlist(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_netlist` input: exactly one of `path` and `source`
+/// (not too large), and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or `source` too
+/// large.
+pub fn normalize_netlist(input: ShowNetlist) -> Result<ShowNetlist, String> {
+    let (path, source) = one_of(input.path, input.source, "source")?;
+    Ok(ShowNetlist {
+        path,
+        source,
+        format: input.format,
+        title: non_blank(input.title),
+    })
+}
+
+/// The netlist block of a checked call ([`normalize_netlist`]): reads
+/// the file through the guard (or takes the source) and parses it off
+/// the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_netlist(
+    ports: &FormatToolPorts,
+    input: ShowNetlist,
+) -> Result<NetlistSpec, String> {
+    let text = source_text(ports, input.path.as_deref(), input.source).await?;
+    let formats = Arc::clone(&ports.formats);
+    let at = input.path;
+    let format = input.format;
+    let mut spec = parse_off(ports, "the netlist reader", move || {
+        formats.parse_netlist(&text, format, at.as_deref())
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_netlist`.
@@ -242,7 +266,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

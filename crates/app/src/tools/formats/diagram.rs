@@ -20,9 +20,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::devops::MAX_TOP;
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line, read};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use super::{FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, read, shown};
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest inline source, in bytes.
 pub const MAX_INLINE_SOURCE: usize = 4 * 1024 * 1024;
@@ -46,22 +45,17 @@ pub(super) async fn source_text(
 
 /// Exactly one of `path` and the inline source, or an input error.
 pub(super) fn one_of(
-    tool: &str,
     path: Option<String>,
     inline: Option<String>,
     inline_name: &str,
-) -> Result<(Option<String>, Option<String>), ToolError> {
-    let path = path.filter(|p| !p.trim().is_empty());
+) -> Result<(Option<String>, Option<String>), String> {
+    let path = non_blank(path);
     let inline = inline.filter(|s| !s.trim().is_empty());
     match (&path, &inline) {
-        (Some(_), Some(_)) => Err(invalid(
-            tool,
-            format!("give `path` or `{inline_name}`, not both"),
-        )),
-        (None, None) => Err(invalid(tool, format!("give `path` or `{inline_name}`"))),
-        (None, Some(s)) if s.len() > MAX_INLINE_SOURCE => Err(invalid(
-            tool,
-            format!("`{inline_name}` is too large: save it to a file and pass `path`"),
+        (Some(_), Some(_)) => Err(format!("give `path` or `{inline_name}`, not both")),
+        (None, None) => Err(format!("give `path` or `{inline_name}`")),
+        (None, Some(s)) if s.len() > MAX_INLINE_SOURCE => Err(format!(
+            "`{inline_name}` is too large: save it to a file and pass `path`"
         )),
         _ => Ok((path, inline)),
     }
@@ -126,35 +120,60 @@ impl TypedTool for ShowDotTool {
     }
 
     async fn prepare(&self, input: ShowDot, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(SHOW_DOT, input.path, input.source, "source")?;
-        let subject = path.clone().unwrap_or_else(|| "DOT source".to_owned());
+        let input = normalize_dot(input).map_err(|e| invalid(SHOW_DOT, e))?;
+        let subject = input
+            .path
+            .clone()
+            .unwrap_or_else(|| "DOT source".to_owned());
         let ports = self.ports.clone();
-        let title = input.title.filter(|t| !t.trim().is_empty());
         let run = async move {
-            let text = match source_text(&ports, path.as_deref(), inline).await {
-                Ok(text) => text,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let at = path.clone();
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_dot(&text, at.as_deref())
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the DOT parser did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = dot_summary(path.as_deref(), &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Diagram(Box::new(spec))))
+            let path = input.path.clone();
+            shown(
+                build_dot(&ports, input).await,
+                |spec| dot_summary(path.as_deref(), spec),
+                |spec| BlockKind::Diagram(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_dot` input: exactly one of `path` and `source` (not
+/// too large), and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or `source` too
+/// large.
+pub fn normalize_dot(input: ShowDot) -> Result<ShowDot, String> {
+    let (path, source) = one_of(input.path, input.source, "source")?;
+    Ok(ShowDot {
+        path,
+        source,
+        title: non_blank(input.title),
+    })
+}
+
+/// The diagram block of a checked call ([`normalize_dot`]): reads the
+/// file through the guard (or takes the source) and parses it off the
+/// executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or the DOT parsed,
+/// or the result is not a valid block.
+pub async fn build_dot(ports: &FormatToolPorts, input: ShowDot) -> Result<DiagramSpec, String> {
+    let text = source_text(ports, input.path.as_deref(), input.source).await?;
+    let formats = Arc::clone(&ports.formats);
+    let at = input.path;
+    let mut spec = parse_off(ports, "the DOT parser", move || {
+        formats.parse_dot(&text, at.as_deref())
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// `1 table`, `3 tables`.
@@ -338,36 +357,58 @@ impl TypedTool for ShowErTool {
     }
 
     async fn prepare(&self, input: ShowEr, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(SHOW_ER, input.path, input.sql, "sql")?;
-        let subject = path.clone().unwrap_or_else(|| "SQL DDL".to_owned());
+        let input = normalize_er(input).map_err(|e| invalid(SHOW_ER, e))?;
+        let subject = input.path.clone().unwrap_or_else(|| "SQL DDL".to_owned());
         let ports = self.ports.clone();
-        let title = input.title.filter(|t| !t.trim().is_empty());
-        let dialect = input.dialect.filter(|d| !d.trim().is_empty());
         let run = async move {
-            let text = match source_text(&ports, path.as_deref(), inline).await {
-                Ok(text) => text,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let at = path.clone();
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_ddl(&text, dialect.as_deref(), at.as_deref())
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the SQL parser did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = er_summary(path.as_deref(), &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Diagram(Box::new(spec))))
+            let path = input.path.clone();
+            shown(
+                build_er(&ports, input).await,
+                |spec| er_summary(path.as_deref(), spec),
+                |spec| BlockKind::Diagram(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_er` input: exactly one of `path` and `sql` (not too
+/// large), and the dialect and title when not blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or `sql` too large.
+pub fn normalize_er(input: ShowEr) -> Result<ShowEr, String> {
+    let (path, sql) = one_of(input.path, input.sql, "sql")?;
+    Ok(ShowEr {
+        path,
+        sql,
+        dialect: non_blank(input.dialect),
+        title: non_blank(input.title),
+    })
+}
+
+/// The ER diagram block of a checked call ([`normalize_er`]): reads the
+/// file through the guard (or takes the SQL) and parses it off the
+/// executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or the DDL parsed,
+/// or the result is not a valid block.
+pub async fn build_er(ports: &FormatToolPorts, input: ShowEr) -> Result<DiagramSpec, String> {
+    let text = source_text(ports, input.path.as_deref(), input.sql).await?;
+    let formats = Arc::clone(&ports.formats);
+    let at = input.path;
+    let dialect = input.dialect;
+    let mut spec = parse_off(ports, "the SQL parser", move || {
+        formats.parse_ddl(&text, dialect.as_deref(), at.as_deref())
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_er`.
@@ -471,7 +512,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

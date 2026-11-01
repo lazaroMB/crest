@@ -19,11 +19,10 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line, read};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, read, shown};
 use crate::csv::{delimiter_for, number, records};
 use crate::ports::formats::{GridEntry, MoleculeGridRequest};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Molecules listed to the model.
 pub const MAX_LISTED_MOLECULES: usize = 60;
@@ -153,72 +152,91 @@ impl TypedTool for ShowMoleculeGridTool {
         input: ShowMoleculeGrid,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let path = input.path.clone().filter(|p| !p.trim().is_empty());
-        match (&path, input.molecules.is_empty()) {
-            (Some(_), false) => {
-                return Err(invalid(
-                    SHOW_MOLECULE_GRID,
-                    "give `molecules` or `path`, not both",
-                ));
-            }
-            (None, true) => return Err(invalid(SHOW_MOLECULE_GRID, "give `molecules` or `path`")),
-            _ => {}
-        }
-        if input.molecules.len() > MAX_MOLECULES {
-            return Err(invalid(
-                SHOW_MOLECULE_GRID,
-                format!("at most {MAX_MOLECULES} molecules in one grid"),
-            ));
-        }
+        let input = normalize_molecule_grid(input).map_err(|e| invalid(SHOW_MOLECULE_GRID, e))?;
         let ports = self.ports.clone();
-        let subject = path
+        let subject = input
+            .path
             .clone()
             .unwrap_or_else(|| format!("{} molecules", input.molecules.len()));
         let run = async move {
-            let molecules = match &path {
-                Some(path) => {
-                    let bytes = match read(ports.fs.as_ref(), path).await {
-                        Ok(bytes) => bytes,
-                        Err(message) => return Ok(ToolOutput::error(message)),
-                    };
-                    let Ok(text) = String::from_utf8(bytes) else {
-                        return Ok(ToolOutput::error(format!("`{path}` is not UTF-8 text")));
-                    };
-                    let column = input.activity_column.as_deref().unwrap_or("activity");
-                    match grid_entries(&text, delimiter_for(path), column) {
-                        Ok(entries) => entries,
-                        Err(message) => {
-                            return Ok(ToolOutput::error(format!("`{path}`: {message}")));
-                        }
-                    }
-                }
-                None => input.molecules,
-            };
-            let request = MoleculeGridRequest {
-                molecules,
-                activity_label: input.activity_label.filter(|l| !l.trim().is_empty()),
-                activity_unit: input.activity_unit.filter(|u| !u.trim().is_empty()),
-                direction: input.direction.unwrap_or_default(),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let computed = offloaded(&ports.offload, move || formats.molecule_grid(&request)).await;
-            let mut spec = match computed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the descriptor engine did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = grid_summary(&spec);
-            Ok(
-                ToolOutput::text(summary)
-                    .with_block_update(BlockKind::MoleculeGrid(Box::new(spec))),
+            shown(
+                build_molecule_grid(&ports, input).await,
+                grid_summary,
+                |spec| BlockKind::MoleculeGrid(Box::new(spec)),
             )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_molecule_grid` input: exactly one of `molecules` (at
+/// most [`MAX_MOLECULES`]) and `path`, and the optional texts when not
+/// blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or too many
+/// molecules.
+pub fn normalize_molecule_grid(input: ShowMoleculeGrid) -> Result<ShowMoleculeGrid, String> {
+    let path = non_blank(input.path);
+    match (&path, input.molecules.is_empty()) {
+        (Some(_), false) => return Err("give `molecules` or `path`, not both".to_owned()),
+        (None, true) => return Err("give `molecules` or `path`".to_owned()),
+        _ => {}
+    }
+    if input.molecules.len() > MAX_MOLECULES {
+        return Err(format!("at most {MAX_MOLECULES} molecules in one grid"));
+    }
+    Ok(ShowMoleculeGrid {
+        molecules: input.molecules,
+        path,
+        activity_column: non_blank(input.activity_column),
+        activity_label: non_blank(input.activity_label),
+        activity_unit: non_blank(input.activity_unit),
+        direction: input.direction,
+        title: non_blank(input.title),
+    })
+}
+
+/// The SAR grid block of a checked call ([`normalize_molecule_grid`]):
+/// the molecules given, or those of a CSV/TSV read through the guard,
+/// with their descriptors computed off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or has no `smiles`
+/// column, the descriptors cannot be computed, or the result is not a
+/// valid block.
+pub async fn build_molecule_grid(
+    ports: &FormatToolPorts,
+    input: ShowMoleculeGrid,
+) -> Result<MoleculeGridSpec, String> {
+    let molecules = match &input.path {
+        Some(path) => {
+            let bytes = read(ports.fs.as_ref(), path).await?;
+            let text =
+                String::from_utf8(bytes).map_err(|_| format!("`{path}` is not UTF-8 text"))?;
+            let column = input.activity_column.as_deref().unwrap_or("activity");
+            grid_entries(&text, delimiter_for(path), column)
+                .map_err(|message| format!("`{path}`: {message}"))?
+        }
+        None => input.molecules,
+    };
+    let request = MoleculeGridRequest {
+        molecules,
+        activity_label: input.activity_label,
+        activity_unit: input.activity_unit,
+        direction: input.direction.unwrap_or_default(),
+    };
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the descriptor engine", move || {
+        formats.molecule_grid(&request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// A number with `decimals`, `-0` as `0`.
@@ -320,7 +338,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

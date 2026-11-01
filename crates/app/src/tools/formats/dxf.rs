@@ -16,9 +16,11 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line, read_report};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use super::{
+    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, read, required_path,
+    shown,
+};
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Texts listed to the model.
 pub const MAX_TEXTS: usize = 40;
@@ -77,33 +79,50 @@ impl TypedTool for ShowDxfTool {
     }
 
     async fn prepare(&self, input: ShowDxf, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_DXF, "`path` is empty"));
-        }
+        let input = normalize_dxf(input).map_err(|e| invalid(SHOW_DXF, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_report(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let path = input.path.clone();
-            let parsed = offloaded(&ports.offload, move || formats.parse_dxf(&bytes, &path)).await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the DXF reader did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = dxf_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Drawing(Box::new(spec))))
+            shown(build_dxf(&ports, input).await, dxf_summary, |spec| {
+                BlockKind::Drawing(Box::new(spec))
+            })
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_dxf` input: a path and a non-blank title.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_dxf(input: ShowDxf) -> Result<ShowDxf, String> {
+    Ok(ShowDxf {
+        path: required_path(&input.path)?,
+        title: non_blank(input.title),
+    })
+}
+
+/// The DXF drawing block of a checked call ([`normalize_dxf`]): reads the file
+/// through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_dxf(ports: &FormatToolPorts, input: ShowDxf) -> Result<DrawingSpec, String> {
+    let bytes = read(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let path = input.path.clone();
+    let mut spec = parse_off(ports, "the DXF reader", move || {
+        formats.parse_dxf(&bytes, &path)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// A coordinate for the summary: up to 4 decimals.
@@ -218,7 +237,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

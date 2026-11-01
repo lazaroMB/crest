@@ -17,11 +17,10 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, required_path, shown};
 use crate::ports::formats::SpectrumRequest;
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest spectrum file read, in bytes.
 pub const MAX_SPECTRUM_BYTES: u64 = 128 * 1024 * 1024;
@@ -107,57 +106,72 @@ impl TypedTool for ShowSpectrumTool {
         input: ShowSpectrum,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_SPECTRUM, "`path` is empty"));
-        }
-        let block = match input.block {
-            Some(0) => return Err(invalid(SHOW_SPECTRUM, "`block` counts from 1")),
-            Some(b) => b - 1,
-            None => 0,
-        };
-        if input.threshold.is_some_and(|t| !(0.0..1.0).contains(&t)) {
-            return Err(invalid(SHOW_SPECTRUM, "`threshold` is a share from 0 to 1"));
-        }
-        if input.max_peaks.is_some_and(|m| m == 0 || m > MAX_PEAKS) {
-            return Err(invalid(
-                SHOW_SPECTRUM,
-                format!("`max_peaks` is 1 to {MAX_PEAKS}"),
-            ));
-        }
+        let input = normalize_spectrum(input).map_err(|e| invalid(SHOW_SPECTRUM, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_spectrum(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let request = SpectrumRequest {
-                path: input.path.clone(),
-                block,
-                threshold: input.threshold,
-                max_peaks: input.max_peaks,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_spectrum(&bytes, &request)
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => {
-                    return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-                }
-                None => return Ok(ToolOutput::error("the spectrum reader did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = spectrum_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Spectrum(Box::new(spec))))
+            shown(
+                build_spectrum(&ports, input).await,
+                spectrum_summary,
+                |spec| BlockKind::Spectrum(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_spectrum` input: a path, a 1-based block, a threshold
+/// share from 0 to 1, 1 to [`MAX_PEAKS`] peaks and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller naming the field out of range.
+pub fn normalize_spectrum(input: ShowSpectrum) -> Result<ShowSpectrum, String> {
+    let path = required_path(&input.path)?;
+    if input.block == Some(0) {
+        return Err("`block` counts from 1".to_owned());
+    }
+    if input.threshold.is_some_and(|t| !(0.0..1.0).contains(&t)) {
+        return Err("`threshold` is a share from 0 to 1".to_owned());
+    }
+    if input.max_peaks.is_some_and(|m| m == 0 || m > MAX_PEAKS) {
+        return Err(format!("`max_peaks` is 1 to {MAX_PEAKS}"));
+    }
+    Ok(ShowSpectrum {
+        path,
+        title: non_blank(input.title),
+        ..input
+    })
+}
+
+/// The spectrum block of a checked call ([`normalize_spectrum`]): reads
+/// the file through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_spectrum(
+    ports: &FormatToolPorts,
+    input: ShowSpectrum,
+) -> Result<SpectrumSpec, String> {
+    let bytes = read_spectrum(ports.fs.as_ref(), &input.path).await?;
+    let request = SpectrumRequest {
+        path: input.path.clone(),
+        block: input.block.map_or(0, |b| b.saturating_sub(1)),
+        threshold: input.threshold,
+        max_peaks: input.max_peaks,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the spectrum reader", move || {
+        formats.parse_spectrum(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| format!("`{}`: {e}", input.path))?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// `v` with the decimals peak positions of `kind` use.
@@ -259,7 +273,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

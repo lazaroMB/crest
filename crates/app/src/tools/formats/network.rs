@@ -17,10 +17,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{FormatToolPorts, invalid, one_line, read};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, read, shown};
 use crate::ports::formats::NetworkRequest;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Top nodes listed per metric.
 const TOP: usize = 5;
@@ -126,57 +125,87 @@ impl TypedTool for ShowNetworkTool {
         input: ShowNetwork,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let path = input.path.filter(|p| !p.trim().is_empty());
-        let edges = input.edges.filter(|e| !e.is_empty());
-        match (&path, &edges) {
-            (Some(_), Some(_)) => {
-                return Err(invalid(SHOW_NETWORK, "give `path` or `edges`, not both"));
-            }
-            (None, None) => return Err(invalid(SHOW_NETWORK, "give `path` or `edges`")),
-            (None, Some(e)) if e.len() > MAX_EDGES => {
-                return Err(invalid(SHOW_NETWORK, format!("at most {MAX_EDGES} edges")));
-            }
-            _ => {}
-        }
+        let input = normalize_network(input).map_err(|e| invalid(SHOW_NETWORK, e))?;
         let ports = self.ports.clone();
-        let subject = path.clone().unwrap_or_else(|| "inline edges".to_owned());
-        let title = input.title.filter(|t| !t.trim().is_empty());
-        let mut request = NetworkRequest {
-            path: path.clone(),
-            bytes: Vec::new(),
-            directed: input.directed,
-            source: input.source.filter(|s| !s.trim().is_empty()),
-            target: input.target.filter(|s| !s.trim().is_empty()),
-            weight: input.weight.filter(|s| !s.trim().is_empty()),
-            size_by: input.size_by.unwrap_or_default(),
-            seed: input.seed,
-        };
+        let subject = input
+            .path
+            .clone()
+            .unwrap_or_else(|| "inline edges".to_owned());
         let run = async move {
-            request.bytes = match (&path, edges) {
-                (Some(path), _) => match read(ports.fs.as_ref(), path).await {
-                    Ok(bytes) => bytes,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                },
-                (None, edges) => edges_json(&edges.unwrap_or_default()),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let analysed =
-                offloaded(&ports.offload, move || formats.analyse_network(&request)).await;
-            let name = path.as_deref().unwrap_or("the edges");
-            let mut spec = match analysed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(format!("{name}: {err}"))),
-                None => return Ok(ToolOutput::error("the network engine did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("{name}: {err}")));
-            }
-            let summary = network_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Network(Box::new(spec))))
+            shown(
+                build_network(&ports, input).await,
+                network_summary,
+                |spec| BlockKind::Network(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_network` input: exactly one of `path` and `edges` (at
+/// most [`MAX_EDGES`]), and the column names and title when not blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or too many edges.
+pub fn normalize_network(input: ShowNetwork) -> Result<ShowNetwork, String> {
+    let path = non_blank(input.path);
+    let edges = input.edges.filter(|e| !e.is_empty());
+    match (&path, &edges) {
+        (Some(_), Some(_)) => return Err("give `path` or `edges`, not both".to_owned()),
+        (None, None) => return Err("give `path` or `edges`".to_owned()),
+        (None, Some(e)) if e.len() > MAX_EDGES => {
+            return Err(format!("at most {MAX_EDGES} edges"));
+        }
+        _ => {}
+    }
+    Ok(ShowNetwork {
+        path,
+        edges,
+        source: non_blank(input.source),
+        target: non_blank(input.target),
+        weight: non_blank(input.weight),
+        title: non_blank(input.title),
+        ..input
+    })
+}
+
+/// The network block of a checked call ([`normalize_network`]): reads
+/// the file through the guard (or takes the edges) and analyses it off
+/// the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_network(
+    ports: &FormatToolPorts,
+    input: ShowNetwork,
+) -> Result<NetworkSpec, String> {
+    let bytes = match &input.path {
+        Some(path) => read(ports.fs.as_ref(), path).await?,
+        None => edges_json(input.edges.as_deref().unwrap_or_default()),
+    };
+    let request = NetworkRequest {
+        path: input.path.clone(),
+        bytes,
+        directed: input.directed,
+        source: input.source,
+        target: input.target,
+        weight: input.weight,
+        size_by: input.size_by.unwrap_or_default(),
+        seed: input.seed,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let name = input.path.as_deref().unwrap_or("the edges").to_owned();
+    let mut spec = parse_off(ports, "the network engine", move || {
+        formats.analyse_network(&request)
+    })
+    .await?
+    .map_err(|e| format!("{name}: {e}"))?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| format!("{name}: {e}"))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_network`.
@@ -243,7 +272,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

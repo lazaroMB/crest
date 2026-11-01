@@ -18,12 +18,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::diagram::{MAX_INLINE_SOURCE, one_of};
-use super::{FormatToolPorts, invalid, one_line};
+use super::diagram::one_of;
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, shown};
 use crate::ports::formats::MapRequest;
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest GeoJSON file read, in bytes.
 pub const MAX_MAP_BYTES: u64 = 64 * 1024 * 1024;
@@ -121,56 +120,82 @@ impl TypedTool for ShowMapTool {
     }
 
     async fn prepare(&self, input: ShowMap, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(
-            SHOW_MAP,
-            input.path,
-            inline_geojson(input.geojson),
-            "geojson",
-        )?;
-        if inline.as_ref().is_some_and(|s| s.len() > MAX_INLINE_SOURCE) {
-            return Err(invalid(
-                SHOW_MAP,
-                "`geojson` is too large: save it to a file",
-            ));
-        }
+        let call = normalize_map(input).map_err(|e| invalid(SHOW_MAP, e))?;
         let ports = self.ports.clone();
-        let subject = path.clone().unwrap_or_else(|| "inline GeoJSON".to_owned());
-        let crs = input.crs.filter(|c| !c.trim().is_empty());
-        let color_by = input.color_by.filter(|c| !c.trim().is_empty());
-        let title = input.title.filter(|t| !t.trim().is_empty());
+        let subject = call
+            .path
+            .clone()
+            .unwrap_or_else(|| "inline GeoJSON".to_owned());
         let run = async move {
-            let bytes = match (&path, inline) {
-                (Some(path), _) => match read_map(ports.fs.as_ref(), path).await {
-                    Ok(bytes) => bytes,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                },
-                (None, inline) => inline.unwrap_or_default().into_bytes(),
-            };
-            let request = MapRequest {
-                path: path.clone(),
-                crs,
-                color_by,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_geojson(&bytes, &request)
+            shown(build_map(&ports, call).await, map_summary, |spec| {
+                BlockKind::GeoMap(Box::new(spec))
             })
-            .await;
-            let name = path.as_deref().unwrap_or("inline GeoJSON");
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(format!("`{name}`: {err}"))),
-                None => return Ok(ToolOutput::error("the GeoJSON reader did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{name}`: {err}")));
-            }
-            let summary = map_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::GeoMap(Box::new(spec))))
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// A `show_map` call, checked: the file or the inline GeoJSON as text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapCall {
+    /// The GeoJSON file, when given.
+    pub path: Option<String>,
+    /// The inline GeoJSON as text, when given instead.
+    pub geojson: Option<String>,
+    /// An EPSG code or PROJ string over the file's.
+    pub crs: Option<String>,
+    /// The property features are coloured by.
+    pub color_by: Option<String>,
+    /// Title above the map.
+    pub title: Option<String>,
+}
+
+/// Checks a `show_map` input: exactly one of `path` and `geojson` (not
+/// too large), and the optional texts when not blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or `geojson` too
+/// large.
+pub fn normalize_map(input: ShowMap) -> Result<MapCall, String> {
+    let (path, geojson) = one_of(input.path, inline_geojson(input.geojson), "geojson")?;
+    Ok(MapCall {
+        path,
+        geojson,
+        crs: non_blank(input.crs),
+        color_by: non_blank(input.color_by),
+        title: non_blank(input.title),
+    })
+}
+
+/// The map block of a checked call ([`normalize_map`]): reads the file
+/// through the guard (or takes the GeoJSON) and measures it off the
+/// executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_map(ports: &FormatToolPorts, call: MapCall) -> Result<MapSpec, String> {
+    let bytes = match &call.path {
+        Some(path) => read_map(ports.fs.as_ref(), path).await?,
+        None => call.geojson.unwrap_or_default().into_bytes(),
+    };
+    let request = MapRequest {
+        path: call.path.clone(),
+        crs: call.crs,
+        color_by: call.color_by,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let name = call.path.as_deref().unwrap_or("inline GeoJSON").to_owned();
+    let mut spec = parse_off(ports, "the GeoJSON reader", move || {
+        formats.parse_geojson(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| format!("`{name}`: {e}"))?;
+    spec.title = call.title;
+    spec.validate().map_err(|e| format!("`{name}`: {e}"))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_map`.
@@ -281,7 +306,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

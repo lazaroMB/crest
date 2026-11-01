@@ -18,10 +18,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::diagram::{one_of, source_text};
-use super::{FormatToolPorts, invalid, one_line};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, shown};
 use crate::ports::formats::SequenceRequest;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Features listed to the model.
 pub const MAX_FEATURES_LISTED: usize = 30;
@@ -110,53 +109,81 @@ impl TypedTool for ShowSequenceTool {
         input: ShowSequence,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(SHOW_SEQUENCE, input.path, input.sequence, "sequence")?;
-        let record = match input.record {
-            Some(0) => return Err(invalid(SHOW_SEQUENCE, "`record` counts from 1")),
-            Some(r) => r - 1,
-            None => 0,
-        };
-        let request = SequenceRequest {
-            path: path.clone(),
-            record,
-            alphabet: input.alphabet,
-            topology: input.circular.map(|c| {
-                if c {
-                    Topology::Circular
-                } else {
-                    Topology::Linear
-                }
-            }),
-            enzymes: input.enzymes.unwrap_or(true),
-        };
+        let input = normalize_sequence(input).map_err(|e| invalid(SHOW_SEQUENCE, e))?;
         let ports = self.ports.clone();
-        let subject = path.clone().unwrap_or_else(|| "inline sequence".to_owned());
-        let title = input.title.filter(|t| !t.trim().is_empty());
-        let find = input.find.filter(|f| !f.trim().is_empty());
+        let subject = input
+            .path
+            .clone()
+            .unwrap_or_else(|| "inline sequence".to_owned());
         let run = async move {
-            let text = match source_text(&ports, path.as_deref(), inline).await {
-                Ok(text) => text,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_sequence(text.as_bytes(), &request)
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the sequence reader did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = sequence_summary(&spec, find.as_deref());
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Sequence(Box::new(spec))))
+            let find = input.find.clone();
+            shown(
+                build_sequence(&ports, input).await,
+                |spec| sequence_summary(spec, find.as_deref()),
+                |spec| BlockKind::Sequence(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_sequence` input: exactly one of `path` and `sequence`
+/// (not too large), a 1-based `record`, and the motif and title when not
+/// blank.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, `sequence` too
+/// large, or `record` 0.
+pub fn normalize_sequence(input: ShowSequence) -> Result<ShowSequence, String> {
+    let (path, sequence) = one_of(input.path, input.sequence, "sequence")?;
+    if input.record == Some(0) {
+        return Err("`record` counts from 1".to_owned());
+    }
+    Ok(ShowSequence {
+        path,
+        sequence,
+        find: non_blank(input.find),
+        title: non_blank(input.title),
+        ..input
+    })
+}
+
+/// The sequence block of a checked call ([`normalize_sequence`]): reads
+/// the file through the guard (or takes the residues) and parses it off
+/// the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_sequence(
+    ports: &FormatToolPorts,
+    input: ShowSequence,
+) -> Result<SequenceSpec, String> {
+    let request = SequenceRequest {
+        path: input.path.clone(),
+        record: input.record.map_or(0, |r| r.saturating_sub(1)),
+        alphabet: input.alphabet,
+        topology: input.circular.map(|c| {
+            if c {
+                Topology::Circular
+            } else {
+                Topology::Linear
+            }
+        }),
+        enzymes: input.enzymes.unwrap_or(true),
+    };
+    let text = source_text(ports, input.path.as_deref(), input.sequence).await?;
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the sequence reader", move || {
+        formats.parse_sequence(text.as_bytes(), &request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// A percentage with one decimal.
@@ -306,7 +333,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

@@ -78,36 +78,33 @@ pub mod terraform;
 pub mod training;
 pub mod waveform;
 
-pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary, read_array};
+pub use arrays::{MAX_ARRAY_BYTES, SHOW_ARRAY_FILE, ShowArrayFileTool, array_summary};
 pub use bench::{
     DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, SHOW_BENCHMARKS, ShowBenchmarksTool, bench_summary,
-    collect_benchmarks,
 };
 pub use devops::{
     SHOW_FLAMEGRAPH, SHOW_LOGS, SHOW_TRACE, ShowFlamegraphTool, ShowLogsTool, ShowTraceTool,
-    flame_summary, logs_summary, read_log, trace_summary,
+    flame_summary, logs_summary, trace_summary,
 };
 pub use diagram::{SHOW_DOT, SHOW_ER, ShowDotTool, ShowErTool, dot_summary, er_summary};
 pub use dxf::{SHOW_DXF, ShowDxfTool, dxf_summary};
 pub use gantt::{SHOW_GANTT, ShowGanttTool, gantt_summary};
-pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, inline_geojson, map_summary, read_map};
-pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary, read_har};
-pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary, read_ifc};
+pub use geomap::{MAX_MAP_BYTES, SHOW_MAP, ShowMapTool, map_summary};
+pub use har::{MAX_HAR_BYTES, SHOW_HAR, ShowHarTool, har_summary};
+pub use ifc::{MAX_IFC_BYTES, SHOW_IFC_SCHEDULE, ShowIfcScheduleTool, ifc_summary};
 pub use material::{SHOW_MATERIAL, ShowMaterialTool, material_summary};
-pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_entries, grid_summary};
+pub use molecule_grid::{SHOW_MOLECULE_GRID, ShowMoleculeGridTool, grid_summary};
 pub use molecule3d::{SHOW_MOLECULE_3D, ShowMolecule3dTool, molecule3d_summary};
 pub use netlist::{SHOW_NETLIST, ShowNetlistTool, netlist_summary};
-pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, edges_json, network_summary};
+pub use network::{EdgeInput, SHOW_NETWORK, ShowNetworkTool, network_summary};
 pub use query_plan::{SHOW_QUERY_PLAN, ShowQueryPlanTool, query_plan_summary};
 pub use reaction::{SHOW_REACTION, ShowReactionTool, reaction_summary};
 pub use sequence::{SHOW_SEQUENCE, ShowSequenceTool, sequence_summary};
-pub use spectrum::{
-    MAX_SPECTRUM_BYTES, SHOW_SPECTRUM, ShowSpectrumTool, read_spectrum, spectrum_summary,
-};
-pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, read_step, step_summary};
+pub use spectrum::{MAX_SPECTRUM_BYTES, SHOW_SPECTRUM, ShowSpectrumTool, spectrum_summary};
+pub use step::{MAX_STEP_BYTES, SHOW_STEP, STEP_EXTENSIONS, ShowStepTool, step_summary};
 pub use terraform::{SHOW_TERRAFORM_PLAN, ShowTerraformPlanTool, terraform_summary};
 pub use training::{SHOW_TRAINING_CURVES, ShowTrainingCurvesTool, training_summary};
-pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, read_wave, waveform_summary};
+pub use waveform::{MAX_WAVE_BYTES, SHOW_WAVEFORM, ShowWaveformTool, waveform_summary};
 
 /// Largest report file the tools read, in bytes.
 pub const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
@@ -135,24 +132,59 @@ fn invalid(tool: &str, message: impl Into<String>) -> ToolError {
     }
 }
 
+/// `text` trimmed, or `None` when it is blank: optional text inputs
+/// (titles, filters, names) the caller left empty.
+#[must_use]
+pub fn non_blank(text: Option<String>) -> Option<String> {
+    text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// A required `path`, trimmed.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn required_path(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("`path` is empty".to_owned());
+    }
+    Ok(path.to_owned())
+}
+
+/// Runs `work` (a parser) through the ports' [`Offload`]; `what` names
+/// it in the error of a job dropped without running ("the trace parser
+/// did not run").
+async fn parse_off<R: Send + 'static>(
+    ports: &FormatToolPorts,
+    what: &str,
+    work: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    offloaded(&ports.offload, work)
+        .await
+        .ok_or_else(|| format!("{what} did not run"))
+}
+
+/// The tool output of a builder's result: `summary` of the spec for the
+/// model with `block` of it for the timeline, or the builder's message
+/// as an error the model can act on.
+fn shown<S>(
+    built: Result<S, String>,
+    summary: impl FnOnce(&S) -> String,
+    block: impl FnOnce(S) -> BlockKind,
+) -> Result<ToolOutput, ToolError> {
+    Ok(match built {
+        Ok(spec) => ToolOutput::text(summary(&spec)).with_block_update(block(spec)),
+        Err(message) => ToolOutput::error(message),
+    })
+}
+
 /// Reads `path` of the workspace through the guard.
 async fn read(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
     let parsed = WorkspacePath::parse(path).map_err(|e| format!("report path `{path}`: {e}"))?;
     fs.read_bytes(&parsed, MAX_REPORT_BYTES)
         .await
         .map_err(|e| format!("cannot read `{path}`: {e}"))
-}
-
-/// Reads a report, trace or profile file of the workspace (up to
-/// [`MAX_REPORT_BYTES`]) through the guard, for callers outside the tools
-/// (Lua's `app.formats`).
-///
-/// # Errors
-///
-/// A message for the caller: a bad path, a file the guard refuses or one
-/// that cannot be read.
-pub async fn read_report(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
-    read(fs, path).await
 }
 
 /// `path` relative to `root` when it is an absolute path inside it;
@@ -781,56 +813,81 @@ impl TypedTool for ShowDatasetTool {
         input: ShowDataset,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_DATASET, "`path` is empty"));
-        }
-        let Some(format) = dataset_format(&input.path) else {
-            return Err(invalid(
-                SHOW_DATASET,
-                format!(
-                    "`{}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet",
-                    input.path
-                ),
-            ));
-        };
-        let preview_rows = input
-            .rows
-            .unwrap_or(DEFAULT_PREVIEW_ROWS)
-            .min(MAX_PREVIEW_ROWS);
+        let call = normalize_dataset(input).map_err(|e| invalid(SHOW_DATASET, e))?;
         let ports = self.ports.clone();
-        let subject = input.path.clone();
+        let subject = call.path.clone();
         let run = async move {
-            let (bytes, truncated) =
-                match read_dataset(ports.fs.as_ref(), &input.path, format).await {
-                    Ok(read) => read,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                };
-            let request = DatasetRequest {
-                path: input.path.clone(),
-                format,
-                preview_rows,
-                truncated,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.preview_dataset(&bytes, &request)
-            })
-            .await;
-            let spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => {
-                    return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-                }
-                None => return Ok(ToolOutput::error("the dataset reader did not run")),
-            };
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = dataset_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Dataset(spec)))
+            shown(
+                build_dataset(&ports, call).await,
+                dataset_summary,
+                BlockKind::Dataset,
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// A `show_dataset` call, checked, with its defaults applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DatasetCall {
+    /// The data file.
+    pub path: String,
+    /// Its format, from the extension.
+    pub format: DatasetFormat,
+    /// Preview rows, at most [`MAX_PREVIEW_ROWS`].
+    pub rows: usize,
+}
+
+/// Checks a `show_dataset` input and applies its defaults.
+///
+/// # Errors
+///
+/// A message for the caller: an empty path, one that is not a dataset
+/// file, or `rows` of 0.
+pub fn normalize_dataset(input: ShowDataset) -> Result<DatasetCall, String> {
+    let path = required_path(&input.path)?;
+    let Some(format) = dataset_format(&path) else {
+        return Err(format!(
+            "`{path}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet"
+        ));
+    };
+    if input.rows == Some(0) {
+        return Err("`rows` must be at least 1".to_owned());
+    }
+    let rows = input
+        .rows
+        .unwrap_or(DEFAULT_PREVIEW_ROWS)
+        .min(MAX_PREVIEW_ROWS);
+    Ok(DatasetCall { path, format, rows })
+}
+
+/// The dataset block of a checked call: reads the file through the guard
+/// and profiles it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_dataset(
+    ports: &FormatToolPorts,
+    call: DatasetCall,
+) -> Result<DatasetSpec, String> {
+    let (bytes, truncated) = read_dataset(ports.fs.as_ref(), &call.path, call.format).await?;
+    let request = DatasetRequest {
+        path: call.path.clone(),
+        format: call.format,
+        preview_rows: call.rows,
+        truncated,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let spec = parse_off(ports, "the dataset reader", move || {
+        formats.preview_dataset(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| format!("`{}`: {e}", call.path))?;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", call.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_dataset`: the shape, whether the
@@ -931,31 +988,17 @@ impl TypedTool for ShowMoleculeTool {
         input: ShowMolecule,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.smiles.trim().is_empty() {
-            return Err(invalid(SHOW_MOLECULE, "`smiles` is empty"));
-        }
+        let input = normalize_molecule(input).map_err(|e| invalid(SHOW_MOLECULE, e))?;
         let ports = self.ports.clone();
-        let subject = input
-            .name
-            .clone()
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| input.smiles.clone());
+        let subject = input.name.clone().unwrap_or_else(|| input.smiles.clone());
         let run = async move {
-            let formats = Arc::clone(&ports.formats);
-            let smiles = input.smiles.trim().to_owned();
-            let claimed = input
-                .claimed_formula
-                .clone()
-                .filter(|c| !c.trim().is_empty());
-            let depicted = offloaded(&ports.offload, move || {
-                formats.depict_molecule(&smiles, claimed.as_deref())
-            })
-            .await;
-            let Some(mut spec) = depicted else {
-                return Ok(ToolOutput::error("the molecule renderer did not run"));
+            let spec = match build_molecule(&ports, input).await {
+                Ok(spec) => spec,
+                Err(message) => return Ok(ToolOutput::error(message)),
             };
-            spec.name = input.name.filter(|n| !n.trim().is_empty());
             let summary = molecule_summary(&spec);
+            // A SMILES that does not parse is still drawn (with its
+            // error) so the user sees what was asked.
             let output = if spec.error.is_some() {
                 ToolOutput::error(summary)
             } else {
@@ -965,6 +1008,46 @@ impl TypedTool for ShowMoleculeTool {
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_molecule` input: a SMILES (trimmed), and the name and
+/// claimed formula when not blank.
+///
+/// # Errors
+///
+/// "`smiles` is empty" when it is blank.
+pub fn normalize_molecule(input: ShowMolecule) -> Result<ShowMolecule, String> {
+    let smiles = input.smiles.trim().to_owned();
+    if smiles.is_empty() {
+        return Err("`smiles` is empty".to_owned());
+    }
+    Ok(ShowMolecule {
+        smiles,
+        name: non_blank(input.name),
+        claimed_formula: non_blank(input.claimed_formula),
+    })
+}
+
+/// The molecule block of a checked call ([`normalize_molecule`]), drawn
+/// off the executor. A SMILES that does not parse gives a spec with its
+/// `error` set, not an `Err`.
+///
+/// # Errors
+///
+/// When the renderer did not run.
+pub async fn build_molecule(
+    ports: &FormatToolPorts,
+    input: ShowMolecule,
+) -> Result<MoleculeSpec, String> {
+    let formats = Arc::clone(&ports.formats);
+    let smiles = input.smiles;
+    let claimed = input.claimed_formula;
+    let mut spec = parse_off(ports, "the molecule renderer", move || {
+        formats.depict_molecule(&smiles, claimed.as_deref())
+    })
+    .await?;
+    spec.name = input.name;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_molecule`: the computed values and
@@ -1416,6 +1499,14 @@ mod tests {
         let tool = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::new()))));
         let not_data = tool.prepare(json!({ "path": "src/lib.rs" }), &ctx()).await;
         assert!(matches!(not_data, Err(ToolError::InvalidInput { .. })));
+        let no_rows = tool
+            .prepare(json!({ "path": "data/cars.csv", "rows": 0 }), &ctx())
+            .await;
+        assert!(
+            matches!(&no_rows, Err(ToolError::InvalidInput { message, .. }) if message == "`rows` must be at least 1"),
+            "{:?}",
+            no_rows.err()
+        );
         let guarded = call(&tool, json!({ "path": "../x.csv" })).await.unwrap();
         assert!(guarded.is_error);
         let bad = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::failing(

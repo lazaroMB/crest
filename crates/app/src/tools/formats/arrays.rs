@@ -17,11 +17,10 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, required_path, shown};
 use crate::ports::formats::ArrayRequest;
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest array file read, in bytes: the reader needs the whole file in
 /// memory (previews decode only their rows).
@@ -103,41 +102,60 @@ impl TypedTool for ShowArrayFileTool {
         input: ShowArrayFile,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_ARRAY_FILE, "`path` is empty"));
-        }
+        let input = normalize_array_file(input).map_err(|e| invalid(SHOW_ARRAY_FILE, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_array(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let request = ArrayRequest {
-                path: input.path.clone(),
-                variable: input.variable.filter(|v| !v.trim().is_empty()),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.inspect_array_file(&bytes, &request)
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => {
-                    return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-                }
-                None => return Ok(ToolOutput::error("the array reader did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = array_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::ArrayFile(Box::new(spec))))
+            shown(
+                build_array_file(&ports, input).await,
+                array_summary,
+                |spec| BlockKind::ArrayFile(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_array_file` input: a path, and the variable and title
+/// when not blank.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_array_file(input: ShowArrayFile) -> Result<ShowArrayFile, String> {
+    Ok(ShowArrayFile {
+        path: required_path(&input.path)?,
+        variable: non_blank(input.variable),
+        title: non_blank(input.title),
+    })
+}
+
+/// The array file block of a checked call ([`normalize_array_file`]):
+/// reads the file through the guard and inspects it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_array_file(
+    ports: &FormatToolPorts,
+    input: ShowArrayFile,
+) -> Result<ArrayFileSpec, String> {
+    let bytes = read_array(ports.fs.as_ref(), &input.path).await?;
+    let request = ArrayRequest {
+        path: input.path.clone(),
+        variable: input.variable,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the array reader", move || {
+        formats.inspect_array_file(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| format!("`{}`: {e}", input.path))?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// `v` with up to 6 significant digits.
@@ -240,7 +258,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

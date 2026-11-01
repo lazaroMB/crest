@@ -18,11 +18,12 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line};
+use super::{
+    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, required_path, shown,
+};
 use crate::ports::formats::WaveRequest;
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest dump read, in bytes.
 pub const MAX_WAVE_BYTES: u64 = 256 * 1024 * 1024;
@@ -108,51 +109,71 @@ impl TypedTool for ShowWaveformTool {
         input: ShowWaveform,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_WAVEFORM, "`path` is empty"));
-        }
-        if input.signals.len() > MAX_PATTERNS {
-            return Err(invalid(
-                SHOW_WAVEFORM,
-                format!("at most {MAX_PATTERNS} signal patterns"),
-            ));
-        }
+        let input = normalize_waveform(input).map_err(|e| invalid(SHOW_WAVEFORM, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_wave(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let request = WaveRequest {
-                path: input.path.clone(),
-                signals: input
-                    .signals
-                    .iter()
-                    .map(|s| s.trim().to_owned())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-                radix: input.radix,
-            };
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_waveform(&bytes, &request)
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the waveform reader did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = waveform_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Waveform(Box::new(spec))))
+            shown(
+                build_waveform(&ports, input).await,
+                waveform_summary,
+                |spec| BlockKind::Waveform(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_waveform` input: a path, at most [`MAX_PATTERNS`]
+/// signal patterns (trimmed, blanks dropped) and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller: an empty path or too many patterns.
+pub fn normalize_waveform(input: ShowWaveform) -> Result<ShowWaveform, String> {
+    let path = required_path(&input.path)?;
+    if input.signals.len() > MAX_PATTERNS {
+        return Err(format!("at most {MAX_PATTERNS} signal patterns"));
+    }
+    Ok(ShowWaveform {
+        path,
+        signals: input
+            .signals
+            .iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        radix: input.radix,
+        title: non_blank(input.title),
+    })
+}
+
+/// The waveform block of a checked call ([`normalize_waveform`]): reads
+/// the dump through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the dump cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_waveform(
+    ports: &FormatToolPorts,
+    input: ShowWaveform,
+) -> Result<WaveformSpec, String> {
+    let bytes = read_wave(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let request = WaveRequest {
+        path: input.path.clone(),
+        signals: input.signals,
+        radix: input.radix,
+    };
+    let mut spec = parse_off(ports, "the waveform reader", move || {
+        formats.parse_waveform(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_waveform`.
@@ -268,7 +289,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

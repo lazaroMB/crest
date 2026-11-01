@@ -16,10 +16,9 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line, read};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off, read, shown};
 use crate::ports::formats::Molecule3dSource;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Input of `show_molecule_3d`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -85,48 +84,78 @@ impl TypedTool for ShowMolecule3dTool {
         input: ShowMolecule3d,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let smiles = input.smiles.filter(|s| !s.trim().is_empty());
-        let path = input.path.filter(|p| !p.trim().is_empty());
-        let subject = match (&smiles, &path) {
-            (Some(_), Some(_)) => {
-                return Err(invalid(
-                    SHOW_MOLECULE_3D,
-                    "give `smiles` or `path`, not both",
-                ));
-            }
-            (None, None) => return Err(invalid(SHOW_MOLECULE_3D, "give `smiles` or `path`")),
-            (Some(s), None) => s.clone(),
-            (None, Some(p)) => p.clone(),
-        };
+        let input = normalize_molecule_3d(input).map_err(|e| invalid(SHOW_MOLECULE_3D, e))?;
+        let subject = input
+            .smiles
+            .clone()
+            .or_else(|| input.path.clone())
+            .unwrap_or_default();
         let ports = self.ports.clone();
         let run = async move {
-            let source = match (smiles, path) {
-                (Some(s), _) => Molecule3dSource::Smiles(s.trim().to_owned()),
-                (None, Some(path)) => match read(ports.fs.as_ref(), &path).await {
-                    Ok(bytes) => Molecule3dSource::File { path, bytes },
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                },
-                (None, None) => return Ok(ToolOutput::error("nothing to show")),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let built = offloaded(&ports.offload, move || formats.molecule_3d(&source)).await;
-            let mut spec = match built {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the 3D builder did not run")),
-            };
-            if let Some(name) = input.name.filter(|n| !n.trim().is_empty()) {
-                spec.name = Some(name);
-            }
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
-            let summary = molecule3d_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Molecule3d(Box::new(spec))))
+            shown(
+                build_molecule_3d(&ports, input).await,
+                molecule3d_summary,
+                |spec| BlockKind::Molecule3d(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_molecule_3d` input: exactly one of `smiles` and
+/// `path` (trimmed), and the name and title when not blank.
+///
+/// # Errors
+///
+/// A message for the caller when neither or both are given.
+pub fn normalize_molecule_3d(input: ShowMolecule3d) -> Result<ShowMolecule3d, String> {
+    let smiles = non_blank(input.smiles);
+    let path = non_blank(input.path);
+    match (&smiles, &path) {
+        (Some(_), Some(_)) => return Err("give `smiles` or `path`, not both".to_owned()),
+        (None, None) => return Err("give `smiles` or `path`".to_owned()),
+        _ => {}
+    }
+    Ok(ShowMolecule3d {
+        smiles,
+        path,
+        name: non_blank(input.name),
+        title: non_blank(input.title),
+    })
+}
+
+/// The 3D molecule block of a checked call ([`normalize_molecule_3d`]):
+/// a SMILES embedded, or a coordinate file read through the guard, off
+/// the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read, the molecule not
+/// built, or the result is not a valid block.
+pub async fn build_molecule_3d(
+    ports: &FormatToolPorts,
+    input: ShowMolecule3d,
+) -> Result<Molecule3dSpec, String> {
+    let source = match (input.smiles, input.path) {
+        (Some(smiles), _) => Molecule3dSource::Smiles(smiles),
+        (None, Some(path)) => {
+            let bytes = read(ports.fs.as_ref(), &path).await?;
+            Molecule3dSource::File { path, bytes }
+        }
+        (None, None) => return Err("give `smiles` or `path`".to_owned()),
+    };
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "the 3D builder", move || {
+        formats.molecule_3d(&source)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    if let Some(name) = input.name {
+        spec.name = Some(name);
+    }
+    spec.title = input.title;
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_molecule_3d`.
@@ -188,7 +217,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

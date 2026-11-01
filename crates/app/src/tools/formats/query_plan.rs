@@ -20,9 +20,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::devops::MAX_TOP;
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line, read};
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use super::{FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, read, shown};
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest inline plan, in bytes.
 pub const MAX_INLINE_PLAN: usize = 4 * 1024 * 1024;
@@ -93,54 +92,75 @@ impl TypedTool for ShowQueryPlanTool {
         input: ShowQueryPlan,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let path = input.path.clone().filter(|p| !p.trim().is_empty());
-        let plan = input.plan.clone().filter(|p| !p.trim().is_empty());
-        let subject = match (&path, &plan) {
-            (Some(_), Some(_)) => {
-                return Err(invalid(SHOW_QUERY_PLAN, "give `path` or `plan`, not both"));
-            }
-            (None, None) => return Err(invalid(SHOW_QUERY_PLAN, "give `path` or `plan`")),
-            (Some(path), None) => path.clone(),
-            (None, Some(plan)) => {
-                if plan.len() > MAX_INLINE_PLAN {
-                    return Err(invalid(
-                        SHOW_QUERY_PLAN,
-                        "`plan` is too large: save it to a file and pass `path`",
-                    ));
-                }
-                "inline plan".to_owned()
-            }
-        };
+        let input = normalize_query_plan(input).map_err(|e| invalid(SHOW_QUERY_PLAN, e))?;
+        let subject = input
+            .path
+            .clone()
+            .unwrap_or_else(|| "inline plan".to_owned());
         let ports = self.ports.clone();
         let run = async move {
-            let bytes = match (&path, plan) {
-                (Some(path), _) => match read(ports.fs.as_ref(), path).await {
-                    Ok(bytes) => bytes,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                },
-                (None, plan) => plan.unwrap_or_default().into_bytes(),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let at = path.clone();
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_query_plan(&bytes, at.as_deref())
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the plan parser did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            let name = path.as_deref().unwrap_or("inline plan");
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{name}`: {err}")));
-            }
-            let summary = query_plan_summary(path.as_deref(), &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::QueryPlan(Box::new(spec))))
+            let path = input.path.clone();
+            shown(
+                build_query_plan(&ports, input).await,
+                |spec| query_plan_summary(path.as_deref(), spec),
+                |spec| BlockKind::QueryPlan(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_query_plan` input: exactly one of `path` and `plan`
+/// (at most [`MAX_INLINE_PLAN`] bytes), and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller: neither or both given, or `plan` too large.
+pub fn normalize_query_plan(input: ShowQueryPlan) -> Result<ShowQueryPlan, String> {
+    let path = non_blank(input.path);
+    let plan = input.plan.filter(|p| !p.trim().is_empty());
+    match (&path, &plan) {
+        (Some(_), Some(_)) => return Err("give `path` or `plan`, not both".to_owned()),
+        (None, None) => return Err("give `path` or `plan`".to_owned()),
+        (None, Some(plan)) if plan.len() > MAX_INLINE_PLAN => {
+            return Err("`plan` is too large: save it to a file and pass `path`".to_owned());
+        }
+        _ => {}
+    }
+    Ok(ShowQueryPlan {
+        path,
+        plan,
+        title: non_blank(input.title),
+    })
+}
+
+/// The query plan block of a checked call ([`normalize_query_plan`]):
+/// reads the file through the guard (or takes the plan) and parses it
+/// off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or the plan parsed,
+/// or the result is not a valid block.
+pub async fn build_query_plan(
+    ports: &FormatToolPorts,
+    input: ShowQueryPlan,
+) -> Result<QueryPlanSpec, String> {
+    let bytes = match &input.path {
+        Some(path) => read(ports.fs.as_ref(), path).await?,
+        None => input.plan.unwrap_or_default().into_bytes(),
+    };
+    let formats = Arc::clone(&ports.formats);
+    let at = input.path.clone();
+    let mut spec = parse_off(ports, "the plan parser", move || {
+        formats.parse_query_plan(&bytes, at.as_deref())
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    let name = input.path.as_deref().unwrap_or("inline plan");
+    spec.validate().map_err(|e| format!("`{name}`: {e}"))?;
+    Ok(spec)
 }
 
 fn ms(value: f64) -> String {
@@ -267,7 +287,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {
