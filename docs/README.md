@@ -24,3 +24,4 @@ Research notes:
 - [research/installation.md](research/installation.md): how crest is packaged and installed on each platform.
 - [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
 - [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (implemented as an MVP; see its status section).
+- [research/crest-ux-discovery-summary.md](research/crest-ux-discovery-summary.md): executive summary of the CREST-UX discovery, the visibility and reach of the graphical window.
