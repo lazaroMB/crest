@@ -11,7 +11,13 @@ pub mod privacy;
 pub mod providers;
 pub mod rtk;
 pub mod shell;
-#[cfg(any(test, feature = "testing"))]
+// The fakes live in the application-testing crate so that other crates'
+// tests get them without a feature on this crate (a feature would build
+// application, and every crate above it, a second time for tests). They are
+// written against `crate::ports`, so the same files compile here as well,
+// for this crate's own unit tests.
+#[cfg(test)]
+#[path = "../../app-testing/src/fakes/mod.rs"]
 pub mod testing;
 pub mod theme;
 pub mod tools;

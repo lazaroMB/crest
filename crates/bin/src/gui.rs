@@ -2259,10 +2259,10 @@ mod tests {
     #[tokio::test]
     async fn recompute_reruns_the_card_with_the_real_engine_and_rereads_its_file() {
         use application::ports::compute::{ComputePort, DescribeRequest};
-        use application::testing::fs::{InMemoryFs, test_root};
-        use application::testing::system::RecordingSink;
         use application::tools::compute::ComputeToolPorts;
         use application::usecases::compute::{inline_offload, load_file};
+        use application_testing::fs::{InMemoryFs, test_root};
+        use application_testing::system::RecordingSink;
         use domain::block::{Block, BlockKind};
 
         let fs = Arc::new(InMemoryFs::new(test_root()).with_file("d.csv", "x\n1\n2\n4\n"));
@@ -2319,7 +2319,7 @@ mod tests {
             ColumnValues, ComputePort, DataColumn, DataSet, TestRequest,
         };
         use application::ports::plugin::{ConfigSources, PluginHostPort, PluginOutput};
-        use application::testing::fs::{InMemoryFs, test_root};
+        use application_testing::fs::{InMemoryFs, test_root};
         use domain::block::BlockKind;
 
         let engine = Arc::new(adapter_compute::StatsEngine::new());
@@ -2424,7 +2424,7 @@ mod tests {
     #[test]
     fn login_and_logout_go_to_the_key_store_on_the_runtime() {
         use application::ports::credentials::KeyCheck;
-        use application::testing::credentials::FakeKeys;
+        use application_testing::credentials::FakeKeys;
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let keys = FakeKeys::new(KeyCheck::Valid);

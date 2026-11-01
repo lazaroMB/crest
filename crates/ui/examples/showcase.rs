@@ -2,7 +2,7 @@
 //! status bar, modals, approval dialog, help) driven by a scripted fake
 //! controller, so no API key is needed.
 //!
-//! `cargo run -p ui --example showcase -- --scene <name>`
+//! `cargo run -p ui --features examples --example showcase -- --scene <name>`
 //!
 //! Scenes: `hero` (a turn with tool calls, a diff, a chart and an answer),
 //! `research` (the research flow at work), `approval` (an edit waiting for
@@ -25,8 +25,8 @@ use application::ports::approval::{
 };
 use application::ports::events::{DomainEvent, EventSink};
 use application::ports::form::{FormPort as _, FormRequest, FormRequestId};
-use application::testing::fs::InMemoryFs;
-use application::testing::system::RecordingSink;
+use application_testing::fs::InMemoryFs;
+use application_testing::system::RecordingSink;
 use domain::block::{
     Block, BlockKind, Cell, ChartKind, ChartSpec, Column, CustomNode, DiffSpec, MermaidSpec,
     Series, TableSpec, ToolStatus,

@@ -1,0 +1,29 @@
+[package]
+name = "application-testing"
+description = "In-memory fakes of the application ports, for tests of other crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Only ever a [dev-dependency]. The fakes' own unit tests run inside
+# application (which mounts the same files as `application::testing`), so
+# `cargo test` does not run them a second time here. `--all-targets` still
+# compiles them (clippy), hence the tokio dev-dependency.
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+application.workspace = true
+async-trait.workspace = true
+domain.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

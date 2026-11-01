@@ -868,4 +868,4 @@ A leader that does not parse, or that is a plain key the prompt types (`" "`, `"
 2. Open the window and check that there are no `Error` blocks at the top of the timeline.
 3. For tools: ask for something that uses them, expand the ToolCall with `Ctrl+G o` and check the input and the output.
 4. For hooks: use `print` and `CREST_LOG=warn,lua=info`.
-5. If you write Rust, the tests in `crates/adapters/lua/tests/` (`plugin_tools.rs`, `plugin_hooks.rs`, `plugin_ui.rs`) show how to load an `init.lua` into a real `LuaHost` and run it inside the agent loop with a scripted model (`application::testing`).
+5. If you write Rust, the tests in `crates/adapters/lua/tests/it/` (`plugin_tools.rs`, `plugin_hooks.rs`, `plugin_ui.rs`) show how to load an `init.lua` into a real `LuaHost` and run it inside the agent loop with a scripted model (the `application-testing` crate).

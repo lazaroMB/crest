@@ -54,6 +54,8 @@ fixture ui-to-adapter 1 "crate ui (layer ui) depends on adapter-fs (layer adapte
 fixture app-io-dep 1 "crate application (layer app) depends on the I/O crate tokio"
 fixture domain-io-glob 1 "crate domain (layer domain) depends on the I/O crate opentelemetry-sdk"
 fixture app-misnamed 1 "crate app (layer app) must be named 'application'"
+fixture app-testing-normal-dep 1 "crate ui (layer ui) depends on application-testing (layer app-testing) [normal]: only allowed in [dev-dependencies]"
+fixture app-to-app-testing 1 "crate application (layer app) depends on application-testing (layer app-testing) [dev]: forbidden"
 fixture unknown-path 1 "crate misc (crates/misc) does not belong to any known layer"
 
 check "env CHECK_ARCH_MANIFEST" 1 "must be named 'application'" \

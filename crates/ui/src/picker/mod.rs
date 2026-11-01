@@ -1439,7 +1439,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use application::ports::search::{ListFilesRequest, TreeNode, TreeRequest};
-    use application::testing::fs::{InMemoryFs, test_root};
+    use application_testing::fs::{InMemoryFs, test_root};
 
     use futures::executor::block_on;
     use gpui::{TestAppContext, VisualTestContext};
@@ -1998,9 +1998,9 @@ mod tests {
     /// Output of the registered file tool `name` for `input`, as the model
     /// would get it.
     fn tool_output(fs: &Arc<InMemoryFs>, name: &str, input: serde_json::Value) -> String {
-        use application::testing::fs::ScriptedShell;
         use application::tools::files::{FileToolPorts, register_file_tools};
         use application::tools::registry::{ToolContext, ToolRegistry};
+        use application_testing::fs::ScriptedShell;
         use domain::conversation::{SessionId, ToolUseId, TurnId};
 
         let mut registry = ToolRegistry::new();

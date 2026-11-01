@@ -4,6 +4,8 @@
 # Layers (by the manifest path relative to the workspace root):
 #   domain   crates/domain
 #   app      crates/app            (the package must be named "application")
+#   app-testing crates/app-testing (the package must be named
+#            "application-testing": the fakes of the ports, for tests)
 #   adapter  crates/adapters/<x>
 #   ui       crates/ui
 #   bin      crates/bin
@@ -12,17 +14,19 @@
 # Usage: scripts/check-arch.sh [--manifest-path <Cargo.toml>]
 #      (or the CHECK_ARCH_MANIFEST environment variable)
 # Internal dependency rules (path crates inside the workspace):
-#   domain -> none; app -> domain; adapter, ui -> app, domain, platform;
-#   platform -> none; bin -> all.
-# domain and app cannot use I/O crates either (see IO_CRATES).
+#   domain -> none; app -> domain; app-testing -> app, domain;
+#   adapter, ui -> app, domain, platform; platform -> none; bin -> all.
+#   adapter, ui and bin may also use app-testing, but only in
+#   [dev-dependencies]: the fakes never reach a production build.
+# domain, app and app-testing cannot use I/O crates either (see IO_CRATES).
 #
 # Exits 0 if everything complies, 1 on any violation, 2 on a usage error.
 # Requires cargo and jq. Compatible with bash 3.2.
 set -euo pipefail
 set -f # no pathname globbing: IO_CRATES holds patterns such as opentelemetry*
 
-# I/O crates forbidden in the [dependencies] and [build-dependencies] of domain
-# and app (matched by package name; globs allowed). They are allowed in
+# I/O crates forbidden in the [dependencies] and [build-dependencies] of domain,
+# app and app-testing (matched by package name; globs allowed). They are allowed in
 # [dev-dependencies]: tests may use a runtime or a real fs without coupling the
 # production code to them. futures, async-trait, tracing (the facade) and the
 # like are pure and allowed.
@@ -88,6 +92,7 @@ layer_of() {
     case "$rel" in
         crates/domain) echo domain ;;
         crates/app) echo app ;;
+        crates/app-testing) echo app-testing ;;
         crates/adapters/*/*) echo unknown ;;
         crates/adapters/*) echo adapter ;;
         crates/ui) echo ui ;;
@@ -108,6 +113,8 @@ while IFS="$(printf '\t')" read -r name dir; do
         fail "crate $name (${dir#"$root"/}) does not belong to any known layer"
     elif [ "$layer" = app ] && [ "$name" != application ]; then
         fail "crate $name (layer app) must be named 'application'"
+    elif [ "$layer" = app-testing ] && [ "$name" != application-testing ]; then
+        fail "crate $name (layer app-testing) must be named 'application-testing'"
     fi
 done <<EOF
 $packages
@@ -117,8 +124,9 @@ EOF
 internal_allowed() {
     case "$1:$2" in
         app:domain) return 0 ;;
-        adapter:app | adapter:domain | adapter:platform) return 0 ;;
-        ui:app | ui:domain | ui:platform) return 0 ;;
+        app-testing:app | app-testing:domain) return 0 ;;
+        adapter:app | adapter:domain | adapter:platform | adapter:app-testing) return 0 ;;
+        ui:app | ui:domain | ui:platform | ui:app-testing) return 0 ;;
         bin:*) return 0 ;;
         *) return 1 ;;
     esac
@@ -144,6 +152,8 @@ while IFS="$(printf '\t')" read -r name dir dep dep_dir kind; do
         fail "crate $name (layer $from) depends on $dep (${dep_dir#"$root"/}), which does not belong to any known layer"
     elif ! internal_allowed "$from" "$to"; then
         fail "crate $name (layer $from) depends on $dep (layer $to) [$kind]: forbidden"
+    elif [ "$to" = app-testing ] && [ "$kind" != dev ]; then
+        fail "crate $name (layer $from) depends on $dep (layer app-testing) [$kind]: only allowed in [dev-dependencies]"
     fi
 done <<EOF
 $path_deps
@@ -170,7 +180,7 @@ while IFS="$(printf '\t')" read -r name dir dep kind; do
     [ -n "$name" ] || continue
     from="$(layer_of "$dir")"
     case "$from" in
-        domain | app) ;;
+        domain | app | app-testing) ;;
         *) continue ;;
     esac
     if is_io_crate "$dep"; then

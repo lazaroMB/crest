@@ -1,7 +1,7 @@
 //! The main window with its three views wired to a fake agent: the timeline,
 //! the prompt input and the status bar, all fed by one `RecordingSink`.
 //!
-//! `cargo run -p ui --example shell [workspace-label]`
+//! `cargo run -p ui --features examples --example shell [workspace-label]`
 //!
 //! - Type and press Enter; the fake agent echoes the prompt with a tool call
 //!   and a streamed reply. Shift+Enter adds a line.
@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use application::keymap::Action;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::system::RecordingSink;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, ToolStatus};
 use domain::conversation::{SessionId, StopReason, TurnId, Usage};
 use domain::model::{ModelId, ModelRole};

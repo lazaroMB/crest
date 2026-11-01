@@ -3,7 +3,7 @@
 //! wrapping cells), then sorted by each column while the frame interval
 //! is logged.
 //!
-//! `cargo run -p ui --release --example table_stress [--quit]`
+//! `cargo run -p ui --release --features examples --example table_stress [--quit]`
 //!
 //! With `--quit` the app exits after the sweep; quit any time with
 //! Cmd/Ctrl+Q. Intervals include vsync, so at 60 Hz ~16.7 ms is the floor.
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use application::keymap::Action;
 use application::ports::events::{DomainEvent, EventSink as _};
-use application::testing::system::RecordingSink;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockId, BlockKind, Cell, Column, TableSpec};
 use gpui::{App, AppContext as _, Entity, Window};
 use ui::app::RootView;

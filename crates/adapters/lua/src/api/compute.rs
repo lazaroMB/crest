@@ -331,8 +331,8 @@ pub(crate) fn table(lua: &Lua, origin: &Arc<Origin>) -> mlua::Result<Table> {
 mod tests {
     use application::ports::compute::{ColumnValues, ComputeError};
     use application::ports::plugin::PluginOutput;
-    use application::testing::compute::FakeCompute;
-    use application::testing::fs::{InMemoryFs, test_root};
+    use application_testing::compute::FakeCompute;
+    use application_testing::fs::{InMemoryFs, test_root};
 
     use super::*;
     use crate::callbacks::{self, CallbackIds};

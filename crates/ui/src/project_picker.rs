@@ -582,7 +582,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use application::testing::projects::InMemoryDirs;
+    use application_testing::projects::InMemoryDirs;
     use gpui::{TestAppContext, VisualTestContext};
 
     use super::*;

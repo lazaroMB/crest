@@ -3,7 +3,7 @@
 //! a small anchored one, an update and the closing, as `app.modal.*`
 //! would push them.
 //!
-//! `cargo run -p ui --example modal [--quit]`
+//! `cargo run -p ui --features examples --example modal [--quit]`
 //!
 //! There is no screenshot in CI, so each scripted step prints the open
 //! modals and the bounds computed for the current window size. With

@@ -3,7 +3,7 @@
 //! for about eight seconds (stage headers, activity lines, tool calls and
 //! a flowchart with long labels) and each prompt streams a short answer.
 //!
-//! `cargo run -p ui --example activity [--demo]`
+//! `cargo run -p ui --features examples --example activity [--demo]`
 //!
 //! Run `/research`, then type prompts while it works: they are listed under
 //! the activity line and sent one by one when it ends; `Up` in an empty
@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::fs::InMemoryFs;
-use application::testing::system::RecordingSink;
+use application_testing::fs::InMemoryFs;
+use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, MermaidSpec, ToolStatus};
 use domain::conversation::{SessionId, StopReason, TurnId};
 use domain::model::{ModelId, ModelRole};

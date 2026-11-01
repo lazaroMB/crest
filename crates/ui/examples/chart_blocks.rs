@@ -4,7 +4,7 @@
 //! Each is toggled to its data table and back with `block.toggle_view`
 //! (`t`).
 //!
-//! `cargo run -p ui --example chart_blocks [--quit]`
+//! `cargo run -p ui --features examples --example chart_blocks [--quit]`
 
 #[path = "support/demo.rs"]
 mod demo;

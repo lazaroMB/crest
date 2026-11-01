@@ -2,7 +2,7 @@
 //! passing and one failing scenario) in a full-size modal, drawn by the
 //! offscreen wgpu renderer when there is an adapter.
 //!
-//! `cargo run -p ui --example sysboard [--quit] [--dump <file.ppm>]`
+//! `cargo run -p ui --features examples --example sysboard [--quit] [--dump <file.ppm>]`
 //!
 //! There is no screenshot in CI, so the script logs the backend and
 //! adapter, plays the scenario, scrubs, orbits and switches scenario,
@@ -17,7 +17,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use application::testing::sim;
+use application_testing::sim;
 use domain::sysmodel::scene::{frame_at, scene_of};
 use domain::sysmodel::{Board, SysModel, run_all};
 use gpui::{App, AppContext as _, Entity, Window};

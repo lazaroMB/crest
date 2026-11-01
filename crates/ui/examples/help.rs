@@ -2,7 +2,7 @@
 //! snapshot has a plugin, its tool and command, an MCP server and a few
 //! flags.
 //!
-//! `cargo run -p ui --example help [--demo]`
+//! `cargo run -p ui --features examples --example help [--demo]`
 //!
 //! Press `Esc` then `?` (or `F1` in any mode, or `/help tools`) to open it;
 //! `1`–`8` switch sections, `j`/`k` move, `Enter` expands, `y` copies, `/`
@@ -18,8 +18,8 @@ mod support;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use application::testing::fs::InMemoryFs;
-use application::testing::system::RecordingSink;
+use application_testing::fs::InMemoryFs;
+use application_testing::system::RecordingSink;
 use domain::conversation::StopReason;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;

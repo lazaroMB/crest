@@ -65,7 +65,7 @@ order=(hero research approval help model3d modal blocks routing technical board)
 [ "$#" -gt 0 ] && order=("$@")
 
 cd "$root"
-cargo build -q -p ui --example showcase --example sysboard
+cargo build -q -p ui --features examples --example showcase --example sysboard
 
 # The id of the newest window of class "crest".
 crest_window() {

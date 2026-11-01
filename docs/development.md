@@ -118,6 +118,18 @@ docs/                   user and developer guides
 | `make package` | Release tarball in `dist/`. |
 | `make install` / `make uninstall` | Packages the release build and installs it with `scripts/install.sh`: `$(PREFIX)/bin/crest` plus the app menu entry on Linux, `~/Applications/crest.app` on macOS (`PREFIX=~/.local`). |
 | `make clean` | `cargo clean`. |
+| `make sweep` | `cargo sweep --time 14` (`SWEEP_DAYS`): deletes the artifacts no build has used in two weeks. Needs `cargo install cargo-sweep`. |
+
+### Build times and disk
+
+GPUI makes `target/` big and links slow, so the workspace trims both:
+
+- `[profile.dev]` in the root `Cargo.toml`: line tables only for the workspace crates (file and line in backtraces), no debug info and `opt-level = 1` for the dependencies, and optimized build scripts and proc macros.
+- The fakes are a crate of their own (`application-testing`), not a feature, so `cargo build` and `cargo test` build `application` and the crates above it once. `gpui`'s `test-support` feature cannot get the same treatment: it would put test code in the release binary, so `gpui`, `ui` and `crest` are still built twice (once with it, for tests).
+- One integration test binary per crate (`tests/it/`), no doctest pass in `ui`, `crest` and `adapter-formats`, and the UI examples behind `--features examples`.
+- The linker is already LLD: Rust's `x86_64-unknown-linux-gnu` target links with its bundled `rust-lld` (Arch's `rust` package included), so there is no `.cargo/config.toml`.
+
+`make sweep` deletes the artifacts unused for two weeks. If your `rustc` comes from the distribution (Arch's `rust` package rather than rustup), every package update changes the compiler and makes all of `target/` stale: run `cargo sweep --installed` after it, which keeps only what the installed toolchain built.
 
 ### Screenshots
 
@@ -139,7 +151,7 @@ make check   # fmt-check + lint + test + arch + test-arch + test-deps
 | Target | What it runs |
 | --- | --- |
 | `make fmt` / `make fmt-check` | `cargo fmt --all` |
-| `make lint` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
+| `make lint` | `cargo clippy --workspace --all-targets -- -D warnings`, then the optional features on their own: `-p crest --features langfuse` and `-p ui --examples --features examples`. Without `--all-features` clippy builds the same feature set as `cargo build` and `cargo test`. |
 | `make test` | `cargo nextest run --workspace` plus the doctests, if nextest is installed. Otherwise `cargo test --workspace`. |
 | `make test-live` | The `#[ignore]` tests whose name contains `live`, with `ANTHROPIC_LIVE_TEST=1`. Needs `ANTHROPIC_API_KEY` in the environment. |
 | `make arch` / `make test-arch` | `scripts/check-arch.sh` and its fixtures. |
@@ -155,14 +167,14 @@ Code rules, enforced by the workspace lints:
 
 Tests use no network, no `rg` and no window, except where they are adapter integration tests:
 
-- Use cases are tested with the fakes from `application::testing`.
+- Use cases are tested with the fakes of the `application-testing` crate (`application::testing` inside `application`'s own unit tests).
 - The Anthropic API is tested with `wiremock`.
 - GPUI tests use `gpui`'s `TestAppContext` (`test-support` feature), which opens no windows.
 - Snapshots of the tools' JSON schemas are stored with `insta` (`crates/app/src/tools/snapshots/`). If you change a schema, review the snapshot with `cargo insta review`.
 
-## Fakes in `application::testing`
+## Fakes in `application-testing`
 
-To use the fakes from another crate, enable the feature: `application = { workspace = true, features = ["testing"] }` under `[dev-dependencies]`.
+The fakes live in `crates/app-testing` (package `application-testing`). Another crate uses them as a dev-dependency only, `application-testing.workspace = true` under `[dev-dependencies]`, and imports them as `application_testing::llm::ScriptedLlm`; `scripts/check-arch.sh` rejects it anywhere else. `application` mounts the same files as its `testing` module for its own unit tests (`crate::testing::llm::…`). They are not a feature of `application`: a feature turned on by dev-dependencies would build `application` and every crate above it twice, once for `cargo build` and once for `cargo test`.
 
 | Module | Fakes |
 | --- | --- |
@@ -170,7 +182,7 @@ To use the fakes from another crate, enable the feature: `application = { worksp
 | `testing::fs` | `InMemoryFs` (in-memory `FileSystemPort`, `FileSearchPort` and `ContentSearchPort`, with `with_file`), `ScriptedShell`. |
 | `testing::system` | `RecordingSink` (records the `DomainEvent`s), `ScriptedApproval` (scripted answers), `InMemorySessionStore`, `FakePluginHost`, `RecordingTelemetry`. |
 
-The integration tests in `crates/bin/tests/` bring up the real composition root with a scripted model through `root::Overrides`, which lets you replace the LLM, the catalog, the config paths, the database and the MCP trust file:
+The integration tests in `crates/bin/tests/it/` bring up the real composition root with a scripted model through `root::Overrides`, which lets you replace the LLM, the catalog, the config paths, the database and the MCP trust file:
 
 - `headless_demo.rs`
 - `resume.rs`
@@ -179,7 +191,9 @@ The integration tests in `crates/bin/tests/` bring up the real composition root 
 - `research_demo.rs`
 - `implement_demo.rs`
 
-For the UI there are runnable examples in `crates/ui/examples/`, for example `cargo run -p ui --example chart_blocks`.
+The integration tests of `crest`, `adapter-formats` and `adapter-lua` are modules of a single test binary per crate (`tests/it/main.rs`): every test binary links the whole dependency tree, so one binary instead of a dozen saves most of the link time of `cargo test`. A new test file goes into `tests/it/` with its `mod` line in `main.rs`; run one file with `cargo test -p crest --test it resume::`.
+
+For the UI there are runnable examples in `crates/ui/examples/`, for example `cargo run -p ui --features examples --example chart_blocks`. They sit behind the `examples` feature so that `cargo test` does not build them; `make lint` checks them.
 
 ## Adding a tool
 
@@ -261,7 +275,7 @@ column range. "context" events are attached to the previous hit.
 
 | Workflow | When | What it does |
 | --- | --- | --- |
-| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
+| `ci.yml` | `push` and `pull_request` to `main` | `make ci` (`doctor` + `check`) on `ubuntu-24.04` and `macos-15`, split into a lint job (`fmt-check`, `lint`, `arch`, `test-arch`) and a test job that run in parallel, with a Rust cache per job and OS saved only from `main`; clippy and `cargo test` on `windows-2025`; `install-deps.sh --check` in containers (Ubuntu 24.04 and 22.04, Fedora, Arch). |
 | `live.yml` | Manual (`workflow_dispatch`) | `make test-live` with the `ANTHROPIC_API_KEY` secret. |
 | `release.yml` | `v*` tags (or manual) | Builds and packages (`scripts/package.sh`) for `x86_64`/`aarch64-unknown-linux-gnu` (on ubuntu-22.04 and 22.04-arm, because of glibc) and for `aarch64`/`x86_64-apple-darwin` (signed and notarized by `scripts/sign-macos.sh`), and a zip (`scripts/package.ps1`) for `x86_64-pc-windows-msvc` (signed by SignPath) whose `install.ps1` is tested on the runner. With a tag, it publishes a GitHub Release with checksums, then the Homebrew cask (`scripts/publish-homebrew.sh`) and the winget update (Komac). Each signing or publishing step is skipped without its secret (see the workflow's header). |
 

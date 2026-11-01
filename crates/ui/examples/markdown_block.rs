@@ -1,7 +1,7 @@
 //! Markdown document block: headings, a GFM table and highlighted code,
 //! toggled to its source and back with `block.toggle_view` (`t`).
 //!
-//! `cargo run -p ui --example markdown_block [--quit]`
+//! `cargo run -p ui --features examples --example markdown_block [--quit]`
 
 #[path = "support/demo.rs"]
 mod demo;

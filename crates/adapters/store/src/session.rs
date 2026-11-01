@@ -551,7 +551,7 @@ pub(crate) mod tests {
 
     // --- through the port ------------------------------------------------
 
-    use application::testing::system::InMemorySessionStore;
+    use application_testing::system::InMemorySessionStore;
 
     fn port(store: SqliteSessionStore) -> Arc<dyn SessionStorePort> {
         Arc::new(store)

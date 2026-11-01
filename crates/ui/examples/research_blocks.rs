@@ -2,7 +2,7 @@
 //! sources a node cited (click a file or URL to open it) and images with
 //! their source, one of them failing to load.
 //!
-//! `cargo run -p ui --example research_blocks [--quit]`
+//! `cargo run -p ui --features examples --example research_blocks [--quit]`
 
 #[path = "support/demo.rs"]
 mod demo;

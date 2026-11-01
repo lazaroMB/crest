@@ -7,3 +7,6 @@ publish = false
 [dependencies]
 application = { path = "../app" }
 domain = { path = "../domain" }
+
+[dev-dependencies]
+application-testing = { path = "../app-testing" }

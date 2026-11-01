@@ -226,6 +226,7 @@ name = "adapter-lua"
 version = "0.18.0"
 dependencies = [
  "application",
+ "application-testing",
  "async-trait",
  "domain",
  "dunce",
@@ -245,6 +246,7 @@ name = "adapter-mcp"
 version = "0.18.0"
 dependencies = [
  "application",
+ "application-testing",
  "async-trait",
  "domain",
  "hyper",
@@ -317,6 +319,7 @@ name = "adapter-store"
 version = "0.18.0"
 dependencies = [
  "application",
+ "application-testing",
  "async-trait",
  "domain",
  "graph-flow",
@@ -558,6 +561,18 @@ dependencies = [
  "tokio",
  "toml 1.1.8+spec-1.1.0",
  "tracing",
+]
+
+[[package]]
+name = "application-testing"
+version = "0.18.0"
+dependencies = [
+ "application",
+ "async-trait",
+ "domain",
+ "futures",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2085,6 +2100,7 @@ dependencies = [
  "adapter-web",
  "anyhow",
  "application",
+ "application-testing",
  "async-trait",
  "clap",
  "domain",
@@ -10330,6 +10346,7 @@ version = "0.18.0"
 dependencies = [
  "anstyle-parse",
  "application",
+ "application-testing",
  "async-trait",
  "base64 0.23.1",
  "bytemuck",

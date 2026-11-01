@@ -64,7 +64,7 @@
 
 pub mod builder;
 pub mod checks;
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 pub mod fake;
 pub mod flow;
 pub mod gate;

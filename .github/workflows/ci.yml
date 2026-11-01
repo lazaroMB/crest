@@ -1,5 +1,10 @@
-# crest CI: `make ci` (doctor + check) on Linux and macOS, and clippy plus
-# the tests on Windows.
+# crest CI: on Linux and macOS, a lint job (fmt-check, clippy, architecture
+# rules) and a test job (doctor and the tests: what `make ci` runs, split in
+# two so they run in parallel); clippy plus the tests on Windows.
+#
+# rust-cache: one cache per job kind and OS (clippy's check artifacts and the
+# test build share little), saved only from main so that pull requests
+# restore it without filling the 10 GB quota with their own copies.
 #
 # Actions pinned by commit SHA (with the version in the comment): a tag can
 # move, a SHA cannot. Dependabot or Renovate can update them.
@@ -44,8 +49,34 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  lint:
+    name: lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: lint-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: "true"
+
+      - name: Install dependencies
+        run: |
+          bash scripts/install-deps.sh --yes --dev
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
+      - name: fmt-check, lint, arch, test-arch
+        run: make fmt-check lint arch test-arch
+
   ci:
-    name: make ci (${{ matrix.os }})
+    name: tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -59,6 +90,8 @@ jobs:
       # cargo-insta and cargo-nextest are not rebuilt on every run.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          shared-key: test-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-bin: "true"
 
       - name: Metal toolchain
@@ -77,8 +110,9 @@ jobs:
           # If the runner had no Rust, rustup puts it in ~/.cargo/bin.
           echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
-      - name: make ci
-        run: make ci
+      # `make ci` without the lint job's targets.
+      - name: doctor and tests
+        run: make doctor test test-deps test-install
 
   windows:
     name: clippy and tests (windows-2025)
@@ -88,6 +122,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install rg and fzf
         shell: pwsh
@@ -113,8 +150,12 @@ jobs:
           rg --version
           fzf --version
 
+      # The same three passes as `make lint`.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy -p crest --all-targets --features langfuse --locked -- -D warnings
+          cargo clippy -p ui --examples --features examples --locked -- -D warnings
 
       - name: Tests
         # Every failing test binary at once, not just the first.

@@ -2,7 +2,7 @@
 //! status bar, the workspace tree (`Ctrl+G e`), the pickers
 //! (`Ctrl+G ff`, `Ctrl+G fg`) and the approval dialog.
 //!
-//! `cargo run -p ui --example panels`
+//! `cargo run -p ui --features examples --example panels`
 //!
 //! The workspace is an in-memory file system.
 //!
@@ -27,8 +27,8 @@ use application::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
-use application::testing::fs::{InMemoryFs, unified_diff};
-use application::testing::system::RecordingSink;
+use application_testing::fs::{InMemoryFs, unified_diff};
+use application_testing::system::RecordingSink;
 use domain::block::{ApprovalState, Block, BlockKind, DiffSpec};
 use domain::conversation::ToolUseId;
 use domain::permission::ToolEffect;
