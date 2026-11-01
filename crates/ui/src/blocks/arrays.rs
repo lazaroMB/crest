@@ -378,23 +378,18 @@ impl Render for ArrayFileView {
             .enumerate()
             .map(|(i, p)| {
                 let on = i == shown;
-                div()
-                    .id(("array-preview-chip", i))
-                    .debug_selector(move || format!("array-preview-{i}"))
-                    .px_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .when(on, |d| {
-                        d.bg(token(cx, "accent.bg"))
-                            .text_color(token(cx, "accent.fg"))
-                    })
-                    .when(!on, |d| d.text_color(muted))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.show(i, cx);
-                    }))
-                    .child(SharedString::from(format!("{} {}", p.path, p.selection)))
-                    .into_any_element()
+                crate::kit::toggle_chip(
+                    SharedString::from(format!("{} {}", p.path, p.selection)),
+                    on,
+                    cx,
+                )
+                .id(("array-preview-chip", i))
+                .debug_selector(move || format!("array-preview-{i}"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.show(i, cx);
+                }))
+                .into_any_element()
             })
             .collect();
         let warnings = self.spec.warnings.clone();

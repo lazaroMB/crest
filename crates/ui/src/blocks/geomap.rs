@@ -432,22 +432,13 @@ impl MapView {
             .map(|(i, key)| {
                 let on = key == current;
                 let label = key.clone().unwrap_or_else(|| "none".to_owned());
-                div()
+                crate::kit::toggle_chip(SharedString::from(label), on, cx)
                     .id(("map-color", i))
                     .debug_selector(move || format!("map-color-{i}"))
-                    .px_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .when(on, |d| {
-                        d.bg(token(cx, "accent.bg"))
-                            .text_color(token(cx, "accent.fg"))
-                    })
-                    .when(!on, |d| d.text_color(muted))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.set_color_by(key.clone(), cx);
                     }))
-                    .child(SharedString::from(label))
                     .into_any_element()
             })
             .collect::<Vec<_>>();

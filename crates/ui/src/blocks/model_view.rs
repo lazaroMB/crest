@@ -36,9 +36,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use domain::block::BlockId;
 use domain::model3d::{ModelSpec, UpAxis};
 use gpui::{
-    App, Bounds, Context, Corners, Entity, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    App, Bounds, Context, Corners, Entity, FocusHandle, Hsla, InteractiveElement as _, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
+    PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, Window, canvas, div,
     prelude::FluentBuilder as _, px,
 };
@@ -544,26 +544,7 @@ impl ModelView {
         on: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let (accent, accent_hover, accent_fg) = (
-            token(cx, "accent.bg"),
-            token(cx, "accent.hover.bg"),
-            token(cx, "accent.fg"),
-        );
-        let (bg, fg) = if on {
-            (cx.theme().primary, cx.theme().primary_foreground)
-        } else {
-            (accent, accent_fg)
-        };
-        div()
-            .id(id)
-            .debug_selector(move || id.to_owned())
-            .px_1p5()
-            .rounded_sm()
-            .bg(bg)
-            .hover(move |style| style.bg(accent_hover))
-            .text_color(fg)
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(label.into())
+        crate::kit::tool_button(id, label, cx).when(on, |button| button.border_1())
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
