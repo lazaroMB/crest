@@ -223,7 +223,8 @@ pub struct InputView {
     theme_previewing: bool,
     tray: ImageTray,
     /// The last step of the paste chain: images being prepared for the
-    /// tray, or a prompt sent while some were, which waits for them.
+    /// tray, or a prompt sent or an image mode switch pressed while some
+    /// were, which waits for them.
     attaching: Option<Task<()>>,
     /// Steps of the paste chain not landed yet.
     pastes_pending: usize,
