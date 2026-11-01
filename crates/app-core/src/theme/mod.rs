@@ -394,8 +394,7 @@ mod tests {
 
     #[test]
     fn shape_follows_extends_and_overrides() {
-        let (overrides, warnings) =
-            parse_overrides(&json!({ "shape": { "radius": { "md": 2 } } }));
+        let (overrides, warnings) = parse_overrides(&json!({ "shape": { "radius": { "md": 2 } } }));
         assert!(warnings.is_empty(), "{warnings:?}");
         let theme = catalog().resolve("night", Some(&overrides)).unwrap().theme;
         assert_eq!(theme.size("radius.md"), 2);

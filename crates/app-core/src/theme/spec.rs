@@ -6,9 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use domain::theme::{
-    Appearance, Color, MAX_SHAPE, StyleSpec, shape_spec, syntax_spec, token_spec,
-};
+use domain::theme::{Appearance, Color, MAX_SHAPE, StyleSpec, shape_spec, syntax_spec, token_spec};
 use serde_json::{Map, Value};
 
 /// A color as a theme writes it: hex, or the name of a palette entry.
