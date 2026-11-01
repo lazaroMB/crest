@@ -353,6 +353,8 @@ mod tests {
             )
         });
         assert!(viewer.read_with(cx, |v, _| v.measuring()));
+        // The coloured mesh is built in the background.
+        cx.run_until_parked();
         // The mesh is coloured: oxygen red, not clay.
         let red = viewer.read_with(cx, |v, _| {
             let m = v.mesh();
