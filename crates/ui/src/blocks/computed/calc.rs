@@ -11,8 +11,8 @@
 
 use domain::computed::{CalcLine, CalcSheetBody, QuantityBody};
 use gpui::{
-    AnyElement, App, Hsla, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Styled as _, Window, div,
+    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -36,18 +36,6 @@ pub fn plain(x: f64) -> String {
         rounded.to_string()
     };
     text.replace('-', "−")
-}
-
-/// A small rounded label.
-fn chip(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
-    div()
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .text_xs()
-        .bg(color.opacity(0.12))
-        .text_color(color)
-        .child(text.into())
 }
 
 /// `name = expr`, or the bare expression.
@@ -114,11 +102,14 @@ fn sheet_line(line: &CalcLine, window: &mut Window, cx: &mut App) -> AnyElement 
     }
     if !line.notes.is_empty() {
         block = block.child(
-            h_flex().pl_4().gap_1().flex_wrap().children(
-                line.notes.iter().map(|note| {
-                    chip(note.clone(), warning).debug_selector(|| "calc-note".to_owned())
-                }),
-            ),
+            h_flex()
+                .pl_4()
+                .gap_1()
+                .flex_wrap()
+                .children(line.notes.iter().map(|note| {
+                    crate::kit::chip(note.clone(), warning, crate::kit::ChipKind::Soft, cx)
+                        .debug_selector(|| "calc-note".to_owned())
+                })),
         );
     }
     block.into_any_element()
@@ -198,7 +189,10 @@ pub fn quantity(body: &QuantityBody, result: Option<String>, cx: &App) -> AnyEle
             plain(body.factor),
             body.to.unit
         )))
-        .child(chip(label, color).debug_selector(move || selector.to_owned()))
+        .child(
+            crate::kit::chip(label, color, crate::kit::ChipKind::Soft, cx)
+                .debug_selector(move || selector.to_owned()),
+        )
         .child(
             div()
                 .text_color(theme.muted_foreground)

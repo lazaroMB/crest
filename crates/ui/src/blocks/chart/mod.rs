@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use domain::block::{BlockId, BlockKind, BlockTag, ChartKind, ChartSpec, TableSpec};
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
+    AnyElement, App, ElementId, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::chart::PieChart;
@@ -264,24 +264,12 @@ pub fn render_spec(
         .border_1()
         .border_color(theme.border)
         .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(SharedString::from(title.to_owned())),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(format!("{} · {hint}", kind_label(spec.kind))),
-                ),
+            crate::kit::header(cx)
+                .child(crate::kit::title(SharedString::from(title.to_owned())))
+                .child(crate::kit::caption(
+                    format!("{} · {hint}", kind_label(spec.kind)),
+                    cx,
+                )),
         )
         .child(body)
         .into_any_element()

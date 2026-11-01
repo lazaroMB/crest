@@ -15,10 +15,10 @@ reaches it.
   use ui::kit::{Radius, Space, TextRole, TokenStyled as _};
 
   div()
-      .gap_t(Space::Md, cx)
-      .px_t(Space::Sm, cx)
-      .rounded_t(Radius::Sm, cx)
-      .text_t(TextRole::Caption, cx)
+      .tk_gap(Space::Md, cx)
+      .tk_px(Space::Sm, cx)
+      .tk_rounded(Radius::Sm, cx)
+      .tk_text(TextRole::Caption, cx)
   ```
 
   The defaults are GPUI's own sizes (`gap_2` is `Space::Md`, `rounded_sm`

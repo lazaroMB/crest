@@ -127,41 +127,41 @@ fn to_rems(px: u16) -> Rems {
     rems(f32::from(px) / REM_PX)
 }
 
-/// Shape tokens on any styled element: `div().gap_t(Space::Md, cx)`.
+/// Shape tokens on any styled element: `div().tk_gap(Space::Md, cx)`.
 pub trait TokenStyled: Styled + Sized {
     /// Gap between children.
     #[must_use]
-    fn gap_t(self, space: Space, cx: &App) -> Self {
+    fn tk_gap(self, space: Space, cx: &App) -> Self {
         self.gap(space.get(cx))
     }
 
     /// Padding on every side.
     #[must_use]
-    fn p_t(self, space: Space, cx: &App) -> Self {
+    fn tk_p(self, space: Space, cx: &App) -> Self {
         self.p(space.get(cx))
     }
 
     /// Left and right padding.
     #[must_use]
-    fn px_t(self, space: Space, cx: &App) -> Self {
+    fn tk_px(self, space: Space, cx: &App) -> Self {
         self.px(space.get(cx))
     }
 
     /// Top and bottom padding.
     #[must_use]
-    fn py_t(self, space: Space, cx: &App) -> Self {
+    fn tk_py(self, space: Space, cx: &App) -> Self {
         self.py(space.get(cx))
     }
 
     /// Corner radius on every corner.
     #[must_use]
-    fn rounded_t(self, radius: Radius, cx: &App) -> Self {
+    fn tk_rounded(self, radius: Radius, cx: &App) -> Self {
         self.rounded(radius.get(cx))
     }
 
     /// Font size of a text role.
     #[must_use]
-    fn text_t(self, role: TextRole, cx: &App) -> Self {
+    fn tk_text(self, role: TextRole, cx: &App) -> Self {
         self.text_size(role.get(cx))
     }
 }

@@ -28,8 +28,9 @@ use super::computed::provenance_text;
 use super::copy::CopyFormat;
 use super::molecule::{subscript_formula, svg_data, tinted_picture};
 use super::svg::SvgData;
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
-use crate::widgets::{readout, register_input, tool_button};
+use crate::widgets::register_input;
 
 /// Cards drawn at most; the rest are counted.
 pub const MAX_CARDS: usize = 120;

@@ -33,11 +33,12 @@ use super::BlockView;
 use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::trace::caption;
+use crate::kit::{readout, tool_button};
 use crate::timeline::{NO_REV, TimelineEntry};
 use crate::widgets::list::{ListEvent, ListView};
 use crate::widgets::timeline::axis::color_slot;
 use crate::widgets::timeline::{TimelineEvent, TimelineView};
-use crate::widgets::{self, palette, readout, tool_button};
+use crate::widgets::{self, palette};
 
 /// What a masked value shows.
 pub const MASK: &str = "••••••";

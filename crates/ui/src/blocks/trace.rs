@@ -24,9 +24,10 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::custom::node_id;
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
 use crate::widgets::timeline::axis::color_slot;
-use crate::widgets::{self, palette, readout, tool_button};
+use crate::widgets::{self, palette};
 
 /// The file name of `path`.
 pub(crate) fn file_name(path: &str) -> &str {

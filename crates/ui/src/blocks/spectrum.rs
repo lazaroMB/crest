@@ -24,8 +24,8 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::BlockView;
 use super::computed::provenance_text;
 use super::copy::CopyFormat;
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
-use crate::widgets::{readout, tool_button};
 
 /// Pixel columns the trace is reduced to.
 pub const COLUMNS: usize = 1_200;
@@ -257,9 +257,7 @@ impl Render for SpectrumView {
             (false, PeakSense::Maxima) => "maxima",
         };
         let (lo, hi) = self.view;
-        let toolbar = h_flex()
-            .gap_1()
-            .text_xs()
+        let toolbar = crate::kit::toolbar(cx)
             .child(
                 tool_button("spectrum-zoom-out", "−", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom(1.0 / ZOOM, cx))),

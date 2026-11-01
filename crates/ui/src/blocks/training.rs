@@ -26,7 +26,6 @@ use serde_json::{Map, json};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::custom::node_id;
-use crate::theme::token;
 use crate::timeline::TimelineEntry;
 use crate::widgets;
 
@@ -177,7 +176,7 @@ impl TrainingView {
         cx.notify();
     }
 
-    fn chip(
+    fn toggle(
         &self,
         id: String,
         label: String,
@@ -185,24 +184,14 @@ impl TrainingView {
         cx: &mut Context<Self>,
         click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
         let selector = id.clone();
-        div()
+        crate::kit::toggle_chip(label, on, cx)
             .id(SharedString::from(id))
             .debug_selector(move || selector.clone())
-            .px_1()
-            .rounded_sm()
-            .cursor_pointer()
-            .when(on, |d| {
-                d.bg(token(cx, "accent.bg"))
-                    .text_color(token(cx, "accent.fg"))
-            })
-            .when(!on, |d| d.text_color(muted))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 click(this, cx);
             }))
-            .child(SharedString::from(label))
             .into_any_element()
     }
 }
@@ -224,7 +213,7 @@ impl Render for TrainingView {
             .map(|(i, m)| {
                 let on = m == self.metric;
                 let name = m.clone();
-                self.chip(
+                self.toggle(
                     format!("training-metric-{i}"),
                     m,
                     on,
@@ -245,7 +234,7 @@ impl Render for TrainingView {
                     TrainingAxis::Epoch => "epoch",
                     TrainingAxis::Time => "time",
                 };
-                self.chip(
+                self.toggle(
                     format!("training-x-{key}"),
                     a.name().to_owned(),
                     a == self.axis,
@@ -254,7 +243,7 @@ impl Render for TrainingView {
                 )
             })
             .collect();
-        let log = self.chip(
+        let log = self.toggle(
             "training-log".into(),
             "log y".into(),
             self.log_y,
@@ -263,7 +252,7 @@ impl Render for TrainingView {
                 this.toggle_log(cx);
             },
         );
-        let raw = self.chip(
+        let raw = self.toggle(
             "training-raw".into(),
             "raw".into(),
             self.raw,

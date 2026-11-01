@@ -204,16 +204,6 @@ impl ImageView {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .px_1p5()
-                .rounded_sm()
-                .bg(theme.secondary)
-                .hover(|style| style.bg(theme.secondary_hover))
-                .cursor_pointer()
-                .child(label)
-        };
         let level = match self.zoom {
             None => "fit".to_owned(),
             Some(zoom) => format!("{:.0}%", zoom * 100.0),
@@ -240,17 +230,20 @@ impl ImageView {
                     .child(SharedString::from(label)),
             )
             .child(SharedString::from(level))
-            .child(button("image-fit", "fit").on_click(cx.listener(|this, _, _, cx| this.fit(cx))))
             .child(
-                button("image-actual", "1:1")
+                crate::kit::quiet_button("image-fit", "fit", cx)
+                    .on_click(cx.listener(|this, _, _, cx| this.fit(cx))),
+            )
+            .child(
+                crate::kit::quiet_button("image-actual", "1:1", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.actual_size(cx))),
             )
             .child(
-                button("image-zoom-out", "−")
+                crate::kit::quiet_button("image-zoom-out", "−", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_by(1.0 / ZOOM_STEP, cx))),
             )
             .child(
-                button("image-zoom-in", "+")
+                crate::kit::quiet_button("image-zoom-in", "+", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, cx))),
             )
             .into_any_element()

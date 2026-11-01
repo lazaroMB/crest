@@ -24,10 +24,10 @@ use std::rc::Rc;
 
 use domain::block::{BlockId, BlockKind, BlockTag, MermaidSpec};
 use gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
-    Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, Window, canvas, div, px,
+    AnyElement, App, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Render,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window,
+    canvas, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -249,22 +249,6 @@ impl MermaidView {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (accent, accent_hover, accent_fg) = (
-            token(cx, "accent.bg"),
-            token(cx, "accent.hover.bg"),
-            token(cx, "accent.fg"),
-        );
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .px_1p5()
-                .rounded_sm()
-                .bg(accent)
-                .hover(move |style| style.bg(accent_hover))
-                .text_color(accent_fg)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(label)
-        };
         h_flex()
             .absolute()
             .top_1()
@@ -280,15 +264,15 @@ impl MermaidView {
                     .child(format!("{:.0}%", self.camera.zoom * 100.0)),
             )
             .child(
-                button("mermaid-zoom-out", "−")
+                crate::kit::tool_button("mermaid-zoom-out", "−", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom(1.0 / ZOOM_STEP, None, cx))),
             )
             .child(
-                button("mermaid-zoom-in", "+")
+                crate::kit::tool_button("mermaid-zoom-in", "+", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom(ZOOM_STEP, None, cx))),
             )
             .child(
-                button("mermaid-reset", "fit")
+                crate::kit::tool_button("mermaid-reset", "fit", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.reset(cx))),
             )
             .into_any_element()
@@ -494,7 +478,7 @@ pub fn render_source(
     cx: &mut App,
 ) -> AnyElement {
     let view = source_view(id, source, show_source, rev, window, cx);
-    let theme = cx.theme();
+    let _theme = cx.theme();
     let state = view.read(cx);
     let hint = match (state.error(), show_source) {
         (Some(_), _) => "diagram · invalid",
@@ -505,24 +489,9 @@ pub fn render_source(
     v_flex()
         .gap_1()
         .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(SharedString::from(title.to_owned())),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(hint),
-                ),
+            crate::kit::header(cx)
+                .child(crate::kit::title(SharedString::from(title.to_owned())))
+                .child(crate::kit::caption(hint, cx)),
         )
         .child(view)
         .into_any_element()
