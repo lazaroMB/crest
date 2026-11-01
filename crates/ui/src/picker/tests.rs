@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use application::ports::search::{
+use application_core::ports::search::{
     ColumnRange, FileList, FindFileRequest, GrepRequest, ListFilesRequest, TreeNode, TreeRequest,
 };
 use application_testing::fs::{InMemoryFs, test_root};
@@ -575,7 +575,7 @@ fn the_highlighted_row_stays_in_view(cx: &mut TestAppContext) {
 /// would get it.
 fn tool_output(fs: &Arc<InMemoryFs>, name: &str, input: serde_json::Value) -> String {
     use application::tools::files::{FileToolPorts, register_file_tools};
-    use application::tools::registry::{ToolContext, ToolRegistry};
+    use application_core::tools::registry::{ToolContext, ToolRegistry};
     use application_testing::fs::ScriptedShell;
     use domain::conversation::{SessionId, ToolUseId, TurnId};
 

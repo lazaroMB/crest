@@ -11,11 +11,11 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use application::ports::discovery::{
+use application_core::ports::discovery::{
     Appended, DiscoveryId, DiscoveryLogError, DiscoveryLogPort, DiscoverySummary, SourceStoreError,
     SourceStorePort, SourceText, StoredSource, judge, text_hash,
 };
-use application::ports::store::StoreError;
+use application_core::ports::store::StoreError;
 use async_trait::async_trait;
 use domain::discovery::{DiscoveryEvent, Level, Logged, SourceId, SourceKind};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};

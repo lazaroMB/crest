@@ -1,4 +1,4 @@
-//! [`McpPort`](application::ports::mcp::McpPort) adapter with rmcp.
+//! [`McpPort`](application_core::ports::mcp::McpPort) adapter with rmcp.
 //!
 //! [`McpManager`] connects to the servers declared in the config, over
 //! stdio (a child process) or streamable HTTP, lists their tools and routes

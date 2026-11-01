@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_compute::StatsEngine;
-use application::ports::compute::*;
+use application_core::ports::compute::*;
 use domain::computed::*;
 
 /// Asserts `actual` rounds to `printed` at the printed digits.
@@ -1860,7 +1860,7 @@ fn bom_file(builds: f64) -> BomRequest {
         env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
-    let data = application::csv::data_set(&text, ',', inline_source()).unwrap();
+    let data = application_core::csv::data_set(&text, ',', inline_source()).unwrap();
     BomRequest {
         data,
         items: Vec::new(),

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::keymap::Key;
+use application_core::keymap::Key;
 use gpui::{
     InteractiveElement as _, IntoElement, Keystroke, ParentElement as _, Render, ScrollWheelEvent,
     Styled as _, TestAppContext, VisualTestContext, div, px,
@@ -779,7 +779,7 @@ fn key(notation: &str) -> Option<Key> {
 }
 
 fn parsed(notation: &str) -> Option<Key> {
-    application::keymap::parse_keys(notation, " ")
+    application_core::keymap::parse_keys(notation, " ")
         .ok()
         .and_then(|keys| keys.first().copied())
 }

@@ -3,7 +3,7 @@
 //! [`OpenAiClient`] sends one request and turns its answer into either a
 //! decoded value, the server-sent events of a stream, or a typed
 //! [`LlmError`]. It does not retry: the caller wraps it in
-//! [`RetryingLlm`](application::llm_retry::RetryingLlm).
+//! [`RetryingLlm`](application_core::llm_retry::RetryingLlm).
 //!
 //! The key goes out only as an `Authorization: Bearer` header marked
 //! sensitive; it is never logged, traced nor included in errors.
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use adapter_support::errors::{self, Named, is_context_error};
 use adapter_support::http::{self, Refusal, network_error};
-use application::ports::llm::LlmError;
+use application_core::ports::llm::LlmError;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;

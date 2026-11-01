@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use application::keymap::{Key, KeyCode, Modifiers};
+use application_core::keymap::{Key, KeyCode, Modifiers};
 use gpui::{App, Context, ParentElement as _, SharedString, Styled as _, Window, div};
 use gpui_component::{ActiveTheme as _, h_flex};
 

@@ -12,8 +12,8 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use application::decide::DecisionOptions;
-use application::ports::decision::{DecisionError, DecisionPort};
+use application_core::decide::DecisionOptions;
+use application_core::ports::decision::{DecisionError, DecisionPort};
 use async_trait::async_trait;
 use domain::decision::{Answer, DecisionRequest, DecisionResponse, Question};
 use platform::KEYRING_SERVICE;

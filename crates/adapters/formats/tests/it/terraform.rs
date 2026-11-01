@@ -1,7 +1,7 @@
 //! Terraform plans on fixture files.
 
 use adapter_formats::Formats;
-use application::ports::formats::FormatsPort;
+use application_core::ports::formats::FormatsPort;
 use domain::devops::terraform::{AttrValue, PlanAction, PlanSource};
 use serde_json::json;
 

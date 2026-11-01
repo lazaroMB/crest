@@ -12,7 +12,7 @@
 //! of the raw design (constant included). The collinearity warning uses
 //! the scaled condition number (unit-length columns, Belsley's rule of 30).
 
-use application::ports::compute::{ColumnValues, ComputeError, RegressRequest};
+use application_core::ports::compute::{ColumnValues, ComputeError, RegressRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, CoefficientRow, Computed, ComputedBody, Diagnostics, FitStats,
     Narrative, RegressionBody, UncertaintyKind, WarningSeverity, apa,
@@ -586,7 +586,7 @@ fn py_term(name: &str) -> String {
 fn reproduce(
     computed: &mut Computed,
     request: &RegressRequest,
-    used: &[application::ports::compute::DataColumn],
+    used: &[application_core::ports::compute::DataColumn],
 ) {
     let data = &request.data;
     let categorical = |name: &str| data.column(name).is_some_and(|c| !data::is_numeric(c));
@@ -615,9 +615,9 @@ fn reproduce(
         r_x.join(" + "),
         request.conf_level
     ));
-    let request_json = serde_json::to_value(application::ports::compute::ComputeRequest::Regress(
-        request.clone(),
-    ))
+    let request_json = serde_json::to_value(
+        application_core::ports::compute::ComputeRequest::Regress(request.clone()),
+    )
     .unwrap_or_default();
     computed.reproduce.lua = Some(crate::reproduce::lua("regress", &request_json, Some(data)));
 }

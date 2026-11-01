@@ -1,15 +1,15 @@
 //! Model backends over OpenAI-style APIs: Chat Completions ([`chat`]) and
 //! Responses ([`responses`]), plus the `/models` catalog. Retries and
 //! fallbacks are not done here: wrap the backend in
-//! [`RetryingLlm`](application::llm_retry::RetryingLlm).
+//! [`RetryingLlm`](application_core::llm_retry::RetryingLlm).
 
 pub mod chat;
 pub mod client;
 pub mod responses;
 pub mod sse;
 
-use application::llm_retry::ModelBackend;
-use application::ports::llm::{LlmError, LlmRequest, LlmStream, ModelCatalogPort, ModelInfo};
+use application_core::llm_retry::ModelBackend;
+use application_core::ports::llm::{LlmError, LlmRequest, LlmStream, ModelCatalogPort, ModelInfo};
 use async_trait::async_trait;
 use domain::model::ModelId;
 use serde::Deserialize;
@@ -116,7 +116,7 @@ impl ModelCatalogPort for OpenAiCatalog {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::llm::MessageAssembler;
+    use application_core::ports::llm::MessageAssembler;
     use domain::conversation::{Message, SessionId};
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
     use futures::StreamExt;

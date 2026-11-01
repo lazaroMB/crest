@@ -19,7 +19,7 @@ mod support;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application_core::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application_testing::fs::InMemoryFs;
 use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockKind, MermaidSpec, ToolStatus};

@@ -1,7 +1,7 @@
 //! PostgreSQL EXPLAIN plans on fixture files.
 
 use adapter_formats::Formats;
-use application::ports::formats::FormatsPort;
+use application_core::ports::formats::FormatsPort;
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = format!(

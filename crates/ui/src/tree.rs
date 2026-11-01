@@ -21,8 +21,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use application::keymap::Action;
-use application::ports::search::{
+use application_core::keymap::Action;
+use application_core::ports::search::{
     FileSearchPort, SearchError, TreeNode, TreeNodeKind, TreeRequest,
 };
 use domain::workspace::WorkspacePath;
@@ -858,14 +858,14 @@ mod tests {
     impl FileSearchPort for Pending {
         async fn list_files(
             &self,
-            _: application::ports::search::ListFilesRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            _: application_core::ports::search::ListFilesRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             futures::future::pending().await
         }
         async fn find_file(
             &self,
-            _: application::ports::search::FindFileRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            _: application_core::ports::search::FindFileRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             futures::future::pending().await
         }
         async fn tree(&self, _: TreeRequest) -> Result<TreeNode, SearchError> {
@@ -901,14 +901,14 @@ mod tests {
     impl FileSearchPort for Failing {
         async fn list_files(
             &self,
-            _: application::ports::search::ListFilesRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            _: application_core::ports::search::ListFilesRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             Err(SearchError::Io("disk on fire".into()))
         }
         async fn find_file(
             &self,
-            _: application::ports::search::FindFileRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            _: application_core::ports::search::FindFileRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             Err(SearchError::Io("disk on fire".into()))
         }
         async fn tree(&self, _: TreeRequest) -> Result<TreeNode, SearchError> {
@@ -957,14 +957,14 @@ mod tests {
     impl FileSearchPort for Counting {
         async fn list_files(
             &self,
-            request: application::ports::search::ListFilesRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            request: application_core::ports::search::ListFilesRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             self.inner.list_files(request).await
         }
         async fn find_file(
             &self,
-            request: application::ports::search::FindFileRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
+            request: application_core::ports::search::FindFileRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
             self.inner.find_file(request).await
         }
         async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
@@ -1122,18 +1122,18 @@ mod tests {
     impl FileSearchPort for DirSearch {
         async fn list_files(
             &self,
-            request: application::ports::search::ListFilesRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
-            Ok(application::ports::search::FileList::from_matches(
+            request: application_core::ports::search::ListFilesRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
+            Ok(application_core::ports::search::FileList::from_matches(
                 self.files(),
                 request.limit,
             ))
         }
         async fn find_file(
             &self,
-            _: application::ports::search::FindFileRequest,
-        ) -> Result<application::ports::search::FileList, SearchError> {
-            Ok(application::ports::search::FileList::default())
+            _: application_core::ports::search::FindFileRequest,
+        ) -> Result<application_core::ports::search::FileList, SearchError> {
+            Ok(application_core::ports::search::FileList::default())
         }
         async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
             let base = request.path.unwrap_or_else(WorkspacePath::root);

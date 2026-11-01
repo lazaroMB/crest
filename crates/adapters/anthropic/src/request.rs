@@ -47,10 +47,10 @@
 //!
 //! No `anthropic-beta` header is needed for any of this.
 //!
-//! [`SystemBlock::cache`]: application::ports::llm::SystemBlock::cache
-//! [`ToolDefinition::cache`]: application::ports::llm::ToolDefinition::cache
+//! [`SystemBlock::cache`]: application_core::ports::llm::SystemBlock::cache
+//! [`ToolDefinition::cache`]: application_core::ports::llm::ToolDefinition::cache
 
-use application::ports::llm::LlmRequest;
+use application_core::ports::llm::LlmRequest;
 use domain::model::{ModelId, ThinkingConfig};
 
 use crate::convert;

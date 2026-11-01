@@ -13,8 +13,8 @@ pub mod html;
 
 use std::ffi::OsString;
 
-use application::ports::web::{SearchHit, WebError, WebPage, WebPort};
-use application::web::{SearchBackend, WebOptions};
+use application_core::ports::web::{SearchHit, WebError, WebPage, WebPort};
+use application_core::web::{SearchBackend, WebOptions};
 use async_trait::async_trait;
 use platform::KEYRING_SERVICE;
 
@@ -167,7 +167,7 @@ impl WebPort for CurlWeb {
 
 #[cfg(test)]
 mod tests {
-    use application::web::DomainRules;
+    use application_core::web::DomainRules;
 
     use super::*;
 

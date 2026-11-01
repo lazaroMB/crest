@@ -11,7 +11,7 @@
 //! the 0.135% and 99.865% quantiles, and the share outside the limits
 //! with its Monte Carlo standard error.
 
-use application::ports::compute::{ComputeError, SimDistribution, ToleranceRequest};
+use application_core::ports::compute::{ComputeError, SimDistribution, ToleranceRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, ComputedValue, Interval, Narrative,
     StackDimension, ToleranceBody, ToleranceDistribution, UncertaintyKind, WarningSeverity, apa,

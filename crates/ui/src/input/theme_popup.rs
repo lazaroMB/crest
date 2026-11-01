@@ -102,7 +102,11 @@ impl ThemeCompletion {
 /// What `key` does in `popup` with entry `selected` chosen: `Tab`
 /// completes the line to the chosen theme and `Enter` saves it.
 #[must_use]
-pub fn theme_key(key: &application::keymap::Key, popup: &ThemePopup, selected: usize) -> ThemeKey {
+pub fn theme_key(
+    key: &application_core::keymap::Key,
+    popup: &ThemePopup,
+    selected: usize,
+) -> ThemeKey {
     match nav_key(key, popup, selected) {
         Nav::Select(ix) => ThemeKey::Select(ix),
         Nav::Hide => ThemeKey::Hide,
@@ -175,7 +179,7 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use application::keymap::{Key, KeyCode};
+    use application_core::keymap::{Key, KeyCode};
 
     use super::*;
 

@@ -1,4 +1,4 @@
-use application::ports::llm::{ServerTool, SystemBlock, ToolChoice, ToolDefinition};
+use application_core::ports::llm::{ServerTool, SystemBlock, ToolChoice, ToolDefinition};
 use domain::conversation::Message;
 use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
 use serde_json::json;

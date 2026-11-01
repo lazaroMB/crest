@@ -5,5 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-application = { path = "../../app" }
+application-core = { path = "../../app-core" }
 tokio = { path = "../../../../_vendor/tokio" }

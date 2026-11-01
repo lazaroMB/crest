@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use application::ports::compute::{ComputeError, ContingencyChoice, ContingencyRequest};
+use application_core::ports::compute::{ComputeError, ContingencyChoice, ContingencyRequest};
 use domain::computed::{
     Alternative, Assumption, AssumptionStatus, Computed, ComputedBody, ContingencyBody,
     ContingencyTest, Narrative, UncertaintyKind, WarningSeverity, apa,
@@ -812,7 +812,7 @@ fn reproduce(
     request: &ContingencyRequest,
     observed: &[Vec<f64>],
     test: ContingencyTest,
-    used: &[application::ports::compute::DataColumn],
+    used: &[application_core::ports::compute::DataColumn],
 ) {
     let cells: Vec<String> = observed.iter().flatten().map(|x| format!("{x}")).collect();
     let rows: Vec<String> = observed

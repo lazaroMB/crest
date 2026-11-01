@@ -22,7 +22,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use application::ports::formats::StepRequest;
+use application_core::ports::formats::StepRequest;
 use domain::engineering::cad::{CadModelSpec, CadSolid, MAX_SOLIDS};
 use domain::model3d::{ModelMesh, UpAxis};
 use rayon::prelude::*;

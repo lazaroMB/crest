@@ -168,7 +168,7 @@ impl LoginView {
         }
         let key = self.input.read(cx).value().trim().to_owned();
         if key.is_empty() {
-            self.error = Some(application::usecases::login::key_prompt(self.account).into());
+            self.error = Some(application_core::usecases::login::key_prompt(self.account).into());
             cx.notify();
             return;
         }

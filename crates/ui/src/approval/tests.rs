@@ -1,4 +1,4 @@
-use application::ports::approval::{
+use application_core::ports::approval::{
     ApprovalError, ApprovalPort as _, ApprovalPreview, ApprovalRequestId,
 };
 use domain::conversation::ToolUseId;

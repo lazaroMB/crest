@@ -1,6 +1,6 @@
 //! The `/theme` popup: its list, previews and `/theme set`.
 
-use application::ports::events::NoticeLevel;
+use application_core::ports::events::NoticeLevel;
 use gpui::{Context, Window};
 
 use super::Session;

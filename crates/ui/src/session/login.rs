@@ -1,6 +1,6 @@
 //! `/login` and `/logout`: the API key dialog and its check.
 
-use application::ports::events::NoticeLevel;
+use application_core::ports::events::NoticeLevel;
 use domain::model::Account;
 use gpui::{Context, Entity, Window};
 

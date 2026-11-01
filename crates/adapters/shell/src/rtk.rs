@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use application::ports::shell::{CommandRewritePort, RunCommandRequest};
+use application_core::ports::shell::{CommandRewritePort, RunCommandRequest};
 use async_trait::async_trait;
 use domain::workspace::WorkspaceRoot;
 use tokio::process::Command;

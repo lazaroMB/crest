@@ -1,4 +1,4 @@
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use domain::block::{Cell, ChartKind, ChartSpec, Column, Series, TableSpec};
 use gpui::{TestAppContext, px};
 

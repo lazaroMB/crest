@@ -11,7 +11,7 @@
 //! uses the whole series. The decomposition runs in single precision
 //! (`stlrs`), so components carry about seven significant digits.
 
-use application::ports::compute::{ComputeError, DataColumn, ForecastRequest};
+use application_core::ports::compute::{ComputeError, DataColumn, ForecastRequest};
 use augurs_core::{Fit as _, Forecast, Predict as _};
 use augurs_ets::AutoETS;
 use augurs_ets::trend::AutoETSTrendModel;

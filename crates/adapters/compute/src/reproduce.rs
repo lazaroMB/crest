@@ -5,7 +5,7 @@
 //! R lines first build a data frame `df`, from the file when the data came
 //! from one, else from the values themselves, so the line runs as is.
 
-use application::ports::compute::{ColumnValues, DataColumn, DataSet};
+use application_core::ports::compute::{ColumnValues, DataColumn, DataSet};
 use serde_json::Value;
 
 /// Above this many cells inline data is not written out; the lines read

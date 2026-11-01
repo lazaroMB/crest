@@ -1,7 +1,7 @@
 //! Criterion estimates on a fixture `target/criterion` tree.
 
 use adapter_formats::Formats;
-use application::ports::formats::{BenchFiles, BenchRequest, FormatsPort};
+use application_core::ports::formats::{BenchFiles, BenchRequest, FormatsPort};
 use domain::devops::bench::Verdict;
 
 fn read(rel: &str) -> Option<Vec<u8>> {

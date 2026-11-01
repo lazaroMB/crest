@@ -10,7 +10,7 @@
 use std::ffi::OsString;
 use std::process::Stdio;
 
-use application::ports::web::WebError;
+use application_core::ports::web::WebError;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 

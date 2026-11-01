@@ -1,7 +1,7 @@
 //! Traces, profiles and logs on fixture files of real tools' dialects.
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, LogRequest, ProfileRequest};
+use application_core::ports::formats::{FormatsPort, LogRequest, ProfileRequest};
 use domain::devops::logs::LogFormat;
 use domain::devops::trace::{KIND, SERVICE, STATUS_MESSAGE, TraceFormat};
 use domain::widget::timeline::SpanStatus;

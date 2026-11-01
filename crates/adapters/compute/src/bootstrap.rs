@@ -12,7 +12,7 @@
 //! binomial spread of the quantile's rank); that of the SE is
 //! SE/√(2(B − 1)). Same seed, same numbers: a recompute matches exactly.
 
-use application::ports::compute::{BootstrapRequest, ComputeError, DataColumn};
+use application_core::ports::compute::{BootstrapRequest, ComputeError, DataColumn};
 use domain::computed::{
     Assumption, AssumptionStatus, BootInterval, BootMethod, BootStatistic, BootstrapBody, Computed,
     ComputedBody, Narrative, UncertaintyKind, WarningSeverity,

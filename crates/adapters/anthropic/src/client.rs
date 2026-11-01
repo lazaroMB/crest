@@ -12,7 +12,7 @@ use std::fmt;
 use std::time::Duration;
 
 use adapter_support::http::{self, Refusal, network_error};
-use application::ports::llm::{LlmError, LlmStream};
+use application_core::ports::llm::{LlmError, LlmStream};
 use domain::model::ModelId;
 use platform::KEYRING_SERVICE;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};

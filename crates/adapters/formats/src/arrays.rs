@@ -17,7 +17,7 @@ pub mod netcdf3;
 
 use std::collections::BTreeMap;
 
-use application::ports::formats::ArrayRequest;
+use application_core::ports::formats::ArrayRequest;
 use domain::computed::{Computed, ComputedValue};
 use domain::science::arrays::{
     ArrayFileSpec, ArrayFormat, ArrayNode, ArrayNodeKind, ArrayPreview, MAX_LINE, MAX_PREVIEWS,

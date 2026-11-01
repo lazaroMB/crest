@@ -1,7 +1,7 @@
 //! Keys: decoding keystrokes, the keymap's sequences and what each action
 //! does to the prompt.
 
-use application::keymap::{Action, Feed, Key, KeyCode, Modifiers};
+use application_core::keymap::{Action, Feed, Key, KeyCode, Modifiers};
 use gpui::{App, ClipboardItem, Context, KeystrokeEvent, Window};
 
 use super::paste::PasteStep;

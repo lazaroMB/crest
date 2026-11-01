@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+application-core = { path = "../app-core" }
 domain = { path = "../domain" }
 
 [dev-dependencies]

@@ -17,7 +17,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use application::ports::fs::FsError;
+use application_core::ports::fs::FsError;
 use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceRoot};
 
 /// Confines paths to one canonical workspace root.

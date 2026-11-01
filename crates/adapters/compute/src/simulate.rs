@@ -14,7 +14,7 @@
 //! Draws are by inversion (uniform, normal, lognormal, triangular) and,
 //! for PERT, as a beta from two Marsaglia-Tsang gamma draws.
 
-use application::ports::compute::{ComputeError, SimDistribution, SimInput, SimulateRequest};
+use application_core::ports::compute::{ComputeError, SimDistribution, SimInput, SimulateRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, Curve, Narrative, SimInputSummary,
     SimulationBody, TornadoBar, UncertaintyKind, WarningSeverity, apa,

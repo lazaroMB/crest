@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use application::ports::llm::{LlmEvent, MessageAssembler};
+use application_core::ports::llm::{LlmEvent, MessageAssembler};
 use domain::conversation::{ContentPart, Message};
 use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
 use futures::StreamExt;
@@ -316,7 +316,7 @@ fn backoff_is_exponential_capped_and_jittered() {
 
 #[tokio::test]
 async fn server_tool_options_are_sent_with_the_request() {
-    use application::ports::llm::ServerTool;
+    use application_core::ports::llm::ServerTool;
 
     use crate::server_tools::{DomainFilter, ServerToolOptions, WebSearchOptions};
 

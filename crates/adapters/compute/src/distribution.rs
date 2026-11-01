@@ -11,7 +11,7 @@
 //! normal sample with the fitted mean and SD lies between the normal
 //! quantiles of the Beta(i, n + 1 − i) quantiles at α/2 and 1 − α/2.
 
-use application::ports::compute::{ComputeError, DistributionRequest};
+use application_core::ports::compute::{ComputeError, DistributionRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, BandwidthRule, BinRule, BoxSummary, Computed, ComputedBody,
     Curve, DistributionBody, DistributionGroup, EcdfStep, Histogram, Narrative, QqPoint,
@@ -535,7 +535,7 @@ pub fn run(
 fn reproduce(
     computed: &mut Computed,
     request: &DistributionRequest,
-    used: &[application::ports::compute::DataColumn],
+    used: &[application_core::ports::compute::DataColumn],
 ) {
     let var = &request.variable;
     let r_breaks = match (request.bins, request.bin_rule) {

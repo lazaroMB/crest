@@ -20,7 +20,7 @@ pub mod syntax;
 
 use std::sync::{Mutex, PoisonError};
 
-use application::ports::compute::{CalcRequest, ComputeError};
+use application_core::ports::compute::{CalcRequest, ComputeError};
 use domain::computed::{
     Assumption, AssumptionStatus, CalcLine, CalcSheetBody, Computed, ComputedBody, ComputedStatus,
     ComputedValue, InputRef, WarningSeverity,

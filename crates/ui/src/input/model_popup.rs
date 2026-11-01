@@ -137,7 +137,11 @@ impl ModelCompletion {
 /// What `key` does in `popup` with entry `selected` chosen: `Tab`
 /// completes the line to the chosen model and `Enter` saves it.
 #[must_use]
-pub fn model_key(key: &application::keymap::Key, popup: &ModelPopup, selected: usize) -> ModelKey {
+pub fn model_key(
+    key: &application_core::keymap::Key,
+    popup: &ModelPopup,
+    selected: usize,
+) -> ModelKey {
     match nav_key(key, popup, selected) {
         Nav::Select(ix) => ModelKey::Select(ix),
         Nav::Hide => ModelKey::Hide,
@@ -204,7 +208,7 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use application::keymap::{Key, KeyCode};
+    use application_core::keymap::{Key, KeyCode};
 
     use super::*;
 

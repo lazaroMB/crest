@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use application::ports::fs::{
+use application_core::ports::fs::{
     DirEntry, FileContent, FsError, MAX_DIR_ENTRIES, MAX_READ_BYTES, ReadFileRequest,
 };
 use domain::workspace::WorkspacePath;

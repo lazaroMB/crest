@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use application::ports::telemetry::{LlmCallRecord, TelemetryPort, ToolCallRecord, TurnSpan};
+use application_core::ports::telemetry::{LlmCallRecord, TelemetryPort, ToolCallRecord, TurnSpan};
 use domain::conversation::{SessionId, StopReason, TurnId, Usage};
 use domain::model::{ModelId, ModelRole};
 use tracing::field::{Field, Visit};

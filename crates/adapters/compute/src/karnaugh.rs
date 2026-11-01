@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use application::ports::compute::{ComputeError, KarnaughRequest};
+use application_core::ports::compute::{ComputeError, KarnaughRequest};
 use domain::computed::karnaugh::{MAX_VARIABLES, product_term, sum_term};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, CoverMethod, Implicant, KarnaughBody,

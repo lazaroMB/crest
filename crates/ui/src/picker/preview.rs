@@ -3,11 +3,11 @@
 //!
 //! A text match is previewed at once from the context lines `grep` already
 //! returned ([`Preview::of_context`]); the file itself is read through the
-//! [`FileSystemPort`](application::ports::fs::FileSystemPort) after
+//! [`FileSystemPort`](application_core::ports::fs::FileSystemPort) after
 //! [`PREVIEW_DEBOUNCE`] ([`preview_request`]) and replaces it.
 //!
 //! Pictures and 3D models (what `/open` would show for the same file, see
-//! [`FileKind`](application::usecases::open_file::FileKind)) are previewed
+//! [`FileKind`](application_core::usecases::open_file::FileKind)) are previewed
 //! too, as a still ([`RichPreview`]): a picture from its path, a model
 //! parsed off the UI thread when the file is under
 //! [`PREVIEW_MODEL_MAX_BYTES`]. Anything else that is not text says so
@@ -17,8 +17,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::ports::fs::{FileContent, ReadFileRequest};
-use application::ports::search::ColumnRange;
+use application_core::ports::fs::{FileContent, ReadFileRequest};
+use application_core::ports::search::ColumnRange;
 use domain::model3d::ModelSpec;
 use domain::workspace::WorkspacePath;
 use gpui::HighlightStyle;

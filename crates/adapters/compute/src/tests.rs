@@ -10,7 +10,7 @@
 //! `conf_level`. Fisher's odds ratio is the sample (Woolf) estimate, not
 //! R's conditional MLE.
 
-use application::ports::compute::{ComputeError, DataColumn, TestChoice, TestRequest};
+use application_core::ports::compute::{ComputeError, DataColumn, TestChoice, TestRequest};
 use domain::computed::{
     Alternative, Assumption, AssumptionStatus, Computed, ComputedBody, ComputedValue, GroupSummary,
     Narrative, TestBody, TestKind, UncertaintyKind, WarningSeverity, apa,
@@ -803,7 +803,7 @@ pub fn run(request: &TestRequest, id: String) -> Result<(Computed, ComputedBody)
                 .collect(),
         });
     }
-    let lua_request = serde_json::to_value(application::ports::compute::ComputeRequest::Test(
+    let lua_request = serde_json::to_value(application_core::ports::compute::ComputeRequest::Test(
         request.clone(),
     ))
     .unwrap_or_default();

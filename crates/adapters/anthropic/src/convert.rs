@@ -1,6 +1,6 @@
 //! Pure conversions between the domain/port types and the wire types.
 
-use application::ports::llm::{Citation, LlmRequest, ServerTool, ToolChoice, ToolDefinition};
+use application_core::ports::llm::{Citation, LlmRequest, ServerTool, ToolChoice, ToolDefinition};
 use domain::conversation::{
     ContentPart, Message, Role, StopReason, ToolResultContent, ToolUseId, Usage,
 };
@@ -276,7 +276,7 @@ pub(crate) fn tool_choice(choice: &ToolChoice, thinking: bool) -> Option<WireToo
 #[cfg(test)]
 mod request_tests {
     use super::*;
-    use application::ports::llm::SystemBlock;
+    use application_core::ports::llm::SystemBlock;
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
     use serde_json::json;
 

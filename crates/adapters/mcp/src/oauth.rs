@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use application::ports::plugin::McpOAuthClient;
+use application_core::ports::plugin::McpOAuthClient;
 use async_trait::async_trait;
 use platform::KEYRING_SERVICE;
 use rmcp::transport::auth::{

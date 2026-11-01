@@ -25,7 +25,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use application::ports::fs::{
+use application_core::ports::fs::{
     EditFileRequest, FileChange, FsError, PendingChange, WriteFileRequest, replace_unique,
 };
 use domain::workspace::WorkspacePath;

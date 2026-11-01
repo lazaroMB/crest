@@ -14,7 +14,7 @@
 //! phase crossover where the unwrapped phase passes −180° + k·360° (gain
 //! margin = −20·log10 |G| there). The margins reported are the smallest.
 
-use application::ports::compute::{BodeRequest, ComputeError};
+use application_core::ports::compute::{BodeRequest, ComputeError};
 use domain::computed::{
     Assumption, AssumptionStatus, BodeBody, BodePoint, Complex, Computed, ComputedBody, Crossover,
     Narrative, WarningSeverity, apa,

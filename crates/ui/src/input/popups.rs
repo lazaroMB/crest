@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use application::ports::search::FileSearchPort;
+use application_core::ports::search::FileSearchPort;
 use domain::model::ModelId;
 use gpui::{App, Context, ScrollWheelEvent, Window, px};
 

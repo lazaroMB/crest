@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use application::ports::credentials::{CredentialError, KeyCheck};
-use application::ports::llm::{LlmError, ModelCatalogPort};
+use application_core::ports::credentials::{CredentialError, KeyCheck};
+use application_core::ports::llm::{LlmError, ModelCatalogPort};
 use platform::KEYRING_SERVICE;
 
 use crate::catalog::AnthropicCatalog;

@@ -8,8 +8,8 @@
 //! `searxng` with `CREST_SEARXNG_URL`; `brave` with `BRAVE_API_KEY`).
 
 use adapter_web::CurlWeb;
-use application::ports::web::WebPort as _;
-use application::web::{SearchBackend, WebOptions};
+use application_core::ports::web::WebPort as _;
+use application_core::web::{SearchBackend, WebOptions};
 
 #[tokio::main]
 async fn main() {

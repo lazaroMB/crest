@@ -1,7 +1,7 @@
 //! Decoding of recorded streams (`tests/fixtures/*.sse`, copied from the
 //! official streaming docs).
 
-use application::ports::llm::{AssembledMessage, Citation, MessageAssembler};
+use application_core::ports::llm::{AssembledMessage, Citation, MessageAssembler};
 use domain::conversation::{ContentPart, Usage};
 use futures::StreamExt;
 use futures::executor::block_on;

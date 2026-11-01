@@ -1,7 +1,7 @@
 //! The formats adapter on fixture files of real tools' dialects.
 
 use adapter_formats::Formats;
-use application::ports::formats::FormatsPort;
+use application_core::ports::formats::FormatsPort;
 use domain::block::SourceRef;
 use domain::report::{FindingSeverity, TestOutcome};
 

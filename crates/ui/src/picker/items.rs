@@ -2,8 +2,10 @@
 
 use std::ops::Range;
 
-use application::keymap::Action;
-use application::ports::search::{ColumnRange, FileList, FindFileRequest, GrepRequest, GrepResult};
+use application_core::keymap::Action;
+use application_core::ports::search::{
+    ColumnRange, FileList, FindFileRequest, GrepRequest, GrepResult,
+};
 use domain::workspace::WorkspacePath;
 
 use super::preview::valid_range;

@@ -17,7 +17,7 @@
 
 use std::str::FromStr as _;
 
-use application::ports::compute::{CashFlowRequest, ComputeError};
+use application_core::ports::compute::{CashFlowRequest, ComputeError};
 use domain::computed::{
     Assumption, AssumptionStatus, CashFlowBody, CashFlowRow, Computed, ComputedBody, ComputedValue,
     Curve, Narrative, UncertaintyKind, ValueFormat, WarningSeverity, apa,

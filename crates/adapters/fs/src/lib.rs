@@ -19,7 +19,7 @@ pub mod guard;
 mod read;
 mod write;
 
-use application::ports::fs::{
+use application_core::ports::fs::{
     DirEntry, EditFileRequest, FileChange, FileContent, FileSystemPort, FsError, PendingChange,
     ReadFileRequest, WriteFileRequest,
 };

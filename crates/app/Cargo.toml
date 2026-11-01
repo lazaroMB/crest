@@ -1,6 +1,6 @@
 [package]
 name = "application"
-description = "Use cases and port definitions for crest"
+description = "Flows and tools of crest, on top of application-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,21 +8,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+application-core.workspace = true
 async-trait.workspace = true
 # SVG of show_wavedrom as an inline image block.
 base64.workspace = true
-blake3.workspace = true
 domain.workspace = true
 futures.workspace = true
 graph-flow.workspace = true
-regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-stl_io.workspace = true
 thiserror.workspace = true
-tobj.workspace = true
-toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

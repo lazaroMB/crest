@@ -3,13 +3,13 @@ use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use application::ports::events::EventSink;
-use application::ports::form::FormPort;
 use application::tools::files::{FileToolPorts, register_file_tools};
-use application::tools::registry::ToolRegistry;
-use application::usecases::approval::SharedPermissions;
-use application::usecases::permissions::ProjectRules;
-use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
+use application_core::ports::events::EventSink;
+use application_core::ports::form::FormPort;
+use application_core::tools::registry::ToolRegistry;
+use application_core::usecases::approval::SharedPermissions;
+use application_core::usecases::permissions::ProjectRules;
+use application_core::usecases::run_turn::{AgentDeps, AgentService, TurnOptions, UserInput};
 use application_testing::fs::{InMemoryFs, ScriptedShell, test_root};
 use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use application_testing::permissions::MemoryPermissionStore;
@@ -96,7 +96,7 @@ impl SessionController for AgentController {
     fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
         let service = Arc::clone(&self.service);
         async move {
-            application::usecases::permissions::load_rules(
+            application_core::usecases::permissions::load_rules(
                 service.permissions(),
                 service.project_rules(),
             )
@@ -111,7 +111,7 @@ impl SessionController for AgentController {
     ) -> BoxFuture<'static, Result<(), String>> {
         let service = Arc::clone(&self.service);
         async move {
-            application::usecases::permissions::remove_rule(
+            application_core::usecases::permissions::remove_rule(
                 service.permissions(),
                 service.project_rules(),
                 &rule,
@@ -128,7 +128,7 @@ impl SessionController for AgentController {
     ) -> BoxFuture<'static, Result<(), String>> {
         let service = Arc::clone(&self.service);
         async move {
-            application::usecases::permissions::promote_rule(
+            application_core::usecases::permissions::promote_rule(
                 service.permissions(),
                 service.project_rules(),
                 &rule,
@@ -190,7 +190,7 @@ impl SessionController for AgentController {
         caption: String,
         images: Vec<ImageAttachment>,
     ) -> BoxFuture<'static, Reply> {
-        for block in application::usecases::user_blocks::user_blocks(&caption, &images) {
+        for block in application_core::usecases::user_blocks::user_blocks(&caption, &images) {
             self.events.emit(DomainEvent::BlockAdded { block });
         }
         futures::future::ready(Reply::Done).boxed()
@@ -777,7 +777,7 @@ fn a_running_command_keeps_the_session_busy_and_queues_prompts(cx: &mut TestAppC
 
 #[gpui::test]
 fn a_prompt_sent_while_a_form_waits_answers_it_in_prose(cx: &mut TestAppContext) {
-    use application::tools::form::AskUserTool;
+    use application_core::tools::form::AskUserTool;
     use domain::form::FormState;
 
     let script = vec![
@@ -831,7 +831,7 @@ fn a_prompt_sent_while_a_form_waits_answers_it_in_prose(cx: &mut TestAppContext)
 
 #[gpui::test]
 fn a_form_left_waiting_by_a_restart_is_asked_again_on_open(cx: &mut TestAppContext) {
-    use application::tools::form::AskUserTool;
+    use application_core::tools::form::AskUserTool;
     use domain::block::BlockId;
     use domain::conversation::{Message, Role, ToolUseId, Turn};
     use domain::form::{FormSpec, FormState};
@@ -2308,9 +2308,9 @@ fn ctrl_c_in_the_picker_copies_its_selection_without_interrupting(cx: &mut TestA
 
 #[gpui::test]
 fn the_welcome_screen_names_the_keys_of_the_keymap(cx: &mut TestAppContext) {
-    use application::keymap::Platform;
-    use application::keymap::layers::build_keymap;
-    use application::ports::plugin::{KeyAction, KeymapSpec};
+    use application_core::keymap::Platform;
+    use application_core::keymap::layers::build_keymap;
+    use application_core::ports::plugin::{KeyAction, KeymapSpec};
     let unbind = |lhs: &str| KeymapSpec {
         lhs: lhs.into(),
         action: KeyAction::Unmap,

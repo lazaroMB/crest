@@ -6,7 +6,7 @@
 //! nanoseconds; changes are fractions. The numbers are copied as
 //! criterion wrote them.
 
-use application::ports::formats::BenchRequest;
+use application_core::ports::formats::BenchRequest;
 use domain::devops::bench::{
     Bench, BenchSpec, Estimate, MAX_BENCHES, NOISE_THRESHOLD, RunEstimates, Verdict,
 };

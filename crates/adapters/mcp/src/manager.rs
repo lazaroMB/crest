@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
-use application::ports::mcp::{
+use application_core::ports::mcp::{
     McpError, McpPort, McpServerState, McpServerStatus, McpTool, McpToolResult,
 };
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use async_trait::async_trait;
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, CancelledNotificationParam,

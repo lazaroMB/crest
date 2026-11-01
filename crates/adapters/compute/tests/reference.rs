@@ -11,7 +11,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::approx_constant)]
 
 use adapter_compute::StatsEngine;
-use application::ports::compute::{
+use application_core::ports::compute::{
     ComputePort, CorrelateRequest, DataColumn, DataSet, DescribeRequest, RegressRequest,
     TestChoice, TestRequest,
 };
@@ -356,7 +356,7 @@ fn r_wilcox_two_sample() {
         DataColumn::numeric("y", &[0.0; 10]),
     ];
     // Columns must have equal length: pad y with missing values.
-    columns[1].values = application::ports::compute::ColumnValues::Numeric(
+    columns[1].values = application_core::ports::compute::ColumnValues::Numeric(
         y.iter()
             .map(|v| Some(*v))
             .chain(std::iter::repeat_n(None, 5))

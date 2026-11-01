@@ -1,5 +1,5 @@
 use super::*;
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use domain::block::Block;
 use gpui::{Entity, TestAppContext, VisualTestContext, size};
 

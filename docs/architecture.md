@@ -3,7 +3,7 @@
 crest follows a hexagonal architecture (ports and adapters):
 
 - The domain and the use cases know nothing about GPUI, HTTP, Lua, SQLite or external processes.
-- All of that lives in adapters that implement traits (**ports**) defined in `application`.
+- All of that lives in adapters that implement traits (**ports**) defined in `application-core`.
 - The binary is the only place that wires all the pieces together.
 
 ## Layers and crates
@@ -32,25 +32,32 @@ flowchart TB
         formats["formats (JUnit, SARIF, WaveDrom, datasets, molecules)"]
     end
     subgraph app["crates/app · application"]
-        ports["ports/*"]
-        usecases["usecases/ · run_turn, compact, resume, simulate, compute"]
-        tools["tools/ · registry, files, components, compute, formats, form, task, simulate, mcp, plugin"]
         flows["flows/ · research, implement"]
-        keymap["keymap.rs, cost.rs"]
+        tools["tools/ · files, components, compute, formats, task, simulate, mcp, plugin"]
+        simulate["usecases/simulate"]
+    end
+    subgraph core["crates/app-core · application-core"]
+        ports["ports/*"]
+        usecases["usecases/ · run_turn, compact, resume, compute, open_file"]
+        coretools["tools/ · registry, budget, form, web"]
+        keymap["keymap.rs, cost.rs, theme/, privacy"]
     end
     domain["crates/domain · pure types and rules"]
 
     bin --> ui & adapters & app & domain
-    ui --> app & domain
-    adapters --> app & domain
-    app --> domain
+    ui --> core & domain
+    adapters --> core & domain
+    lua --> app
+    app --> core
+    core --> domain
 ```
 
 | Crate (package) | Path | Contents |
 | --- | --- | --- |
 | `domain` | `crates/domain` | Pure types and rules: the conversation (`Session`, `Turn`, `Message`), `Block` and its payloads, `ModelPolicy` and roles, `PermissionPolicy`, `WorkspacePath` and sensitive paths, research types (`Evidence`, `Hypothesis`, `Constraint`, `Decision`), the `plan.json` schema and `sysmodel` (the `crest.sysmodel/v1` model, its expression language, lint, the deterministic simulator, traces, the assertion checker, the board layout and its renderer-agnostic 3D scene). No tokio, no I/O. |
-| `application` | `crates/app` | Ports (async traits), retries and model fallback over any provider (`llm_retry`), the router of prefixed model ids (`providers`), use cases (`AgentService::run_turn`, compaction, resume), the tool registry and the tool definitions, the keymap parser, cost, the graph-flow workflows. Its unit tests mount the fakes of `application-testing` as `crate::testing`. |
-| `application-testing` | `crates/app-testing` | In-memory fakes of every port (`ScriptedLlm`, `InMemoryFs`, `RecordingSink`…), used only as a dev-dependency by the adapters, `ui` and `crest`. |
+| `application-core` | `crates/app-core` | Ports (async traits), retries and model fallback over any provider (`llm_retry`), the router of prefixed model ids (`providers`), use cases (`AgentService::run_turn`, compaction, resume, `/open`, compute), the tool registry and result budgets, the tools the loop knows by name (`ask_user`, `web_search`, `web_fetch`), privacy, themes, the keymap parser, cost. Its unit tests mount the fakes of `application-testing` as `crate::testing`. |
+| `application` | `crates/app` | The heavy half: the graph-flow workflows (research, implement), the rest of the tool definitions (files, components, compute, formats, task, MCP, plugin, `simulate_solution`) and the `simulate` use case. Re-exports the modules of `application-core` under the same paths (`application::ports`, `application::usecases::run_turn`…). Only `adapter-lua` and `crest` depend on it, so a change to a tool rebuilds neither `ui` nor the other adapters. Its unit tests mount the same fakes. |
+| `application-testing` | `crates/app-testing` | In-memory fakes of every port (`ScriptedLlm`, `InMemoryFs`, `RecordingSink`…), used only as a dev-dependency by the adapters, `ui` and `crest`. Written against `application-core`. |
 | `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, the `GET /v1/models` catalog and server tools (web search and fetch); also the client of OpenCode's Messages endpoint and the keyring entries of every key. |
 | `adapter-openai` | `crates/adapters/openai` | OpenAI Chat Completions and Responses with SSE streaming, and the `GET /models` catalog (OpenCode's GPT, Grok and open models). |
 | `adapter-support` | `crates/adapters/support` | What the model adapters share: the server-sent events loop and its `Decoder` trait, the reqwest client, `retry-after`, the typed error of an HTTP status (rejected keys and full contexts included) and `TokioClock`, the real clock of the retries. |
@@ -94,13 +101,13 @@ flowchart TB
 | `DiscoveryLogPort` | `ports/discovery.rs` | `start`, `append` (replays and judges before writing), `load`, `list`, `put_artifact`, `artifact`, `artifacts` | `adapter_store::SqliteDiscoveryStore` | `discovery::MemoryDiscoveryLog` |
 | `SourceStorePort` | `ports/discovery.rs` | `put`, `get`, `sources` | `adapter_store::SqliteDiscoveryStore` | `discovery::MemorySourceStore` |
 
-Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
+Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application_core::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
-The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command`, `recompute` (re-runs a computed card's envelope) and `permission_rules` / `remove_permission_rule` / `promote_permission_rule` (for `/permissions`, over `usecases::permissions`), among others. The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application` and `domain`.
+The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command`, `recompute` (re-runs a computed card's envelope) and `permission_rules` / `remove_permission_rule` / `promote_permission_rule` (for `/permissions`, over `usecases::permissions`), among others. The binary implements it (`UiController`) on top of the real `AgentService`. The UI depends only on `application-core` and `domain` (its session and picker tests also use `application`'s file tools, as a dev-dependency).
 
 ## A turn: `run_turn`
 
-`AgentService::run_turn` (`crates/app/src/usecases/run_turn.rs`) is the agent loop:
+`AgentService::run_turn` (`crates/app-core/src/usecases/run_turn.rs`) is the agent loop:
 
 ```mermaid
 sequenceDiagram
@@ -273,26 +280,28 @@ Every non-essential step degrades to a notice: without Lua, without a database o
 | Layer | May depend on | Forbidden |
 | --- | --- | --- |
 | `domain` | no crate of the project | I/O crates |
-| `application` (must be named so) | `domain` | I/O crates, adapters, `ui` |
-| adapters | `application`, `domain`, `platform`, `adapter-support` | other adapters, `ui` |
-| `adapter-support` (`crates/adapters/support`, must be named so) | `application`, `domain`, `platform` | adapters, `ui` |
-| `ui` | `application`, `domain`, `platform` | adapters |
+| `application-core` (`crates/app-core`, must be named so) | `domain` | I/O crates, `application`, adapters, `ui` |
+| `application` (must be named so) | `application-core`, `domain` | I/O crates, adapters, `ui` |
+| `application-testing` (`crates/app-testing`, must be named so) | `application-core`, `domain` | everything else; only usable in `[dev-dependencies]` |
+| adapters | `application-core`, `application`, `domain`, `platform`, `adapter-support` | other adapters, `ui` |
+| `adapter-support` (`crates/adapters/support`, must be named so) | `application-core`, `domain`, `platform` | `application`, adapters, `ui` |
+| `ui` | `application-core`, `domain`, `platform`; `application` only in `[dev-dependencies]` | adapters |
 | `platform` (`crates/platform`) | no crate of the project | everything internal |
 | `bin` | everything | — |
 
 `platform` is the operating-system glue several outer crates need (spawning and killing processes, `PATH` lookup with `PATHEXT`, crest's config and data directories, the Windows console, the keyring service `crest`). It only uses `std`, `dirs` and `windows-sys`, and is the one crate allowed `unsafe` (two Win32 console calls).
 
-The I/O crates that `domain` and `application` cannot use (in normal and build dependencies) are:
+The I/O crates that `domain`, `application-core` and `application` cannot use (in normal and build dependencies) are:
 
 `tokio`, `reqwest`, `reqwest-eventsource`, `hyper`, `gpui`, `gpui-component`, `mlua`, `rusqlite`, `sqlx`, `rmcp`, `notify`, `keyring`, `opentelemetry*` and `tracing-opentelemetry`.
 
-`application` uses `tokio` only in its dev-dependencies (for the tests).
+`application-core` and `application` use `tokio` only in their dev-dependencies (for the tests).
 
 `scripts/check-arch.sh` (`make arch`) enforces these rules:
 
 - It reads `cargo metadata --no-deps --offline` with `jq`.
 - It classifies each crate by its manifest path. A path that fits no layer is an error.
 - It checks internal dependencies, including dev and build ones.
-- It requires the `crates/app` package to be named `application`.
+- It requires the `crates/app-core` package to be named `application-core` and the `crates/app` package to be named `application`.
 - It exits with 0 if all is well, 1 if there are violations and 2 on misuse.
 - It works with Bash 3.2. `make test-arch` tests it against the workspaces in `tests/arch/fixtures/`.

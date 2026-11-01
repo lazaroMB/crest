@@ -5,13 +5,13 @@ mod common;
 use std::collections::BTreeMap;
 
 use adapter_mcp::{McpEntry, McpManager, McpOptions};
-use application::ports::mcp::{McpContent, McpError, McpPort, McpServerState};
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::mcp::{McpContent, McpError, McpPort, McpServerState};
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use serde_json::json;
 
 use common::echo_spec;
 
-fn text(result: &application::ports::mcp::McpToolResult) -> &str {
+fn text(result: &application_core::ports::mcp::McpToolResult) -> &str {
     match result.content.as_slice() {
         [McpContent::Text { text }] => text,
         other => panic!("unexpected content {other:?}"),

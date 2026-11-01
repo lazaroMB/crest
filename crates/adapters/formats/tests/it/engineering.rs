@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, StepRequest, WaveRequest};
+use application_core::ports::formats::{FormatsPort, StepRequest, WaveRequest};
 use domain::engineering::netlist::NetlistFormat;
 use domain::engineering::waveform::{Radix, SignalKind, WaveFormat};
 

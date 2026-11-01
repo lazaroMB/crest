@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-application.workspace = true
+application-core.workspace = true
 async-trait.workspace = true
 domain.workspace = true
 keyring.workspace = true
@@ -21,6 +21,8 @@ tokio = { workspace = true, features = ["net"] }
 tracing.workspace = true
 
 [dev-dependencies]
+# tests/turn.rs registers the MCP tools (application keeps them).
+application.workspace = true
 application-testing.workspace = true
 # The example server (`examples/echo_server.rs`) is an rmcp server.
 hyper.workspace = true

@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
 
-use application::ports::search::{ColumnRange, GrepHit, GrepRequest, GrepResult, SearchError};
+use application_core::ports::search::{ColumnRange, GrepHit, GrepRequest, GrepResult, SearchError};
 use base64::Engine;
 use domain::workspace::{PathError, WorkspacePath};
 use serde::Deserialize;

@@ -19,7 +19,7 @@
 
 use std::time::{Duration, Instant};
 
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use domain::block::BlockKind;
 use gpui::{
     App, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task, Window,

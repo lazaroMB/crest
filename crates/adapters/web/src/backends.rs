@@ -11,8 +11,8 @@
 
 use std::sync::LazyLock;
 
-use application::ports::web::{SearchHit, WebError};
-use application::web::SearchBackend;
+use application_core::ports::web::{SearchHit, WebError};
+use application_core::web::SearchBackend;
 use regex::Regex;
 use serde_json::Value;
 

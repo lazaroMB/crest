@@ -1,5 +1,5 @@
-use application::ports::events::DomainEvent;
-use application::ports::form::FormRequestId;
+use application_core::ports::events::DomainEvent;
+use application_core::ports::form::FormRequestId;
 use chrono::NaiveDate;
 use domain::block::Block;
 use domain::conversation::ToolUseId;
@@ -402,7 +402,7 @@ fn the_port_reaches_the_block_and_a_withdrawn_form_stops_waiting(cx: &mut TestAp
         let port = port.clone();
         let request = request.clone();
         cx.executor().spawn(async move {
-            use application::ports::form::FormPort as _;
+            use application_core::ports::form::FormPort as _;
             port.ask(request).await
         })
     };

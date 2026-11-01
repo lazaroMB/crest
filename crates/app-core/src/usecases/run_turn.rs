@@ -105,6 +105,12 @@ use super::permissions::ProjectRules;
 use super::routing::{Routing, route, used_tools};
 use super::web_sources::web_sources;
 
+/// Name of the `ask_user` tool ([`tools::form`](crate::tools::form)): the
+/// loop never runs it alongside other calls, and a restart asks its form
+/// again instead of closing it. Defined here so the loop does not depend
+/// on the tool.
+pub const ASK_USER: &str = "ask_user";
+
 /// Default limit of model calls in one turn.
 pub const DEFAULT_MAX_ITERATIONS: u32 = 50;
 
@@ -904,7 +910,7 @@ impl GatedCall {
             } => {
                 matches!(effect, ToolEffect::Read | ToolEffect::Network)
                     && prepared.on_interrupt.is_none()
-                    && self.name != crate::tools::form::ASK_USER
+                    && self.name != ASK_USER
             }
             GateStep::Answered(..) | GateStep::Ask { .. } => false,
         }
@@ -1139,7 +1145,7 @@ impl TurnRun<'_> {
         let mut results = Vec::new();
         for PendingToolUse { id, name, input } in pending {
             let block_id = BlockId::for_tool_use(id.as_str(), "tool_call");
-            if name == crate::tools::form::ASK_USER {
+            if name == ASK_USER {
                 blocks.insert(id.clone(), block_id);
                 uses.push((id, name, input));
                 continue;

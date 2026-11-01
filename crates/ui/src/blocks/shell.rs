@@ -261,7 +261,7 @@ mod tests {
 
     #[gpui::test]
     fn draws_colored_output(cx: &mut gpui::TestAppContext) {
-        use application::ports::events::DomainEvent;
+        use application_core::ports::events::DomainEvent;
         use domain::block::Block;
 
         use crate::timeline::TimelineView;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use adapter_compute::StatsEngine;
-use application::ports::compute::{
+use application_core::ports::compute::{
     ComputeError, ComputePort, CorrelateRequest, DataColumn, DataSet, DescribeRequest,
     RegressRequest, TestChoice, TestRequest,
 };
@@ -412,7 +412,7 @@ fn one_sample_and_signed_rank() {
 
 #[test]
 fn calc_sheets_and_conversions_are_crest_calc_envelopes_that_recompute() {
-    use application::ports::compute::{CalcRequest, ConvertRequest};
+    use application_core::ports::compute::{CalcRequest, ConvertRequest};
     let engine = fixed_engine();
     let request = CalcRequest {
         lines: vec![

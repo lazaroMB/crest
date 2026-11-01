@@ -285,7 +285,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
 mod tests {
     use std::collections::BTreeMap;
 
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::Block;
     use domain::computed::{Computed, Engine};
     use domain::science::MoleculeSpec;

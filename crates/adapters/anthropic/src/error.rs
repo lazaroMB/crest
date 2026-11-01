@@ -2,7 +2,7 @@
 //! the port's [`LlmError`].
 
 use adapter_support::errors::{self, Wording, is_context_error};
-use application::ports::llm::LlmError;
+use application_core::ports::llm::LlmError;
 
 use crate::wire::ApiError;
 

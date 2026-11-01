@@ -29,7 +29,7 @@
 
 use std::sync::Arc;
 
-use application::usecases::permissions::RuleListing;
+use application_core::usecases::permissions::RuleListing;
 use domain::modal::ModalId;
 use domain::permission::{PermissionMode, PermissionRule, RuleDecision, RuleScope};
 use gpui::{

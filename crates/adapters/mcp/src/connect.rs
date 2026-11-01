@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::handler::client::ClientHandler;
 use rmcp::model::{ClientCapabilities, ClientConfig, Implementation, ProtocolVersion};

@@ -72,7 +72,7 @@ use super::sources::events::{BlockEvent, emit};
 use crate::timeline::TimelineEntry;
 
 /// Code of the warning a recompute adds when the data file changed.
-pub const INPUT_CHANGED: &str = application::usecases::compute::INPUT_CHANGED;
+pub const INPUT_CHANGED: &str = application_core::usecases::compute::INPUT_CHANGED;
 
 /// `x` with `decimals` decimals and a true minus sign.
 pub fn number(x: f64, decimals: u32) -> String {

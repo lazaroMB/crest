@@ -1,7 +1,7 @@
 //! DOT graphs and ER diagrams from DDL on fixture files.
 
 use adapter_formats::Formats;
-use application::ports::formats::FormatsPort;
+use application_core::ports::formats::FormatsPort;
 use domain::devops::diagram::DiagramSource;
 use domain::widget::graph::FlowDirection;
 

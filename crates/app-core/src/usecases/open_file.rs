@@ -20,10 +20,13 @@ use std::sync::Arc;
 
 use crate::ports::formats::{FormatsPort, StepRequest};
 use crate::ports::fs::{FileContent, FileSystemPort, FsError, ReadFileRequest};
-use crate::tools::formats::{MAX_STEP_BYTES, STEP_EXTENSIONS};
 use crate::usecases::compute::{Offload, offloaded};
 use crate::usecases::model3d::{self, MAX_MODEL_BYTES, MODEL_EXTENSIONS};
 
+/// Largest STEP file read, in bytes (as the other 3D models).
+pub const MAX_STEP_BYTES: u64 = MAX_MODEL_BYTES;
+/// Extensions of STEP files, lowercase.
+pub const STEP_EXTENSIONS: [&str; 2] = ["step", "stp"];
 /// Most lines shown; longer files are cut and say so in the title.
 pub const MAX_OPEN_LINES: usize = 20_000;
 /// Share of the window the modal takes, in percent.

@@ -14,7 +14,9 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitStatus;
 
-use application::ports::search::{FileList, ListFilesRequest, SearchError, TreeNode, TreeRequest};
+use application_core::ports::search::{
+    FileList, ListFilesRequest, SearchError, TreeNode, TreeRequest,
+};
 use domain::workspace::{SensitivePathRules, WorkspacePath};
 
 use crate::RipgrepSearch;
@@ -253,7 +255,7 @@ mod tests {
     #[cfg(unix)]
     use std::time::Duration;
 
-    use application::ports::search::TreeNodeKind;
+    use application_core::ports::search::TreeNodeKind;
 
     use super::*;
     #[cfg(unix)]

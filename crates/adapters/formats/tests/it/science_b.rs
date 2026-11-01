@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{
+use application_core::ports::formats::{
     ArrayRequest, FormatsPort, GanttRequest, GanttSource, GanttTaskInput, MapRequest,
     NetworkRequest, TrainingFile, TrainingRequest,
 };

@@ -397,14 +397,17 @@ flowchart TB
         anthropic["anthropic<br/>Claude, OpenCode"] --- openai["openai<br/>OpenCode"] --- cloudflare["cloudflare<br/>Clef"] --- compute["compute<br/>statrs, numbat"] --- formats["formats<br/>file parsers"] --- search["search<br/>rg, fzf"] --- fs["fs"]
         shell["shell"] --- web["web<br/>curl"] --- store["store<br/>SQLite"] --- lua["lua<br/>mlua"] --- mcp["mcp<br/>rmcp"] --- telemetry["telemetry"] --- export["export<br/>board.html"]
     end
-    app["crates/app · application<br/>ports, use cases, tools, workflows"]
+    app["crates/app · application<br/>tools, workflows"]
+    core["crates/app-core · application-core<br/>ports, use cases, agent loop"]
     domain["crates/domain<br/>pure types and rules"]
     platform["crates/platform<br/>processes, directories, console"]
     bin --> ui & adapters & app & domain & platform
-    ui --> app & domain
-    adapters --> app & domain
+    ui --> core & domain
+    adapters --> core & domain
+    lua --> app
     adapters -.-> platform
-    app --> domain
+    app --> core
+    core --> domain
 ```
 
 ## Vision and roadmap

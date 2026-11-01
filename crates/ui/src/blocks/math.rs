@@ -820,7 +820,7 @@ mod tests {
 
     #[gpui::test]
     fn text_block_typesets_inline_display_and_broken_math(cx: &mut gpui::TestAppContext) {
-        use application::ports::events::DomainEvent;
+        use application_core::ports::events::DomainEvent;
         use domain::block::{Block, BlockKind};
         use gpui::{point, size};
 

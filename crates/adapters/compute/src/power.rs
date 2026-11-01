@@ -8,7 +8,7 @@
 //! printed digits can differ in the fifth place). The card also gets the
 //! power curve over n at the given effect and α.
 
-use application::ports::compute::{ComputeError, PowerRequest};
+use application_core::ports::compute::{ComputeError, PowerRequest};
 use domain::computed::{
     Alternative, Assumption, AssumptionStatus, Computed, ComputedBody, Curve, Narrative, PowerBody,
     PowerTarget, PowerTest, UncertaintyKind, WarningSeverity,

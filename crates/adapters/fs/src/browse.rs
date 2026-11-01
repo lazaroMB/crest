@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use application::ports::projects::{
+use application_core::ports::projects::{
     BrowseError, DirEntry, DirListing, MAX_DIR_ENTRIES, ProjectBrowserPort,
 };
 use async_trait::async_trait;

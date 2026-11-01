@@ -1,6 +1,6 @@
 //! Reading request columns: numeric values, group labels, missing rows.
 
-use application::ports::compute::{ColumnValues, ComputeError, DataColumn, DataSet};
+use application_core::ports::compute::{ColumnValues, ComputeError, DataColumn, DataSet};
 
 /// The rows of a column as numbers; `None` is missing (NaN counts as
 /// missing too).

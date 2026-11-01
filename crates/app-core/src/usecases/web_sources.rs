@@ -14,7 +14,18 @@ use domain::block::SourceRef;
 use domain::conversation::{ContentPart, Message, ToolResultContent};
 
 use crate::ports::llm::Citation;
-use crate::tools::web::{SOURCE_PREFIX, TITLE_PREFIX, URL_PREFIX, WEB_FETCH_TOOL, WEB_SEARCH_TOOL};
+
+/// Name of the search tool.
+pub const WEB_SEARCH_TOOL: &str = "web_search";
+/// Name of the page tool.
+pub const WEB_FETCH_TOOL: &str = "web_fetch";
+
+/// Prefix of the URL line of a search result.
+pub const URL_PREFIX: &str = "URL: ";
+/// Prefix of the URL line of a fetched page.
+pub const SOURCE_PREFIX: &str = "Source: ";
+/// Prefix of the title line of a fetched page.
+pub const TITLE_PREFIX: &str = "Title: ";
 
 /// Characters of a page kept as the excerpt of its citation.
 const EXCERPT_CHARS: usize = 400;

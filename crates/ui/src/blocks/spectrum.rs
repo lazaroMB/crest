@@ -376,7 +376,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
 
 #[cfg(test)]
 mod tests {
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::Block;
     use domain::computed::{Computed, Engine};
     use domain::science::spectrum::{Peak, SpectrumFormat, SpectrumKind};

@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use application::ports::events::{DomainEvent, NoticeLevel};
+use application_core::ports::events::{DomainEvent, NoticeLevel};
 use domain::conversation::Usage;
 use domain::git::GitStatus;
 use domain::model::ModelId;

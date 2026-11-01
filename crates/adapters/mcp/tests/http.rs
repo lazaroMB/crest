@@ -5,8 +5,8 @@ mod common;
 use std::collections::BTreeMap;
 
 use adapter_mcp::McpManager;
-use application::ports::mcp::{McpContent, McpPort, McpServerState};
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::mcp::{McpContent, McpPort, McpServerState};
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use serde_json::json;
 
 use common::http_server;

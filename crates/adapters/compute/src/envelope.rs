@@ -3,7 +3,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use application::ports::compute::{ComputeRequest, DataColumn, DataSet, REQUEST_PARAM};
+use application_core::ports::compute::{ComputeRequest, DataColumn, DataSet, REQUEST_PARAM};
 use domain::computed::{
     Computed, ComputedStatus, ComputedValue, ComputedWarning, Engine, InputRef, Interval,
     ValueFormat, WarningSeverity, apa,

@@ -14,7 +14,7 @@
 //! - The minimum detectable effect at 80% power and, for a given minimum
 //!   lift, the power to detect it (normal approximations).
 
-use application::ports::compute::{AbTestRequest, ComputeError};
+use application_core::ports::compute::{AbTestRequest, ComputeError};
 use domain::computed::{
     AbArm, AbMethod, AbTestBody, Alternative, Assumption, AssumptionStatus, Computed, ComputedBody,
     ComputedValue, Interval, Narrative, UncertaintyKind, ValueFormat, WarningSeverity, apa,
@@ -164,14 +164,15 @@ pub fn run(request: &AbTestRequest, id: String) -> Result<(Computed, ComputedBod
     );
     let (p1, p2) = (x1 / n1, x2 / n2);
     let (w1, w2) = (wilson(x1, n1, z_crit), wilson(x2, n2, z_crit));
-    let arm = |input: &application::ports::compute::ArmCounts, default: &str, p, (lo, hi)| AbArm {
-        name: input.name.clone().unwrap_or_else(|| default.to_owned()),
-        visitors: input.visitors,
-        conversions: input.conversions,
-        rate: p,
-        rate_lo: lo,
-        rate_hi: hi,
-    };
+    let arm =
+        |input: &application_core::ports::compute::ArmCounts, default: &str, p, (lo, hi)| AbArm {
+            name: input.name.clone().unwrap_or_else(|| default.to_owned()),
+            visitors: input.visitors,
+            conversions: input.conversions,
+            rate: p,
+            rate_lo: lo,
+            rate_hi: hi,
+        };
     let arms = vec![arm(a, "A", p1, w1), arm(b, "B", p2, w2)];
     let (name_a, name_b) = (arms[0].name.clone(), arms[1].name.clone());
 

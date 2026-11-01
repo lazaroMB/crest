@@ -10,7 +10,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use application::theme::ThemeCatalog;
+use application_core::theme::ThemeCatalog;
 use domain::theme::{Appearance, Color, TextStyle, Theme as CrestThemeData};
 use gpui::{App, Global, Hsla, Rgba};
 use gpui_component::{Theme, ThemeConfig};
@@ -146,7 +146,7 @@ pub fn token(cx: &App, path: &str) -> Hsla {
 pub fn default_theme() -> Arc<CrestThemeData> {
     static DEFAULT: std::sync::LazyLock<Arc<CrestThemeData>> = std::sync::LazyLock::new(|| {
         ThemeCatalog::new()
-            .resolve_or_default(application::theme::TWOCREST, None)
+            .resolve_or_default(application_core::theme::TWOCREST, None)
             .theme
     });
     Arc::clone(&DEFAULT)

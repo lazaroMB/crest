@@ -1,4 +1,4 @@
-use application::keymap::{Action, default_keymap};
+use application_core::keymap::{Action, default_keymap};
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 
@@ -225,7 +225,7 @@ fn rows_group_and_copy_what_is_useful() {
 
 #[test]
 fn keys_read_as_a_person_types_them() {
-    use application::keymap::parse_keys;
+    use application_core::keymap::parse_keys;
     let label = |notation: &str| keys_label(&parse_keys(notation, "<C-g>").unwrap());
     assert_eq!(label("<leader>ff"), "Ctrl+G ff");
     assert_eq!(label("<A-p>"), "Alt+P");
@@ -293,9 +293,9 @@ fn the_keys_list_each_panel_after_the_keymap_once() {
 
 #[test]
 fn remap_snippets_use_the_leader_and_escape_quotes() {
-    let mut keymap = application::keymap::default_keymap_with(
+    let mut keymap = application_core::keymap::default_keymap_with(
         "<C-Space>",
-        application::keymap::Platform::current(),
+        application_core::keymap::Platform::current(),
     );
     keymap.set("<F9>", Action::Callback(2)).unwrap();
     let rows = key_rows(&keymap, |_| None);
@@ -330,12 +330,12 @@ fn remap_snippets_use_the_leader_and_escape_quotes() {
 fn next_keys_say_what_follows_a_prefix() {
     let mut keymap = default_keymap();
     keymap.set("<leader>f", Action::Callback(1)).unwrap();
-    let leader = application::keymap::parse_keys("<leader>", keymap.leader()).unwrap();
+    let leader = application_core::keymap::parse_keys("<leader>", keymap.leader()).unwrap();
     let next = next_keys(&keymap, &leader);
     let what = |key: &str| next.iter().find(|n| n.key == key).map(|n| n.what.as_str());
     assert_eq!(what("e"), Some("Show or hide the workspace tree"));
     assert_eq!(what("f"), Some("Lua function (+2 more)"));
     assert_eq!(what("Ctrl+C"), Some("Interrupt the running turn"));
-    let q = application::keymap::Key::char('q');
+    let q = application_core::keymap::Key::char('q');
     assert!(next_keys(&keymap, &[q]).is_empty(), "nothing starts with q");
 }

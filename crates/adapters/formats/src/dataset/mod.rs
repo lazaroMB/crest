@@ -10,7 +10,7 @@ pub mod parquet;
 pub mod profile;
 pub mod text;
 
-use application::ports::formats::DatasetRequest;
+use application_core::ports::formats::DatasetRequest;
 use domain::block::{Column, TableSpec};
 use domain::dataset::{DatasetFormat, DatasetSpec};
 

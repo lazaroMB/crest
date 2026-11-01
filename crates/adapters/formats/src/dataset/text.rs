@@ -1,4 +1,4 @@
-//! Text datasets: CSV and TSV (through `application::csv`) and JSON lines.
+//! Text datasets: CSV and TSV (through `application_core::csv`) and JSON lines.
 //!
 //! CSV cells are typed per column by inference over the profiled rows: a
 //! column is `integer` when every present cell is a whole number, `float`
@@ -7,7 +7,7 @@
 //! otherwise. Missing cells (empty, `NA`, `null`, …) are nulls. JSON lines
 //! keep their JSON types; their strings are tested for dates the same way.
 
-use application::csv;
+use application_core::csv;
 use serde_json::Value as Json;
 
 use super::profile::Value;

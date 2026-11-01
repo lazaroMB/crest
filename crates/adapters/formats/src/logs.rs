@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use application::ports::formats::LogRequest;
+use application_core::ports::formats::LogRequest;
 use domain::devops::logs::{
     BucketCounts, LogFormat, LogHistogram, LogSpec, MAX_BUCKETS, MAX_LINES,
 };

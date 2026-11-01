@@ -1,7 +1,7 @@
 //! The channel between [`UiApproval`], which the use cases call off the UI
 //! thread, and the dialog that answers its requests.
 
-use application::ports::approval::{
+use application_core::ports::approval::{
     ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse,
 };
 use async_trait::async_trait;

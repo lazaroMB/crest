@@ -295,7 +295,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::Block;
     use gpui::{Modifiers, TestAppContext};
 

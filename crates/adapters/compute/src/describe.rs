@@ -6,7 +6,7 @@
 //! pandas); histogram bins follow Freedman-Diaconis, falling back to
 //! Sturges when the IQR is zero.
 
-use application::ports::compute::{ColumnValues, ComputeError, DescribeRequest};
+use application_core::ports::compute::{ColumnValues, ComputeError, DescribeRequest};
 use domain::computed::{
     Computed, ComputedBody, DescriptiveBody, Histogram, LevelCount, Narrative, VariableKind,
     VariableSummary,

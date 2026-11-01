@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use application::ports::formats::WaveRequest;
+use application_core::ports::formats::WaveRequest;
 use domain::engineering::waveform::{
     MAX_CHANGES, MAX_SIGNALS, SignalKind, Timescale, WaveChange, WaveFormat, WaveSignal,
     WaveformSpec,

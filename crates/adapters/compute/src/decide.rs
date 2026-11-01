@@ -9,7 +9,7 @@
 //! nearest such weight below and above the current one and who takes the
 //! lead there; ties are flagged.
 
-use application::ports::compute::{ComputeError, DecideRequest};
+use application_core::ports::compute::{ComputeError, DecideRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, CriterionDirection, DecisionCriterion,
     DecisionMatrixBody, DecisionOption, Narrative, Normalization, UncertaintyKind, WarningSeverity,
