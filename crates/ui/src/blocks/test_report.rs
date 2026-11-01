@@ -18,7 +18,7 @@
 
 use std::collections::BTreeSet;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::report::{TestCase, TestOutcome, TestReportSpec};
 use gpui::{
     AnyElement, App, Context, ElementId, Entity, FontWeight, Hsla, InteractiveElement as _,
@@ -27,6 +27,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::sources::{action, activate, entry_label};
 use crate::timeline::TimelineEntry;
 
@@ -467,6 +469,31 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of test report blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::TestReport
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::TestReport(spec) = kind else {
+            return Vec::new();
+        };
+        let failing = super::copy::failing_tests(spec);
+        if failing.is_empty() {
+            Vec::new()
+        } else {
+            vec![CopyFormat::new("failing", "failing tests", failing)]
+        }
+    }
 }
 
 #[cfg(test)]

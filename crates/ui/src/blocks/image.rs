@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine as _;
-use domain::block::{BlockId, BlockKind, ImageData, SourceRef};
+use domain::block::{BlockId, BlockKind, BlockTag, ImageData, SourceRef};
 use gpui::{
     AnyElement, App, ElementId, Entity, Hsla, Image, ImageFormat, ImageSource,
     InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _, Pixels, SharedString,
@@ -23,6 +23,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
+use super::BlockView;
 use super::measured::measured_with;
 use super::sources::events::{BlockEvent, emit};
 use super::sources::{action, activate, entry_label};
@@ -288,6 +289,19 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         block = block.child(source_line(entry, source, cx));
     }
     block.into_any_element()
+}
+
+/// The registry entry of image blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Image
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
 }
 
 #[cfg(test)]

@@ -5,13 +5,15 @@
 //! first line of the reasoning. Expanded (`Enter` or a click) it shows the
 //! whole text in a muted tone under the same header.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use gpui::{
     AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
     Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// Header shown in both states.
@@ -79,6 +81,34 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
                 .child((*full).clone()),
         )
         .into_any_element()
+}
+
+/// The registry entry of thinking blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Thinking
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
+
+    fn expanded_by_default(&self, kind: &BlockKind) -> bool {
+        // Shown as its own `collapsed` flag says.
+        !matches!(
+            kind,
+            BlockKind::Thinking {
+                collapsed: true,
+                ..
+            }
+        )
+    }
 }
 
 #[cfg(test)]

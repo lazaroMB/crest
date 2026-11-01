@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::devops::trace::TraceSpec;
 use domain::widget::timeline::{TimeUnit, TimelineSpec, format_date_time, format_duration};
 use gpui::{
@@ -21,6 +21,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use crate::timeline::TimelineEntry;
 use crate::widgets::timeline::axis::color_slot;
@@ -207,6 +209,33 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of trace blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Trace
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Trace(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("spans", "spans CSV", spec.timeline.to_csv()),
+            CopyFormat::new(
+                "critical",
+                "critical path",
+                super::copy::critical_path_text(spec),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

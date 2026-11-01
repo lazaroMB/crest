@@ -16,7 +16,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::engineering::waveform::{Radix, SignalKind, WaveSignal, WaveformSpec, format_value};
 use gpui::{
     AnyElement, App, Bounds, ContentMask, Context, FocusHandle, FontWeight, Hsla,
@@ -27,6 +27,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::trace::file_name;
 use crate::blocks::chart::layout::{Align, Label};
 use crate::blocks::chart::paint::LabelFont;
@@ -837,6 +839,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of waveform blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Waveform
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Waveform(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
+            CopyFormat::new("end", "values at end", spec.values_at(spec.end, spec.radix)),
+        ]
+    }
 }
 
 #[cfg(test)]

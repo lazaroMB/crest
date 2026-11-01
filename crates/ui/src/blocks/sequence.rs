@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use base64::Engine as _;
-use domain::block::{BlockId, BlockKind, ImageData};
+use domain::block::{BlockId, BlockKind, BlockTag, ImageData};
 use domain::science::sequence::{
     Alphabet, SeqHit, SequenceSpec, Strand, feature_slot, gc_percent, reverse_complement,
 };
@@ -40,6 +40,8 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use self::map::{MapColors, plasmid_svg};
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::svg::{SvgData, SvgState, hex};
 use crate::timeline::TimelineEntry;
 use crate::widgets::{palette, readout, register_input, tool_button};
@@ -1028,6 +1030,33 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of sequence blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Sequence
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Sequence(spec) = kind else {
+            return Vec::new();
+        };
+        let mut formats = vec![
+            CopyFormat::new("fasta", "FASTA", spec.to_fasta()),
+            CopyFormat::new("features", "features CSV", spec.features_csv()),
+        ];
+        if spec.enzyme_source.is_some() {
+            formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
+        }
+        formats
+    }
 }
 
 #[cfg(test)]

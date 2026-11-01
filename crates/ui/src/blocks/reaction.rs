@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use domain::science::reaction::{ReactionComponent, ReactionRole, ReactionSpec, Stoichiometry};
 use gpui::{
     AnyElement, App, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
@@ -19,8 +19,10 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
 use super::computed::grid::{Grid, GridCell};
 use super::computed::provenance_text;
+use super::copy::CopyFormat;
 use super::molecule::{subscript_formula, svg_data, tinted_picture};
 use super::svg::SvgData;
 use crate::timeline::TimelineEntry;
@@ -279,6 +281,44 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
                 ))),
         )
         .into_any_element()
+}
+
+/// The registry entry of reaction blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Reaction
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Reaction(spec) = kind else {
+            return Vec::new();
+        };
+        let mut formats = vec![
+            CopyFormat::new("smiles", "reaction SMILES", spec.smiles.clone()),
+            CopyFormat::new("equation", "equation", spec.equation(None)),
+        ];
+        if let domain::science::reaction::Stoichiometry::Suggested { coefficients } =
+            &spec.stoichiometry
+        {
+            formats.push(CopyFormat::new(
+                "balanced",
+                "balanced equation",
+                spec.equation(Some(coefficients)),
+            ));
+        }
+        formats.push(CopyFormat::new(
+            "balance",
+            "balance CSV",
+            spec.balance_csv(),
+        ));
+        formats
+    }
 }
 
 #[cfg(test)]

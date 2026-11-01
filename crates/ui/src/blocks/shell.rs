@@ -9,7 +9,7 @@
 //! [`super::ansi`]); the 16 basic colors take the theme's `ansi.*`
 //! tokens, so a red error looks like the theme's red.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use gpui::{
     AnyElement, App, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, StyledText, UnderlineStyle, Window, div, px,
@@ -17,7 +17,9 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
 use super::ansi::{self, Color, Style};
+use super::copy::CopyFormat;
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
 
@@ -232,6 +234,27 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         .child(header)
         .child(body)
         .into_any_element()
+}
+
+/// The registry entry of shell blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Shell
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Shell { stdout, stderr, .. } = kind else {
+            return Vec::new();
+        };
+        let plain = super::ansi::parse(&format!("{stdout}{stderr}")).text;
+        vec![CopyFormat::new("plain", "plain output", plain)]
+    }
 }
 
 #[cfg(test)]

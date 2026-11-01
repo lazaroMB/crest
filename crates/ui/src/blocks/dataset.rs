@@ -13,7 +13,7 @@
 //! At most [`MAX_PROFILE_ROWS`] columns are profiled on screen; copy-as
 //! has all of them.
 
-use domain::block::{BlockKind, Cell};
+use domain::block::{BlockKind, BlockTag, Cell};
 use domain::computed::apa::significant;
 use domain::dataset::{DatasetColumn, DatasetFormat, DatasetSpec};
 use gpui::prelude::FluentBuilder as _;
@@ -24,7 +24,9 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
 use super::computed::descriptive::sparkline;
+use super::copy::CopyFormat;
 use crate::timeline::TimelineEntry;
 
 /// Most columns drawn in the profile; the rest are counted.
@@ -339,6 +341,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         )
         .child(table)
         .into_any_element()
+}
+
+/// The registry entry of dataset blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Dataset
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Dataset(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("profile", "profile CSV", profile_csv(spec)),
+            CopyFormat::new("csv", "preview CSV", super::copy::csv(&spec.preview)),
+        ]
+    }
 }
 
 #[cfg(test)]

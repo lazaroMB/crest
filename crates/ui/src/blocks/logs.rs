@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::devops::logs::{LogHistogram, LogSpec};
 use domain::widget::list::ListSpec;
 use domain::widget::timeline::{TimeUnit, format_date_time, format_duration};
@@ -24,6 +24,8 @@ use gpui::{
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::trace::caption;
 use crate::timeline::TimelineEntry;
@@ -212,6 +214,26 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of logs blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Logs
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Logs(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new("lines", "lines", spec.list.all_text())]
+    }
 }
 
 #[cfg(test)]

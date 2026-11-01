@@ -7,7 +7,7 @@
 //! `unverified` in the warning color when it has none. Notes follow.
 //! crest bundles no material data: every number is the call's.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use domain::engineering::material::MaterialSpec;
 use gpui::{
     AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -15,7 +15,9 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
 use super::computed::grid::{Grid, GridCell};
+use super::copy::CopyFormat;
 use crate::timeline::TimelineEntry;
 
 /// Text of the source column for a value without one.
@@ -109,6 +111,26 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
         return super::placeholder(entry, cx);
     };
     render_spec(spec, cx)
+}
+
+/// The registry entry of material blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Material
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Material(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new("csv", "properties CSV", spec.to_csv())]
+    }
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use application_core::ports::form::{FormRequest, FormResponse};
 use chrono::NaiveDate;
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::form::{DateSpan, FieldKind, FormField, FormOption, FormSpec, FormState};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, FocusHandle, Focusable as _,
@@ -50,7 +50,9 @@ use gpui_component::radio::Radio;
 use gpui_component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use serde_json::Value;
 
+use super::BlockView;
 use crate::form::PendingForm;
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// The input of one field.
@@ -1082,6 +1084,23 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let form = view(entry.block.id, spec, window, cx);
     form.update(cx, |form, cx| form.sync(spec, window, cx));
     form.into_any_element()
+}
+
+/// The registry entry of form blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Form
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
 }
 
 #[cfg(test)]

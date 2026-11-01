@@ -52,7 +52,7 @@ pub mod simulation;
 pub mod test;
 pub mod tolerance;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::computed::apa::{self, ApaToken};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, ComputedStatus, ValueFormat,
@@ -68,6 +68,8 @@ use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v
 use serde_json::Value;
 
 use self::grid::Grid;
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::sources::events::{BlockEvent, emit};
 use crate::timeline::TimelineEntry;
 
@@ -793,6 +795,31 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     card(entry.block.id, envelope, body, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of computed blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Computed
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn own_copy_buttons(&self) -> bool {
+        // The card's footer has its own copy buttons.
+        true
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Computed { envelope, body } = kind else {
+            return Vec::new();
+        };
+        super::copy::computed(envelope, body)
+    }
 }
 
 #[cfg(test)]

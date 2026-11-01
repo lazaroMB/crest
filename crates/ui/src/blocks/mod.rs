@@ -1,8 +1,10 @@
 //! Block registry: one module per rich block kind.
 //!
-//! Each module exposes `render(entry, window, cx)`. The timeline dispatches
-//! here for every kind it does not draw itself, so the wave-3 block tasks
-//! work in separate files. Renderers get the window and a mutable `App`
+//! Each module has a unit `View` implementing [`BlockView`] (how the kind
+//! is drawn, how wide it is, the forms it copies in...) and is listed once
+//! in [`VIEWS`]; the timeline looks a block's view up by its [`BlockTag`]
+//! for every kind it does not draw itself (text, tool calls and errors,
+//! [`TIMELINE_DRAWN`]). Renderers get the window and a mutable `App`
 //! because some keep GPUI state per block (a table's `TableView`, a
 //! diagram's pan and zoom) that is created and updated while drawing.
 
@@ -62,78 +64,131 @@ pub mod waveform;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use gpui::{
     AnyElement, AnyEntity, App, AppContext as _, Context, Entity, FocusHandle, Global,
     IntoElement as _, ParentElement as _, Styled as _, WeakFocusHandle, Window, div,
 };
 use gpui_component::ActiveTheme as _;
 
-use crate::timeline::kind_name;
-use crate::timeline::{NO_REV, TimelineEntry};
+use self::copy::CopyFormat;
+use crate::timeline::{BlockWidth, NO_REV, TimelineEntry};
+
+/// How the timeline draws one kind of block, and what it knows about it.
+/// One unit struct per module implements it and is listed in [`VIEWS`];
+/// everything but [`tag`](Self::tag) and [`render`](Self::render) has a
+/// default.
+pub trait BlockView: Sync + 'static {
+    /// The kind this view draws.
+    fn tag(&self) -> BlockTag;
+
+    /// Draws `entry`, a block of this view's kind.
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement;
+
+    /// Which column width the kind uses; rich blocks are wide.
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Wide
+    }
+
+    /// The forms `kind` (of this view's kind) can be copied in
+    /// ([`copy::formats`]); none by default.
+    fn copy_formats(&self, _kind: &BlockKind) -> Vec<CopyFormat> {
+        Vec::new()
+    }
+
+    /// Whether the kind has an alternate view (a chart's table, a
+    /// document's source) toggled with `t`.
+    fn has_alt_view(&self) -> bool {
+        false
+    }
+
+    /// Whether a new block of this kind starts expanded.
+    fn expanded_by_default(&self, _kind: &BlockKind) -> bool {
+        true
+    }
+
+    /// Whether the block draws its own copy buttons, so the timeline
+    /// shows no copy row under it ([`copy::row`]).
+    fn own_copy_buttons(&self) -> bool {
+        false
+    }
+}
+
+/// Every block view; a new kind adds its line here.
+pub static VIEWS: &[&dyn BlockView] = &[
+    &chart::View,
+    &custom::View,
+    &diff::View,
+    &image::View,
+    &markdown::View,
+    &mermaid::View,
+    &shell::View,
+    &sources::View,
+    &stage::View,
+    &table::View,
+    &thinking::View,
+    &computed::View,
+    // Phase 1 chat blocks.
+    &form::View,
+    &plot::View,
+    &test_report::View,
+    &findings::View,
+    &dataset::View,
+    &molecule::View,
+    &plate::View,
+    // Phase 2 developer/ops viewers.
+    &trace::View,
+    &flame::View,
+    &logs::View,
+    &query_plan::View,
+    &har::View,
+    &terraform::View,
+    &diagram::View,
+    &bench::View,
+    &waveform::View,
+    &netlist::View,
+    &material::View,
+    &cad::View,
+    &drawing::View,
+    &ifc::View,
+    &sequence::View,
+    &reaction::View,
+    &molecule_grid::View,
+    &spectrum::View,
+    &molecule3d::View,
+    &ghs::View,
+    &geomap::View,
+    &gantt::View,
+    &arrays::View,
+    &network::View,
+    &training::View,
+];
+
+/// The kinds `timeline/render.rs` draws itself, so they have no view.
+pub const TIMELINE_DRAWN: &[BlockTag] = &[BlockTag::Text, BlockTag::ToolCall, BlockTag::Error];
+
+/// The view of the kind `tag`, or `None` for [`TIMELINE_DRAWN`] kinds.
+pub fn view(tag: BlockTag) -> Option<&'static dyn BlockView> {
+    // Built once: it is looked up for every block on every frame.
+    static BY_TAG: OnceLock<HashMap<BlockTag, &'static dyn BlockView>> = OnceLock::new();
+    BY_TAG
+        .get_or_init(|| VIEWS.iter().map(|view| (view.tag(), *view)).collect())
+        .get(&tag)
+        .copied()
+}
 
 /// Draws a rich block, or `None` for kinds the timeline renders itself.
 pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-    let element = match &entry.block.kind {
-        BlockKind::Chart(_) => chart::render(entry, window, cx),
-        BlockKind::Custom { .. } => custom::render(entry, window, cx),
-        BlockKind::Diff(_) => diff::render(entry, window, cx),
-        BlockKind::Image { .. } => image::render(entry, window, cx),
-        BlockKind::Markdown { .. } => markdown::render(entry, window, cx),
-        BlockKind::Mermaid(_) => mermaid::render(entry, window, cx),
-        BlockKind::Shell { .. } => shell::render(entry, window, cx),
-        BlockKind::Sources { .. } => sources::render(entry, window, cx),
-        BlockKind::StageHeader { .. } => stage::render(entry, window, cx),
-        BlockKind::Table(_) => table::render(entry, window, cx),
-        BlockKind::Thinking { .. } => thinking::render(entry, window, cx),
-        BlockKind::Computed { .. } => computed::render(entry, window, cx),
-        // Phase 1 chat blocks.
-        BlockKind::Form(_) => form::render(entry, window, cx),
-        BlockKind::Plot(_) => plot::render(entry, window, cx),
-        BlockKind::TestReport(_) => test_report::render(entry, window, cx),
-        BlockKind::Findings(_) => findings::render(entry, window, cx),
-        BlockKind::Dataset(_) => dataset::render(entry, window, cx),
-        BlockKind::Molecule(_) => molecule::render(entry, window, cx),
-        BlockKind::Plate(_) => plate::render(entry, window, cx),
-        // Phase 2 developer/ops viewers.
-        BlockKind::Trace(_) => trace::render(entry, window, cx),
-        BlockKind::FlameGraph(_) => flame::render(entry, window, cx),
-        BlockKind::Logs(_) => logs::render(entry, window, cx),
-        BlockKind::QueryPlan(_) => query_plan::render(entry, window, cx),
-        BlockKind::Har(_) => har::render(entry, window, cx),
-        BlockKind::TerraformPlan(_) => terraform::render(entry, window, cx),
-        BlockKind::Diagram(_) => diagram::render(entry, window, cx),
-        BlockKind::Benchmarks(_) => bench::render(entry, window, cx),
-        BlockKind::Waveform(_) => waveform::render(entry, window, cx),
-        BlockKind::Netlist(_) => netlist::render(entry, window, cx),
-        BlockKind::Material(_) => material::render(entry, window, cx),
-        BlockKind::CadModel(_) => cad::render(entry, window, cx),
-        BlockKind::Drawing(_) => drawing::render(entry, window, cx),
-        BlockKind::IfcSchedule(_) => ifc::render(entry, window, cx),
-        BlockKind::Sequence(_) => sequence::render(entry, window, cx),
-        BlockKind::Reaction(_) => reaction::render(entry, window, cx),
-        BlockKind::MoleculeGrid(_) => molecule_grid::render(entry, window, cx),
-        BlockKind::Spectrum(_) => spectrum::render(entry, window, cx),
-        BlockKind::Molecule3d(_) => molecule3d::render(entry, window, cx),
-        BlockKind::Ghs(_) => ghs::render(entry, window, cx),
-        BlockKind::GeoMap(_) => geomap::render(entry, window, cx),
-        BlockKind::Gantt(_) => gantt::render(entry, window, cx),
-        BlockKind::ArrayFile(_) => arrays::render(entry, window, cx),
-        BlockKind::Network(_) => network::render(entry, window, cx),
-        BlockKind::TrainingCurves(_) => training::render(entry, window, cx),
-        BlockKind::Text { .. } | BlockKind::ToolCall { .. } | BlockKind::Error { .. } => {
-            return None;
-        }
-    };
-    Some(element)
+    view(entry.block.kind.tag()).map(|view| view.render(entry, window, cx))
 }
 
 /// The `[kind]` stand-in used until a block's renderer exists.
 pub(crate) fn placeholder(entry: &TimelineEntry, cx: &App) -> AnyElement {
     div()
         .text_color(cx.theme().muted_foreground)
-        .child(format!("[{}]", kind_name(&entry.block.kind)))
+        .child(format!("[{}]", entry.block.kind.tag().name()))
         .into_any_element()
 }
 
@@ -337,6 +392,15 @@ mod tests {
     use gpui::TestAppContext;
 
     struct Counter(u32);
+
+    #[test]
+    fn every_kind_has_one_view_or_is_drawn_by_the_timeline() {
+        for &tag in BlockTag::ALL {
+            let views = VIEWS.iter().filter(|view| view.tag() == tag).count();
+            let drawn = TIMELINE_DRAWN.contains(&tag);
+            assert_eq!(views + usize::from(drawn), 1, "{tag:?}");
+        }
+    }
 
     #[gpui::test]
     fn block_state_is_created_once_per_block(cx: &mut TestAppContext) {

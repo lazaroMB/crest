@@ -11,7 +11,7 @@
 //! `https` and `mailto` URLs. Nesting past [`MAX_DEPTH`] is cut with a
 //! marker instead of recursing further.
 
-use domain::block::{Block, BlockId, BlockKind, CustomNode, is_openable_url};
+use domain::block::{Block, BlockId, BlockKind, BlockTag, CustomNode, is_openable_url};
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
@@ -20,6 +20,8 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use uuid::Uuid;
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use crate::timeline::TimelineEntry;
 
 /// Deepest node drawn; children below it show a marker.
@@ -314,6 +316,26 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         )
         .child(body)
         .into_any_element()
+}
+
+/// The registry entry of custom blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Custom
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Custom { tree, .. } = kind else {
+            return Vec::new();
+        };
+        super::copy::custom(tree)
+    }
 }
 
 #[cfg(test)]

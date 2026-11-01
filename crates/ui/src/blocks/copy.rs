@@ -33,6 +33,9 @@
 //! | map | features CSV (type, geodesic area, length, perimeter, box, properties), the summary line |
 //! | custom | its widgets: timeline → spans CSV, filter list → all items as lines (its own copy button takes the visible ones), graph → DOT, tree → indented text |
 //!
+//! Each kind's forms are made by its view
+//! ([`super::BlockView::copy_formats`]); [`formats`] looks the view up.
+//!
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
 
@@ -65,7 +68,7 @@ pub struct CopyFormat {
 }
 
 impl CopyFormat {
-    fn new(key: &'static str, label: &'static str, text: String) -> Self {
+    pub(crate) fn new(key: &'static str, label: &'static str, text: String) -> Self {
         Self { key, label, text }
     }
 }
@@ -489,205 +492,7 @@ pub fn custom(tree: &CustomNode) -> Vec<CopyFormat> {
 /// The forms `kind` can be copied in; empty for kinds without any.
 #[must_use]
 pub fn formats(kind: &BlockKind) -> Vec<CopyFormat> {
-    match kind {
-        BlockKind::Table(table) => vec![
-            CopyFormat::new("tsv", "TSV", tsv(table)),
-            CopyFormat::new("csv", "CSV", csv(table)),
-        ],
-        BlockKind::Chart(chart) => {
-            let table = chart_table(chart);
-            vec![
-                CopyFormat::new("csv", "CSV", csv(&table)),
-                CopyFormat::new("tsv", "TSV", tsv(&table)),
-            ]
-        }
-        BlockKind::Plot(spec) => vec![CopyFormat::new(
-            "json",
-            "JSON",
-            serde_json::to_string_pretty(spec).unwrap_or_default(),
-        )],
-        BlockKind::Computed { envelope, body } => computed(envelope, body),
-        BlockKind::Mermaid(spec) => vec![CopyFormat::new("source", "source", spec.source.clone())],
-        BlockKind::TestReport(spec) => {
-            let failing = failing_tests(spec);
-            if failing.is_empty() {
-                Vec::new()
-            } else {
-                vec![CopyFormat::new("failing", "failing tests", failing)]
-            }
-        }
-        BlockKind::Findings(spec) if !spec.findings.is_empty() => {
-            vec![CopyFormat::new(
-                "lines",
-                "file:line list",
-                finding_lines(spec),
-            )]
-        }
-        BlockKind::Shell { stdout, stderr, .. } => {
-            let plain = super::ansi::parse(&format!("{stdout}{stderr}")).text;
-            vec![CopyFormat::new("plain", "plain output", plain)]
-        }
-        BlockKind::Dataset(spec) => vec![
-            CopyFormat::new("profile", "profile CSV", super::dataset::profile_csv(spec)),
-            CopyFormat::new("csv", "preview CSV", csv(&spec.preview)),
-        ],
-        BlockKind::Molecule(spec) => molecule(spec),
-        BlockKind::Plate(spec) => {
-            vec![CopyFormat::new("csv", "CSV", super::plate::plate_csv(spec))]
-        }
-        BlockKind::Custom { tree, .. } => custom(tree),
-        BlockKind::Trace(spec) => vec![
-            CopyFormat::new("spans", "spans CSV", spec.timeline.to_csv()),
-            CopyFormat::new("critical", "critical path", critical_path_text(spec)),
-        ],
-        BlockKind::FlameGraph(spec) => vec![
-            CopyFormat::new("folded", "folded stacks", spec.to_folded()),
-            CopyFormat::new("top", "self-time CSV", frame_stats_csv(spec)),
-        ],
-        BlockKind::Logs(spec) => {
-            vec![CopyFormat::new("lines", "lines", spec.list.all_text())]
-        }
-        BlockKind::QueryPlan(spec) => vec![
-            CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
-            CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
-        ],
-        BlockKind::Benchmarks(spec) => {
-            vec![CopyFormat::new("csv", "CSV", spec.to_csv())]
-        }
-        BlockKind::Waveform(spec) => vec![
-            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
-            CopyFormat::new("end", "values at end", spec.values_at(spec.end, spec.radix)),
-        ],
-        BlockKind::Netlist(spec) => vec![
-            CopyFormat::new("nets", "nets CSV", spec.nets_csv()),
-            CopyFormat::new("components", "components CSV", spec.components_csv()),
-            CopyFormat::new("dot", "DOT", spec.to_graph().to_dot()),
-        ],
-        BlockKind::Material(spec) => vec![CopyFormat::new("csv", "properties CSV", spec.to_csv())],
-        BlockKind::CadModel(spec) => vec![
-            CopyFormat::new("solids", "solids CSV", spec.to_csv()),
-            CopyFormat::new("summary", "summary", super::cad::summary_text(spec)),
-        ],
-        BlockKind::Drawing(spec) => vec![
-            CopyFormat::new("layers", "layers CSV", spec.layers_csv()),
-            CopyFormat::new("texts", "texts", spec.texts().join("\n")),
-            CopyFormat::new("summary", "summary", super::drawing::summary_text(spec)),
-        ],
-        BlockKind::IfcSchedule(spec) => vec![
-            CopyFormat::new("spaces", "spaces CSV", spec.to_csv()),
-            CopyFormat::new("tree", "schedule", spec.to_tree().to_text()),
-        ],
-        BlockKind::Sequence(spec) => {
-            let mut formats = vec![
-                CopyFormat::new("fasta", "FASTA", spec.to_fasta()),
-                CopyFormat::new("features", "features CSV", spec.features_csv()),
-            ];
-            if spec.enzyme_source.is_some() {
-                formats.push(CopyFormat::new("sites", "cut sites CSV", spec.sites_csv()));
-            }
-            formats
-        }
-        BlockKind::TrainingCurves(spec) => vec![CopyFormat::new(
-            "summaries",
-            "summaries CSV",
-            spec.summary_csv(),
-        )],
-        BlockKind::Network(spec) => vec![
-            CopyFormat::new("metrics", "metrics CSV", spec.to_csv()),
-            CopyFormat::new("edges", "edges CSV", spec.edges_csv()),
-        ],
-        BlockKind::ArrayFile(spec) => {
-            let mut formats = vec![CopyFormat::new("nodes", "variables CSV", spec.nodes_csv())];
-            if let Some(p) = spec.previews.first() {
-                formats.push(CopyFormat::new("preview", "preview CSV", p.to_csv()));
-            }
-            formats
-        }
-        BlockKind::Gantt(spec) => vec![
-            CopyFormat::new("schedule", "schedule CSV", spec.to_csv()),
-            CopyFormat::new(
-                "critical",
-                "critical path",
-                super::gantt::critical_text(spec),
-            ),
-        ],
-        BlockKind::GeoMap(spec) => vec![
-            CopyFormat::new("features", "features CSV", spec.to_csv()),
-            CopyFormat::new("summary", "summary", super::geomap::summary_text(spec)),
-        ],
-        BlockKind::Ghs(spec) => vec![
-            CopyFormat::new("card", "card", spec.to_text()),
-            CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),
-        ],
-        BlockKind::Molecule3d(spec) => {
-            let mut formats = vec![CopyFormat::new("xyz", "XYZ", spec.to_xyz())];
-            if let Some(smiles) = &spec.smiles {
-                formats.push(CopyFormat::new("smiles", "SMILES", smiles.clone()));
-            }
-            formats
-        }
-        BlockKind::Spectrum(spec) => vec![
-            CopyFormat::new("peaks", "peaks CSV", spec.peaks_csv()),
-            CopyFormat::new("points", "points CSV", spec.to_csv()),
-        ],
-        BlockKind::MoleculeGrid(spec) => vec![
-            CopyFormat::new("csv", "CSV", spec.to_csv()),
-            CopyFormat::new(
-                "smiles",
-                "SMILES",
-                spec.molecules
-                    .iter()
-                    .map(|m| format!("{} {}", m.molecule.smiles, m.id))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-        ],
-        BlockKind::Reaction(spec) => {
-            let mut formats = vec![
-                CopyFormat::new("smiles", "reaction SMILES", spec.smiles.clone()),
-                CopyFormat::new("equation", "equation", spec.equation(None)),
-            ];
-            if let domain::science::reaction::Stoichiometry::Suggested { coefficients } =
-                &spec.stoichiometry
-            {
-                formats.push(CopyFormat::new(
-                    "balanced",
-                    "balanced equation",
-                    spec.equation(Some(coefficients)),
-                ));
-            }
-            formats.push(CopyFormat::new(
-                "balance",
-                "balance CSV",
-                spec.balance_csv(),
-            ));
-            formats
-        }
-        BlockKind::Diagram(spec) if spec.tables.is_empty() => {
-            vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())]
-        }
-        BlockKind::Diagram(spec) => vec![
-            CopyFormat::new("mermaid", "Mermaid", spec.to_mermaid()),
-            CopyFormat::new("dot", "DOT", spec.graph.to_dot()),
-            CopyFormat::new("tables", "tables", spec.tables_tree().to_text()),
-        ],
-        BlockKind::TerraformPlan(spec) => vec![
-            CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
-            CopyFormat::new("changes", "changes CSV", spec.to_csv()),
-        ],
-        BlockKind::Har(spec) => vec![
-            CopyFormat::new("requests", "requests CSV", spec.to_csv()),
-            CopyFormat::new(
-                "urls",
-                "URLs",
-                spec.entries
-                    .iter()
-                    .map(|e| format!("{} {}\n", e.method, domain::devops::har::redact_url(&e.url)))
-                    .collect(),
-            ),
-        ],
-        _ => Vec::new(),
-    }
+    super::view(kind.tag()).map_or_else(Vec::new, |view| view.copy_formats(kind))
 }
 
 /// The critical path of a trace, one `service: name<TAB>duration` line
@@ -763,7 +568,7 @@ pub fn row(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
-    if matches!(entry.block.kind, BlockKind::Computed { .. }) {
+    if super::view(entry.block.kind.tag()).is_some_and(|view| view.own_copy_buttons()) {
         return None;
     }
     let id = entry.block.id;

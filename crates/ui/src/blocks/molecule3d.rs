@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::model3d::ModelSpec;
 use domain::science::molecule3d::{CoordinateSource, Molecule3dSpec, StructureFormat};
 use domain::sysmodel::scene::Rgb;
@@ -23,6 +23,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::model_view::model_view_inline;
 use crate::render3d::math::V3;
@@ -253,6 +255,30 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of molecule3d blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Molecule3d
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Molecule3d(spec) = kind else {
+            return Vec::new();
+        };
+        let mut formats = vec![CopyFormat::new("xyz", "XYZ", spec.to_xyz())];
+        if let Some(smiles) = &spec.smiles {
+            formats.push(CopyFormat::new("smiles", "SMILES", smiles.clone()));
+        }
+        formats
+    }
 }
 
 #[cfg(test)]

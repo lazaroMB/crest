@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::devops::query_plan::{MISESTIMATE_FACTOR, QueryPlanSpec, round_factor};
 use domain::widget::timeline::{TimeUnit, format_duration};
 use domain::widget::tree::{TreeSpec, format_number};
@@ -22,6 +22,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::trace::caption;
 use crate::timeline::TimelineEntry;
@@ -212,6 +214,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of query plan blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::QueryPlan
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::QueryPlan(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("tree", "tree", spec.to_tree().to_text()),
+            CopyFormat::new("nodes", "nodes CSV", spec.to_csv()),
+        ]
+    }
 }
 
 #[cfg(test)]

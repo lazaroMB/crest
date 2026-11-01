@@ -12,7 +12,7 @@
 //! - A SMILES that did not parse shows the parse error instead.
 
 use base64::Engine as _;
-use domain::block::{BlockKind, ImageData};
+use domain::block::{BlockKind, BlockTag, ImageData};
 use domain::science::MoleculeSpec;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -22,7 +22,10 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::svg::{SvgData, SvgState};
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// Tallest the depiction is drawn, in pixels.
@@ -238,6 +241,30 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         );
     }
     card.into_any_element()
+}
+
+/// The registry entry of molecule blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Molecule
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Molecule(spec) = kind else {
+            return Vec::new();
+        };
+        super::copy::molecule(spec)
+    }
 }
 
 #[cfg(test)]
