@@ -1,11 +1,14 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use application::ports::search::{ListFilesRequest, TreeNode, TreeRequest};
+use application::ports::search::{
+    ColumnRange, FileList, FindFileRequest, GrepRequest, ListFilesRequest, TreeNode, TreeRequest,
+};
 use application_testing::fs::{InMemoryFs, test_root};
 
 use futures::executor::block_on;
-use gpui::{TestAppContext, VisualTestContext};
+use gpui::{ParentElement as _, Styled as _, TestAppContext, VisualTestContext, div, px};
 
+use super::preview::RichPreview;
 use super::*;
 
 fn fake_fs() -> Arc<InMemoryFs> {
