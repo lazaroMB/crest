@@ -30,17 +30,11 @@ use super::registry::{
 };
 use crate::ports::web::{MAX_RESULTS, SearchHit, WebFetchRequest, WebPort, WebSearchRequest};
 
-/// Name of the search tool.
-pub const WEB_SEARCH_TOOL: &str = "web_search";
-/// Name of the page tool.
-pub const WEB_FETCH_TOOL: &str = "web_fetch";
-
-/// Prefix of the URL line of a search result.
-pub const URL_PREFIX: &str = "URL: ";
-/// Prefix of the URL line of a fetched page.
-pub const SOURCE_PREFIX: &str = "Source: ";
-/// Prefix of the title line of a fetched page.
-pub const TITLE_PREFIX: &str = "Title: ";
+// The names and the line prefixes are what `web_sources` reads back, so
+// they live with it.
+pub use crate::usecases::web_sources::{
+    SOURCE_PREFIX, TITLE_PREFIX, URL_PREFIX, WEB_FETCH_TOOL, WEB_SEARCH_TOOL,
+};
 
 const WEB_SEARCH_DESCRIPTION: &str = "\
 Searches the web and returns the results: title, URL and snippet of each.
