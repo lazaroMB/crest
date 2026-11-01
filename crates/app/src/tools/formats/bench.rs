@@ -285,7 +285,7 @@ pub async fn build_benchmarks(
     )
     .await?;
     let formats = Arc::clone(&ports.formats);
-    let mut spec = parse_off(ports, "benchmark", move || {
+    let mut spec = parse_off(ports, "the benchmark reader", move || {
         formats.parse_benchmarks(&request)
     })
     .await?

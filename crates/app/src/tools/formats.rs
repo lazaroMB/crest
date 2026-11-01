@@ -155,16 +155,17 @@ pub fn required_path(path: &str) -> Result<String, String> {
     Ok(path.to_owned())
 }
 
-/// Runs `work` (a parser) through the ports' [`Offload`]; `reader` names
-/// it in the error of a job dropped without running.
+/// Runs `work` (a parser) through the ports' [`Offload`]; `what` names
+/// it in the error of a job dropped without running ("the trace parser
+/// did not run").
 async fn parse_off<R: Send + 'static>(
     ports: &FormatToolPorts,
-    reader: &str,
+    what: &str,
     work: impl FnOnce() -> R + Send + 'static,
 ) -> Result<R, String> {
     offloaded(&ports.offload, work)
         .await
-        .ok_or_else(|| format!("the {reader} reader did not run"))
+        .ok_or_else(|| format!("{what} did not run"))
 }
 
 /// The tool output of a builder's result: `summary` of the spec for the
@@ -894,7 +895,7 @@ pub async fn build_dataset(
         truncated,
     };
     let formats = Arc::clone(&ports.formats);
-    let spec = parse_off(ports, "dataset", move || {
+    let spec = parse_off(ports, "the dataset reader", move || {
         formats.preview_dataset(&bytes, &request)
     })
     .await?

@@ -82,7 +82,13 @@ use application::ports::formats::{
 };
 use application::ports::fs::FileSystemPort;
 use application::tools::formats::bench::{build_benchmarks, normalize_benchmarks};
+use application::tools::formats::devops::{
+    build_flamegraph, build_logs, build_trace, normalize_flamegraph, normalize_logs,
+    normalize_trace,
+};
+use application::tools::formats::har::{build_har, normalize_har};
 use application::tools::formats::reaction::{build_reaction, normalize_reaction};
+use application::tools::formats::terraform::{build_terraform_plan, normalize_terraform_plan};
 use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
     FormatToolPorts, build_dataset, grid_entries, normalize_dataset, read_har, read_ifc, read_log,
@@ -241,77 +247,6 @@ fn molecule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Molecule(spec))
 }
 
-fn trace(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "trace";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_report(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_trace(&bytes, &path)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Trace(Box::new(spec)))
-}
-
-fn flamegraph(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "flamegraph";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_report(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = ProfileRequest {
-        path: path.clone(),
-        sample_type: text(args, F, "sample_type")?,
-    };
-    let mut spec = services
-        .formats
-        .parse_profile(&bytes, &request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::FlameGraph(Box::new(spec)))
-}
-
-fn logs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "logs";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let format = match text(args, F, "format")?.as_deref() {
-        None => None,
-        Some("json") => Some(LogFormat::Json),
-        Some("logfmt") => Some(LogFormat::Logfmt),
-        Some("text") => Some(LogFormat::Text),
-        Some(other) => {
-            return Err(error(
-                F,
-                format!("`format` must be json, logfmt or text, got {other:?}"),
-            ));
-        }
-    };
-    let (bytes, truncated) = context(lua)?
-        .block_on(read_log(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = LogRequest {
-        path: path.clone(),
-        format,
-        truncated,
-    };
-    let spec = services
-        .formats
-        .parse_logs(&bytes, &request)
-        .map_err(|e| error(F, e))?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Logs(Box::new(spec)))
-}
-
 fn query_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "query_plan";
     let services = services(lua, F)?;
@@ -331,40 +266,6 @@ fn query_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     spec.title = text(args, F, "title")?;
     spec.validate().map_err(|e| error(F, e))?;
     block_value(lua, &BlockKind::QueryPlan(Box::new(spec)))
-}
-
-fn har(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "har";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_har(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_har(&bytes, &path)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Har(Box::new(spec)))
-}
-
-fn terraform_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "terraform_plan";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_report(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_terraform_plan(&bytes, &path)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::TerraformPlan(Box::new(spec)))
 }
 
 /// The text of `path` (through the guard) or of the inline `inline`
@@ -790,19 +691,21 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("molecule", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "trace",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => trace(lua, &args),
-            _ => Err(error("trace", "expected a table of arguments")),
-        })?,
+        normalize_trace,
+        build_trace,
+        |spec| BlockKind::Trace(Box::new(spec)),
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "flamegraph",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => flamegraph(lua, &args),
-            _ => Err(error("flamegraph", "expected a table of arguments")),
-        })?,
+        normalize_flamegraph,
+        build_flamegraph,
+        |spec| BlockKind::FlameGraph(Box::new(spec)),
     )?;
     register(
         lua,
@@ -855,20 +758,17 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("er", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "terraform_plan",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => terraform_plan(lua, &args),
-            _ => Err(error("terraform_plan", "expected a table of arguments")),
-        })?,
+        normalize_terraform_plan,
+        build_terraform_plan,
+        |spec| BlockKind::TerraformPlan(Box::new(spec)),
     )?;
-    formats.set(
-        "har",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => har(lua, &args),
-            _ => Err(error("har", "expected a table of arguments")),
-        })?,
-    )?;
+    register(lua, &formats, "har", normalize_har, build_har, |spec| {
+        BlockKind::Har(Box::new(spec))
+    })?;
     formats.set(
         "query_plan",
         lua.create_function(|lua, args: Value| match args {
@@ -876,13 +776,9 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("query_plan", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
-        "logs",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => logs(lua, &args),
-            _ => Err(error("logs", "expected a table of arguments")),
-        })?,
-    )?;
+    register(lua, &formats, "logs", normalize_logs, build_logs, |spec| {
+        BlockKind::Logs(Box::new(spec))
+    })?;
     Ok(formats)
 }
 
@@ -1250,7 +1146,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(bad.contains("json, logfmt or text"), "{bad}");
+        assert!(
+            bad.contains("format: unknown variant `xml`, expected one of `json`, `logfmt`, `text`"),
+            "{bad}"
+        );
     }
 
     #[test]

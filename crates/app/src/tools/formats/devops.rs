@@ -24,11 +24,13 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, MAX_LISTED, invalid, mib, one_line, read};
+use super::{
+    FormatToolPorts, MAX_LISTED, invalid, mib, non_blank, one_line, parse_off, read, required_path,
+    shown,
+};
 use crate::ports::formats::{LogRequest, ProfileRequest};
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// How much of a log file `show_logs` reads; a larger file is shown from
 /// its head and marked cut.
@@ -37,11 +39,6 @@ pub const MAX_LOG_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PATH_LISTED: usize = 12;
 /// Spans, frames or patterns listed to the model in a "top" list.
 pub const MAX_TOP: usize = 8;
-
-/// A non-empty title, if given.
-fn title(input: Option<String>) -> Option<String> {
-    input.filter(|t| !t.trim().is_empty())
-}
 
 fn ms(value: f64) -> String {
     format_duration(value, TimeUnit::Ms)
@@ -115,34 +112,53 @@ impl TypedTool for ShowTraceTool {
         input: ShowTrace,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_TRACE, "`path` is empty"));
-        }
+        let input = normalize_trace(input).map_err(|e| invalid(SHOW_TRACE, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
             let path = input.path.clone();
-            let parsed =
-                offloaded(&ports.offload, move || formats.parse_trace(&bytes, &path)).await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the trace parser did not run")),
-            };
-            spec.title = title(input.title);
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = trace_summary(&input.path, &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Trace(Box::new(spec))))
+            shown(
+                build_trace(&ports, input).await,
+                |spec| trace_summary(&path, spec),
+                |spec| BlockKind::Trace(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_trace` input: a path and a non-blank title.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_trace(input: ShowTrace) -> Result<ShowTrace, String> {
+    Ok(ShowTrace {
+        path: required_path(&input.path)?,
+        title: non_blank(input.title),
+    })
+}
+
+/// The trace block of a checked call ([`normalize_trace`]): reads the
+/// file through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_trace(ports: &FormatToolPorts, input: ShowTrace) -> Result<TraceSpec, String> {
+    let bytes = read(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let path = input.path.clone();
+    let mut spec = parse_off(ports, "the trace parser", move || {
+        formats.parse_trace(&bytes, &path)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_trace`.
@@ -292,39 +308,61 @@ impl TypedTool for ShowFlamegraphTool {
         input: ShowFlamegraph,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_FLAMEGRAPH, "`path` is empty"));
-        }
+        let input = normalize_flamegraph(input).map_err(|e| invalid(SHOW_FLAMEGRAPH, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let request = ProfileRequest {
-                path: input.path.clone(),
-                sample_type: input.sample_type.filter(|s| !s.trim().is_empty()),
-            };
-            let parsed = offloaded(&ports.offload, move || {
-                formats.parse_profile(&bytes, &request)
-            })
-            .await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the profile parser did not run")),
-            };
-            spec.title = title(input.title);
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = flame_summary(&input.path, &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::FlameGraph(Box::new(spec))))
+            let path = input.path.clone();
+            shown(
+                build_flamegraph(&ports, input).await,
+                |spec| flame_summary(&path, spec),
+                |spec| BlockKind::FlameGraph(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_flamegraph` input: a path, and the sample type and
+/// title when not blank.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_flamegraph(input: ShowFlamegraph) -> Result<ShowFlamegraph, String> {
+    Ok(ShowFlamegraph {
+        path: required_path(&input.path)?,
+        sample_type: non_blank(input.sample_type),
+        title: non_blank(input.title),
+    })
+}
+
+/// The flame graph block of a checked call ([`normalize_flamegraph`]):
+/// reads the profile through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_flamegraph(
+    ports: &FormatToolPorts,
+    input: ShowFlamegraph,
+) -> Result<FlameSpec, String> {
+    let bytes = read(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let request = ProfileRequest {
+        path: input.path.clone(),
+        sample_type: input.sample_type,
+    };
+    let mut spec = parse_off(ports, "the profile parser", move || {
+        formats.parse_profile(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_flamegraph`.
@@ -472,37 +510,56 @@ impl TypedTool for ShowLogsTool {
         input: ShowLogs,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_LOGS, "`path` is empty"));
-        }
+        let input = normalize_logs(input).map_err(|e| invalid(SHOW_LOGS, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let (bytes, truncated) = match read_log(ports.fs.as_ref(), &input.path).await {
-                Ok(read) => read,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let request = LogRequest {
-                path: input.path.clone(),
-                format: input.format.map(LogFormat::from),
-                truncated,
-            };
-            let parsed =
-                offloaded(&ports.offload, move || formats.parse_logs(&bytes, &request)).await;
-            let spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the log parser did not run")),
-            };
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = logs_summary(&input.path, &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Logs(Box::new(spec))))
+            let path = input.path.clone();
+            shown(
+                build_logs(&ports, input).await,
+                |spec| logs_summary(&path, spec),
+                |spec| BlockKind::Logs(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_logs` input: a path.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_logs(input: ShowLogs) -> Result<ShowLogs, String> {
+    Ok(ShowLogs {
+        path: required_path(&input.path)?,
+        format: input.format,
+    })
+}
+
+/// The log block of a checked call ([`normalize_logs`]): reads the head
+/// of the file through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_logs(ports: &FormatToolPorts, input: ShowLogs) -> Result<LogSpec, String> {
+    let (bytes, truncated) = read_log(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let request = LogRequest {
+        path: input.path.clone(),
+        format: input.format.map(LogFormat::from),
+        truncated,
+    };
+    let spec = parse_off(ports, "the log parser", move || {
+        formats.parse_logs(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_logs`.
@@ -596,7 +653,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

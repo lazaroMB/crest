@@ -144,11 +144,10 @@ pub async fn build_reaction(
     let formats = Arc::clone(&ports.formats);
     let smiles = input.smiles;
     let coefficients = input.coefficients;
-    let mut spec = parse_off(ports, "reaction", move || {
+    let mut spec = parse_off(ports, "the reaction renderer", move || {
         formats.depict_reaction(&smiles, coefficients.as_deref())
     })
-    .await
-    .map_err(|_| "the reaction renderer did not run".to_owned())?;
+    .await?;
     spec.title = input.title;
     spec.conditions = input.conditions;
     let mut names = input.names.into_iter();

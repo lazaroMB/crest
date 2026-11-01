@@ -20,10 +20,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::devops::MAX_TOP;
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line};
+use super::{
+    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, required_path, shown,
+};
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest HAR file read (they carry bodies), in bytes.
 pub const MAX_HAR_BYTES: u64 = 128 * 1024 * 1024;
@@ -96,33 +97,53 @@ impl TypedTool for ShowHarTool {
     }
 
     async fn prepare(&self, input: ShowHar, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_HAR, "`path` is empty"));
-        }
+        let input = normalize_har(input).map_err(|e| invalid(SHOW_HAR, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_har(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
             let path = input.path.clone();
-            let parsed = offloaded(&ports.offload, move || formats.parse_har(&bytes, &path)).await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the HAR parser did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = har_summary(&input.path, &spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Har(Box::new(spec))))
+            shown(
+                build_har(&ports, input).await,
+                |spec| har_summary(&path, spec),
+                |spec| BlockKind::Har(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_har` input: a path and a non-blank title.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn normalize_har(input: ShowHar) -> Result<ShowHar, String> {
+    Ok(ShowHar {
+        path: required_path(&input.path)?,
+        title: non_blank(input.title),
+    })
+}
+
+/// The HAR block of a checked call ([`normalize_har`]): reads the file
+/// through the guard and parses it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_har(ports: &FormatToolPorts, input: ShowHar) -> Result<HarSpec, String> {
+    let bytes = read_har(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let path = input.path.clone();
+    let mut spec = parse_off(ports, "the HAR parser", move || {
+        formats.parse_har(&bytes, &path)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 fn ms(value: f64) -> String {
@@ -267,7 +288,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

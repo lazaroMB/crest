@@ -165,7 +165,7 @@ pub async fn build_waveform(
         signals: input.signals,
         radix: input.radix,
     };
-    let mut spec = parse_off(ports, "waveform", move || {
+    let mut spec = parse_off(ports, "the waveform reader", move || {
         formats.parse_waveform(&bytes, &request)
     })
     .await?
