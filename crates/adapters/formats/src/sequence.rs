@@ -11,7 +11,7 @@
 //! not a residue code is counted in a warning. Cut sites come from the
 //! bundled enzyme table ([`domain::science::enzymes`]).
 
-use application::ports::formats::SequenceRequest;
+use application_core::ports::formats::SequenceRequest;
 use domain::science::enzymes::{ENZYME_SOURCE, ENZYMES, find_cut_sites};
 use domain::science::sequence::{
     Alphabet, MAX_FEATURES, MAX_LENGTH, MAX_QUALIFIER_BYTES, MAX_QUALIFIERS, Qualifier, SeqFeature,

@@ -74,13 +74,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use application::keymap::{Action, Keymap, default_keymap};
-use application::ports::events::{DomainEvent, NoticeLevel};
-use application::ports::fs::FileSystemPort;
-use application::ports::plugin::PluginAction;
-use application::ports::search::{ContentSearchPort, FileSearchPort};
-use application::usecases::cancel::CancelToken;
-use application::usecases::permissions::RuleListing;
+use application_core::keymap::{Action, Keymap, default_keymap};
+use application_core::ports::events::{DomainEvent, NoticeLevel};
+use application_core::ports::fs::FileSystemPort;
+use application_core::ports::plugin::PluginAction;
+use application_core::ports::search::{ContentSearchPort, FileSearchPort};
+use application_core::usecases::cancel::CancelToken;
+use application_core::usecases::permissions::RuleListing;
 use domain::block::Block;
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
@@ -399,7 +399,7 @@ pub trait SessionController: Send + Sync {
 }
 
 /// The block that shows a prompt sent by the user in the timeline.
-pub use application::usecases::user_blocks::prompt_block;
+pub use application_core::usecases::user_blocks::prompt_block;
 
 /// What `@` reference a file chosen in the tree or a picker inserts.
 /// A path with spaces is quoted: `@"My Docs/a.rs":12 `.

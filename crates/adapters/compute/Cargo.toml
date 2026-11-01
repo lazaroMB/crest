@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-application.workspace = true
+application-core.workspace = true
 augurs-core.workspace = true
 augurs-ets.workspace = true
 augurs-mstl.workspace = true

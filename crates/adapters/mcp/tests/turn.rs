@@ -6,10 +6,10 @@ mod common;
 use std::sync::{Arc, Mutex};
 
 use adapter_mcp::McpManager;
-use application::ports::approval::ApprovalResponse;
 use application::tools::mcp::register_mcp_tools;
-use application::tools::registry::ToolRegistry;
-use application::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
+use application_core::ports::approval::ApprovalResponse;
+use application_core::tools::registry::ToolRegistry;
+use application_core::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
 use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use application_testing::system::{RecordingSink, RecordingTelemetry, ScriptedApproval};
 use domain::conversation::{ContentPart, Session, ToolResultContent};

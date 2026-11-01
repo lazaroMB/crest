@@ -8,7 +8,7 @@
 //! drops its end of the signal, so the block stops offering the form; a
 //! block that drops the reply cancels the form.
 
-use application::ports::form::{FormPort, FormRequest, FormResponse};
+use application_core::ports::form::{FormPort, FormRequest, FormResponse};
 use async_trait::async_trait;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};

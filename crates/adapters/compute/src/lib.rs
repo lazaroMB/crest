@@ -70,7 +70,7 @@ mod tolerance;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use application::ports::compute::*;
+use application_core::ports::compute::*;
 use domain::computed::Computed;
 
 pub use envelope::{BACKEND, CALC_BACKEND, CALC_ENGINE_NAME, ENGINE_NAME, SOLVE_ENGINE_NAME};

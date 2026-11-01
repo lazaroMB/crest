@@ -505,8 +505,8 @@ pub fn render_source(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use application::keymap::Action;
-    use application::ports::events::DomainEvent;
+    use application_core::keymap::Action;
+    use application_core::ports::events::DomainEvent;
     use domain::block::{Block, BlockId};
     use gpui::{Modifiers, ScrollDelta, TestAppContext, TouchPhase, point, size};
 

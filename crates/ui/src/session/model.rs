@@ -1,7 +1,7 @@
 //! The permission mode, the model override and the `/model` and `/mode`
 //! popups.
 
-use application::ports::events::{DomainEvent, NoticeLevel};
+use application_core::ports::events::{DomainEvent, NoticeLevel};
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 use gpui::{Context, Window};

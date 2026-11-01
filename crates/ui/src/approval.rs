@@ -10,8 +10,8 @@
 
 use std::collections::VecDeque;
 
-use application::keymap::KeyCode;
-use application::ports::approval::{
+use application_core::keymap::KeyCode;
+use application_core::ports::approval::{
     ApprovalPreview, ApprovalRequest, ApprovalRequestId, ApprovalResponse,
 };
 use domain::permission::{

@@ -25,10 +25,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::keymap::{Action, KeyCode};
-use application::ports::fs::FileSystemPort;
-use application::ports::search::{ContentSearchPort, FileSearchPort, SearchError};
-use application::usecases::open_file::{FileKind, file_kind};
+use application_core::keymap::{Action, KeyCode};
+use application_core::ports::fs::FileSystemPort;
+use application_core::ports::search::{ContentSearchPort, FileSearchPort, SearchError};
+use application_core::usecases::open_file::{FileKind, file_kind};
 use domain::block::BlockId;
 use domain::workspace::WorkspacePath;
 use gpui::{

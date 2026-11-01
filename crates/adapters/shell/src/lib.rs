@@ -30,7 +30,7 @@ use std::pin::pin;
 use std::process::Stdio;
 use std::time::Duration;
 
-use application::ports::shell::{
+use application_core::ports::shell::{
     CommandOutput, RunCommandRequest, ShellError, ShellPort, ShellSpec,
 };
 use async_trait::async_trait;

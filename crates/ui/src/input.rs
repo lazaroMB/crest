@@ -66,7 +66,7 @@ pub use palette::palette_matches;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use application::keymap::{Action, KeySequencer, Keymap, default_keymap};
+use application_core::keymap::{Action, KeySequencer, Keymap, default_keymap};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Subscription, Task, Window,

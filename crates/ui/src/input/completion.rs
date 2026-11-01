@@ -9,7 +9,7 @@
 //! and the footer says which part is shown ([`window_note`]). `Esc` hides
 //! it; what `Tab` and `Enter` do is each popup's ([`nav_key`]).
 
-use application::keymap::{Key, KeyCode};
+use application_core::keymap::{Key, KeyCode};
 use gpui::{
     AnyElement, App, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     Styled as _, div,

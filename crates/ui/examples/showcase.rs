@@ -20,11 +20,11 @@ use std::f32::consts::TAU;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use application::ports::approval::{
+use application_core::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
-use application::ports::events::{DomainEvent, EventSink};
-use application::ports::form::{FormPort as _, FormRequest, FormRequestId};
+use application_core::ports::events::{DomainEvent, EventSink};
+use application_core::ports::form::{FormPort as _, FormRequest, FormRequestId};
 use application_testing::fs::InMemoryFs;
 use application_testing::system::RecordingSink;
 use domain::block::{

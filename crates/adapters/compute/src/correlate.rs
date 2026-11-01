@@ -7,7 +7,7 @@
 //! Edgeworth series above 9); Kendall exact for n < 50 without ties (R's
 //! rule), else the normal approximation with the tie-corrected variance.
 
-use application::ports::compute::{ComputeError, CorrelateRequest};
+use application_core::ports::compute::{ComputeError, CorrelateRequest};
 use domain::computed::{
     Alternative, Assumption, AssumptionStatus, Computed, ComputedBody, CorrelationBody,
     CorrelationMethod, Narrative, PAdjust, UncertaintyKind, WarningSeverity,
@@ -546,7 +546,7 @@ pub fn run(
         ));
     }
     let request_json = serde_json::to_value(
-        application::ports::compute::ComputeRequest::Correlate(request.clone()),
+        application_core::ports::compute::ComputeRequest::Correlate(request.clone()),
     )
     .unwrap_or_default();
     computed.reproduce.lua = Some(crate::reproduce::lua(

@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use application::ports::web::WebError;
+use application_core::ports::web::WebError;
 use regex::Regex;
 
 /// Columns of the text html2text wraps a page to.

@@ -8,7 +8,7 @@
 //! definition. Units numbat itself defines by a rounded value (psi) are
 //! never called exact.
 
-use application::ports::compute::{ComputeError, ConvertRequest};
+use application_core::ports::compute::{ComputeError, ConvertRequest};
 use domain::computed::{
     Computed, ComputedBody, ComputedValue, ConversionStep, InputRef, Quantity, QuantityBody,
 };

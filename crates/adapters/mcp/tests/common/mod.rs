@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 

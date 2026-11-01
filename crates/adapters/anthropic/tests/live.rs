@@ -7,7 +7,9 @@
 //! print why and pass. They spend a few cents on `claude-haiku-5-5`.
 
 use adapter_anthropic::{AnthropicLlm, ClientConfig};
-use application::ports::llm::{LlmPort, LlmRequest, MessageAssembler, SystemBlock, ToolDefinition};
+use application_core::ports::llm::{
+    LlmPort, LlmRequest, MessageAssembler, SystemBlock, ToolDefinition,
+};
 use domain::conversation::{ContentPart, Message, StopReason};
 use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
 use futures::StreamExt;
@@ -48,7 +50,7 @@ fn request(messages: Vec<Message>) -> LlmRequest {
 async fn run(
     llm: &AnthropicLlm,
     req: LlmRequest,
-) -> Result<application::ports::llm::AssembledMessage, String> {
+) -> Result<application_core::ports::llm::AssembledMessage, String> {
     let mut stream = llm.stream(req).await.map_err(|e| e.to_string())?;
     let mut asm = MessageAssembler::new();
     while let Some(event) = stream.next().await {

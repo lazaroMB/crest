@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::llm::{LlmError, LlmEvent, LlmRequest, ToolChoice};
+use application_core::ports::llm::{LlmError, LlmEvent, LlmRequest, ToolChoice};
 use domain::conversation::{ContentPart, Role, StopReason, ToolResultContent, ToolUseId, Usage};
 use domain::model::ModelId;
 use serde_json::{Map, Value, json};
@@ -414,7 +414,7 @@ impl Decoder for ChatDecoder {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::llm::{MessageAssembler, SystemBlock, ToolDefinition};
+    use application_core::ports::llm::{MessageAssembler, SystemBlock, ToolDefinition};
     use domain::conversation::Message;
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
 
@@ -435,7 +435,7 @@ mod tests {
         events
     }
 
-    fn assemble(events: Vec<LlmEvent>) -> application::ports::llm::AssembledMessage {
+    fn assemble(events: Vec<LlmEvent>) -> application_core::ports::llm::AssembledMessage {
         let mut assembler = MessageAssembler::new();
         for event in events {
             assembler.push(event).unwrap();

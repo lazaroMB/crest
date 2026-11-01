@@ -17,7 +17,7 @@
 //! The branch and bound has a node limit instead of a time limit, so the
 //! same problem always gives the same answer and a recompute matches.
 
-use application::ports::compute::{ComputeError, OptimizeRequest};
+use application_core::ports::compute::{ComputeError, OptimizeRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, ConstraintOp, Narrative, OptConstraint,
     OptVariable, OptimizationBody, OptimizationStatus, Sense, UncertaintyKind, WarningSeverity,

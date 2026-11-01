@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 
 use adapter_support::Decoder;
-use application::ports::llm::{LlmError, LlmEvent};
+use application_core::ports::llm::{LlmError, LlmEvent};
 use domain::conversation::{StopReason, ToolUseId};
 use domain::model::ModelId;
 use futures::Stream;

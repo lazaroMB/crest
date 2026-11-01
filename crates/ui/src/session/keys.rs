@@ -1,7 +1,7 @@
 //! Keys outside the prompt, the focus cycle and the events of the input.
 
-use application::keymap::{Action, Key, KeyCode};
-use application::ports::events::NoticeLevel;
+use application_core::keymap::{Action, Key, KeyCode};
+use application_core::ports::events::NoticeLevel;
 use gpui::{App, Context, Entity, Focusable as _, KeystrokeEvent, Subscription, Window};
 
 use super::{

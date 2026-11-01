@@ -17,7 +17,7 @@
 //! search ranked like the application's in-memory fake: matches in the file
 //! name first, then shorter paths, then by path.
 
-use application::ports::search::{FileList, FindFileRequest, SearchError};
+use application_core::ports::search::{FileList, FindFileRequest, SearchError};
 use domain::workspace::WorkspacePath;
 
 use crate::RipgrepSearch;

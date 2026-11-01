@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use domain::block::{Block, BlockId, BlockKind};
 use domain::computed::Computed;
 use domain::computed::lint::lint_numbers;

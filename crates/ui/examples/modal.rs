@@ -17,7 +17,7 @@ mod support;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use base64::Engine as _;
 use domain::block::{
     Cell as TableCell, ChartKind, ChartSpec, Column, CustomNode, ImageData, ImageFit, Series,

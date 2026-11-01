@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use application::ports::telemetry::{
+use application_core::ports::telemetry::{
     LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan,
 };
 use domain::conversation::{StopReason, Usage};

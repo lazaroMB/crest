@@ -24,7 +24,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::ports::search::{
+use application_core::ports::search::{
     ContentSearchPort, DEFAULT_SEARCH_TIMEOUT, FileList, FileSearchPort, FindFileRequest,
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };

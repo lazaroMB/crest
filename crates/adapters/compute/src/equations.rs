@@ -14,7 +14,7 @@
 //! (both sides and their difference), and gives the condition number of
 //! the Jacobian at the solution, from its singular values.
 
-use application::ports::compute::{ComputeError, SolveRequest};
+use application_core::ports::compute::{ComputeError, SolveRequest};
 use domain::computed::{
     Assumption, AssumptionStatus, Computed, ComputedBody, Curve, EquationsBody, Narrative,
     PlugBack, SolveMethod, SolvedUnknown, UncertaintyKind, WarningSeverity,

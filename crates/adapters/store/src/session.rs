@@ -9,8 +9,8 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use application::ports::projects::RecentWorkspace;
-use application::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
+use application_core::ports::projects::RecentWorkspace;
+use application_core::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
 use async_trait::async_trait;
 use domain::block::Block;
 use domain::conversation::{Session, SessionId};

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use application::ports::formats::{GridEntry, MoleculeGridRequest};
+use application_core::ports::formats::{GridEntry, MoleculeGridRequest};
 use chematic::chem;
 use chematic::smiles;
 use domain::computed::{Computed, ComputedStatus, ComputedValue, ComputedWarning, WarningSeverity};

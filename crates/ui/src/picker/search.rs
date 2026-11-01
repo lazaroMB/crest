@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use application::ports::fs::{FileSystemPort, FsError};
-use application::ports::search::{
+use application_core::ports::fs::{FileSystemPort, FsError};
+use application_core::ports::search::{
     ContentSearchPort, FileSearchPort, ListFilesRequest, SearchError,
 };
-use application::usecases::model3d;
-use application::usecases::open_file::extension;
+use application_core::usecases::model3d;
+use application_core::usecases::open_file::extension;
 use domain::model3d::ModelSpec;
 use domain::workspace::WorkspacePath;
 use gpui::AppContext as _;

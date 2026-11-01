@@ -19,7 +19,7 @@ langfuse = [
 ]
 
 [dependencies]
-application.workspace = true
+application-core.workspace = true
 domain.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }

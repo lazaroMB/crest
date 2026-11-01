@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 
-use application::ports::llm::{LlmError, LlmEvent};
+use application_core::ports::llm::{LlmError, LlmEvent};
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures::{Stream, StreamExt};
 

@@ -15,8 +15,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use application::keymap::Action;
-use application::ports::events::{DomainEvent, EventSink as _};
+use application_core::keymap::Action;
+use application_core::ports::events::{DomainEvent, EventSink as _};
 use application_testing::system::RecordingSink;
 use domain::block::{Block, BlockId, BlockKind, Cell, Column, TableSpec};
 use gpui::{App, AppContext as _, Entity, Window};

@@ -2,8 +2,8 @@
 //! `LlmEvent`s → `AssembledMessage::citations` → `Evidence`.
 
 use adapter_anthropic::stream::llm_events;
-use application::ports::llm::{Citation, LlmEvent, MessageAssembler};
-use application::usecases::evidence::citations_to_evidence;
+use application_core::ports::llm::{Citation, LlmEvent, MessageAssembler};
+use application_core::usecases::evidence::citations_to_evidence;
 use domain::block::SourceRef;
 use domain::model::ModelId;
 use domain::research::ResearchState;

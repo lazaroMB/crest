@@ -17,7 +17,7 @@
 //! element's left node, exact by Gauss–Legendre quadrature since M is at
 //! most cubic there (uniform E·I).
 
-use application::ports::compute::{BeamRequest, ComputeError};
+use application_core::ports::compute::{BeamRequest, ComputeError};
 use domain::computed::{
     Assumption, AssumptionStatus, BeamBody, BeamLoad, BeamLoadKind, BeamReaction, BeamSupport,
     Computed, ComputedBody, ComputedValue, Narrative, SupportKind, WarningSeverity, apa,

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use application::ports::telemetry::{LlmCallRecord, TelemetryPort, ToolCallRecord, TurnSpan};
+use application_core::ports::telemetry::{LlmCallRecord, TelemetryPort, ToolCallRecord, TurnSpan};
 use base64::Engine as _;
 use domain::conversation::{SessionId, StopReason, TurnId, Usage};
 use domain::model::{ModelId, ModelRole};

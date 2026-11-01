@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use adapter_support::TokioClock;
-pub use application::llm_retry::{Clock, RetryPolicy};
-use application::llm_retry::{ModelBackend, RetryingLlm};
-use application::ports::llm::{LlmError, LlmPort, LlmRequest, LlmStream};
+pub use application_core::llm_retry::{Clock, RetryPolicy};
+use application_core::llm_retry::{ModelBackend, RetryingLlm};
+use application_core::ports::llm::{LlmError, LlmPort, LlmRequest, LlmStream};
 use async_trait::async_trait;
 use domain::model::ModelId;
 

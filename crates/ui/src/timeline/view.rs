@@ -20,8 +20,8 @@
 //! block widget leaves gives the focus back to the timeline first
 //! ([`TimelineView::focus_widget`] is the way in).
 
-use application::keymap::{Action, Key, KeyCode, Keymap, default_keymap, parse_keys};
-use application::ports::events::DomainEvent;
+use application_core::keymap::{Action, Key, KeyCode, Keymap, default_keymap, parse_keys};
+use application_core::ports::events::DomainEvent;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
@@ -1005,7 +1005,7 @@ impl Render for TimelineView {
 mod tests {
     use super::*;
     use crate::timeline::{PROSE_MAX_WIDTH, WIDE_MAX_WIDTH};
-    use application::ports::events::EventSink as _;
+    use application_core::ports::events::EventSink as _;
     use application_testing::system::RecordingSink;
     use domain::block::{Block, BlockKind};
     use gpui::{Entity, TestAppContext, VisualTestContext};

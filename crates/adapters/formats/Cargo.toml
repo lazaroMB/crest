@@ -13,7 +13,7 @@ publish.workspace = true
 doctest = false
 
 [dependencies]
-application.workspace = true
+application-core.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 chematic.workspace = true

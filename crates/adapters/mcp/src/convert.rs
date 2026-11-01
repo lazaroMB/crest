@@ -10,7 +10,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use application::ports::mcp::{McpContent, McpError, McpTool, McpToolResult, qualified_name};
+use application_core::ports::mcp::{McpContent, McpError, McpTool, McpToolResult, qualified_name};
 use rmcp::ServiceError;
 use rmcp::model::{CallToolResult, ContentBlock, ResourceContents, Tool};
 use serde_json::{Map, Value, json};

@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use application::ports::store::StoreError;
+use application_core::ports::store::StoreError;
 use rusqlite::Connection;
 
 use crate::migrations::{self, MigrationError};

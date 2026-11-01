@@ -14,7 +14,9 @@
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
 
-use application::ports::compute::{BomRequest, ColumnValues, ComputeError, DataColumn, DataSet};
+use application_core::ports::compute::{
+    BomRequest, ColumnValues, ComputeError, DataColumn, DataSet,
+};
 use domain::computed::{
     Assumption, AssumptionStatus, BomBody, BomCategory, BomLine, Computed, ComputedBody,
     ComputedValue, Narrative, UncertaintyKind, WarningSeverity,
@@ -169,10 +171,10 @@ fn lines_data(request: &BomRequest) -> DataSet {
         return request.data.clone();
     }
     let items = &request.items;
-    let text = |f: &dyn Fn(&application::ports::compute::BomItem) -> Option<String>| {
+    let text = |f: &dyn Fn(&application_core::ports::compute::BomItem) -> Option<String>| {
         ColumnValues::Categorical(items.iter().map(f).collect())
     };
-    let number = |f: &dyn Fn(&application::ports::compute::BomItem) -> Option<f64>| {
+    let number = |f: &dyn Fn(&application_core::ports::compute::BomItem) -> Option<f64>| {
         ColumnValues::Numeric(items.iter().map(f).collect())
     };
     let column = |name: &str, values| DataColumn {

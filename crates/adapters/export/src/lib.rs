@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::sim::{SimExport, SimExportError};
+use application_core::ports::sim::{SimExport, SimExportError};
 use domain::sysmodel::Board;
 use domain::sysmodel::scene::{PACKET_Y, chip_look, message_color, scene_of};
 use domain::sysmodel::sim::initial_snapshot;

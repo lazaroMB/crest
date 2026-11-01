@@ -26,8 +26,8 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use application::csv::{delimiter_for, records};
-use application::ports::formats::NetworkRequest;
+use application_core::csv::{delimiter_for, records};
+use application_core::ports::formats::NetworkRequest;
 use domain::computed::{Computed, ComputedValue};
 use domain::science::molecule_grid::value_key;
 use domain::science::network::{MAX_EDGES, MAX_NODES, NetworkEdge, NetworkNode, NetworkSpec};

@@ -22,10 +22,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use application::ports::projects::{
+use application_core::ports::projects::{
     BrowseError, DirEntry, DirListing, ProjectBrowserPort, RecentWorkspace,
 };
-use application::usecases::project_picker::{filter_dirs, split_typed_path};
+use application_core::usecases::project_picker::{filter_dirs, split_typed_path};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeystrokeEvent, ParentElement as _, Render, ScrollHandle,

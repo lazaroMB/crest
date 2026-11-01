@@ -22,11 +22,11 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use application::keymap::default_keymap;
-use application::ports::approval::{
+use application_core::keymap::default_keymap;
+use application_core::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
-use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use application_core::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application_testing::fs::{InMemoryFs, unified_diff};
 use application_testing::system::RecordingSink;
 use domain::block::{ApprovalState, Block, BlockKind, DiffSpec};
@@ -156,9 +156,9 @@ impl Fakes {
             let answer = futures::executor::block_on(fakes.approval.request(request));
             let approved = matches!(
                 answer,
-                Ok(application::ports::approval::ApprovalResponse::Approve
-                    | application::ports::approval::ApprovalResponse::ApproveAlways { .. }
-                    | application::ports::approval::ApprovalResponse::ApproveAllEdits)
+                Ok(application_core::ports::approval::ApprovalResponse::Approve
+                    | application_core::ports::approval::ApprovalResponse::ApproveAlways { .. }
+                    | application_core::ports::approval::ApprovalResponse::ApproveAllEdits)
             );
             if approved {
                 fakes.fs.set_file(path, new);

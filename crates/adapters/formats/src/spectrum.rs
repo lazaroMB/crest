@@ -15,7 +15,7 @@ pub mod ms;
 
 use std::collections::BTreeMap;
 
-use application::ports::formats::SpectrumRequest;
+use application_core::ports::formats::SpectrumRequest;
 use domain::computed::{Computed, ComputedValue};
 use domain::science::spectrum::{
     MAX_PEAKS, MAX_POINTS, Peak, PeakSense, SpectrumFormat, SpectrumKind, SpectrumSpec, range,

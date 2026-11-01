@@ -1,8 +1,8 @@
 //! Drawing the approval dialog: the preview, the rule chips and rows, the hints
 //! and the footer.
 
-use application::ports::approval::ApprovalPreview;
-use application::ports::permissions::PERMISSIONS_FILE;
+use application_core::ports::approval::ApprovalPreview;
+use application_core::ports::permissions::PERMISSIONS_FILE;
 use gpui::prelude::FluentBuilder as _;
 use gpui::px;
 use gpui::{

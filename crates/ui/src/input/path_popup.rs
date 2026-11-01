@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use application::keymap::{Key, KeyCode};
-use application::ports::search::{FileSearchPort, TreeNodeKind, TreeRequest};
+use application_core::keymap::{Key, KeyCode};
+use application_core::ports::search::{FileSearchPort, TreeNodeKind, TreeRequest};
 use domain::workspace::WorkspacePath;
 use gpui::{AnyElement, App, Context, ParentElement as _, SharedString, Styled as _, Task, div};
 use gpui_component::{ActiveTheme as _, h_flex};

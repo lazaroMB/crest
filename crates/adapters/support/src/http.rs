@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use application::ports::llm::LlmError;
+use application_core::ports::llm::LlmError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 
 /// A client that sends `headers` (plus `user_agent`, if any) on every

@@ -3,7 +3,7 @@
 //! The endpoint is paginated: each page has `data`, `has_more` and
 //! `last_id`, and the next page is requested with `after_id=<last_id>`.
 
-use application::ports::llm::{LlmError, ModelCatalogPort, ModelInfo};
+use application_core::ports::llm::{LlmError, ModelCatalogPort, ModelInfo};
 use async_trait::async_trait;
 use domain::model::ModelId;
 use serde::Deserialize;

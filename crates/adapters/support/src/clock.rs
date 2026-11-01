@@ -4,7 +4,7 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::time::Duration;
 
-use application::llm_retry::Clock;
+use application_core::llm_retry::Clock;
 use futures::future::BoxFuture;
 
 /// [`Clock`] backed by `tokio::time::sleep` and std's random hasher seed.

@@ -31,7 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::form::{FormRequest, FormResponse};
+use application_core::ports::form::{FormRequest, FormResponse};
 use chrono::NaiveDate;
 use domain::block::{BlockId, BlockKind};
 use domain::form::{DateSpan, FieldKind, FormField, FormOption, FormSpec, FormState};

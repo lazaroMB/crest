@@ -1,8 +1,8 @@
 //! `/` commands, the replies of the controller and what they ask for.
 
-use application::keymap::Action;
-use application::ports::events::{DomainEvent, NoticeLevel};
-use application::ports::plugin::PluginAction;
+use application_core::keymap::Action;
+use application_core::ports::events::{DomainEvent, NoticeLevel};
+use application_core::ports::plugin::PluginAction;
 use domain::block::{BlockId, CustomNode, ImageData, ImageFit};
 use domain::conversation::ImageAttachment;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};

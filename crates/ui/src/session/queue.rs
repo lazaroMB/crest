@@ -1,8 +1,8 @@
 //! Prompts and turns: sending a prompt, queueing it while the session is
 //! busy, and what follows once a turn ends or is interrupted.
 
-use application::ports::events::{DomainEvent, NoticeLevel};
-use application::usecases::cancel::CancelToken;
+use application_core::ports::events::{DomainEvent, NoticeLevel};
+use application_core::usecases::cancel::CancelToken;
 use domain::block::{Block, BlockKind};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::model::ModelRole;

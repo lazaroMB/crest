@@ -19,8 +19,8 @@
 
 use std::fmt;
 
-use application::keymap::layers::{DEFAULT_SOURCE, GLOBAL_CONFIG, source_label};
-use application::keymap::{
+use application_core::keymap::layers::{DEFAULT_SOURCE, GLOBAL_CONFIG, source_label};
+use application_core::keymap::{
     Action, Key, KeyCode, Keymap, KeymapEntry, Platform, action_description, default_keymap_with,
     parse_keys,
 };

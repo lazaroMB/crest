@@ -74,7 +74,7 @@ pub mod training;
 pub mod wave;
 pub mod waveform;
 
-use application::ports::formats::{
+use application_core::ports::formats::{
     ArrayRequest, BenchRequest, DatasetRequest, FormatError, FormatsPort, GanttRequest, LogRequest,
     MapRequest, Molecule3dSource, MoleculeGridRequest, NetworkRequest, ProfileRequest,
     SequenceRequest, SpectrumRequest, StepRequest, TrainingRequest, WaveRequest,

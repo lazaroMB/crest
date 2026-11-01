@@ -84,7 +84,7 @@ pub fn render(id: BlockId, numbers: &[String], window: &mut Window, cx: &mut App
 
 #[cfg(test)]
 mod tests {
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::{Block, BlockKind};
     use domain::conversation::{StopReason, TurnId};
     use gpui::{Modifiers, TestAppContext, px};

@@ -113,7 +113,7 @@ name = "adapter-anthropic"
 version = "0.18.0"
 dependencies = [
  "adapter-support",
- "application",
+ "application-core",
  "async-trait",
  "domain",
  "futures",
@@ -134,7 +134,7 @@ dependencies = [
 name = "adapter-cloudflare"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "domain",
  "keyring",
@@ -150,7 +150,7 @@ dependencies = [
 name = "adapter-compute"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "augurs-core",
  "augurs-ets",
  "augurs-mstl",
@@ -170,7 +170,7 @@ dependencies = [
 name = "adapter-export"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "domain",
  "serde_json",
 ]
@@ -179,7 +179,7 @@ dependencies = [
 name = "adapter-formats"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "blake3",
  "bytes",
  "chematic",
@@ -213,7 +213,7 @@ dependencies = [
 name = "adapter-fs"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "dirs 7.0.0",
  "domain",
@@ -252,6 +252,7 @@ name = "adapter-mcp"
 version = "0.18.0"
 dependencies = [
  "application",
+ "application-core",
  "application-testing",
  "async-trait",
  "domain",
@@ -274,7 +275,7 @@ name = "adapter-openai"
 version = "0.18.0"
 dependencies = [
  "adapter-support",
- "application",
+ "application-core",
  "async-trait",
  "domain",
  "futures",
@@ -291,7 +292,7 @@ dependencies = [
 name = "adapter-search"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "base64 0.23.1",
  "domain",
@@ -310,7 +311,7 @@ dependencies = [
 name = "adapter-shell"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "domain",
  "platform",
@@ -324,7 +325,7 @@ dependencies = [
 name = "adapter-store"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "application-testing",
  "async-trait",
  "domain",
@@ -343,7 +344,7 @@ dependencies = [
 name = "adapter-support"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "eventsource-stream",
  "futures",
  "reqwest",
@@ -354,7 +355,7 @@ dependencies = [
 name = "adapter-telemetry"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "base64 0.23.1",
  "domain",
  "opentelemetry",
@@ -373,7 +374,7 @@ dependencies = [
 name = "adapter-web"
 version = "0.18.0"
 dependencies = [
- "application",
+ "application-core",
  "async-trait",
  "html2text",
  "keyring",
@@ -10381,6 +10382,7 @@ version = "0.18.0"
 dependencies = [
  "anstyle-parse",
  "application",
+ "application-core",
  "application-testing",
  "async-trait",
  "base64 0.23.1",

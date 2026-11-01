@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::formats::MapRequest;
+use application_core::ports::formats::MapRequest;
 use domain::computed::{Computed, ComputedValue};
 use domain::science::geomap::{
     CrsSource, GeometryKind, MAX_FEATURES, MAX_LATITUDE, MAX_VERTICES, MapCrs, MapFeature, MapSpec,

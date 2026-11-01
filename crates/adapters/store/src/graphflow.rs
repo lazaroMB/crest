@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use application::ports::store::StoreError;
+use application_core::ports::store::StoreError;
 use async_trait::async_trait;
 use graph_flow::{GraphError, Session, SessionStorage};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};

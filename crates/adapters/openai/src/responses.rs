@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use application::ports::llm::{LlmError, LlmEvent, LlmRequest, ToolChoice};
+use application_core::ports::llm::{LlmError, LlmEvent, LlmRequest, ToolChoice};
 use domain::conversation::{ContentPart, Role, StopReason, ToolUseId, Usage};
 use domain::model::{ModelId, ThinkingConfig};
 use serde_json::{Map, Value, json};
@@ -351,7 +351,7 @@ impl Decoder for ResponsesDecoder {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::llm::{MessageAssembler, SystemBlock, ToolDefinition};
+    use application_core::ports::llm::{MessageAssembler, SystemBlock, ToolDefinition};
     use domain::conversation::Message;
     use domain::model::{ModelRole, ModelSpec, ResolvedModel, SpecSource};
 

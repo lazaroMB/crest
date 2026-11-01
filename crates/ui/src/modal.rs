@@ -42,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use application::ports::events::DomainEvent;
+use application_core::ports::events::DomainEvent;
 use domain::modal::{ModalPosition, Percent};
 use domain::sysmodel::Board;
 
@@ -200,7 +200,7 @@ impl ModalHost {
         let images = match (&doc, &self.root) {
             (Some(_), Some(root)) => {
                 let root = root.clone();
-                let dir = application::usecases::open_file::opened_path(&spec.id)
+                let dir = application_core::usecases::open_file::opened_path(&spec.id)
                     .and_then(|path| path.parent());
                 let resolver: Arc<ImageResolver> = Arc::new(move |uri: &SharedUri| {
                     match document_image(&root, dir.as_ref(), &uri.to_string()) {

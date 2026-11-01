@@ -15,19 +15,19 @@
 //!
 //! Citations come back as [`LlmEvent::Citation`] and end up in
 //! `AssembledMessage::citations`; the research flow turns them into
-//! `Evidence` with `application::usecases::evidence::citations_to_evidence`.
+//! `Evidence` with `application_core::usecases::evidence::citations_to_evidence`.
 //!
 //! Tool shapes follow the official web search and web fetch tool docs
 //! (platform.claude.com, checked 2026-10): `max_uses`, `allowed_domains`
 //! or `blocked_domains` (never both), `user_location` (search only),
 //! `citations` and `max_content_tokens` (fetch only).
 //!
-//! [`LlmRequest::server_tools`]: application::ports::llm::LlmRequest::server_tools
-//! [`LlmEvent::Citation`]: application::ports::llm::LlmEvent::Citation
+//! [`LlmRequest::server_tools`]: application_core::ports::llm::LlmRequest::server_tools
+//! [`LlmEvent::Citation`]: application_core::ports::llm::LlmEvent::Citation
 
 use std::collections::BTreeMap;
 
-use application::ports::llm::{LlmRequest, ServerTool};
+use application_core::ports::llm::{LlmRequest, ServerTool};
 use domain::model::ModelRole;
 use serde::{Deserialize, Serialize};
 
@@ -203,7 +203,7 @@ impl ServerToolOptions {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::llm::LlmRequest;
+    use application_core::ports::llm::LlmRequest;
     use domain::conversation::Message;
     use domain::model::{ModelId, ModelSpec, ResolvedModel, SpecSource};
     use serde_json::{Value, json};

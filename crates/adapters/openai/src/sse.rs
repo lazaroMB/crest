@@ -1,7 +1,7 @@
 //! The server-sent events of a response: the shared [`Decoder`] loop of
 //! `adapter-support` and the JSON of each event.
 
-use application::ports::llm::LlmError;
+use application_core::ports::llm::LlmError;
 
 pub use adapter_support::sse::{Decoder, llm_events};
 

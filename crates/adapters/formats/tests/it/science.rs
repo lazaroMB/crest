@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use adapter_formats::Formats;
-use application::ports::formats::{FormatsPort, SequenceRequest};
+use application_core::ports::formats::{FormatsPort, SequenceRequest};
 use domain::science::sequence::{Alphabet, SequenceFormat, Strand, Topology};
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -202,7 +202,7 @@ fn reaction_balance_suggestions_and_errors() {
 
 #[test]
 fn molecule_grid_descriptors_match_reference_values() {
-    use application::ports::formats::{GridEntry, MoleculeGridRequest};
+    use application_core::ports::formats::{GridEntry, MoleculeGridRequest};
     use domain::science::molecule_grid::ActivityDirection;
     let entry = |id: &str, smiles: &str, activity: Option<f64>| GridEntry {
         id: id.into(),
@@ -261,7 +261,7 @@ fn molecule_grid_descriptors_match_reference_values() {
 }
 
 fn spectrum(name: &str, block: usize) -> domain::science::spectrum::SpectrumSpec {
-    use application::ports::formats::SpectrumRequest;
+    use application_core::ports::formats::SpectrumRequest;
     Formats::new()
         .parse_spectrum(
             &fixture(name),
@@ -346,7 +346,7 @@ fn jcamp_linked_blocks_and_peak_tables() {
     assert!(ms.sticks);
     let top: Vec<f64> = ms.peaks.iter().map(|p| p.x).collect();
     assert_eq!(top, [43.0, 58.0, 42.0, 15.0]);
-    use application::ports::formats::SpectrumRequest;
+    use application_core::ports::formats::SpectrumRequest;
     let missing = Formats::new().parse_spectrum(
         &fixture("linked.jdx"),
         &SpectrumRequest {
@@ -389,7 +389,7 @@ fn mass_spectra_from_mgf_and_mzml() {
 
 #[test]
 fn molecules_in_3d_from_smiles_and_files() {
-    use application::ports::formats::Molecule3dSource;
+    use application_core::ports::formats::Molecule3dSource;
     use domain::science::molecule3d::{CoordinateSource, StructureFormat};
     let formats = Formats::new();
     // The engine's conformer of ethanol, hydrogens added.

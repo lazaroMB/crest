@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 
 use adapter_mcp::McpManager;
-use application::ports::mcp::McpPort;
-use application::ports::plugin::{McpServerSpec, McpTransport};
+use application_core::ports::mcp::McpPort;
+use application_core::ports::plugin::{McpServerSpec, McpTransport};
 
 #[tokio::main]
 async fn main() {

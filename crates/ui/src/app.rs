@@ -18,7 +18,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
-pub use application::window::WindowMode;
+pub use application_core::window::WindowMode;
 
 actions!(crest, [Quit, ToggleFullscreen]);
 

@@ -14,8 +14,8 @@
 
 use std::collections::BTreeMap;
 
-use application::csv::{delimiter_for, number, records};
-use application::ports::formats::TrainingRequest;
+use application_core::csv::{delimiter_for, number, records};
+use application_core::ports::formats::TrainingRequest;
 use domain::computed::{Computed, ComputedValue};
 use domain::science::molecule_grid::value_key;
 use domain::science::training::{

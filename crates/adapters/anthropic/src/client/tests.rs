@@ -1,4 +1,4 @@
-use application::ports::llm::LlmEvent;
+use application_core::ports::llm::LlmEvent;
 use futures::StreamExt;
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, header, headers, method, path, query_param};

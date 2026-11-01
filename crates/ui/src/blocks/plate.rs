@@ -290,7 +290,7 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
 
 #[cfg(test)]
 mod tests {
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::Block;
     use gpui::{TestAppContext, point, size};
 

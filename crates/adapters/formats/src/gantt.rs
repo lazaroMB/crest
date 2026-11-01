@@ -16,8 +16,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use application::csv::{delimiter_for, records};
-use application::ports::formats::{GanttRequest, GanttSource, GanttTaskInput};
+use application_core::csv::{delimiter_for, records};
+use application_core::ports::formats::{GanttRequest, GanttSource, GanttTaskInput};
 use domain::computed::{Computed, ComputedValue};
 use domain::gantt::{
     Dependency, DependencyKind, GanttSpec, GanttTask, MAX_TASKS, SLACK_EPSILON, format_date,

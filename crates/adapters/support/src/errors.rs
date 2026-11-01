@@ -8,7 +8,7 @@
 //! over the model's context window, which the caller can fix by
 //! compacting.
 
-use application::ports::llm::LlmError;
+use application_core::ports::llm::LlmError;
 
 /// How a provider words the errors that concern the user's account.
 pub trait Wording {

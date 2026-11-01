@@ -1060,8 +1060,8 @@ mod tests {
 
     #[gpui::test]
     fn the_selected_block_copies_as_csv(cx: &mut gpui::TestAppContext) {
-        use application::keymap::Action;
-        use application::ports::events::DomainEvent;
+        use application_core::keymap::Action;
+        use application_core::ports::events::DomainEvent;
         use domain::block::Block;
         use gpui::{Modifiers, point, px, size};
 

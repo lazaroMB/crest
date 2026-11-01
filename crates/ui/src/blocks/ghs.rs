@@ -257,7 +257,7 @@ pub fn render_spec(spec: &GhsSpec, window: &mut Window, cx: &mut App) -> AnyElem
 
 #[cfg(test)]
 mod tests {
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use domain::block::Block;
     use domain::science::ghs::{HazardStatement, Pictogram};
     use gpui::{TestAppContext, point, size};

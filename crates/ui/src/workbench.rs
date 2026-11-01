@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use application::ports::events::NoticeLevel;
-use application::ports::projects::{ProjectBrowserPort, RecentWorkspace};
+use application_core::ports::events::NoticeLevel;
+use application_core::ports::projects::{ProjectBrowserPort, RecentWorkspace};
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
 use gpui::{
@@ -246,8 +246,8 @@ impl Workbench {
         let Some(key) = crate::input::key_from_keystroke(&event.keystroke) else {
             return;
         };
-        let keymap = application::keymap::default_keymap();
-        let Some(application::keymap::Action::Builtin(name)) =
+        let keymap = application_core::keymap::default_keymap();
+        let Some(application_core::keymap::Action::Builtin(name)) =
             keymap.lookup(std::slice::from_ref(&key)).exact
         else {
             return;
@@ -822,7 +822,7 @@ impl Render for Workbench {
 mod tests {
     use std::sync::{Mutex, PoisonError};
 
-    use application::ports::events::DomainEvent;
+    use application_core::ports::events::DomainEvent;
     use application_testing::fs::{InMemoryFs, test_root};
     use application_testing::projects::InMemoryDirs;
     use domain::conversation::StopReason;

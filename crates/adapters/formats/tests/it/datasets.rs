@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use adapter_formats::Formats;
-use application::ports::formats::{DatasetRequest, FormatsPort};
+use application_core::ports::formats::{DatasetRequest, FormatsPort};
 use domain::block::Cell;
 use domain::dataset::{DatasetFormat, DatasetSpec};
 use parquet::data_type::{ByteArray, ByteArrayType, DoubleType, Int64Type};

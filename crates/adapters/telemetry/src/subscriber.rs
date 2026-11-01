@@ -152,7 +152,7 @@ fn open_log(path: &PathBuf) -> Result<File, SubscriberError> {
 
 #[cfg(test)]
 mod tests {
-    use application::ports::telemetry::{LlmCallRecord, TelemetryPort, TurnSpan};
+    use application_core::ports::telemetry::{LlmCallRecord, TelemetryPort, TurnSpan};
     use domain::conversation::{SessionId, StopReason, TurnId, Usage};
     use domain::model::{ModelId, ModelRole};
 

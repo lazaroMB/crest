@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use application::usecases::permissions::RuleListing;
+use application_core::usecases::permissions::RuleListing;
 use domain::block::CustomNode;
 use domain::modal::{ModalPosition, ModalSpec, Percent};
 use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Window};
