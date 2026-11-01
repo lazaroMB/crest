@@ -18,6 +18,12 @@
 //! the difference per axis in the file's unit (`mm` from STEP; plain
 //! "units" for OBJ/STL/PLY, which do not say), `Esc` clears them. A line
 //! under the model gives its size and which renderer draws it.
+//!
+//! The drawn mesh is built again (a new cut, hidden solids, colours, the
+//! up axis) on the background executor; the previous one stays on screen
+//! until it lands. GPU frames are read back without blocking
+//! ([`crate::sysboard::GpuFrames`]); the vector drawing stands in until
+//! the first one, and while the device is still opening.
 
 pub mod vector;
 
@@ -32,8 +38,8 @@ use domain::model3d::{ModelSpec, UpAxis};
 use gpui::{
     App, Bounds, Context, Corners, Entity, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, PathBuilder, Pixels, Point, Render, RenderImage, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
+    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Task, Window, canvas, div,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -42,7 +48,7 @@ use crate::render3d::camera::OrbitCamera;
 use crate::render3d::math::V3;
 use crate::render3d::mesh::{Mesh, Placement};
 use crate::render3d::section::{self, Section};
-use crate::sysboard::{Backend, auto_backend};
+use crate::sysboard::{Backend, GpuFrames, auto_backend};
 use crate::theme::token;
 use domain::sysmodel::scene::Rgb;
 
@@ -77,12 +83,34 @@ struct FrameKey {
     background: domain::theme::Color,
 }
 
-#[derive(Default)]
-struct Surface {
-    image: Option<Arc<RenderImage>>,
-    key: Option<FrameKey>,
-    retired: Vec<Arc<RenderImage>>,
-    failed: Option<String>,
+type Surface = GpuFrames<FrameKey>;
+
+/// What the drawn mesh is built from, to build it off the UI thread.
+struct MeshJob {
+    spec: Arc<ModelSpec>,
+    placement: Placement,
+    colors: Option<Arc<[Rgb]>>,
+    hidden: Vec<Range<usize>>,
+    section: Option<Section>,
+}
+
+impl MeshJob {
+    fn build(&self) -> Mesh {
+        let keep = |i: usize| !self.hidden.iter().any(|r| r.contains(&i));
+        let color = |i: usize| {
+            self.colors
+                .as_ref()
+                .and_then(|c| c.get(i).copied())
+                .unwrap_or(CLAY)
+        };
+        Mesh::from_model_painted(
+            &self.spec.mesh,
+            &self.placement,
+            &color,
+            &keep,
+            self.section.as_ref(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -106,12 +134,14 @@ fn fingerprint(spec: &ModelSpec) -> Fingerprint {
 
 /// Per-node state: the model, its mesh and the camera.
 pub struct ModelView {
-    spec: ModelSpec,
+    spec: Arc<ModelSpec>,
     fingerprint: Fingerprint,
     up: UpAxis,
     placement: Placement,
     mesh: Rc<Mesh>,
     mesh_key: u64,
+    /// The drawn mesh being built again, if it is.
+    building: Option<Task<()>>,
     fitted: OrbitCamera,
     camera: OrbitCamera,
     backend: Backend,
@@ -127,8 +157,9 @@ pub struct ModelView {
     points: Vec<V3>,
     /// Fixed viewport height when shown inline; the modal share otherwise.
     height: Option<f32>,
-    /// A colour per triangle (linear RGB), instead of clay.
-    colors: Option<Rc<[Rgb]>>,
+    /// A colour per triangle (linear RGB), instead of clay; the same
+    /// colours shareable with the background builder.
+    colors: Option<(Rc<[Rgb]>, Arc<[Rgb]>)>,
     /// Points (file coordinates) a measured point snaps to, e.g. atom
     /// centres.
     snap: Rc<[V3]>,
@@ -139,12 +170,13 @@ impl ModelView {
         let up = spec.mesh.up;
         let placement = Placement::of(&spec.mesh, up);
         let mut view = Self {
-            spec: spec.clone(),
+            spec: Arc::new(spec.clone()),
             fingerprint: fingerprint(spec),
             up,
             placement,
             mesh: Rc::default(),
             mesh_key: 0,
+            building: None,
             fitted: OrbitCamera::fit_bounds(placement.bounds.0, placement.bounds.1),
             camera: OrbitCamera::fit_bounds(placement.bounds.0, placement.bounds.1),
             backend: auto_backend(cx),
@@ -160,7 +192,8 @@ impl ModelView {
             colors: None,
             snap: Rc::from(Vec::new()),
         };
-        view.rebuild();
+        view.mesh = Rc::new(view.mesh_job().build());
+        view.mesh_key = NEXT_MESH.fetch_add(1, Ordering::Relaxed);
         view
     }
 
@@ -178,30 +211,42 @@ impl ModelView {
         self.snap = snap;
         if colors.is_some() {
             self.colors = colors;
-            self.rebuild();
+            self.rebuild(cx);
         }
     }
 
-    /// Builds the drawn mesh again (hidden ranges, section), keeping the
-    /// placement and the camera.
-    fn rebuild(&mut self) {
-        let hidden = self.hidden.clone();
-        let keep = move |i: usize| !hidden.iter().any(|r| r.contains(&i));
-        let colors = self.colors.clone();
-        let color = move |i: usize| {
-            colors
-                .as_ref()
-                .and_then(|c| c.get(i).copied())
-                .unwrap_or(CLAY)
-        };
-        self.mesh = Rc::new(Mesh::from_model_painted(
-            &self.spec.mesh,
-            &self.placement,
-            &color,
-            &keep,
-            self.section.as_ref(),
-        ));
-        self.mesh_key = NEXT_MESH.fetch_add(1, Ordering::Relaxed);
+    fn mesh_job(&self) -> MeshJob {
+        MeshJob {
+            spec: Arc::clone(&self.spec),
+            placement: self.placement,
+            colors: self.colors.as_ref().map(|(_, shared)| Arc::clone(shared)),
+            hidden: self.hidden.clone(),
+            section: self.section,
+        }
+    }
+
+    /// Builds the drawn mesh again (hidden ranges, section, colours) on the
+    /// background executor, keeping the placement and the camera; the old
+    /// mesh is drawn until the new one lands. A build still running is
+    /// dropped.
+    fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let job = self.mesh_job();
+        let built = cx.background_executor().spawn(async move { job.build() });
+        self.building = Some(cx.spawn(async move |this, cx| {
+            let mesh = built.await;
+            this.update(cx, |this, cx| {
+                this.mesh = Rc::new(mesh);
+                this.mesh_key = NEXT_MESH.fetch_add(1, Ordering::Relaxed);
+                this.building = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Whether the drawn mesh is being built again.
+    pub fn is_building(&self) -> bool {
+        self.building.is_some()
     }
 
     /// The camera.
@@ -216,7 +261,7 @@ impl ModelView {
 
     /// Whether the GPU renderer draws the model.
     pub fn on_gpu(&self) -> bool {
-        matches!(self.backend, Backend::Gpu(_))
+        self.backend.is_gpu()
     }
 
     /// The mesh drawn (cut and filtered).
@@ -262,7 +307,7 @@ impl ModelView {
         self.placement = Placement::of(&self.spec.mesh, self.up);
         self.fitted = OrbitCamera::fit_bounds(self.placement.bounds.0, self.placement.bounds.1);
         self.camera = self.fitted;
-        self.rebuild();
+        self.rebuild(cx);
         cx.notify();
     }
 
@@ -270,13 +315,16 @@ impl ModelView {
     /// all clay again with `None`.
     pub fn set_colors(&mut self, colors: Option<Rc<[Rgb]>>, cx: &mut Context<Self>) {
         let same = match (&self.colors, &colors) {
-            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (Some((a, _)), Some(b)) => Rc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         };
         if !same {
-            self.colors = colors;
-            self.rebuild();
+            self.colors = colors.map(|c| {
+                let shared: Arc<[Rgb]> = Arc::from(&*c);
+                (c, shared)
+            });
+            self.rebuild(cx);
             cx.notify();
         }
     }
@@ -291,7 +339,7 @@ impl ModelView {
     pub fn set_hidden(&mut self, ranges: Vec<Range<usize>>, cx: &mut Context<Self>) {
         if ranges != self.hidden {
             self.hidden = ranges;
-            self.rebuild();
+            self.rebuild(cx);
             cx.notify();
         }
     }
@@ -313,7 +361,7 @@ impl ModelView {
     pub fn set_section(&mut self, section: Option<Section>, cx: &mut Context<Self>) {
         if section != self.section {
             self.section = section;
-            self.rebuild();
+            self.rebuild(cx);
             cx.notify();
         }
     }
@@ -604,16 +652,16 @@ impl ModelView {
         });
         let triangles = mesh.triangles.len();
         let drawn = self.mesh.indices.len() / 3;
-        let renderer = match &self.backend {
-            Backend::Gpu(_) => match &self.surface.borrow().failed {
+        let renderer = match self.backend.vector_reason() {
+            None => match &self.surface.borrow().failed {
                 Some(err) => format!("GPU failed: {err}"),
                 None => "GPU".to_owned(),
             },
-            Backend::Vector(reason) if vector::drawn(drawn) < drawn => format!(
+            Some(reason) if vector::drawn(drawn) < drawn => format!(
                 "vector ({reason}; {} of the triangles drawn)",
                 vector::drawn(drawn)
             ),
-            Backend::Vector(reason) => format!("vector ({reason})"),
+            Some(reason) => format!("vector ({reason})"),
         };
         let cut = self.section.map_or_else(String::new, |s| {
             format!(
@@ -674,9 +722,6 @@ impl ModelView {
                     return;
                 }
                 let mut s = surface.borrow_mut();
-                for old in s.retired.drain(..) {
-                    window.drop_image(old).ok();
-                }
                 let mut painted = false;
                 if let Backend::Gpu(renderer) = &backend
                     && s.failed.is_none()
@@ -690,26 +735,17 @@ impl ModelView {
                         camera: camera_bits(&camera),
                         background,
                     };
-                    if s.key != Some(key) {
-                        renderer.borrow_mut().set_background(background);
-                        match renderer.borrow_mut().render_mesh(
-                            &mesh,
-                            Some(mesh_key),
-                            &camera,
-                            px_size,
-                        ) {
-                            Ok(r) => {
-                                if let Some(old) = s.image.replace(r.image) {
-                                    s.retired.push(old);
-                                }
-                                s.key = Some(key);
-                            }
-                            Err(e) => {
-                                s.failed = Some(e.to_string());
-                                window.refresh();
-                            }
-                        }
-                    }
+                    s.update(
+                        renderer,
+                        &key,
+                        |r, owner| {
+                            r.set_background(background);
+                            r.start_mesh(owner, &mesh, Some(mesh_key), &camera, px_size)
+                        },
+                        window,
+                    );
+                    // Until the first frame lands the vector drawing
+                    // stands in.
                     if let (Some(image), None) = (&s.image, &s.failed) {
                         window
                             .paint_image(
@@ -725,6 +761,9 @@ impl ModelView {
                     }
                 }
                 if !painted {
+                    for old in s.retired.drain(..) {
+                        window.drop_image(old).ok();
+                    }
                     vector::paint(&mesh, &camera, bounds, window);
                 }
                 paint_marks(&marks, &camera, bounds, mark_color, window);
@@ -770,6 +809,7 @@ fn paint_marks(
 
 impl Render for ModelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.backend = self.backend.refreshed(cx);
         let height = self.height.unwrap_or_else(|| {
             (f32::from(window.viewport_size().height) * MODAL_SHARE - CHROME).max(MIN_HEIGHT)
         });
@@ -1071,6 +1111,16 @@ mod tests {
         let camera = view.read_with(cx, |view, _| view.camera());
         view.update(cx, |view, cx| view.cycle_section(cx));
         view.read_with(cx, |view, _| {
+            assert!(view.is_building());
+            assert_eq!(
+                view.mesh().vertex_count(),
+                whole,
+                "the old mesh is drawn until the cut one lands"
+            );
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert!(!view.is_building());
             let s = view.section().unwrap();
             assert_eq!(
                 (s.axis, s.offset, s.flip),
@@ -1103,6 +1153,7 @@ mod tests {
             "kept within the model"
         );
         view.update(cx, |view, cx| view.cycle_section(cx));
+        cx.run_until_parked();
         view.read_with(cx, |view, _| {
             assert_eq!(view.section(), None);
             assert_eq!(view.mesh().vertex_count(), whole);
@@ -1116,6 +1167,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.set_hidden(std::iter::once(0..2).collect(), cx)
         });
+        cx.run_until_parked();
         assert_eq!(
             view.read_with(cx, |view, _| view.mesh().indices.len()),
             2 * 3
