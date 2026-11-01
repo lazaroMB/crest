@@ -11,8 +11,6 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::research::Research;
-use adapter_export::HtmlExporter;
-use adapter_formats::Formats;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
@@ -41,27 +39,19 @@ use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
-use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
-use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
-use application::tools::files::{FileToolPorts, register_file_tools};
-use application::tools::form::{FORM_TOOL_PROMPT, register_form_tool};
-use application::tools::formats::{FORMAT_TOOLS_PROMPT, FormatToolPorts, register_format_tools};
-use application::tools::ghs::{GHS_TOOL_PROMPT, ShowGhsTool};
-use application::tools::plugin::PluginTool;
-use application::tools::registry::ToolRegistry;
-use application::tools::simulate::SimulateTool;
-use application::tools::task::{TaskPorts, TaskTool};
+use application::tools::components::COMPONENT_TOOLS_PROMPT;
+use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts};
+use application::tools::form::FORM_TOOL_PROMPT;
+use application::tools::formats::FORMAT_TOOLS_PROMPT;
+use application::tools::ghs::GHS_TOOL_PROMPT;
 use application::tools::web::WEB_TOOLS_PROMPT;
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
-use application::usecases::resume::{
-    restore_permission_rules, resume_by_id, resume_latest, settle_orphan_forms,
-};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
-use application::usecases::simulate::{SimulateDeps, Simulator};
+use application::usecases::simulate::Simulator;
 use domain::block::Block;
-use domain::conversation::{Session, SessionId};
-use domain::model::{BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
+use domain::conversation::Session;
+use domain::model::{ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -73,15 +63,15 @@ use crate::permissions;
 use crate::plugin_trust;
 use crate::preferences::{self, Preferences};
 use crate::research;
-use crate::startup::{self, CATALOG_TIMEOUT};
+use crate::startup::{self};
 
 mod llm_ports;
 mod stores;
 mod tool_registry;
 
-use llm_ports::model_ports;
-use stores::{Checkpoint, open_flow_storage, open_store};
-use tool_registry::compute_ports;
+use llm_ports::{Models, resolve_models};
+use stores::{Checkpoint, Resumed, open_flow_storage, open_store, resume_session};
+use tool_registry::{ToolInputs, Tools, register_tools};
 
 /// What the command line decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -577,45 +567,13 @@ pub async fn build_app(
         decision: decision_secrets,
         brave,
     } = secrets;
-    let models = async {
-        let mut warnings = Vec::new();
-        let preferences = match preferences_task.await.ok().flatten() {
-            Some(Ok(preferences)) => preferences,
-            Some(Err(err)) => {
-                warnings.push(format!("the saved preferences were ignored: {err}"));
-                Preferences::default()
-            }
-            None => Preferences::default(),
-        };
-        let (llm, catalog, default_provider) = model_ports(
-            &overrides,
-            &loaded.options,
-            &preferences,
-            preferences_path.as_deref(),
-            (anthropic, opencode),
-            &mut warnings,
-        )
-        .await?;
-        let defaults = if default_provider == ProviderId::Anthropic {
-            BuiltinDefaults::Claude
-        } else {
-            BuiltinDefaults::None
-        };
-        let selected = preferences.models.get(&default_provider).cloned();
-        let mut policy = loaded.model_policy().with_selection(selected, defaults);
-        if policy.needs_selection() {
-            warnings.push(format!(
-                "no model is selected for {default_provider}: pick one with /model"
-            ));
-        }
-        if let Some(catalog) = &catalog {
-            let (checked, model_warnings) =
-                startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
-            policy = checked;
-            warnings.extend(model_warnings);
-        }
-        anyhow::Ok((llm, catalog, default_provider, policy, warnings))
-    };
+    let models = resolve_models(
+        preferences_task,
+        &overrides,
+        &loaded,
+        preferences_path.as_deref(),
+        (anthropic, opencode),
+    );
     let mcp_servers = mcp::connect(
         loaded.mcp_servers.clone(),
         root.as_path(),
@@ -629,7 +587,13 @@ pub async fn build_app(
         mcp_servers,
         store_task,
     );
-    let (llm, catalog, default_provider, policy, model_warnings) = models?;
+    let Models {
+        llm,
+        catalog,
+        default_provider,
+        policy,
+        warnings: model_warnings,
+    } = models?;
     warnings.extend(model_warnings);
     let catalog_for_picker = catalog;
 
@@ -669,93 +633,32 @@ pub async fn build_app(
     warnings.extend(privacy_warning);
     let (rewriter, rtk_warning) = startup::rtk(&loaded.options, &root);
     warnings.extend(rtk_warning);
-    let mut tools = ToolRegistry::new().with_redactor(redactor);
-    register_file_tools(
-        &mut tools,
-        FileToolPorts {
-            file_search: search.clone(),
-            content_search: search.clone(),
-            fs: Arc::clone(&tool_fs),
+    let Tools {
+        mut tools,
+        compute,
+        formats,
+        simulator,
+    } = register_tools(
+        ToolInputs {
+            redactor,
+            search,
+            fs: Arc::clone(&fs),
+            tool_fs: Arc::clone(&tool_fs),
             shell: Arc::clone(&shell),
             rewriter,
-        },
-    )
-    .context("tool registration")?;
-    register_component_tools(&mut tools).context("tool registration")?;
-    register_form_tool(&mut tools, Arc::clone(&frontend.form)).context("tool registration")?;
-    let compute = compute_ports(Arc::clone(&fs));
-    register_compute_tools(&mut tools, &compute).context("tool registration")?;
-    let formats: Arc<dyn FormatsPort> = Arc::new(Formats::new());
-    register_format_tools(
-        &mut tools,
-        &FormatToolPorts {
-            formats: Arc::clone(&formats),
-            fs: Arc::clone(&compute.fs),
-            offload: Arc::clone(&compute.offload),
-        },
-    )
-    .context("tool registration")?;
-    if let Some(host) = &plugins {
-        if let Err(err) = host
-            .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
-            .await
-        {
-            warnings.push(format!("app.compute unavailable: {err}"));
-        }
-        if let Err(err) = host
-            .provide_formats(
-                Arc::clone(&formats),
-                Arc::clone(&compute.fs),
-                web.as_ref().map(|w| Arc::clone(&w.web)),
-            )
-            .await
-        {
-            warnings.push(format!("app.formats unavailable: {err}"));
-        }
-        if let Err(err) = host.provide_forms(Arc::clone(&frontend.form)).await {
-            warnings.push(format!("app.ask unavailable: {err}"));
-        }
-    }
-    if let Some(web) = &web {
-        web.register(&mut tools).context("tool registration")?;
-        tools
-            .register_typed(ShowGhsTool::new(Arc::clone(&web.web), now_ms))
-            .context("tool registration")?;
-    }
-    let task = TaskTool::new(
-        TaskPorts {
+            form: Arc::clone(&frontend.form),
+            plugins: &plugins,
+            web: &web,
             llm: Arc::clone(&llm),
             telemetry: Arc::clone(&telemetry),
-            models: policy.clone(),
-            file_search: search.clone(),
-            content_search: search,
-            fs: Arc::clone(&fs),
-            web: web.clone(),
+            policy: &policy,
+            file_search: Arc::clone(&file_search),
+            events: Arc::clone(&events),
+            plugin_tools: &loaded.tools,
         },
-        tools.budget(),
+        &mut warnings,
     )
-    .context("tool registration")?;
-    tools.register_typed(task).context("tool registration")?;
-    let simulator = Simulator::new(SimulateDeps {
-        llm: Arc::clone(&llm),
-        models: policy.clone(),
-        fs: Arc::clone(&fs),
-        search: file_search.clone(),
-        events: Some(Arc::clone(&events)),
-        export: Some(Arc::new(HtmlExporter::new())),
-    });
-    tools
-        .register_typed(SimulateTool::new(simulator.clone(), now_ms))
-        .context("tool registration")?;
-    if let Some(host) = &plugins {
-        for spec in loaded.tools.iter().cloned() {
-            let name = spec.name.clone();
-            let tool = PluginTool::new(spec, host.clone() as Arc<dyn PluginHostPort>);
-            if let Err(err) = tools.register(Arc::new(tool)) {
-                warnings.push(format!("plugin tool `{name}` ignored: {err}"));
-            }
-        }
-    }
+    .await?;
 
     let mcp_trust_path = mcp_trust.store;
     let mcp = connected_mcp.map(|(servers, source)| {
@@ -765,49 +668,19 @@ pub async fn build_app(
     warnings.extend(mcp_warnings);
 
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
-    let mut session = Session::new(root.as_path().display().to_string(), now_ms());
-    let mut resumed_notice = None;
-    let mut prompt_history = Vec::new();
-    if let Some(store) = &store {
-        let chosen = config.session_id.as_deref().and_then(SessionId::parse);
-        let loaded = if let Some(id) = chosen {
-            match resume_by_id(store.as_ref(), id, &session.workspace_root).await {
-                Ok(stored) => Ok(Some(stored)),
-                Err(err) => {
-                    warnings.push(format!("could not open the chosen session: {err}"));
-                    Ok(None)
-                }
-            }
-        } else if config.resume {
-            resume_latest(store.as_ref(), &session.workspace_root).await
-        } else {
-            Ok(None)
-        };
-        match loaded {
-            Ok(Some(mut stored)) => {
-                // Forms of calls that are over close; one whose call still
-                // waits is asked again once the session opens.
-                if settle_orphan_forms(&mut stored) > 0 {
-                    warnings.push("a form left unanswered by an earlier run was closed".into());
-                }
-                restore_permission_rules(&permissions, &stored.permission_rules);
-                let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
-                for block in stored.timeline {
-                    state.apply(&DomainEvent::BlockAdded { block });
-                }
-                if chosen.is_none() {
-                    resumed_notice = Some(format!(
-                        "previous session resumed ({} turns); `crest --new` starts a new one",
-                        stored.session.turns.len()
-                    ));
-                }
-                session = stored.session;
-                prompt_history = stored.prompt_history;
-            }
-            Ok(None) => {}
-            Err(err) => warnings.push(format!("could not resume the last session: {err}")),
-        }
-    }
+    let Resumed {
+        session,
+        notice: resumed_notice,
+        prompt_history,
+    } = resume_session(
+        store.as_ref(),
+        config,
+        &root,
+        &timeline,
+        &permissions,
+        &mut warnings,
+    )
+    .await;
     // The project's rules join the restored session ones; "always in
     // project" answers are written back to the same file.
     let (project_rules, project_warnings) =
