@@ -1432,7 +1432,7 @@ mod tests {
         cx.update(|_, cx| {
             cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
         });
-        cx.simulate_keystrokes("ctrl-q");
+        cx.simulate_keystrokes("secondary-q");
         assert_eq!(quits.get(), 1);
     }
 }

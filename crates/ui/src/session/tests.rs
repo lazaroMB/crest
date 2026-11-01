@@ -1876,7 +1876,7 @@ fn quitting_during_a_turn_asks_twice(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         cx.on_action(move |_: &crate::app::Quit, _| counter.set(counter.get() + 1));
     });
-    cx.simulate_keystrokes("ctrl-q");
+    cx.simulate_keystrokes("secondary-q");
     assert_eq!(quits.get(), 1, "idle: quits at once");
     // A turn that never ends by itself.
     let (_tx, rx) = oneshot::channel::<()>();
@@ -1886,16 +1886,16 @@ fn quitting_during_a_turn_asks_twice(cx: &mut TestAppContext) {
             rx.await.ok();
         }));
     });
-    cx.simulate_keystrokes("ctrl-q");
+    cx.simulate_keystrokes("secondary-q");
     assert_eq!(quits.get(), 1, "the first ask only warns");
     assert!(h.session.read_with(cx, |s, _| s.quit_pending()));
-    cx.simulate_keystrokes("ctrl-q");
+    cx.simulate_keystrokes("secondary-q");
     assert_eq!(quits.get(), 2, "the second quits");
     // Over the help modal too.
     cx.simulate_keystrokes("f1");
     cx.run_until_parked();
     h.session.update(cx, |s, _| s.running = None);
-    cx.simulate_keystrokes("ctrl-q");
+    cx.simulate_keystrokes("secondary-q");
     assert_eq!(quits.get(), 3);
 }
 
