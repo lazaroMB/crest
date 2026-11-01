@@ -39,7 +39,7 @@ use super::registry::{
 use crate::ports::form::{FormPort, FormRequest, FormRequestId, FormResponse};
 
 /// Name of the tool.
-pub const ASK_USER: &str = "ask_user";
+pub use crate::usecases::run_turn::ASK_USER;
 
 /// Answers rejected before the call gives up.
 pub const MAX_ATTEMPTS: usize = 3;
