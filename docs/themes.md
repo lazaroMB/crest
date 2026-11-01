@@ -65,6 +65,7 @@ return {
   palette = p,               -- named colors: other values may use these names
   ui = { ... },              -- the colors of the window
   syntax = { ... },          -- the colors of code
+  shape = { ... },           -- spacing, corners and text sizes
 }
 ```
 
@@ -263,6 +264,36 @@ Names are the highlight names of tree-sitter queries. A dotted name you leave ou
 | `text.code.span` | `ansi.green` |
 | `emphasis` | italic, the color of the text |
 | `emphasis.strong` | bold, the color of the text |
+
+### Shape
+
+`shape` sets the sizes the window is drawn with: the spacing scale, the corner radii and the text sizes. Values are whole pixels (0 to 128) at the default 16px rem, so they scale with the window like every other size. Nested tables join with dots, as in `ui`:
+
+```lua
+shape = {
+  space  = { md = 10 },          -- roomier blocks
+  radius = { sm = 0, md = 0 },   -- square corners
+  text   = { body = 15 },
+}
+```
+
+| Token | Default | Sizes |
+| --- | --- | --- |
+| `space.xxs` | 2 | Hairline gaps: between an icon and its label. |
+| `space.xs` | 4 | Gaps inside a row of chips or a toolbar. |
+| `space.sm` | 6 | Padding of chips and small buttons. |
+| `space.md` | 8 | Gaps between the parts of a block. |
+| `space.lg` | 12 | Padding of cards and dialogs. |
+| `space.xl` | 16 | Gaps between sections. |
+| `radius.sm` | 4 | Corners of chips, badges and small buttons. |
+| `radius.md` | 6 | Corners of cards, inputs and popovers (also gpui-component's buttons and inputs). |
+| `radius.lg` | 8 | Corners of dialogs and large panels. |
+| `text.caption` | 12 | Captions, readouts and chip labels. |
+| `text.body` | 14 | Body text of blocks and lists. |
+| `text.title` | 16 | Block and section titles. |
+| `text.heading` | 18 | Dialog and page headings. |
+
+A theme that `extends` another keeps the base's shape unless it sets its own, and `app.opt.colors` may set `shape` too. The views move to these tokens gradually ([design system](design-system.md)); a size not yet on a token does not follow the theme.
 
 ## Overriding a theme from `init.lua`
 

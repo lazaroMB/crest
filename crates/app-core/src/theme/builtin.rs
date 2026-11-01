@@ -244,6 +244,7 @@ pub fn spec(name: &str) -> Option<ThemeSpec> {
                 ((*name).to_owned(), style)
             })
             .collect(),
+        shape: BTreeMap::new(),
     })
 }
 

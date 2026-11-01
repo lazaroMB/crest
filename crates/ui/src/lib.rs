@@ -10,6 +10,7 @@ pub mod commands;
 pub mod form;
 pub mod help;
 pub mod input;
+pub mod kit;
 pub mod keyscroll;
 pub mod login;
 pub mod modal;

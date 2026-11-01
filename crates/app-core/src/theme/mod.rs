@@ -237,10 +237,12 @@ impl ThemeCatalog {
         let mut palette = BTreeMap::new();
         let mut colors = BTreeMap::new();
         let mut styles = BTreeMap::new();
+        let mut shape = BTreeMap::new();
         for spec in &chain {
             palette.extend(spec.palette.clone());
             colors.extend(spec.colors.clone());
             styles.extend(spec.syntax.clone());
+            shape.extend(spec.shape.clone());
         }
         let mut set: BTreeMap<String, Color> = BTreeMap::new();
         for (path, color) in colors {
@@ -266,7 +268,7 @@ impl ThemeCatalog {
             }
         }
         Ok(Resolved {
-            theme: Arc::new(Theme::derive(name, appearance, &set, &set_syntax)),
+            theme: Arc::new(Theme::derive(name, appearance, &set, &set_syntax).with_shape(&shape)),
             warnings,
         })
     }
@@ -388,6 +390,16 @@ mod tests {
         let theme = catalog().resolve("night", Some(&overrides)).unwrap().theme;
         assert_eq!(theme.color("caret"), hex("#ff0000"));
         assert_eq!(theme.color("accent.bg"), hex("#7aa2f7"));
+    }
+
+    #[test]
+    fn shape_follows_extends_and_overrides() {
+        let (overrides, warnings) =
+            parse_overrides(&json!({ "shape": { "radius": { "md": 2 } } }));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let theme = catalog().resolve("night", Some(&overrides)).unwrap().theme;
+        assert_eq!(theme.size("radius.md"), 2);
+        assert_eq!(theme.size("space.md"), 8);
     }
 
     #[test]
