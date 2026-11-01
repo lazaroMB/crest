@@ -102,19 +102,16 @@ fn appended_slot(kind: &BlockKind, appended: usize) -> bool {
 
 /// Whether blocks of this kind have an alternate view for `t`.
 pub fn has_alt_view(kind: &BlockKind) -> bool {
-    matches!(
-        kind,
-        BlockKind::Chart(_) | BlockKind::Markdown { .. } | BlockKind::Mermaid(_)
-    )
+    crate::blocks::view(kind.tag()).is_some_and(|view| view.has_alt_view())
 }
 
 /// Initial expansion of a block: tool calls start as one line and thinking
-/// follows its own `collapsed` flag; everything else is shown in full.
+/// follows its own `collapsed` flag; everything else is shown in full
+/// ([`crate::blocks::BlockView::expanded_by_default`]).
 fn expanded_by_default(kind: &BlockKind) -> bool {
-    match kind {
-        BlockKind::ToolCall { .. } => false,
-        BlockKind::Thinking { collapsed, .. } => !collapsed,
-        _ => true,
+    match crate::blocks::view(kind.tag()) {
+        Some(view) => view.expanded_by_default(kind),
+        None => !matches!(kind, BlockKind::ToolCall { .. }),
     }
 }
 

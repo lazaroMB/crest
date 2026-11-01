@@ -2,13 +2,15 @@
 //! workflow entering a new stage, `Stage 5/14 · Hypothesis`, over a
 //! progress bar.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use gpui::{
     AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
     Window, div, px, relative,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// The header line: `Stage 5/14 · name`.
@@ -65,6 +67,23 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
         .child(header)
         .child(bar)
         .into_any_element()
+}
+
+/// The registry entry of stage header blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::StageHeader
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
 }
 
 #[cfg(test)]

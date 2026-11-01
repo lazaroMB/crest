@@ -34,57 +34,11 @@ impl BlockWidth {
     }
 }
 
-/// The column width of a block kind.
+/// The column width of a block kind ([`crate::blocks::BlockView::width`]);
+/// the kinds the timeline draws itself (text, tool calls, errors) are
+/// prose.
 pub fn block_width(kind: &BlockKind) -> BlockWidth {
-    match kind {
-        BlockKind::Chart(_)
-        | BlockKind::Table(_)
-        | BlockKind::Diff(_)
-        | BlockKind::Mermaid(_)
-        | BlockKind::Custom { .. }
-        | BlockKind::Image { .. }
-        | BlockKind::Shell { .. }
-        | BlockKind::Computed { .. }
-        | BlockKind::Plot(_)
-        | BlockKind::TestReport(_)
-        | BlockKind::Findings(_)
-        | BlockKind::Dataset(_)
-        | BlockKind::Plate(_)
-        | BlockKind::Trace(_)
-        | BlockKind::FlameGraph(_)
-        | BlockKind::Logs(_)
-        | BlockKind::QueryPlan(_)
-        | BlockKind::Har(_)
-        | BlockKind::TerraformPlan(_)
-        | BlockKind::Diagram(_)
-        | BlockKind::Benchmarks(_)
-        | BlockKind::Waveform(_)
-        | BlockKind::Netlist(_)
-        | BlockKind::Material(_)
-        | BlockKind::CadModel(_)
-        | BlockKind::Drawing(_)
-        | BlockKind::IfcSchedule(_)
-        | BlockKind::Sequence(_)
-        | BlockKind::Reaction(_)
-        | BlockKind::MoleculeGrid(_)
-        | BlockKind::Spectrum(_)
-        | BlockKind::Molecule3d(_)
-        | BlockKind::Ghs(_)
-        | BlockKind::GeoMap(_)
-        | BlockKind::Gantt(_)
-        | BlockKind::ArrayFile(_)
-        | BlockKind::Network(_)
-        | BlockKind::TrainingCurves(_) => BlockWidth::Wide,
-        BlockKind::Text { .. }
-        | BlockKind::Thinking { .. }
-        | BlockKind::ToolCall { .. }
-        | BlockKind::Error { .. }
-        | BlockKind::Markdown { .. }
-        | BlockKind::Sources { .. }
-        | BlockKind::StageHeader { .. }
-        | BlockKind::Form(_)
-        | BlockKind::Molecule(_) => BlockWidth::Prose,
-    }
+    crate::blocks::view(kind.tag()).map_or(BlockWidth::Prose, |view| view.width())
 }
 
 #[cfg(test)]

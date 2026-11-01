@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, json};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 use crate::widget::graph::{GraphEdge, GraphNode, GraphSpec, LayoutKind};
 use crate::widget::tree::{ColumnKind, TreeColumn, TreeNode, TreeSpec};
@@ -438,6 +438,21 @@ fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for NetworkSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[network: {} nodes, {} edges, {} communities]",
+            self.nodes.len(),
+            self.edges.len(),
+            self.communities
+        ))
     }
 }
 

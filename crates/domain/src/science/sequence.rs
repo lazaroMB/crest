@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Longest sequence shown, in residues.
 pub const MAX_LENGTH: usize = 20_000_000;
@@ -901,6 +901,22 @@ pub fn feature_slot(kind: &str) -> usize {
             });
             usize::try_from(hash % 5).unwrap_or(0)
         }
+    }
+}
+
+impl BlockSpec for SequenceSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[sequence: {} {}, {} features, {} cut sites]",
+            self.len(),
+            self.alphabet.unit(),
+            self.features.len(),
+            self.cut_sites.len()
+        ))
     }
 }
 

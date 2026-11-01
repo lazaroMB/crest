@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::tree::{BadgeTone, ColumnKind, TreeColumn, TreeNode, TreeSpec};
 
 /// Resource changes a block keeps.
@@ -476,6 +476,16 @@ impl TerraformPlanSpec {
             }
         }
         out
+    }
+}
+
+impl BlockSpec for TerraformPlanSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[terraform plan: {}]", self.counts_text()))
     }
 }
 

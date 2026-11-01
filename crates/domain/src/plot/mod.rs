@@ -20,7 +20,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use self::expr::{Expr, is_builtin};
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Variable names a parameter cannot take, since expressions use them.
 pub const RESERVED_VARIABLES: [&str; 3] = ["x", "y", "t"];
@@ -391,6 +391,16 @@ impl PlotSpec {
     #[must_use]
     pub fn param_values(&self) -> Vec<f64> {
         self.params.iter().map(|p| p.value).collect()
+    }
+}
+
+impl BlockSpec for PlotSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some("[plot]".to_owned())
     }
 }
 

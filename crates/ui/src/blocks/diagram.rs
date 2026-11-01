@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::devops::diagram::{DiagramSource, DiagramSpec};
 use domain::widget::graph::GraphSpec;
 use domain::widget::tree::TreeSpec;
@@ -22,6 +22,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::trace::file_name;
 use crate::timeline::TimelineEntry;
@@ -185,6 +187,33 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of diagram blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Diagram
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Diagram(spec) = kind else {
+            return Vec::new();
+        };
+        if spec.tables.is_empty() {
+            return vec![CopyFormat::new("dot", "DOT", spec.graph.to_dot())];
+        }
+        vec![
+            CopyFormat::new("mermaid", "Mermaid", spec.to_mermaid()),
+            CopyFormat::new("dot", "DOT", spec.graph.to_dot()),
+            CopyFormat::new("tables", "tables", spec.tables_tree().to_text()),
+        ]
+    }
 }
 
 #[cfg(test)]

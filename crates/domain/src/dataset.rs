@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockError, Cell, TableSpec};
+use crate::block::{BlockError, BlockSpec, Cell, TableSpec};
 use crate::computed::Histogram;
 
 /// A dataset preview.
@@ -98,6 +98,16 @@ impl DatasetSpec {
             }
         }
         Ok(())
+    }
+}
+
+impl BlockSpec for DatasetSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[dataset: {}]", self.path))
     }
 }
 

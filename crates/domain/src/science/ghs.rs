@@ -9,7 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// The nine GHS pictograms: code and name, as the UN GHS names them.
 pub const PICTOGRAMS: [(&str, &str); 9] = [
@@ -223,6 +223,25 @@ pub fn utc_date(ms: u64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+impl BlockSpec for GhsSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        let found = if self.found() {
+            format!("{} sources", self.classifications.len())
+        } else {
+            "not found".to_owned()
+        };
+        Some(format!(
+            "[ghs: {}, {found}, retrieved {}]",
+            self.name.as_deref().unwrap_or(&self.query),
+            self.retrieved
+        ))
+    }
 }
 
 #[cfg(test)]

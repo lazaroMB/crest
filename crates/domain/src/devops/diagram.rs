@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Map;
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::graph::GraphSpec;
 use crate::widget::tree::{BadgeTone, ColumnKind, TreeColumn, TreeNode, TreeSpec};
 
@@ -341,6 +341,20 @@ impl DiagramSpec {
             ));
         }
         out
+    }
+}
+
+impl BlockSpec for DiagramSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[diagram: {} nodes, {} edges]",
+            self.graph.nodes.len(),
+            self.graph.edges.len()
+        ))
     }
 }
 

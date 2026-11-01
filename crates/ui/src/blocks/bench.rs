@@ -10,7 +10,7 @@
 //! shared symmetric axis, with the noise band shaded and zero marked.
 //! Regressions come first.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use domain::devops::bench::{Bench, BenchSpec, Estimate, Verdict, format_change, format_ns};
 use gpui::{
     AnyElement, App, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
@@ -18,6 +18,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::trace::caption;
 use crate::timeline::TimelineEntry;
 
@@ -275,6 +277,26 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
         return super::placeholder(entry, cx);
     };
     render_spec(spec, cx)
+}
+
+/// The registry entry of benchmarks blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Benchmarks
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Benchmarks(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new("csv", "CSV", spec.to_csv())]
+    }
 }
 
 #[cfg(test)]

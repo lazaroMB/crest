@@ -7,13 +7,15 @@
 //! the source, drawn as one fenced `markdown` code block so the same
 //! highlighter colors the raw text.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use gpui::{
     AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
     Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// Wraps `source` in a fenced `markdown` code block whose fence is longer
@@ -75,6 +77,27 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         .child(header)
         .child(body)
         .into_any_element()
+}
+
+/// The registry entry of markdown blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Markdown
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
+
+    fn has_alt_view(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

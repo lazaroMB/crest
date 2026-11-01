@@ -22,7 +22,7 @@ pub mod wrap;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind, MermaidSpec};
+use domain::block::{BlockId, BlockKind, BlockTag, MermaidSpec};
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
@@ -31,6 +31,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
 use diagram::Diagram;
@@ -454,6 +456,30 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         window,
         cx,
     )
+}
+
+/// The registry entry of mermaid blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Mermaid
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn has_alt_view(&self) -> bool {
+        true
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Mermaid(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new("source", "source", spec.source.clone())]
+    }
 }
 
 /// Draws `source` as the diagram of `id` (a block, or a node of a custom

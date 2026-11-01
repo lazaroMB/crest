@@ -11,7 +11,7 @@
 //! one without a classification, is a warning that says so: the card
 //! shows nothing it did not fetch.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use domain::science::ghs::{GhsClassification, GhsSpec};
 use gpui::{
     AnyElement, App, FontWeight, Hsla, ImageSource, InteractiveElement as _, IntoElement as _,
@@ -20,6 +20,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::molecule::svg_data;
 use super::svg::{SvgData, SvgState};
 use crate::timeline::TimelineEntry;
@@ -200,6 +202,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     render_spec(spec, window, cx)
+}
+
+/// The registry entry of ghs blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Ghs
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Ghs(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("card", "card", spec.to_text()),
+            CopyFormat::new("url", "PubChem URL", spec.source_url.clone()),
+        ]
+    }
 }
 
 /// Draws `spec`.

@@ -13,7 +13,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::science::molecule_grid::{GridMolecule, MoleculeGridSpec};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
@@ -23,7 +23,9 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
+use super::BlockView;
 use super::computed::provenance_text;
+use super::copy::CopyFormat;
 use super::molecule::{subscript_formula, svg_data, tinted_picture};
 use super::svg::SvgData;
 use crate::timeline::TimelineEntry;
@@ -548,6 +550,37 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of molecule grid blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::MoleculeGrid
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::MoleculeGrid(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("csv", "CSV", spec.to_csv()),
+            CopyFormat::new(
+                "smiles",
+                "SMILES",
+                spec.molecules
+                    .iter()
+                    .map(|m| format!("{} {}", m.molecule.smiles, m.id))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

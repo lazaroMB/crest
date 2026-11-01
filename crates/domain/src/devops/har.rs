@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::list::{ListItem, ListSpec};
 use crate::widget::timeline::{
     Marker, Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec, format_duration,
@@ -737,6 +737,20 @@ fn short_path(entry: &HarEntry) -> String {
     match path.trim_end_matches('/').rsplit('/').next() {
         Some(last) if !last.is_empty() => last.to_owned(),
         _ => entry.host().to_owned(),
+    }
+}
+
+impl BlockSpec for HarSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[har: {} requests, {} failed]",
+            self.entries.len(),
+            self.failed().len()
+        ))
     }
 }
 

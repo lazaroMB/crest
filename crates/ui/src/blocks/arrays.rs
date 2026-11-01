@@ -14,7 +14,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::plot::{PlotSpec, SeriesStyle, XySeries};
 use domain::science::arrays::{ArrayFileSpec, ArrayPreview, PreviewKind};
 use domain::widget::tree::TreeSpec;
@@ -26,6 +26,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
@@ -454,6 +456,30 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of array file blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::ArrayFile
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::ArrayFile(spec) = kind else {
+            return Vec::new();
+        };
+        let mut formats = vec![CopyFormat::new("nodes", "variables CSV", spec.nodes_csv())];
+        if let Some(p) = spec.previews.first() {
+            formats.push(CopyFormat::new("preview", "preview CSV", p.to_csv()));
+        }
+        formats
+    }
 }
 
 #[cfg(test)]

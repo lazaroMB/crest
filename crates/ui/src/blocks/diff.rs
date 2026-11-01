@@ -4,7 +4,7 @@
 //! [`render_unified`] is shared with the approval dialog, so the user sees
 //! the same colored diff in the timeline and when deciding.
 
-use domain::block::{ApprovalState, BlockKind, DiffSpec};
+use domain::block::{ApprovalState, BlockKind, BlockTag, DiffSpec};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, IntoElement as _, ParentElement as _,
     SharedString, Styled as _, Window, div,
@@ -12,6 +12,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
 use crate::timeline::TimelineEntry;
 
 /// What a line of a unified diff is.
@@ -230,6 +231,19 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         ));
     }
     block.into_any_element()
+}
+
+/// The registry entry of diff blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Diff
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::MoleculeSpec;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 
 /// Most molecules in one grid.
@@ -253,6 +253,20 @@ pub fn value_key(id: &str) -> String {
         })
         .collect();
     if key.is_empty() { "_".to_owned() } else { key }
+}
+
+impl BlockSpec for MoleculeGridSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[molecule grid: {} molecules, {} not parsed]",
+            self.molecules.len(),
+            self.failed().len()
+        ))
+    }
 }
 
 #[cfg(test)]

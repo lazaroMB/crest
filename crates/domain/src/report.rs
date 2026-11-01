@@ -6,7 +6,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockError, SourceRef};
+use crate::block::{BlockError, BlockSpec, SourceRef};
 
 /// A test run: suites of cases.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -378,6 +378,26 @@ impl FindingsSpec {
             .iter()
             .filter_map(|f| f.location.as_ref())
             .try_for_each(SourceRef::validate)
+    }
+}
+
+impl BlockSpec for TestReportSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some("[test report]".to_owned())
+    }
+}
+
+impl BlockSpec for FindingsSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some("[findings]".to_owned())
     }
 }
 

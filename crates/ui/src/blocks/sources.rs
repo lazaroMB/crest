@@ -8,7 +8,7 @@
 
 pub mod events;
 
-use domain::block::{BlockKind, SourceRef};
+use domain::block::{BlockKind, BlockTag, SourceRef};
 use domain::workspace::WorkspacePath;
 use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, KeyDownEvent,
@@ -18,6 +18,8 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 pub use events::{BlockEvent, BlockEvents, block_events, emit};
 
+use super::BlockView;
+use crate::timeline::BlockWidth;
 use crate::timeline::TimelineEntry;
 
 /// Characters of a commit hash shown in the list.
@@ -165,6 +167,23 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
                 .map(|(ix, source)| render_entry(entry, ix, source, cx)),
         )
         .into_any_element()
+}
+
+/// The registry entry of sources blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Sources
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn width(&self) -> BlockWidth {
+        BlockWidth::Prose
+    }
 }
 
 #[cfg(test)]

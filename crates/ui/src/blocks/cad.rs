@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::engineering::cad::CadModelSpec;
 use domain::model3d::ModelSpec;
 use gpui::{
@@ -21,6 +21,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::model_view::model_view_inline;
 use crate::timeline::TimelineEntry;
@@ -288,6 +290,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of cad model blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::CadModel
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::CadModel(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("solids", "solids CSV", spec.to_csv()),
+            CopyFormat::new("summary", "summary", summary_text(spec)),
+        ]
+    }
 }
 
 #[cfg(test)]

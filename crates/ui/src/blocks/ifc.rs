@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::engineering::ifc::IfcScheduleSpec;
 use domain::widget::tree::TreeSpec;
 use gpui::{
@@ -20,6 +20,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use crate::timeline::TimelineEntry;
 use crate::widgets;
@@ -165,6 +167,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of ifc schedule blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::IfcSchedule
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::IfcSchedule(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("spaces", "spaces CSV", spec.to_csv()),
+            CopyFormat::new("tree", "schedule", spec.to_tree().to_text()),
+        ]
+    }
 }
 
 #[cfg(test)]

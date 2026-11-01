@@ -12,7 +12,7 @@
 
 pub mod sort;
 
-use domain::block::{Align, BlockId, BlockKind, Cell, TableSpec};
+use domain::block::{Align, BlockId, BlockKind, BlockTag, Cell, TableSpec};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement,
@@ -23,7 +23,9 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use self::sort::Direction;
+use super::BlockView;
 use super::chart::paint::LabelFont;
+use super::copy::CopyFormat;
 use crate::timeline::TimelineEntry;
 
 /// Rows shown until the table is expanded.
@@ -498,6 +500,29 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     render_spec(entry.block.id, spec, entry.rev, window, cx)
+}
+
+/// The registry entry of table blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Table
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Table(table) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("tsv", "TSV", super::copy::tsv(table)),
+            CopyFormat::new("csv", "CSV", super::copy::csv(table)),
+        ]
+    }
 }
 
 #[cfg(test)]

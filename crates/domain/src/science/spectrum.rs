@@ -9,7 +9,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 
 /// Most points kept per spectrum.
@@ -296,6 +296,21 @@ pub fn decimate(x: &[f64], y: &[f64], lo: f64, hi: f64, columns: usize) -> (Vec<
         }
     }
     (xs, ys)
+}
+
+impl BlockSpec for SpectrumSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[spectrum: {} {} points, {} peaks]",
+            self.kind.name(),
+            self.x.len(),
+            self.peaks.len()
+        ))
+    }
 }
 
 #[cfg(test)]

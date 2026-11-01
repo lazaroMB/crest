@@ -125,74 +125,176 @@ impl Block {
     ///
     /// Returns the first [`BlockError`] found.
     pub fn validate(&self) -> Result<(), BlockError> {
-        match &self.kind {
-            BlockKind::Table(spec) => spec.validate(),
-            BlockKind::Chart(spec) => spec.validate(),
-            BlockKind::Custom { tree, .. } => tree.validate(),
-            BlockKind::Sources { sources } => sources.iter().try_for_each(SourceRef::validate),
-            BlockKind::Image { source, .. } => source.as_ref().map_or(Ok(()), SourceRef::validate),
-            BlockKind::StageHeader { index, total, .. } => {
-                if (1..=*total).contains(index) {
-                    Ok(())
-                } else {
-                    Err(BlockError::StageOutOfRange {
-                        index: *index,
-                        total: *total,
-                    })
-                }
-            }
-            BlockKind::Computed { envelope, body } => {
-                envelope.validate()?;
-                Ok(body.validate()?)
-            }
-            BlockKind::Form(spec) => spec.validate(),
-            BlockKind::Plot(spec) => spec.validate(),
-            BlockKind::TestReport(spec) => spec.validate(),
-            BlockKind::Findings(spec) => spec.validate(),
-            BlockKind::Dataset(spec) => spec.validate(),
-            BlockKind::Molecule(spec) => spec.validate(),
-            BlockKind::Plate(spec) => spec.validate(),
-            BlockKind::Trace(spec) => spec.validate(),
-            BlockKind::FlameGraph(spec) => spec.validate(),
-            BlockKind::Logs(spec) => spec.validate(),
-            BlockKind::QueryPlan(spec) => spec.validate(),
-            BlockKind::Har(spec) => spec.validate(),
-            BlockKind::TerraformPlan(spec) => spec.validate(),
-            BlockKind::Diagram(spec) => spec.validate(),
-            BlockKind::Benchmarks(spec) => spec.validate(),
-            BlockKind::Waveform(spec) => spec.validate(),
-            BlockKind::Netlist(spec) => spec.validate(),
-            BlockKind::Material(spec) => spec.validate(),
-            BlockKind::CadModel(spec) => spec.validate(),
-            BlockKind::Drawing(spec) => spec.validate(),
-            BlockKind::IfcSchedule(spec) => spec.validate(),
-            BlockKind::Sequence(spec) => spec.validate(),
-            BlockKind::Reaction(spec) => spec.validate(),
-            BlockKind::MoleculeGrid(spec) => spec.validate(),
-            BlockKind::Spectrum(spec) => spec.validate(),
-            BlockKind::Molecule3d(spec) => spec.validate(),
-            BlockKind::Ghs(spec) => spec.validate(),
-            BlockKind::GeoMap(spec) => spec.validate(),
-            BlockKind::Gantt(spec) => spec.validate(),
-            BlockKind::ArrayFile(spec) => spec.validate(),
-            BlockKind::Network(spec) => spec.validate(),
-            BlockKind::TrainingCurves(spec) => spec.validate(),
-            BlockKind::Text { .. }
-            | BlockKind::Thinking { .. }
-            | BlockKind::ToolCall { .. }
-            | BlockKind::Diff(_)
-            | BlockKind::Mermaid(_)
-            | BlockKind::Markdown { .. }
-            | BlockKind::Shell { .. }
-            | BlockKind::Error { .. } => Ok(()),
+        match self.kind.spec() {
+            Some(spec) => spec.validate(),
+            None => self.kind.validate_inline(),
         }
     }
 }
 
-/// The payload of a [`Block`], tagged by `type`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum BlockKind {
+/// What every spec-carrying block kind (`BlockKind::Gantt(GanttSpec)`...)
+/// knows about itself, so [`Block::validate`] and the headless printer
+/// need no `match` over the kinds.
+///
+/// Most specs also have an inherent `validate` that callers use directly;
+/// their impl here forwards to it.
+pub trait BlockSpec {
+    /// Checks the spec; valid by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BlockError`] found.
+    fn validate(&self) -> Result<(), BlockError> {
+        Ok(())
+    }
+
+    /// One line standing for the block where it cannot be drawn (the
+    /// headless terminal), e.g. `[gantt: 4 tasks, 12 d, critical a → b]`;
+    /// `None` prints nothing.
+    fn summary_line(&self) -> Option<String> {
+        None
+    }
+}
+
+impl<T: BlockSpec + ?Sized> BlockSpec for Box<T> {
+    fn validate(&self) -> Result<(), BlockError> {
+        (**self).validate()
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        (**self).summary_line()
+    }
+}
+
+/// Length of `name` in snake case, as serde's `rename_all = "snake_case"`
+/// writes it: an `_` before every uppercase letter but the first.
+const fn snake_len(name: &str) -> usize {
+    let bytes = name.as_bytes();
+    let mut len = bytes.len();
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_uppercase() {
+            len += 1;
+        }
+        i += 1;
+    }
+    len
+}
+
+/// `name` in snake case ([`snake_len`] bytes), at compile time, so a
+/// [`BlockTag`] name is the serde tag without writing it twice.
+const fn snake_case<const N: usize>(name: &str) -> [u8; N] {
+    let bytes = name.as_bytes();
+    let mut out = [0; N];
+    let (mut i, mut o) = (0, 0);
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if byte.is_ascii_uppercase() {
+            if i > 0 {
+                out[o] = b'_';
+                o += 1;
+            }
+            out[o] = byte.to_ascii_lowercase();
+        } else {
+            out[o] = byte;
+        }
+        o += 1;
+        i += 1;
+    }
+    out
+}
+
+/// Declares [`BlockKind`] and what is derived from its list of variants:
+/// [`BlockTag`], [`BlockKind::tag`], [`BlockTag::name`] and
+/// [`BlockKind::spec`]. A variant is either a spec newtype, `Name(Spec)`
+/// with `Spec: BlockSpec`, or an inline struct variant, `Name { .. }`;
+/// adding a spec kind is one line here and its `impl BlockSpec`.
+///
+/// The variants are sorted into those two lists one at a time (the `@munch`
+/// rules) while the enum keeps their order and attributes, so its serde
+/// and JSON schema are the ones a plain `enum` would have.
+macro_rules! block_kinds {
+    (@munch [$($decl:tt)*] [$($all:ident)*] [$($spec:ident)*] [$($inline:ident)*]
+        $(#[$meta:meta])* $name:ident($ty:ty), $($rest:tt)*) => {
+        block_kinds!(@munch
+            [$($decl)* $(#[$meta])* $name($ty),]
+            [$($all)* $name] [$($spec)* $name] [$($inline)*]
+            $($rest)*);
+    };
+    (@munch [$($decl:tt)*] [$($all:ident)*] [$($spec:ident)*] [$($inline:ident)*]
+        $(#[$meta:meta])* $name:ident { $($body:tt)* }, $($rest:tt)*) => {
+        block_kinds!(@munch
+            [$($decl)* $(#[$meta])* $name { $($body)* },]
+            [$($all)* $name] [$($spec)*] [$($inline)* $name]
+            $($rest)*);
+    };
+    (@munch [$($decl:tt)*] [$($all:ident)*] [$($spec:ident)*] [$($inline:ident)*]) => {
+        /// The payload of a [`Block`], tagged by `type`.
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        pub enum BlockKind {
+            $($decl)*
+        }
+
+        /// The kind of a block without its payload: a key for per-kind
+        /// tables (the UI's views) and the kind's serde tag
+        /// ([`BlockTag::name`]).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum BlockTag {
+            $(
+                #[doc = concat!("A [`BlockKind::", stringify!($all), "`].")]
+                $all,
+            )*
+        }
+
+        impl BlockTag {
+            /// Every tag, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$all),*];
+
+            /// The serde tag of the kind (`"text"`, `"tool_call"`...), the
+            /// `type` of a serialized block.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$all => {
+                        const NAME: &str = stringify!($all);
+                        const BYTES: [u8; snake_len(NAME)] = snake_case(NAME);
+                        const SNAKE: &str = match std::str::from_utf8(&BYTES) {
+                            Ok(snake) => snake,
+                            Err(_) => panic!("a variant name is ASCII"),
+                        };
+                        SNAKE
+                    })*
+                }
+            }
+        }
+
+        impl BlockKind {
+            /// The tag of this kind.
+            #[must_use]
+            pub const fn tag(&self) -> BlockTag {
+                match self {
+                    $(Self::$all { .. } => BlockTag::$all,)*
+                }
+            }
+
+            /// The spec of a spec newtype kind; `None` for the inline
+            /// kinds (text, tool calls, shell...).
+            #[must_use]
+            pub fn spec(&self) -> Option<&dyn BlockSpec> {
+                match self {
+                    $(Self::$spec(spec) => Some(spec),)*
+                    $(Self::$inline { .. })|* => None,
+                }
+            }
+        }
+    };
+    ($($variants:tt)*) => {
+        block_kinds!(@munch [] [] [] [] $($variants)*);
+    };
+}
+
+block_kinds! {
     /// Model answer, markdown that may still be streaming.
     Text {
         /// Markdown source.
@@ -393,6 +495,43 @@ pub enum BlockKind {
     /// Machine-learning training curves with smoothing and per-run
     /// summaries (tool `show_training_curves`).
     TrainingCurves(Box<TrainingSpec>),
+}
+
+impl BlockKind {
+    /// The one line the headless terminal prints for a spec kind
+    /// ([`BlockSpec::summary_line`]); `None` for inline kinds and specs
+    /// without one.
+    #[must_use]
+    pub fn summary_line(&self) -> Option<String> {
+        self.spec().and_then(BlockSpec::summary_line)
+    }
+
+    /// Validates the inline kinds; spec kinds go through
+    /// [`BlockSpec::validate`].
+    fn validate_inline(&self) -> Result<(), BlockError> {
+        match self {
+            Self::Custom { tree, .. } => tree.validate(),
+            Self::Sources { sources } => sources.iter().try_for_each(SourceRef::validate),
+            Self::Image { source, .. } => source.as_ref().map_or(Ok(()), SourceRef::validate),
+            Self::StageHeader { index, total, .. } => {
+                if (1..=*total).contains(index) {
+                    Ok(())
+                } else {
+                    Err(BlockError::StageOutOfRange {
+                        index: *index,
+                        total: *total,
+                    })
+                }
+            }
+            Self::Computed { envelope, body } => {
+                envelope.validate()?;
+                Ok(body.validate()?)
+            }
+            // Text-like inline kinds, and spec kinds (validated by
+            // `Block::validate` before getting here).
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Lifecycle of a tool call.
@@ -731,6 +870,32 @@ pub struct MermaidSpec {
     /// Optional caption.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+// Tables and diffs have no summary line: the headless terminal prints them
+// whole.
+impl BlockSpec for TableSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+}
+
+impl BlockSpec for ChartSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[chart: {}]", self.title))
+    }
+}
+
+impl BlockSpec for DiffSpec {}
+
+impl BlockSpec for MermaidSpec {
+    fn summary_line(&self) -> Option<String> {
+        Some("[mermaid diagram]".to_owned())
+    }
 }
 
 /// Declarative UI primitive of a `Custom` block, tagged by `type`.
@@ -2071,6 +2236,40 @@ mod tests {
         insta::assert_json_snapshot!("diff_spec_schema", schemars::schema_for!(DiffSpec));
         insta::assert_json_snapshot!("custom_node_schema", schemars::schema_for!(CustomNode));
         insta::assert_json_snapshot!("source_ref_schema", schemars::schema_for!(SourceRef));
+    }
+
+    #[test]
+    fn tags_follow_the_kinds_and_their_serde_names() {
+        // The schema lists the kinds in declaration order with their serde
+        // tag, so it checks `BlockTag::ALL` and `name` against serde.
+        let schema = serde_json::to_value(schemars::schema_for!(Block)).unwrap_or_default();
+        let tags: Vec<&str> = schema["oneOf"]
+            .as_array()
+            .map(|kinds| {
+                kinds
+                    .iter()
+                    .filter_map(|kind| kind["properties"]["type"]["const"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let names: Vec<&str> = BlockTag::ALL.iter().map(|tag| tag.name()).collect();
+        assert_eq!(names, tags);
+        assert_eq!(BlockTag::Molecule3d.name(), "molecule3d");
+        assert_eq!(BlockTag::ToolCall.name(), "tool_call");
+
+        let stage = BlockKind::StageHeader {
+            stage: "explore".into(),
+            index: 1,
+            total: 2,
+        };
+        assert_eq!(stage.tag(), BlockTag::StageHeader);
+        assert!(stage.spec().is_none());
+        let mermaid = BlockKind::Mermaid(MermaidSpec {
+            source: "graph TD".into(),
+            title: None,
+        });
+        assert_eq!(mermaid.tag(), BlockTag::Mermaid);
+        assert_eq!(mermaid.summary_line().as_deref(), Some("[mermaid diagram]"));
     }
 
     #[test]

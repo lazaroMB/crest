@@ -180,9 +180,7 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
                 w.line(Some(Style::Red), stderr.trim_end());
             }
         }
-        BlockKind::Chart(chart) => w.line(Some(Style::Dim), &format!("[chart: {}]", chart.title)),
         BlockKind::Table(table) => print_table(w, table),
-        BlockKind::Mermaid(_) => w.line(Some(Style::Dim), "[mermaid diagram]"),
         BlockKind::StageHeader {
             stage,
             index,
@@ -198,238 +196,13 @@ fn print_block(state: &mut SinkState, w: &mut Writer<'_>, block: &Block) {
             Some(Style::Dim),
             &format!("[computed: {}]", envelope.method.name),
         ),
-        BlockKind::Form(form) => w.line(Some(Style::Dim), &format!("[form: {}]", form.title)),
-        BlockKind::Plot(_) => w.line(Some(Style::Dim), "[plot]"),
-        BlockKind::TestReport(_) => w.line(Some(Style::Dim), "[test report]"),
-        BlockKind::Findings(_) => w.line(Some(Style::Dim), "[findings]"),
-        BlockKind::Dataset(dataset) => {
-            w.line(Some(Style::Dim), &format!("[dataset: {}]", dataset.path));
-        }
-        BlockKind::Molecule(molecule) => {
-            w.line(
-                Some(Style::Dim),
-                &format!("[molecule: {}]", molecule.smiles),
-            );
-        }
-        BlockKind::Plate(_) => w.line(Some(Style::Dim), "[plate]"),
-        BlockKind::Trace(trace) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[trace: {} spans, {} errors]",
-                trace.span_count(),
-                trace.errors().len()
-            ),
-        ),
-        BlockKind::FlameGraph(flame) => w.line(
-            Some(Style::Dim),
-            &format!("[flame graph: {} {}]", flame.total(), flame.unit),
-        ),
-        BlockKind::Logs(logs) => w.line(
-            Some(Style::Dim),
-            &format!("[logs: {} lines]", logs.total_lines),
-        ),
-        BlockKind::Waveform(wave) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[waveform: {} signals, {} – {}]",
-                wave.signals.len(),
-                wave.time_text(wave.start),
-                wave.time_text(wave.end)
-            ),
-        ),
-        BlockKind::Netlist(netlist) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[netlist: {} components, {} nets, {} single-pin]",
-                netlist.components.len(),
-                netlist.nets().len(),
-                netlist.single_pin_nets().len()
-            ),
-        ),
-        BlockKind::CadModel(part) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[step: {}, {} solids, {} triangles, {} faces not meshed]",
-                part.display_title(),
-                part.solids.len(),
-                part.mesh.triangles.len(),
-                part.failed_faces()
-            ),
-        ),
-        BlockKind::GeoMap(map) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[map: {} features, {}]",
-                map.features.len(),
-                map.crs.label()
-            ),
-        ),
-        BlockKind::Gantt(plan) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[gantt: {} tasks, {} d, critical {}]",
-                plan.tasks.len(),
-                domain::gantt::days(plan.project_duration),
-                plan.critical_path.join(" → ")
-            ),
-        ),
-        BlockKind::ArrayFile(file) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[array file: {}, {} variables, {} previews]",
-                file.format.name(),
-                file.variables().count(),
-                file.previews.len()
-            ),
-        ),
-        BlockKind::Network(net) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[network: {} nodes, {} edges, {} communities]",
-                net.nodes.len(),
-                net.edges.len(),
-                net.communities
-            ),
-        ),
-        BlockKind::TrainingCurves(curves) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[training curves: {} runs, {} metrics]",
-                curves.runs.len(),
-                curves.metrics.len()
-            ),
-        ),
-        BlockKind::Ghs(card) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[ghs: {}, {}, retrieved {}]",
-                card.name.as_deref().unwrap_or(&card.query),
-                if card.found() {
-                    format!("{} sources", card.classifications.len())
-                } else {
-                    "not found".to_owned()
-                },
-                card.retrieved
-            ),
-        ),
-        BlockKind::Molecule3d(molecule) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[molecule 3D: {}, {} atoms, {} bonds]",
-                molecule.formula(),
-                molecule.atoms.len(),
-                molecule.bonds.len()
-            ),
-        ),
-        BlockKind::Spectrum(spectrum) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[spectrum: {} {} points, {} peaks]",
-                spectrum.kind.name(),
-                spectrum.x.len(),
-                spectrum.peaks.len()
-            ),
-        ),
-        BlockKind::MoleculeGrid(grid) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[molecule grid: {} molecules, {} not parsed]",
-                grid.molecules.len(),
-                grid.failed().len()
-            ),
-        ),
-        BlockKind::Reaction(reaction) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[reaction: {}, {}]",
-                reaction.equation(None),
-                if reaction.error.is_some() {
-                    "not read"
-                } else if reaction.is_balanced() {
-                    "balanced"
-                } else {
-                    "not balanced"
-                }
-            ),
-        ),
-        BlockKind::Sequence(seq) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[sequence: {} {}, {} features, {} cut sites]",
-                seq.len(),
-                seq.alphabet.unit(),
-                seq.features.len(),
-                seq.cut_sites.len()
-            ),
-        ),
-        BlockKind::IfcSchedule(schedule) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[ifc schedule: {} storeys, {} spaces, {} without area]",
-                schedule.storeys.len(),
-                schedule.space_count(),
-                schedule.missing_areas()
-            ),
-        ),
-        BlockKind::Drawing(drawing) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[dxf: {}, {} entities, {} layers]",
-                drawing.display_title(),
-                drawing.entities.len(),
-                drawing.layers.len()
-            ),
-        ),
-        BlockKind::Material(material) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[material: {}, {} properties, {} unverified]",
-                material.full_name(),
-                material.properties.len(),
-                material.unverified().len()
-            ),
-        ),
-        BlockKind::Benchmarks(bench) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[benchmarks: {}, {} regressed, {} improved]",
-                bench.benches.len(),
-                bench
-                    .with_verdict(domain::devops::bench::Verdict::Regressed)
-                    .len(),
-                bench
-                    .with_verdict(domain::devops::bench::Verdict::Improved)
-                    .len()
-            ),
-        ),
-        BlockKind::Diagram(diagram) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[diagram: {} nodes, {} edges]",
-                diagram.graph.nodes.len(),
-                diagram.graph.edges.len()
-            ),
-        ),
-        BlockKind::TerraformPlan(plan) => w.line(
-            Some(Style::Dim),
-            &format!("[terraform plan: {}]", plan.counts_text()),
-        ),
-        BlockKind::Har(har) => w.line(
-            Some(Style::Dim),
-            &format!(
-                "[har: {} requests, {} failed]",
-                har.entries.len(),
-                har.failed().len()
-            ),
-        ),
-        BlockKind::QueryPlan(plan) => w.line(
-            Some(Style::Dim),
-            &match plan.execution_time {
-                Some(t) => format!("[query plan: {} nodes, {t} ms]", plan.nodes.len()),
-                None => format!("[query plan: {} nodes]", plan.nodes.len()),
-            },
-        ),
         BlockKind::Custom { .. } | BlockKind::Image { .. } => {}
+        // Every other rich kind stands as one dim line of its own.
+        kind => {
+            if let Some(line) = kind.summary_line() {
+                w.line(Some(Style::Dim), &line);
+            }
+        }
     }
 }
 
@@ -690,5 +463,27 @@ mod tests {
             buf.text(),
             "modal `Coverage` opened (only visible in the window)\n"
         );
+    }
+
+    #[test]
+    fn rich_blocks_print_their_summary_line() {
+        let (term, buf) = terminal(false);
+        let sink = HeadlessSink::new(term);
+        let chart = BlockKind::Chart(domain::block::ChartSpec {
+            title: "Sales".into(),
+            kind: domain::block::ChartKind::Bar,
+            labels: vec![],
+            series: vec![],
+        });
+        let mermaid = BlockKind::Mermaid(domain::block::MermaidSpec {
+            source: "graph TD".into(),
+            title: None,
+        });
+        for kind in [chart, mermaid] {
+            sink.emit(DomainEvent::BlockAdded {
+                block: Block::new(kind),
+            });
+        }
+        assert_eq!(buf.text(), "[chart: Sales]\n[mermaid diagram]\n");
     }
 }

@@ -16,7 +16,7 @@ pub mod scale;
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind, ChartKind, ChartSpec, TableSpec};
+use domain::block::{BlockId, BlockKind, BlockTag, ChartKind, ChartSpec, TableSpec};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Window, div, prelude::FluentBuilder as _, px,
@@ -26,6 +26,8 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use self::layout::ChartData;
 use self::plot::ChartMemo;
+use super::BlockView;
+use super::copy::CopyFormat;
 use crate::timeline::TimelineEntry;
 
 /// Height of a pie chart.
@@ -189,6 +191,34 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     render_spec(entry.block.id, spec, entry.alt_view, entry.rev, window, cx)
+}
+
+/// The registry entry of chart blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Chart
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn has_alt_view(&self) -> bool {
+        true
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Chart(chart) = kind else {
+            return Vec::new();
+        };
+        let table = super::copy::chart_table(chart);
+        vec![
+            CopyFormat::new("csv", "CSV", super::copy::csv(&table)),
+            CopyFormat::new("tsv", "TSV", super::copy::tsv(&table)),
+        ]
+    }
 }
 
 /// Draws `spec` as the chart of `id` (a block, or a node of a custom

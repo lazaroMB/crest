@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::graph::{
     FlowDirection, GraphEdge, GraphGroup, GraphNode, GraphSpec, LayoutKind,
 };
@@ -402,6 +402,21 @@ fn csv(field: &str) -> String {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {
         field.to_owned()
+    }
+}
+
+impl BlockSpec for NetlistSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[netlist: {} components, {} nets, {} single-pin]",
+            self.components.len(),
+            self.nets().len(),
+            self.single_pin_nets().len()
+        ))
     }
 }
 

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::tree::{BadgeTone, ColumnKind, TreeColumn, TreeNode, TreeSpec, format_number};
 
 /// Plan nodes a block keeps.
@@ -716,6 +716,19 @@ fn warnings(node: &PlanNode) -> Vec<String> {
         ));
     }
     out
+}
+
+impl BlockSpec for QueryPlanSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(match self.execution_time {
+            Some(t) => format!("[query plan: {} nodes, {t} ms]", self.nodes.len()),
+            None => format!("[query plan: {} nodes]", self.nodes.len()),
+        })
+    }
 }
 
 #[cfg(test)]

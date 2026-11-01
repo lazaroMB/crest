@@ -13,7 +13,7 @@
 //! ([`label_fits`]); every well has a tooltip with its name, label and
 //! value.
 
-use domain::block::BlockKind;
+use domain::block::{BlockKind, BlockTag};
 use domain::science::{PlateRange, PlateScale, PlateSpec, Well, parse_well, plate_dimensions};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -24,6 +24,8 @@ use gpui::{
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::dataset::short_number;
 use crate::timeline::TimelineEntry;
 
@@ -286,6 +288,26 @@ pub fn render(entry: &TimelineEntry, _window: &mut Window, cx: &mut App) -> AnyE
         )
         .children(legend)
         .into_any_element()
+}
+
+/// The registry entry of plate blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Plate
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Plate(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new("csv", "CSV", plate_csv(spec))]
+    }
 }
 
 #[cfg(test)]

@@ -115,7 +115,7 @@ fn frame(
             Some(entry) => format!(
                 "{name}: selected {:?} ({}) expanded={} alt_view={}",
                 state.selected(),
-                ui::timeline::kind_name(&entry.block.kind),
+                entry.block.kind.tag().name(),
                 entry.expanded,
                 entry.alt_view
             ),

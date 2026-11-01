@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::science::training::{Goal, TrainingAxis, TrainingSpec, value_text};
 use domain::widget::tree::{ColumnKind, TreeColumn, TreeNode, TreeSpec};
 use gpui::{
@@ -23,6 +23,8 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use serde_json::{Map, json};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
@@ -341,6 +343,30 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of training curves blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::TrainingCurves
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::TrainingCurves(spec) = kind else {
+            return Vec::new();
+        };
+        vec![CopyFormat::new(
+            "summaries",
+            "summaries CSV",
+            spec.summary_csv(),
+        )]
+    }
 }
 
 #[cfg(test)]

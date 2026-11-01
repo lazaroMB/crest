@@ -15,7 +15,7 @@
 
 use std::rc::Rc;
 
-use domain::block::{BlockId, BlockKind};
+use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::devops::har::{
     HarBody, HarEntry, HarHeader, HarSpec, PHASES, format_bytes, is_sensitive_header,
     is_sensitive_param, redact_url,
@@ -29,6 +29,8 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+use super::BlockView;
+use super::copy::CopyFormat;
 use super::custom::node_id;
 use super::trace::caption;
 use crate::timeline::{NO_REV, TimelineEntry};
@@ -526,6 +528,36 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         return super::placeholder(entry, cx);
     };
     view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
+}
+
+/// The registry entry of har blocks ([`super::BlockView`]).
+pub struct View;
+
+impl BlockView for View {
+    fn tag(&self) -> BlockTag {
+        BlockTag::Har
+    }
+
+    fn render(&self, entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyElement {
+        render(entry, window, cx)
+    }
+
+    fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
+        let BlockKind::Har(spec) = kind else {
+            return Vec::new();
+        };
+        vec![
+            CopyFormat::new("requests", "requests CSV", spec.to_csv()),
+            CopyFormat::new(
+                "urls",
+                "URLs",
+                spec.entries
+                    .iter()
+                    .map(|e| format!("{} {}\n", e.method, domain::devops::har::redact_url(&e.url)))
+                    .collect(),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

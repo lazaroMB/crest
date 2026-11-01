@@ -14,60 +14,6 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::TimelineEntry;
 
-/// Serde tag of a block kind (`"text"`, `"tool_call"`...), as shown in the
-/// placeholder of kinds without a view yet.
-pub fn kind_name(kind: &BlockKind) -> &'static str {
-    match kind {
-        BlockKind::Text { .. } => "text",
-        BlockKind::Thinking { .. } => "thinking",
-        BlockKind::ToolCall { .. } => "tool_call",
-        BlockKind::Table(_) => "table",
-        BlockKind::Chart(_) => "chart",
-        BlockKind::Diff(_) => "diff",
-        BlockKind::Mermaid(_) => "mermaid",
-        BlockKind::Markdown { .. } => "markdown",
-        BlockKind::Custom { .. } => "custom",
-        BlockKind::Sources { .. } => "sources",
-        BlockKind::Image { .. } => "image",
-        BlockKind::StageHeader { .. } => "stage_header",
-        BlockKind::Shell { .. } => "shell",
-        BlockKind::Error { .. } => "error",
-        BlockKind::Computed { .. } => "computed",
-        BlockKind::Form(_) => "form",
-        BlockKind::Plot(_) => "plot",
-        BlockKind::TestReport(_) => "test_report",
-        BlockKind::Findings(_) => "findings",
-        BlockKind::Dataset(_) => "dataset",
-        BlockKind::Molecule(_) => "molecule",
-        BlockKind::Plate(_) => "plate",
-        BlockKind::Trace(_) => "trace",
-        BlockKind::FlameGraph(_) => "flame_graph",
-        BlockKind::Logs(_) => "logs",
-        BlockKind::QueryPlan(_) => "query_plan",
-        BlockKind::Har(_) => "har",
-        BlockKind::TerraformPlan(_) => "terraform_plan",
-        BlockKind::Diagram(_) => "diagram",
-        BlockKind::Benchmarks(_) => "benchmarks",
-        BlockKind::Waveform(_) => "waveform",
-        BlockKind::Netlist(_) => "netlist",
-        BlockKind::Material(_) => "material",
-        BlockKind::CadModel(_) => "cad_model",
-        BlockKind::Drawing(_) => "drawing",
-        BlockKind::IfcSchedule(_) => "ifc_schedule",
-        BlockKind::Sequence(_) => "sequence",
-        BlockKind::Reaction(_) => "reaction",
-        BlockKind::MoleculeGrid(_) => "molecule_grid",
-        BlockKind::Spectrum(_) => "spectrum",
-        BlockKind::Molecule3d(_) => "molecule_3d",
-        BlockKind::Ghs(_) => "ghs",
-        BlockKind::GeoMap(_) => "geo_map",
-        BlockKind::Gantt(_) => "gantt",
-        BlockKind::ArrayFile(_) => "array_file",
-        BlockKind::Network(_) => "network",
-        BlockKind::TrainingCurves(_) => "training_curves",
-    }
-}
-
 /// Short label of a tool status.
 pub fn status_label(status: ToolStatus) -> &'static str {
     match status {
@@ -329,7 +275,7 @@ mod tests {
             total: 2,
         });
         let json = serde_json::to_value(&block).unwrap_or_default();
-        assert_eq!(json["type"], kind_name(&block.kind));
+        assert_eq!(json["type"], block.kind.tag().name());
     }
 
     #[test]
