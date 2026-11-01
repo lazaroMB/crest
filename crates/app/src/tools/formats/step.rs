@@ -17,11 +17,12 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line};
+use super::{
+    FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, required_path, shown,
+};
 use crate::ports::formats::StepRequest;
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Largest STEP file read, in bytes (as the other 3D models).
 pub const MAX_STEP_BYTES: u64 = crate::usecases::model3d::MAX_MODEL_BYTES;
@@ -103,42 +104,62 @@ impl TypedTool for ShowStepTool {
         input: ShowStep,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_STEP, "`path` is empty"));
-        }
-        if let Some(t) = input.tolerance
-            && !(t.is_finite() && t > 0.0)
-        {
-            return Err(invalid(SHOW_STEP, "`tolerance` must be a positive number"));
-        }
+        let input = normalize_step(input).map_err(|e| invalid(SHOW_STEP, e))?;
         let ports = self.ports.clone();
         let subject = input.path.clone();
         let run = async move {
-            let bytes = match read_step(ports.fs.as_ref(), &input.path).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Ok(ToolOutput::error(message)),
-            };
-            let formats = Arc::clone(&ports.formats);
-            let request = StepRequest {
-                path: input.path.clone(),
-                tolerance: input.tolerance,
-            };
-            let parsed =
-                offloaded(&ports.offload, move || formats.parse_step(&bytes, &request)).await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the STEP reader did not run")),
-            };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = step_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::CadModel(Box::new(spec))))
+            shown(build_step(&ports, input).await, step_summary, |spec| {
+                BlockKind::CadModel(Box::new(spec))
+            })
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_step` input: a path, a positive tolerance when given
+/// and a non-blank title.
+///
+/// # Errors
+///
+/// A message for the caller: an empty path or a tolerance that is not a
+/// positive number.
+pub fn normalize_step(input: ShowStep) -> Result<ShowStep, String> {
+    let path = required_path(&input.path)?;
+    if let Some(t) = input.tolerance
+        && !(t.is_finite() && t > 0.0)
+    {
+        return Err("`tolerance` must be a positive number".to_owned());
+    }
+    Ok(ShowStep {
+        path,
+        tolerance: input.tolerance,
+        title: non_blank(input.title),
+    })
+}
+
+/// The 3D part block of a checked call ([`normalize_step`]): reads the
+/// file through the guard and tessellates it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_step(ports: &FormatToolPorts, input: ShowStep) -> Result<CadModelSpec, String> {
+    let bytes = read_step(ports.fs.as_ref(), &input.path).await?;
+    let formats = Arc::clone(&ports.formats);
+    let request = StepRequest {
+        path: input.path.clone(),
+        tolerance: input.tolerance,
+    };
+    let mut spec = parse_off(ports, "the STEP reader", move || {
+        formats.parse_step(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = input.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", input.path))?;
+    Ok(spec)
 }
 
 /// A length for the summary: up to 4 significant decimals.
@@ -265,7 +286,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {

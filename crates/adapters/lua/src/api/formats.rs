@@ -87,11 +87,16 @@ use application::tools::formats::devops::{
     normalize_trace,
 };
 use application::tools::formats::diagram::{build_dot, build_er, normalize_dot, normalize_er};
+use application::tools::formats::dxf::{build_dxf, normalize_dxf};
 use application::tools::formats::har::{build_har, normalize_har};
+use application::tools::formats::ifc::{build_ifc_schedule, normalize_ifc_schedule};
+use application::tools::formats::molecule3d::{build_molecule_3d, normalize_molecule_3d};
 use application::tools::formats::netlist::{build_netlist, normalize_netlist};
 use application::tools::formats::query_plan::{build_query_plan, normalize_query_plan};
 use application::tools::formats::reaction::{build_reaction, normalize_reaction};
 use application::tools::formats::sequence::{build_sequence, normalize_sequence};
+use application::tools::formats::spectrum::{build_spectrum, normalize_spectrum};
+use application::tools::formats::step::{build_step, normalize_step};
 use application::tools::formats::terraform::{build_terraform_plan, normalize_terraform_plan};
 use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
@@ -283,70 +288,6 @@ fn waveform(lua: &Lua, args: Value) -> mlua::Result<Value> {
     )
 }
 
-fn step(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "step";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let tolerance = match args.get::<Value>("tolerance")? {
-        Value::Nil => None,
-        Value::Integer(n) => Some(n as f64),
-        Value::Number(n) if n.is_finite() && n > 0.0 => Some(n),
-        _ => return Err(error(F, "`tolerance` must be a positive number")),
-    };
-    if tolerance.is_some_and(|t| t <= 0.0) {
-        return Err(error(F, "`tolerance` must be a positive number"));
-    }
-    let bytes = context(lua)?
-        .block_on(read_step(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = StepRequest {
-        path: path.clone(),
-        tolerance,
-    };
-    let mut spec = services
-        .formats
-        .parse_step(&bytes, &request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::CadModel(Box::new(spec)))
-}
-
-fn dxf(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "dxf";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_report(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_dxf(&bytes, &path)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Drawing(Box::new(spec)))
-}
-
-fn ifc_schedule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "ifc_schedule";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_ifc(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_ifc_schedule(&bytes, &path)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::IfcSchedule(Box::new(spec)))
-}
-
 fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     const F: &str = "ghs";
     let services = services(lua, F)?;
@@ -374,64 +315,6 @@ fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
         .map_err(|e| error(F, e))?;
     spec.validate().map_err(|e| error(F, e))?;
     block_value(lua, &BlockKind::Ghs(Box::new(spec)))
-}
-
-fn molecule_3d(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "molecule_3d";
-    let services = services(lua, F)?;
-    let source = match (text(args, F, "smiles")?, text(args, F, "path")?) {
-        (Some(_), Some(_)) => return Err(error(F, "give `smiles` or `path`, not both")),
-        (None, None) => return Err(error(F, "`smiles` or `path` is required")),
-        (Some(smiles), None) => application::ports::formats::Molecule3dSource::Smiles(smiles),
-        (None, Some(path)) => {
-            let bytes = context(lua)?
-                .block_on(read_report(services.fs.as_ref(), &path))?
-                .map_err(|e| error(F, e))?;
-            application::ports::formats::Molecule3dSource::File { path, bytes }
-        }
-    };
-    let mut spec = services
-        .formats
-        .molecule_3d(&source)
-        .map_err(|e| error(F, e))?;
-    if let Some(name) = text(args, F, "name")? {
-        spec.name = Some(name);
-    }
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Molecule3d(Box::new(spec)))
-}
-
-fn spectrum(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "spectrum";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let block = match args.get::<Option<i64>>("block")? {
-        Some(n) if n >= 1 => usize::try_from(n - 1).unwrap_or(0),
-        Some(_) => return Err(error(F, "`block` counts from 1")),
-        None => 0,
-    };
-    let max_peaks = match args.get::<Option<i64>>("max_peaks")? {
-        Some(n) if n >= 1 => Some(usize::try_from(n).unwrap_or(1)),
-        Some(_) => return Err(error(F, "`max_peaks` must be at least 1")),
-        None => None,
-    };
-    let bytes = context(lua)?
-        .block_on(read_spectrum(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = application::ports::formats::SpectrumRequest {
-        path: path.clone(),
-        block,
-        threshold: args.get::<Option<f64>>("threshold")?,
-        max_peaks,
-    };
-    let mut spec = services
-        .formats
-        .parse_spectrum(&bytes, &request)
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Spectrum(Box::new(spec)))
 }
 
 fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -517,19 +400,21 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("ghs", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "molecule_3d",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => molecule_3d(lua, &args),
-            _ => Err(error("molecule_3d", "expected a table of arguments")),
-        })?,
+        normalize_molecule_3d,
+        build_molecule_3d,
+        |spec| BlockKind::Molecule3d(Box::new(spec)),
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "spectrum",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => spectrum(lua, &args),
-            _ => Err(error("spectrum", "expected a table of arguments")),
-        })?,
+        normalize_spectrum,
+        build_spectrum,
+        |spec| BlockKind::Spectrum(Box::new(spec)),
     )?;
     formats.set(
         "molecule_grid",
@@ -587,26 +472,19 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         |spec| BlockKind::Benchmarks(Box::new(spec)),
     )?;
     formats.set("waveform", lua.create_function(waveform)?)?;
-    formats.set(
-        "step",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => step(lua, &args),
-            _ => Err(error("step", "expected a table of arguments")),
-        })?,
-    )?;
-    formats.set(
-        "dxf",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => dxf(lua, &args),
-            _ => Err(error("dxf", "expected a table of arguments")),
-        })?,
-    )?;
-    formats.set(
+    register(lua, &formats, "step", normalize_step, build_step, |spec| {
+        BlockKind::CadModel(Box::new(spec))
+    })?;
+    register(lua, &formats, "dxf", normalize_dxf, build_dxf, |spec| {
+        BlockKind::Drawing(Box::new(spec))
+    })?;
+    register(
+        lua,
+        &formats,
         "ifc_schedule",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => ifc_schedule(lua, &args),
-            _ => Err(error("ifc_schedule", "expected a table of arguments")),
-        })?,
+        normalize_ifc_schedule,
+        build_ifc_schedule,
+        |spec| BlockKind::IfcSchedule(Box::new(spec)),
     )?;
     register(
         lua,
