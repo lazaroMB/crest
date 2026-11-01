@@ -3,14 +3,49 @@
 import { toBlob } from "html-to-image";
 import { api } from "./api.js";
 import { setState, setTurn, setUi, state } from "./store.js";
+import { NOTICE_TTL_MS, SHOW_AFTER_MS, recordStep } from "./visibility.js";
 
-const NOTICE_TTL = 6000; // crest's status bar notices last 6 s (status.rs)
 let noticeTimer;
+let toastTimer;
+const TOAST_MS = 3000;
 
+/** Shows a corner note for 3 s. The entry itself stays behind the information mark. */
+function flash(toast) {
+  setState({ toast });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    if (state.toast?.id === toast.id) setState({ toast: null });
+  }, TOAST_MS);
+}
+
+/** The bar keeps the notice for 6 s. The list keeps it until the person dismisses it. */
 export function notice(level, text) {
   clearTimeout(noticeTimer);
-  setState({ notice: { level, text } });
-  noticeTimer = setTimeout(() => setState({ notice: null }), NOTICE_TTL);
+  const item = { id: `notice-${Date.now()}`, level, text };
+  setState({ notice: item, notices: [...state.notices, item] });
+  noticeTimer = setTimeout(() => {
+    if (state.notice?.id === item.id) setState({ notice: null });
+  }, NOTICE_TTL_MS);
+}
+
+export function dismissInfo(id) {
+  const notices = state.notices.filter((n) => n.id !== id);
+  const steps = state.turn.steps.filter((s) => s.id !== id);
+  const left =
+    notices.some((n) => n.level === "error" || n.level === "warning") || steps.some((s) => s.elapsedMs < SHOW_AFTER_MS);
+  setState({
+    notices,
+    notice: state.notice?.id === id ? null : state.notice,
+    toast: state.toast?.id === id ? null : state.toast,
+  });
+  setTurn({ steps });
+  if (!left) setUi({ infoOpen: false });
+}
+
+export function toggleInfo() {
+  const infoOpen = !state.ui.infoOpen;
+  setUi({ infoOpen });
+  if (infoOpen) setState({ toast: null });
 }
 
 /**
@@ -42,8 +77,21 @@ async function refreshProjects() {
 
 export async function openChat(id) {
   const chat = await api.chat(id);
-  setState({ chat, openChatId: id });
-  setUi({ selected: null, menu: null, outlineOpen: false });
+  setState({ chat, openChatId: id, notice: null, notices: [], toast: null });
+  setTurn({ steps: [] });
+  setUi({ selected: null, menu: null, outlineOpen: false, infoOpen: false, focus: "prompt" });
+  if (id === "c-kitchen") showVisibility();
+}
+
+/** The gallery chat opens with a short step on screen and an error kept in the mark. */
+function showVisibility() {
+  const step = { id: "step-1", label: "grep", elapsedMs: 40 };
+  setState({
+    notice: null,
+    notices: [{ id: "kept-1", level: "error", text: "Anthropic API: overloaded (529) after 3 retries" }],
+  });
+  setTurn({ steps: [step] });
+  flash({ id: step.id, level: "info", text: "grep · 40ms" });
 }
 
 export async function newChat(projectId = state.chat?.projectId) {
@@ -106,7 +154,7 @@ function onTurnEvent(chatId, event) {
       return;
     }
     case "activity":
-      return setTurn({ activity: event.activity });
+      return setTurn({ activity: event.activity, steps: rememberStep(state.turn.activity) });
     case "approval":
       markChat(chatId, event.request ? "waiting" : "running");
       setUi({ approvalIndex: 0 });
@@ -121,7 +169,7 @@ function onTurnEvent(chatId, event) {
     case "done": {
       markChat(chatId, undefined);
       const [next, ...rest] = state.turn.queue;
-      setTurn({ busy: false, activity: null, approval: null, queue: rest });
+      setTurn({ busy: false, activity: null, approval: null, queue: rest, steps: rememberStep(state.turn.activity) });
       if (next) startTurn(next);
     }
   }
@@ -185,8 +233,35 @@ export function cycleMode() {
 
 // Timeline.
 
+function rememberStep(activity) {
+  if (!activity?.startedAt) return state.turn.steps;
+  const elapsedMs = Date.now() - activity.startedAt;
+  const label = [activity.verb, activity.detail].filter(Boolean).join(" · ") || activity.verb;
+  const step = { id: `step-${Date.now()}`, label, elapsedMs };
+  if (elapsedMs < SHOW_AFTER_MS) flash({ id: step.id, level: "info", text: `${label} · ${elapsedMs}ms` });
+  return recordStep(state.turn.steps, step, true);
+}
+
+/** Moves among the person's questions, starting from the one the outline marks. */
+export function moveOutline(delta) {
+  const blocks = state.chat?.blocks ?? [];
+  const questions = blocks.filter((b) => b.kind === "user");
+  if (!questions.length) return;
+  const selectedAt = blocks.findIndex((b) => b.id === state.ui.selected);
+  const active = [...questions].reverse().find((q) => selectedAt === -1 || blocks.indexOf(q) <= selectedAt) ?? questions[0];
+  const at = questions.indexOf(active);
+  const next = Math.max(0, Math.min(questions.length - 1, at + delta));
+  setUi({ selected: questions[next].id, focus: "timeline" });
+}
+
 export function select(blockId) {
   setUi({ selected: blockId, focus: "timeline" });
+}
+
+/** Follows the scroll: the block nearest the top becomes selected, without
+ * moving the focus away from wherever it was (typing stays typing). */
+export function syncSelected(blockId) {
+  if (blockId && blockId !== state.ui.selected) setUi({ selected: blockId });
 }
 
 export function moveSelection(delta) {

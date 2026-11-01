@@ -5,7 +5,7 @@
 // the bottom, and keeps your place when you scrolled up.
 
 import { h } from "../../lib/h.js";
-import { select, toggleAltView, toggleExpanded } from "../../actions.js";
+import { select, syncSelected, toggleAltView, toggleExpanded } from "../../actions.js";
 import { isWide, renderBlock } from "../blocks/index.js";
 import { Outline } from "./outline.js";
 import { Welcome } from "./welcome.js";
@@ -39,6 +39,42 @@ export function mountTimeline(root) {
   root.classList.add("timeline");
   root.append(scroll, overlay);
   let lastChatId = null;
+  let syncScheduled = false;
+  let suppressSync = false;
+
+  // Scrollspy: the block just under the top edge becomes the selected one,
+  // so the outline's active question follows the scroll, not only the keys.
+  // Skipped once right after we scroll a block into view ourselves (a click
+  // or a key), so that jump does not get overridden back to the last block.
+  function syncToScroll() {
+    if (suppressSync) {
+      suppressSync = false;
+      return;
+    }
+    const rows = scroll.querySelectorAll(".tblock");
+    if (!rows.length) return;
+    // At the bottom, the last block may be too short to reach the top edge
+    // below; treat the bottom itself as "on" the last block, as the keys do.
+    if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 2) {
+      syncSelected(rows[rows.length - 1].dataset.id);
+      return;
+    }
+    const edge = scroll.getBoundingClientRect().top + 24;
+    let current = rows[0];
+    for (const row of rows) {
+      if (row.getBoundingClientRect().top <= edge) current = row;
+      else break;
+    }
+    syncSelected(current.dataset.id);
+  }
+  scroll.addEventListener("scroll", () => {
+    if (syncScheduled) return;
+    syncScheduled = true;
+    requestAnimationFrame(() => {
+      syncScheduled = false;
+      syncToScroll();
+    });
+  });
 
   function update(state) {
     const blocks = state.chat?.blocks ?? [];
@@ -54,7 +90,11 @@ export function mountTimeline(root) {
     lastChatId = state.chat?.id;
 
     if (state.ui.selected) {
-      scroll.querySelector(`[data-id="${state.ui.selected}"]`)?.scrollIntoView({ block: "nearest" });
+      const el = scroll.querySelector(`[data-id="${state.ui.selected}"]`);
+      if (el) {
+        suppressSync = true;
+        el.scrollIntoView({ block: "nearest" });
+      }
     }
   }
 

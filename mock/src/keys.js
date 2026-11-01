@@ -9,9 +9,10 @@
 //
 // Browsers keep Ctrl+Tab for their own tabs, so F6 does the same.
 
-import { approve, copySelected, cycleMode, interrupt, moveSelection, notice, selectEdge, toggleAltView, toggleExpanded } from "./actions.js";
+import { approve, copySelected, cycleMode, interrupt, moveOutline, moveSelection, notice, selectEdge, toggleAltView, toggleExpanded } from "./actions.js";
 import { APPROVAL_OPTIONS } from "./components/approval-dialog/approval-dialog.js";
 import { setUi, state } from "./store.js";
+import { onKey } from "./visibility.js";
 
 let leader = false;
 let leaderTimer;
@@ -43,7 +44,7 @@ function onLeader(e) {
   const actions = {
     s: () => setUi({ chatsShown: !state.ui.chatsShown }),
     e: () => setUi({ treeShown: !state.ui.treeShown }),
-    O: () => setUi({ outlineOpen: !state.ui.outlineOpen }),
+    O: () => setUi({ outlineOpen: !state.ui.outlineOpen, focus: "timeline" }),
     p: cycleMode,
   };
   (actions[e.key] ?? (() => notice("warning", `<C-g>${e.key} is not in the mock yet`)))();
@@ -52,6 +53,14 @@ function onLeader(e) {
 function onTimeline(e) {
   const blockId = state.ui.selected;
   const block = state.chat?.blocks.find((b) => b.id === blockId);
+  if (state.ui.outlineOpen) {
+    const key = e.key === "j" || e.key === "ArrowDown" ? "down" : e.key === "k" || e.key === "ArrowUp" ? "up" : "";
+    const where = key && onKey(key, true);
+    if (where === "outline.next" || where === "outline.prev") {
+      moveOutline(where === "outline.next" ? 1 : -1);
+      return true;
+    }
+  }
   const keys = {
     j: () => moveSelection(1),
     ArrowDown: () => moveSelection(1),
@@ -111,6 +120,7 @@ export function bindKeys(prompt) {
     }
 
     if (e.key === "Escape") {
+      if (state.ui.infoOpen) return setUi({ infoOpen: false });
       if (state.ui.outlineOpen) return setUi({ outlineOpen: false });
       if (state.ui.menu) return setUi({ menu: null });
       return focus("prompt", prompt);

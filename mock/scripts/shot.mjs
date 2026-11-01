@@ -66,7 +66,7 @@ await send("Page.navigate", { url: `http://localhost:5199/${query}` });
 await sleep(Number(wait));
 
 if (keys.startsWith("js:")) {
-  await send("Runtime.evaluate", { expression: keys.slice(3) });
+  await send("Runtime.evaluate", { expression: keys.slice(3), awaitPromise: true });
   await sleep(300);
 } else if (keys) {
   await send("Input.insertText", { text: keys });

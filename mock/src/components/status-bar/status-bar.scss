@@ -1,3 +1,7 @@
+.status-wrap {
+  flex-shrink: 0;
+}
+
 .status {
   display: flex;
   justify-content: space-between;

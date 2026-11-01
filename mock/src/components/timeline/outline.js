@@ -13,18 +13,23 @@ export function Outline(state) {
   const blocks = state.chat.blocks;
   const selectedAt = blocks.findIndex((b) => b.id === state.ui.selected);
   const active = [...questions].reverse().find((q) => selectedAt === -1 || blocks.indexOf(q) <= selectedAt) ?? questions[0];
-  const jump = (id) => select(id);
+  // A mark opens the list and jumps to that question. The list stays
+  // hidden until then; Esc or the close button hides it again.
+  const jump = (id) => {
+    select(id);
+    setUi({ outlineOpen: true });
+  };
 
   return h(
     "div",
     { class: "outline" },
     h(
       "div",
-      { class: "outline__rail", onClick: () => setUi({ outlineOpen: !state.ui.outlineOpen }) },
+      { class: "outline__rail" },
       questions.map((q) =>
         h(
           "div",
-          { class: "outline__mark", title: q.text, onClick: (e) => (e.stopPropagation(), jump(q.id)) },
+          { class: "outline__mark", title: q.text, onClick: () => jump(q.id) },
           h("span", { class: ["outline__pill", q === active && "outline__pill--active"] }),
         ),
       ),
@@ -36,7 +41,7 @@ export function Outline(state) {
         h(
           "div",
           { class: "outline__menu-head" },
-          h("span", "Esc to close"),
+          h("span", "↑↓ questions · Esc closes"),
           h("button", { onClick: () => setUi({ outlineOpen: false }) }, "✕"),
         ),
         questions.map((q, i) =>

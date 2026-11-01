@@ -4,10 +4,11 @@
 // during a turn queue under it.
 
 import { h } from "../../lib/h.js";
+import { SHOW_AFTER_MS } from "../../visibility.js";
 import "./activity-line.scss";
 
 const FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-const SHOW_AFTER = 150;
+const SHOW_AFTER = SHOW_AFTER_MS;
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 export function ActivityLine(state, now = Date.now()) {

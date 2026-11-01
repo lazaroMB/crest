@@ -13,6 +13,7 @@
 import { h } from "./lib/h.js";
 import { subscribe, state } from "./store.js";
 import { ActivityLine } from "./components/activity-line/activity-line.js";
+import { InfoCorner } from "./components/info-corner/info-corner.js";
 import { ApprovalDialog } from "./components/approval-dialog/approval-dialog.js";
 import { ChatsPanel } from "./components/chats-panel/chats-panel.js";
 import { MockBar } from "./components/mock-bar/mock-bar.js";
@@ -47,12 +48,14 @@ export function mountApp(root) {
   const prompt = h("div");
   const status = slot();
   const overlay = slot();
+  const info = slot();
 
   const win = h(
     "div",
     { class: "window" },
     h("div", { class: "workbench" }, chats, h("div", { class: "root" }, tree, h("div", { class: "session" }, timeline, activity, prompt, status))),
     overlay,
+    info,
   );
   root.append(mockBar, h("div", { class: "stage" }, win));
 
@@ -65,6 +68,7 @@ export function mountApp(root) {
     region(tree, (s) => [s.ui.treeShown, s.ui.focus], (s) => s.ui.treeShown && TreePanel(s)),
     region(activity, (s) => [s.turn.activity, s.turn.queue, Math.floor(Date.now() / 100)], (s) => ActivityLine(s)),
     region(status, (s) => [s.status, s.notice, s.turn.busy], StatusBar),
+    region(info, (s) => [s.notices, s.notice, s.turn.steps, s.toast, s.ui.infoOpen], InfoCorner),
     region(overlay, (s) => [s.turn.approval, s.turn.chatId, s.chat?.id, s.ui.approvalIndex], ApprovalDialog),
   ];
   const renderTimeline = whenChanged(

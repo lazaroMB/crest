@@ -29,6 +29,9 @@ export function StatusBar(state) {
   const { status, notice, turn } = state;
   if (!status) return null;
   return h(
+    "div",
+    { class: "status-wrap" },
+    h(
     "footer",
     { class: "status" },
     h(
@@ -49,6 +52,7 @@ export function StatusBar(state) {
       h("span", { class: `status__git status__git--${gitTone(status.git)}` }, gitText(status.git)),
       bar(),
       h("span", { class: "muted" }, status.workspace),
+    ),
     ),
   );
 }

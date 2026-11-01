@@ -12,6 +12,8 @@ For the project overview, installation and quick start, see the [main README](..
 | [architecture.md](architecture.md) | People reading the code | The hexagonal layers, ports and adapters, the loop of a turn, events, threads, persistence and the dependency rules. |
 | [development.md](development.md) | Contributors | Tests and fakes, how to add tools, blocks, adapters or nodes, commit conventions and CI. |
 
+Requirements, what a person can do, live in [requirements/](requirements/). Copy [requirements/TEMPLATE.md](requirements/TEMPLATE.md). Technical plans live in [specs/](specs/).
+
 Research notes:
 
 - [research/chat-blocks-for-technical-work.md](research/chat-blocks-for-technical-work.md): which new chat blocks crest should render for developers, engineers, architects, chemists, physicists and data people; computation you can verify (the `Computed` envelope), statistics cards, LaTeX math, interop formats and the roadmap (phase 1 implemented).

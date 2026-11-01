@@ -6,12 +6,15 @@ export const state = {
   chat: null, // { id, projectId, title, blocks }
   status: null, // { model, mode, cost, git, workspace }
   commands: [],
-  notice: null, // { level, text }
+  notice: null, // { id, level, text } on the status bar, gone after 6 s
+  notices: [], // errors and warnings kept until dismissed
+  toast: null, // { id, level, text } in the corner, gone after 3 s
 
   turn: {
     chatId: null,
     busy: false,
     activity: null, // { verb, stage, detail, startedAt }
+    steps: [], // finished steps; the short ones stay in the log
     approval: null, // { id, tool, subject, preview, pattern }
     queue: [],
   },
@@ -29,6 +32,7 @@ export const state = {
     expanded: {}, // block id -> true
     altView: {}, // block id -> true when a chart shows its table
     outlineOpen: false,
+    infoOpen: false,
     approvalIndex: 0,
   },
 };
