@@ -1,6 +1,12 @@
 //! The wgpu side: an own device (not GPUI's), offscreen targets per size,
 //! the passes of `board.wgsl` and the readback of the final image as BGRA
 //! bytes for a GPUI `RenderImage`.
+//!
+//! A frame is [`Gpu::submit`]ted and its readback mapped asynchronously;
+//! [`Gpu::try_finish`] collects it without blocking once the GPU is done
+//! (the caller polls on its next frames), or [`Gpu::render`] waits for it.
+//! One frame is in flight at a time: the targets and the readback buffer
+//! are shared.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -70,6 +76,16 @@ struct Targets {
     composite: wgpu::BindGroup,
 }
 
+/// A frame submitted whose pixels are not read back yet.
+struct InFlight {
+    width: u32,
+    height: u32,
+    vertices: usize,
+    started: Instant,
+    /// Set by the `map_async` callback.
+    mapped: Arc<Mutex<Option<Result<(), String>>>>,
+}
+
 /// The device, its pipelines and the targets of the last size.
 pub struct Gpu {
     device: wgpu::Device,
@@ -91,6 +107,7 @@ pub struct Gpu {
     /// Key of the mesh in the buffers, when the caller gave one.
     uploaded: Option<u64>,
     targets: Option<Targets>,
+    in_flight: Option<InFlight>,
     error: Arc<Mutex<Option<String>>>,
     /// The background, linear.
     clear: wgpu::Color,
@@ -358,6 +375,7 @@ impl Gpu {
             index_buffer: None,
             uploaded: None,
             targets: None,
+            in_flight: None,
             error,
             clear: CLEAR,
         };
@@ -585,12 +603,13 @@ impl Gpu {
     }
 
     /// Renders `mesh` seen through `camera` at `width × height` and reads
-    /// the BGRA bytes back. With a `key`, a mesh already uploaded under it
-    /// is not uploaded again.
+    /// the BGRA bytes back, waiting for the GPU. With a `key`, a mesh
+    /// already uploaded under it is not uploaded again.
     ///
     /// # Errors
     ///
-    /// [`RenderError::Render`] for a wgpu error or a failed readback.
+    /// [`RenderError::Render`] for a wgpu error or a failed readback, or
+    /// when another frame is in flight.
     pub fn render(
         &mut self,
         mesh: &Mesh,
@@ -599,6 +618,36 @@ impl Gpu {
         width: u32,
         height: u32,
     ) -> Result<(Vec<u8>, RenderStats), RenderError> {
+        self.submit(mesh, key, camera, width, height)?;
+        self.try_finish(true)
+            .unwrap_or_else(|| Err(RenderError::Render("the readback did not complete".into())))
+    }
+
+    /// Whether a submitted frame is still to be collected.
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
+    /// Encodes and submits a frame of `mesh` (as [`Self::render`]) and
+    /// maps its readback, without waiting: [`Self::try_finish`] collects
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Render`] when another frame is in flight or wgpu
+    /// reports an error.
+    pub fn submit(
+        &mut self,
+        mesh: &Mesh,
+        key: Option<u64>,
+        camera: &CameraUniform,
+        width: u32,
+        height: u32,
+    ) -> Result<(), RenderError> {
+        if self.in_flight.is_some() {
+            return Err(RenderError::Render("a frame is already in flight".into()));
+        }
         let started = Instant::now();
         let (width, height) = (width.clamp(1, 8192), height.clamp(1, 8192));
         self.upload(mesh, key);
@@ -733,18 +782,73 @@ impl Gpu {
             },
         );
         self.queue.submit([encoder.finish()]);
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mapped = Arc::new(Mutex::new(None));
+        let sink = Arc::clone(&mapped);
         t.readback
             .map_async(wgpu::MapMode::Read, .., move |result| {
-                tx.send(result).ok();
+                *sink.lock().unwrap_or_else(PoisonError::into_inner) =
+                    Some(result.map_err(|e| e.to_string()));
             });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| RenderError::Render(e.to_string()))?;
+        self.in_flight = Some(InFlight {
+            width,
+            height,
+            vertices: mesh.vertex_count(),
+            started,
+            mapped,
+        });
+        self.take_error().inspect_err(|_| self.abandon())
+    }
+
+    /// Drops the frame in flight (after an error).
+    fn abandon(&mut self) {
+        if self.in_flight.take().is_some()
+            && let Some(t) = &self.targets
+        {
+            t.readback.unmap();
+        }
+    }
+
+    /// The frame in flight, once the GPU is done with it: polls the device
+    /// (waiting for it with `wait`) and reads the BGRA bytes back. `None`
+    /// while it is not done, or when no frame is in flight. The GPU time in
+    /// the stats runs until the poll that found it done.
+    pub fn try_finish(
+        &mut self,
+        wait: bool,
+    ) -> Option<Result<(Vec<u8>, RenderStats), RenderError>> {
+        self.in_flight.as_ref()?;
+        let poll = if wait {
+            wgpu::PollType::wait_indefinitely()
+        } else {
+            wgpu::PollType::Poll
+        };
+        if let Err(e) = self.device.poll(poll) {
+            self.abandon();
+            return Some(Err(RenderError::Render(e.to_string())));
+        }
+        let state = self.in_flight.as_ref().and_then(|f| {
+            f.mapped
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        });
+        let mapped = match state {
+            None if wait => {
+                self.abandon();
+                return Some(Err(RenderError::Render(
+                    "the readback did not complete".into(),
+                )));
+            }
+            None => return None,
+            Some(mapped) => mapped,
+        };
+        let frame = self.in_flight.take()?;
         let gpu_done = Instant::now();
-        rx.recv()
-            .map_err(|e| RenderError::Render(e.to_string()))?
-            .map_err(|e| RenderError::Render(e.to_string()))?;
+        let t = self.targets.as_ref()?;
+        if let Err(e) = mapped {
+            return Some(Err(RenderError::Render(e)));
+        }
+        let (width, height) = (frame.width, frame.height);
         let mut bgra = Vec::with_capacity((width * height * 4) as usize);
         {
             let data = t.readback.get_mapped_range(..);
@@ -753,17 +857,19 @@ impl Gpu {
             }
         }
         t.readback.unmap();
-        self.take_error()?;
+        if let Err(e) = self.take_error() {
+            return Some(Err(e));
+        }
         let done = Instant::now();
-        Ok((
+        Some(Ok((
             bgra,
             RenderStats {
                 width,
                 height,
-                vertices: mesh.vertex_count(),
-                gpu_ms: (gpu_done - started).as_secs_f32() * 1000.0,
+                vertices: frame.vertices,
+                gpu_ms: (gpu_done - frame.started).as_secs_f32() * 1000.0,
                 readback_ms: (done - gpu_done).as_secs_f32() * 1000.0,
             },
-        ))
+        )))
     }
 }

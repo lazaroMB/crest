@@ -15,6 +15,18 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::InputView;
 use super::attachments::{ImageMode, PendingImage, pending_image};
 
+/// Checks and converts pasted images ([`pending_image`]): the costly part
+/// of a paste (decoding, png encoding, base64), safe to run off the UI
+/// thread.
+pub fn prepare(images: &[gpui::Image]) -> Vec<Result<PendingImage, String>> {
+    images
+        .iter()
+        // One past the limit is enough for `add` to say there are too many.
+        .take(MAX_IMAGES_PER_MESSAGE + 1)
+        .map(pending_image)
+        .collect()
+}
+
 /// Side of a tray thumbnail, in pixels.
 const THUMB_SIZE: f32 = 64.0;
 
@@ -53,15 +65,21 @@ impl ImageTray {
     /// Adds pasted images; returns why the ones left out could not be
     /// attached.
     pub fn attach(&mut self, images: Vec<gpui::Image>) -> Vec<String> {
+        self.add(prepare(&images))
+    }
+
+    /// Adds images [`prepare`]d beforehand, up to the limit; returns why
+    /// the ones left out could not be attached.
+    pub fn add(&mut self, prepared: Vec<Result<PendingImage, String>>) -> Vec<String> {
         let mut problems = Vec::new();
-        for image in images {
+        for image in prepared {
             if self.images.len() >= MAX_IMAGES_PER_MESSAGE {
                 problems.push(format!(
                     "at most {MAX_IMAGES_PER_MESSAGE} images go with a message; remove one first"
                 ));
                 break;
             }
-            match pending_image(&image) {
+            match image {
                 Ok(pending) => self.images.push(pending),
                 Err(err) => problems.push(err),
             }

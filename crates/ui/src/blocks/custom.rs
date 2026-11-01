@@ -17,7 +17,6 @@ use gpui::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     px,
 };
-use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use uuid::Uuid;
 
@@ -164,12 +163,11 @@ impl Walk<'_> {
                     .on_link_click(open_link)
                     .into_any_element()
             }
-            CustomNode::Html { source } => TextView::html(
-                element_id("custom-html", self.next_id()),
-                SharedString::from(source.clone()),
-            )
-            .on_link_click(open_link)
-            .into_any_element(),
+            CustomNode::Html { source } => {
+                super::math::html_block(self.next_id(), source, window, cx)
+                    .on_link_click(open_link)
+                    .into_any_element()
+            }
             CustomNode::Image {
                 source,
                 media_type,

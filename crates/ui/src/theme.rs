@@ -139,12 +139,17 @@ pub fn token(cx: &App, path: &str) -> Hsla {
     hsla(crest_theme(cx).color(path))
 }
 
-/// The built-in dark theme.
+/// The built-in dark theme, resolved once: the same `Arc` every time, so
+/// views that compare themes by pointer (to lay out again in new colors)
+/// see no change while no theme is installed.
 #[must_use]
 pub fn default_theme() -> Arc<CrestThemeData> {
-    ThemeCatalog::new()
-        .resolve_or_default(application::theme::TWOCREST, None)
-        .theme
+    static DEFAULT: std::sync::LazyLock<Arc<CrestThemeData>> = std::sync::LazyLock::new(|| {
+        ThemeCatalog::new()
+            .resolve_or_default(application::theme::TWOCREST, None)
+            .theme
+    });
+    Arc::clone(&DEFAULT)
 }
 
 /// A theme color as a GPUI color.

@@ -54,6 +54,8 @@ pub mod paths;
 pub mod theme_popup;
 pub mod tray;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use application::keymap::{
@@ -144,6 +146,20 @@ fn scroll_window(top: usize, selected: usize, rows: isize, len: usize) -> (usize
     (top, selected.clamp(top, last.max(top)))
 }
 
+/// A step of the paste chain of [`InputView`].
+enum PasteStep {
+    /// Pasted images, being prepared in the background.
+    Images(Task<Vec<Result<PendingImage, String>>>),
+    /// A prompt sent while images were being prepared.
+    Submit(String),
+}
+
+/// A [`PasteStep`] ready to land.
+enum Landed {
+    Images(Vec<Result<PendingImage, String>>),
+    Submit(String),
+}
+
 /// What the input asks the rest of the UI to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputEvent {
@@ -230,6 +246,14 @@ pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
 /// with what follows the `/`, then names containing it. Empty unless
 /// `text` is a `/` and a partial name (no arguments yet).
 pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a CommandRow> {
+    palette_indices(commands, text)
+        .into_iter()
+        .map(|ix| &commands[ix])
+        .collect()
+}
+
+/// [`palette_matches`] as indices into `commands`.
+fn palette_indices(commands: &[CommandRow], text: &str) -> Vec<usize> {
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
     };
@@ -242,24 +266,26 @@ pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a Co
         // (`/mode ` lists `mode plan`...).
         return commands
             .iter()
-            .filter(|row| {
+            .enumerate()
+            .filter(|(_, row)| {
                 let name = row.name.to_lowercase();
                 name.contains(' ') && name.starts_with(&typed)
             })
+            .map(|(ix, _)| ix)
             .collect();
     }
-    let mut starts: Vec<&CommandRow> = Vec::new();
-    let mut contains: Vec<&CommandRow> = Vec::new();
-    for row in commands {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut contains: Vec<usize> = Vec::new();
+    for (ix, row) in commands.iter().enumerate() {
         let name = row.name.to_lowercase();
         // A row named with its argument (`mode plan`) waits for the space.
         if name.contains(' ') {
             continue;
         }
         if name.starts_with(&typed) {
-            starts.push(row);
+            starts.push(ix);
         } else if name.contains(&typed) {
-            contains.push(row);
+            contains.push(ix);
         }
     }
     starts.append(&mut contains);
@@ -385,7 +411,14 @@ pub struct InputView {
     focus_handle: FocusHandle,
     timeout: Option<Task<()>>,
     queued: bool,
+    /// The editor's text as last read, so that a frame that reads it a few
+    /// times (palette, popups) copies it out of the editor only once per
+    /// change.
+    text: RefCell<SharedString>,
     commands: Vec<CommandRow>,
+    /// The palette rows (indices into `commands`) for a text, worked out
+    /// once per text and command list.
+    palette_rows: RefCell<Option<(SharedString, Rc<[usize]>)>>,
     palette_selected: usize,
     /// First visible row of the `/model ` popup, which scrolls.
     palette_top: usize,
@@ -402,6 +435,11 @@ pub struct InputView {
     /// Whether the `/theme ` popup is showing another theme.
     theme_previewing: bool,
     tray: ImageTray,
+    /// The last step of the paste chain: images being prepared for the
+    /// tray, or a prompt sent while some were, which waits for them.
+    attaching: Option<Task<()>>,
+    /// Steps of the paste chain not landed yet.
+    pastes_pending: usize,
     history: PromptHistory,
     blink: Blink,
     _blink: Task<()>,
@@ -466,7 +504,9 @@ impl InputView {
             focus_handle,
             timeout: None,
             queued: false,
+            text: RefCell::default(),
             commands: Vec::new(),
+            palette_rows: RefCell::default(),
             palette_selected: 0,
             palette_top: 0,
             wheel_rest: 0.0,
@@ -478,6 +518,8 @@ impl InputView {
             current_theme: String::new(),
             theme_previewing: false,
             tray: ImageTray::default(),
+            attaching: None,
+            pastes_pending: 0,
             history: PromptHistory::default(),
             blink: Blink::default(),
             _blink: Self::blink_loop(window, cx),
@@ -525,7 +567,19 @@ impl InputView {
 
     /// Text of the prompt editor.
     pub fn text(&self, cx: &App) -> String {
-        self.editor.read(cx).value().to_string()
+        self.shared_text(cx).to_string()
+    }
+
+    /// [`Self::text`] without a copy: the editor's text is copied out of
+    /// it only when it differs from the last read (a comparison that
+    /// allocates nothing).
+    fn shared_text(&self, cx: &App) -> SharedString {
+        let editor = self.editor.read(cx);
+        let mut cached = self.text.borrow_mut();
+        if editor.text() != cached.as_ref() {
+            *cached = editor.value();
+        }
+        cached.clone()
     }
 
     /// The keymap in use.
@@ -547,6 +601,7 @@ impl InputView {
     /// The commands the `/` palette offers.
     pub fn set_commands(&mut self, commands: Vec<CommandRow>, cx: &mut Context<Self>) {
         self.commands = commands;
+        self.palette_rows.take();
         cx.notify();
     }
 
@@ -555,7 +610,19 @@ impl InputView {
         if self.palette_hidden {
             return Vec::new();
         }
-        palette_matches(&self.commands, &self.text(cx))
+        let text = self.shared_text(cx);
+        let mut cached = self.palette_rows.borrow_mut();
+        let rows = match cached.as_ref() {
+            Some((key, rows)) if *key == text => Rc::clone(rows),
+            _ => {
+                let rows: Rc<[usize]> = palette_indices(&self.commands, &text).into();
+                *cached = Some((text, Rc::clone(&rows)));
+                rows
+            }
+        };
+        rows.iter()
+            .filter_map(|&ix| self.commands.get(ix))
+            .collect()
     }
 
     /// Lists the directories `@` words name; without it they get no
@@ -569,7 +636,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.paths.popup(&self.text(cx))
+        self.paths.popup(&self.shared_text(cx))
     }
 
     /// Hands the `/model ` popup the models of the providers, or why they
@@ -603,7 +670,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.themes.popup(&self.text(cx))
+        self.themes.popup(&self.shared_text(cx))
     }
 
     fn end_theme_preview(&mut self, cx: &mut Context<Self>) {
@@ -617,7 +684,7 @@ impl InputView {
         if self.palette_hidden {
             return None;
         }
-        self.models.popup(&self.text(cx))
+        self.models.popup(&self.shared_text(cx))
     }
 
     /// The images waiting in the tray, in paste order.
@@ -638,10 +705,53 @@ impl InputView {
     }
 
     /// Adds pasted images to the tray; an image that cannot be attached
-    /// is reported with [`InputEvent::Notice`].
+    /// is reported with [`InputEvent::Notice`]. They are checked and
+    /// converted (a bmp re-encoded as png, the base64 of every one) on the
+    /// background executor and land in the tray a moment later, in paste
+    /// order.
     pub fn attach_images(&mut self, images: Vec<gpui::Image>, cx: &mut Context<Self>) {
-        let problems = self.tray.attach(images);
-        self.report(problems, cx);
+        let prepared = cx.background_spawn(async move { tray::prepare(&images) });
+        self.after_pastes(PasteStep::Images(prepared), cx);
+    }
+
+    /// Whether pasted images are still being prepared (or a prompt sent
+    /// meanwhile still waits for them).
+    pub fn pastes_pending(&self) -> bool {
+        self.pastes_pending > 0
+    }
+
+    /// Chains `step` after the pastes not landed yet, so pastes land in
+    /// paste order and a prompt sent while some were being prepared goes
+    /// with them.
+    fn after_pastes(&mut self, step: PasteStep, cx: &mut Context<Self>) {
+        let previous = self.attaching.take();
+        self.pastes_pending += 1;
+        self.attaching = Some(cx.spawn(async move |this, cx| {
+            let landed = match step {
+                PasteStep::Images(prepared) => Landed::Images(prepared.await),
+                PasteStep::Submit(text) => Landed::Submit(text),
+            };
+            // An earlier step lands first.
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            this.update(cx, |this, cx| {
+                this.pastes_pending = this.pastes_pending.saturating_sub(1);
+                match landed {
+                    Landed::Images(prepared) => {
+                        let problems = this.tray.add(prepared);
+                        this.report(problems, cx);
+                    }
+                    Landed::Submit(text) => {
+                        if let Some(event) = this.prompt_event(text) {
+                            cx.emit(event);
+                        }
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        }));
     }
 
     /// Puts images back in the tray (a queued prompt taken back to edit).
@@ -998,24 +1108,46 @@ impl InputView {
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let line = classify_line(&self.text(cx));
         // A command leaves the images in the tray for the next prompt.
-        let event = match line {
-            Some(Line::Command(command)) => InputEvent::Command(command),
-            line if !self.tray.is_empty() => {
-                let text = match line {
-                    Some(Line::Prompt(text)) => text,
-                    _ => String::new(),
-                };
-                let (images, mode) = self.tray.take();
-                InputEvent::SubmitImages { text, images, mode }
+        let text = match line {
+            Some(Line::Command(command)) => {
+                self.clear_sent(window, cx);
+                cx.emit(InputEvent::Command(command));
+                return;
             }
-            Some(Line::Prompt(text)) => InputEvent::Submit(text),
-            None => return,
+            Some(Line::Prompt(text)) => text,
+            None => String::new(),
         };
+        if self.pastes_pending() {
+            // Images pasted just before `Enter` are still being prepared:
+            // the prompt leaves the editor now and is sent with them when
+            // they land.
+            self.clear_sent(window, cx);
+            self.after_pastes(PasteStep::Submit(text), cx);
+            return;
+        }
+        let Some(event) = self.prompt_event(text) else {
+            return;
+        };
+        self.clear_sent(window, cx);
+        cx.emit(event);
+    }
+
+    /// What sending the prompt `text` (maybe empty) emits with the images
+    /// in the tray, which it takes; `None` when there is nothing to send.
+    fn prompt_event(&mut self, text: String) -> Option<InputEvent> {
+        if !self.tray.is_empty() {
+            let (images, mode) = self.tray.take();
+            return Some(InputEvent::SubmitImages { text, images, mode });
+        }
+        (!text.is_empty()).then_some(InputEvent::Submit(text))
+    }
+
+    /// Records the sent prompt in the history and empties the editor.
+    fn clear_sent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let sent = self.text(cx);
         self.record(&sent, cx);
         self.editor
             .update(cx, |editor, cx| editor.set_value("", window, cx));
-        cx.emit(event);
     }
 
     fn schedule_timeout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1638,6 +1770,8 @@ mod tests {
         cx.simulate_keystrokes("secondary-v");
         clipboard_png(5, cx);
         cx.simulate_keystrokes("secondary-v");
+        // They are prepared in the background.
+        cx.run_until_parked();
         view.read_with(cx, |view, cx| {
             // The typed text stays; the images are in the tray.
             assert_eq!(view.text(cx), "describe");
@@ -1677,8 +1811,57 @@ mod tests {
         // An image that cannot be attached is reported.
         clipboard_png(domain::conversation::MAX_IMAGE_SIDE + 1, cx);
         cx.simulate_keystrokes("secondary-v");
+        cx.run_until_parked();
         assert!(matches!(take(&events).as_slice(), [InputEvent::Notice(m)] if m.contains("px")));
         view.read_with(cx, |view, _| assert!(view.images().is_empty()));
+    }
+
+    #[gpui::test]
+    fn a_prompt_sent_during_a_paste_waits_for_its_images(cx: &mut TestAppContext) {
+        let (view, cx, events) = input(cx);
+        let png = |width| {
+            gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                attachments::tests::encoded(width, 2, image::ImageFormat::Png),
+            )
+        };
+        // Pasted and sent before the background preparation lands.
+        view.update_in(cx, |view, window, cx| {
+            view.attach_images(vec![png(3)], cx);
+            view.set_text("what is this", window, cx);
+            view.submit(window, cx);
+            // The prompt left the editor; a paste after `Enter` is for the
+            // next prompt.
+            assert_eq!(view.text(cx), "");
+            assert!(view.pastes_pending());
+            view.attach_images(vec![png(5)], cx);
+        });
+        assert_eq!(take(&events), [], "nothing is sent before the image lands");
+        cx.run_until_parked();
+        let sent = take(&events);
+        let [InputEvent::SubmitImages { text, images, mode }] = sent.as_slice() else {
+            panic!("{sent:?}");
+        };
+        assert_eq!((text.as_str(), *mode), ("what is this", ImageMode::Model));
+        assert_eq!(
+            images.iter().map(|image| image.width).collect::<Vec<_>>(),
+            [3]
+        );
+        view.read_with(cx, |view, _| {
+            assert!(!view.pastes_pending());
+            let widths: Vec<u32> = view.images().iter().map(|i| i.attachment.width).collect();
+            assert_eq!(widths, [5]);
+        });
+        // Without pending pastes `Enter` sends at once, and an empty prompt
+        // with nothing pasted sends nothing.
+        view.update_in(cx, |view, window, cx| {
+            view.remove_image(0, cx);
+            view.submit(window, cx);
+            view.set_text("hi", window, cx);
+            view.submit(window, cx);
+        });
+        let sent = take(&events);
+        assert_eq!(sent, [InputEvent::Submit("hi".into())]);
     }
 
     #[gpui::test]
@@ -1686,6 +1869,7 @@ mod tests {
         let (view, cx, _events) = input(cx);
         clipboard_png(4, cx);
         cx.simulate_keystrokes("secondary-v");
+        cx.run_until_parked();
         cx.draw(
             gpui::point(gpui::px(0.), gpui::px(0.)),
             gpui::size(gpui::px(800.), gpui::px(400.)),

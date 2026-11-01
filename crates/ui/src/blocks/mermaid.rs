@@ -9,6 +9,11 @@
 //! same. A plain wheel is left to the timeline so it keeps scrolling. When
 //! the source does not parse, the block shows the error and the source
 //! instead of a diagram, and `t` shows the source of a valid one.
+//!
+//! Parsing and layout run on the background executor, as the graph widget
+//! does: a placeholder shows until the first layout lands, and a new
+//! source or theme keeps the diagram on screen until its new layout is
+//! ready.
 
 pub mod diagram;
 pub mod paint;
@@ -22,7 +27,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
     Pixels, Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, canvas, div, px,
+    Task, Window, canvas, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -42,9 +47,15 @@ const MAX_SOURCE_CHARS: usize = 8_000;
 /// Per-block state: the parsed diagram and its camera.
 pub struct MermaidView {
     source: String,
-    diagram: Result<Rc<Diagram>, String>,
-    /// The color theme the diagram was laid out with.
+    /// The last layout that landed; `None` before the first one.
+    diagram: Option<Result<Rc<Diagram>, String>>,
+    /// The color theme the diagram is (being) laid out with.
     colors: crate::app::ColorTheme,
+    /// The layout running in the background, if any.
+    layout: Option<Task<()>>,
+    /// Whether the layout running is of a new source, which starts from
+    /// the default camera when it lands.
+    reset_camera: bool,
     show_source: bool,
     camera: Camera,
     /// Last mouse position of a drag in progress.
@@ -57,26 +68,57 @@ pub struct MermaidView {
 impl MermaidView {
     fn new(source: &str, cx: &mut Context<Self>) -> Self {
         let colors = crate::theme::crest_theme(cx);
-        Self {
+        let mut view = Self {
             source: source.to_owned(),
-            diagram: diagram::parse_with(source, &colors).map(Rc::new),
+            diagram: None,
             colors,
+            layout: None,
+            reset_camera: false,
             show_source: false,
             camera: Camera::default(),
             drag: None,
             bounds: Rc::default(),
             focus: cx.focus_handle(),
-        }
+        };
+        view.start_layout(cx);
+        view
     }
 
-    /// Reparses when the source changed, resetting the camera.
+    /// Parses and lays out the source in the current colors on the
+    /// background executor. A layout still running is dropped.
+    fn start_layout(&mut self, cx: &mut Context<Self>) {
+        let (source, colors) = (self.source.clone(), self.colors.clone());
+        let task = cx
+            .background_executor()
+            .spawn(async move { diagram::parse_with(&source, &colors) });
+        self.layout = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.diagram = Some(result.map(Rc::new));
+                if std::mem::take(&mut this.reset_camera) {
+                    this.camera = Camera::default();
+                }
+                this.layout = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Lays the source out again when it changed; the camera is reset
+    /// when the new layout lands.
     fn sync_source(&mut self, source: &str, cx: &mut Context<Self>) {
         if self.source != source {
             self.source = source.to_owned();
-            self.diagram = diagram::parse_with(source, &self.colors).map(Rc::new);
-            self.camera = Camera::default();
+            self.reset_camera = true;
+            self.start_layout(cx);
             cx.notify();
         }
+    }
+
+    /// Whether a layout is running.
+    pub fn is_laying_out(&self) -> bool {
+        self.layout.is_some()
     }
 
     /// Follows the theme and switches between diagram and source, on
@@ -85,9 +127,8 @@ impl MermaidView {
         // Another theme (a `/theme` preview): lay it out in its colors.
         let colors = crate::theme::crest_theme(cx);
         if !std::sync::Arc::ptr_eq(&colors, &self.colors) {
-            self.diagram = diagram::parse_with(&self.source, &colors).map(Rc::new);
             self.colors = colors;
-            cx.notify();
+            self.start_layout(cx);
         }
         if self.show_source != show_source {
             self.show_source = show_source;
@@ -97,7 +138,7 @@ impl MermaidView {
 
     /// The parse error, when the source is not a diagram.
     pub fn error(&self) -> Option<&str> {
-        self.diagram.as_ref().err().map(String::as_str)
+        self.diagram.as_ref()?.as_ref().err().map(String::as_str)
     }
 
     /// Current pan and zoom.
@@ -118,7 +159,9 @@ impl MermaidView {
         anchor: Option<gpui::Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
-        let Ok(diagram) = &self.diagram else { return };
+        let Some(Ok(diagram)) = &self.diagram else {
+            return;
+        };
         let bounds = self.bounds.get();
         let size = self.viewport_size();
         let anchor = anchor.map_or((size.0 / 2.0, size.1 / 2.0), |p| {
@@ -249,6 +292,26 @@ impl MermaidView {
             .into_any_element()
     }
 
+    /// The viewport before the first layout lands.
+    fn render_pending(&self, cx: &App) -> AnyElement {
+        let radius = cx.theme().radius;
+        div()
+            .debug_selector(|| "mermaid-pending".to_owned())
+            .w_full()
+            .h(px(MIN_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius)
+            .bg(token(cx, "canvas.bg"))
+            .border_1()
+            .border_color(token(cx, "accent.bg"))
+            .text_sm()
+            .text_color(token(cx, "muted.fg"))
+            .child("Laying out the diagram…")
+            .into_any_element()
+    }
+
     /// The diagram's height at the scale that fits the last painted width
     /// (its natural height before the first paint), within the limits.
     fn viewport_height(&self, diagram: &Diagram) -> f32 {
@@ -313,12 +376,13 @@ impl MermaidView {
 impl Render for MermaidView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.diagram {
-            Ok(_) if self.show_source => self.render_source(cx),
-            Ok(diagram) => {
+            Some(Ok(_)) | None if self.show_source => self.render_source(cx),
+            None => self.render_pending(cx),
+            Some(Ok(diagram)) => {
                 let diagram = diagram.clone();
                 self.render_diagram(&diagram, cx)
             }
-            Err(err) => {
+            Some(Err(err)) => {
                 let theme = cx.theme();
                 v_flex()
                     .gap_1()
@@ -480,10 +544,15 @@ mod tests {
         cx.update(|window, cx| mermaid_view(&entry, &spec, window, cx))
     }
 
+    /// Draws the timeline, lets the layouts it started land and draws it
+    /// again with them.
     fn draw(cx: &mut gpui::VisualTestContext, view: &gpui::Entity<TimelineView>) {
-        cx.draw(point(px(0.), px(0.)), size(px(800.), px(900.)), |_, _| {
-            div().size_full().child(view.clone())
-        });
+        for _ in 0..2 {
+            cx.draw(point(px(0.), px(0.)), size(px(800.), px(900.)), |_, _| {
+                div().size_full().child(view.clone())
+            });
+            cx.run_until_parked();
+        }
     }
 
     #[gpui::test]
@@ -524,6 +593,39 @@ mod tests {
             let error = mermaid.read_with(cx, |m, _| m.error().map(str::to_owned));
             assert_eq!(error.is_none(), ix < 2, "block {ix}: {error:?}");
         }
+    }
+
+    #[gpui::test]
+    fn layouts_land_in_the_background_and_keep_the_old_diagram_meanwhile(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let id = BlockId::new();
+        let mermaid = view_of(cx, id, FLOWCHART);
+        assert!(mermaid.read_with(cx, |m, _| m.diagram.is_none() && m.is_laying_out()));
+        cx.run_until_parked();
+        let first = mermaid.read_with(cx, |m, _| match &m.diagram {
+            Some(Ok(d)) => Rc::clone(d),
+            _ => panic!("the flowchart lays out"),
+        });
+
+        mermaid.update(cx, |m, cx| {
+            m.camera.pan_by((5.0, 5.0));
+            m.sync_source(SEQUENCE, cx);
+        });
+        mermaid.read_with(cx, |m, _| {
+            assert!(m.is_laying_out());
+            assert!(
+                matches!(&m.diagram, Some(Ok(d)) if Rc::ptr_eq(d, &first)),
+                "the old diagram stays until the new one lands"
+            );
+            assert_eq!(m.camera.pan, (5.0, 5.0));
+        });
+        cx.run_until_parked();
+        mermaid.read_with(cx, |m, _| {
+            assert!(!m.is_laying_out());
+            assert!(matches!(&m.diagram, Some(Ok(d)) if !Rc::ptr_eq(d, &first)));
+            assert_eq!(m.camera, Camera::default(), "a new source starts fitted");
+        });
     }
 
     #[gpui::test]

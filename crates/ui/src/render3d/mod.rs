@@ -17,7 +17,15 @@
 //!   point under a ray, for the model viewer's section and measuring.
 //!
 //! [`Renderer3d::new`] fails cleanly when there is no adapter; the board
-//! then falls back to its 2.5D vector drawing.
+//! then falls back to its 2.5D vector drawing. It blocks while the driver
+//! opens the device, so the app calls it on the background executor
+//! ([`crate::sysboard::auto_backend`]).
+//!
+//! Views do not wait for the GPU either: [`Renderer3d::start_mesh`] submits
+//! a frame for an owner (a view), [`Renderer3d::poll`] checks the device
+//! without blocking and [`Renderer3d::take`] hands the owner its frame once
+//! read back. Meanwhile the view shows its previous image and asks for
+//! another frame. One frame is in flight at a time for the whole app.
 
 pub mod camera;
 pub mod gpu;
@@ -27,6 +35,7 @@ pub mod pick;
 pub mod section;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use domain::sysmodel::scene::{Frame, Scene};
 use gpui::RenderImage;
@@ -70,9 +79,24 @@ pub struct Rendered {
     pub stats: RenderStats,
 }
 
+/// Frames read back and not yet taken that are kept at most (one per
+/// owner; an owner that went away leaves its frame behind).
+const DONE_KEPT: usize = 8;
+
+static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
+
+/// A new owner id for [`Renderer3d::start_mesh`]: one per view.
+pub fn next_owner() -> u64 {
+    NEXT_OWNER.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The renderer: one device for the whole app.
 pub struct Renderer3d {
     gpu: gpu::Gpu,
+    /// Owner of the frame in flight.
+    in_flight: Option<u64>,
+    /// Frames read back, by owner, oldest first.
+    done: Vec<(u64, Result<Rendered, RenderError>)>,
 }
 
 impl std::fmt::Debug for Renderer3d {
@@ -90,6 +114,24 @@ pub fn render_image(bgra: Vec<u8>, width: u32, height: u32) -> Option<Arc<Render
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
 
+/// The camera uniform for an image of `size`.
+fn uniform(camera: &OrbitCamera, size: (u32, u32)) -> gpu::CameraUniform {
+    let aspect = size.0.max(1) as f32 / size.1.max(1) as f32;
+    gpu::CameraUniform {
+        view_proj: camera.view_projection(aspect),
+        eye: camera.eye(),
+        light: math::normalize([0.45, 1.0, 0.65]),
+        inv_far: 1.0 / (camera.radius * 12.0),
+    }
+}
+
+/// The bytes read back, as a frame.
+fn rendered(bgra: Vec<u8>, stats: RenderStats) -> Result<Rendered, RenderError> {
+    let image = render_image(bgra, stats.width, stats.height)
+        .ok_or_else(|| RenderError::Render("readback size mismatch".into()))?;
+    Ok(Rendered { image, stats })
+}
+
 impl Renderer3d {
     /// Opens a device.
     ///
@@ -99,6 +141,8 @@ impl Renderer3d {
     pub fn new() -> Result<Self, RenderError> {
         Ok(Self {
             gpu: gpu::Gpu::new()?,
+            in_flight: None,
+            done: Vec::new(),
         })
     }
 
@@ -151,17 +195,98 @@ impl Renderer3d {
         camera: &OrbitCamera,
         size: (u32, u32),
     ) -> Result<Rendered, RenderError> {
-        let aspect = size.0.max(1) as f32 / size.1.max(1) as f32;
-        let uniform = gpu::CameraUniform {
-            view_proj: camera.view_projection(aspect),
-            eye: camera.eye(),
-            light: math::normalize([0.45, 1.0, 0.65]),
-            inv_far: 1.0 / (camera.radius * 12.0),
-        };
+        // A frame in flight for a view goes first.
+        self.finish(true);
+        let uniform = uniform(camera, size);
         let (bgra, stats) = self.gpu.render(mesh, key, &uniform, size.0, size.1)?;
-        let image = render_image(bgra, stats.width, stats.height)
-            .ok_or_else(|| RenderError::Render("readback size mismatch".into()))?;
-        Ok(Rendered { image, stats })
+        rendered(bgra, stats)
+    }
+
+    /// Whether a frame is in flight (for any owner).
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
+    /// Submits a frame of `frame` of `scene` for `owner`, as
+    /// [`Self::render`] draws it, without waiting for it. Returns `false`
+    /// (and submits nothing) while another frame is in flight.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Render`].
+    pub fn start(
+        &mut self,
+        owner: u64,
+        scene: &Scene,
+        frame: &Frame,
+        camera: &OrbitCamera,
+        selected: Option<&str>,
+        size: (u32, u32),
+    ) -> Result<bool, RenderError> {
+        if self.is_busy() {
+            return Ok(false);
+        }
+        let mesh = mesh::build(scene, frame, selected);
+        self.start_mesh(owner, &mesh, None, camera, size)
+    }
+
+    /// Submits a frame of `mesh` for `owner` (see [`Self::render_mesh`] for
+    /// `key`) without waiting for it: [`Self::poll`] and [`Self::take`]
+    /// collect it. Returns `false` (and submits nothing) while another
+    /// frame is in flight.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Render`].
+    pub fn start_mesh(
+        &mut self,
+        owner: u64,
+        mesh: &mesh::Mesh,
+        key: Option<u64>,
+        camera: &OrbitCamera,
+        size: (u32, u32),
+    ) -> Result<bool, RenderError> {
+        if self.is_busy() {
+            return Ok(false);
+        }
+        let uniform = uniform(camera, size);
+        self.gpu.submit(mesh, key, &uniform, size.0, size.1)?;
+        self.in_flight = Some(owner);
+        Ok(true)
+    }
+
+    /// Checks the device without blocking: a frame in flight that the GPU
+    /// finished is read back and kept for its owner.
+    pub fn poll(&mut self) {
+        self.finish(false);
+    }
+
+    fn finish(&mut self, wait: bool) {
+        let Some(result) = self.gpu.try_finish(wait) else {
+            return;
+        };
+        let Some(owner) = self.in_flight.take() else {
+            return;
+        };
+        let frame = result.and_then(|(bgra, stats)| rendered(bgra, stats));
+        self.done.retain(|(o, _)| *o != owner);
+        if self.done.len() >= DONE_KEPT {
+            drop(self.done.remove(0));
+        }
+        self.done.push((owner, frame));
+    }
+
+    /// The frame read back for `owner`, if one is waiting.
+    pub fn take(&mut self, owner: u64) -> Option<Result<Rendered, RenderError>> {
+        let at = self.done.iter().position(|(o, _)| *o == owner)?;
+        Some(self.done.remove(at).1)
+    }
+
+    /// Whether `owner` has a frame in flight.
+    #[must_use]
+    pub fn is_in_flight_for(&self, owner: u64) -> bool {
+        self.in_flight == Some(owner)
     }
 }
 
@@ -263,6 +388,54 @@ mod tests {
             assert!(lit > 200 * 160 / 20, "{lit} pixels drawn");
             camera.orbit(30.0, 0.0);
         }
+    }
+
+    /// A frame started for an owner is read back for it alone, without
+    /// blocking; a second start waits for the first. Skips without an
+    /// adapter.
+    #[test]
+    fn frames_in_flight_reach_their_owner_or_skips_without_an_adapter() {
+        use domain::model3d::{ModelMesh, UpAxis};
+        let mut renderer = match Renderer3d::new() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("skipped: {e}");
+                return;
+            }
+        };
+        let model = ModelMesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            triangles: vec![[0, 1, 2]],
+            up: UpAxis::Z,
+        };
+        let (mesh, (min, max)) = mesh::Mesh::from_model(&model, UpAxis::Z, [0.6; 3]);
+        let camera = OrbitCamera::fit_bounds(min, max);
+        let (a, b) = (next_owner(), next_owner());
+        assert!(
+            renderer
+                .start_mesh(a, &mesh, Some(1), &camera, (64, 48))
+                .unwrap()
+        );
+        assert!(renderer.is_in_flight_for(a));
+        assert!(
+            !renderer
+                .start_mesh(b, &mesh, Some(1), &camera, (64, 48))
+                .unwrap(),
+            "one frame at a time"
+        );
+        let start = std::time::Instant::now();
+        while renderer.is_busy() && start.elapsed() < std::time::Duration::from_secs(10) {
+            renderer.poll();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(renderer.take(b).is_none());
+        let frame = renderer.take(a).unwrap().unwrap();
+        assert_eq!((frame.stats.width, frame.stats.height), (64, 48));
+        assert!(renderer.take(a).is_none(), "taken once");
+        // A blocking render still works after it.
+        renderer
+            .render_mesh(&mesh, Some(1), &camera, (32, 32))
+            .unwrap();
     }
 
     #[test]

@@ -17,11 +17,15 @@
 //! RaTeX lays the formula out and rasterizes it with the embedded KaTeX
 //! fonts in the theme's foreground on a transparent background, at the
 //! window's scale factor. A typical formula takes about 3 ms in a debug
-//! build (far less in release), so it runs on the UI thread, once per
-//! (source, style, size, color, scale): [`MathCache`] keeps the result. A formula RaTeX cannot parse shows as a monospace chip
-//! with the source, the error and a "Copy LaTeX" button.
+//! build, so it runs on the background executor (several formulas in
+//! parallel), once per (source, style, size, color, scale): the source
+//! shows in a muted placeholder until it lands, and the windows are
+//! refreshed then. [`MathCache`] keeps the results, keyed by a hash of
+//! the source, and drops the least recently drawn past [`CACHE_BYTES`].
+//! RaTeX only hands out a PNG, so the bitmap is decoded from it once per
+//! formula. A formula RaTeX cannot parse shows as a monospace chip with
+//! the source, the error and a "Copy LaTeX" button.
 
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::Arc;
 
@@ -46,8 +50,11 @@ const PAD: f32 = 2.0;
 /// KaTeX does.
 const DISPLAY_SCALE: f32 = 1.15;
 
-/// Entries the cache keeps before it starts over.
-const CACHE_LIMIT: usize = 1024;
+/// Most bytes of bitmaps the cache keeps.
+pub const CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Bytes an error counts for in the cache, so errors are evicted too.
+const ERROR_BYTES: usize = 256;
 
 /// A typeset formula.
 pub struct Rendered {
@@ -126,26 +133,62 @@ pub fn rasterize(
     })
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
-    source: String,
+    /// Hash of the source: a lookup does not copy it.
+    source: u64,
     display: bool,
     font_size: u32,
     color: u32,
     scale: u32,
 }
 
-/// Typeset formulas by (source, style, size, color, scale), so a frame
-/// only looks them up. Errors are kept too.
-#[derive(Default)]
-struct MathCache(HashMap<Key, Result<Arc<Rendered>, SharedString>>);
+fn source_hash(source: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Where a formula is in the cache.
+#[derive(Clone)]
+pub enum Typeset {
+    /// Being typeset in the background.
+    Loading,
+    /// Ready to draw.
+    Ready(Arc<Rendered>),
+    /// RaTeX's message.
+    Failed(SharedString),
+}
+
+impl Typeset {
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Loading => 0,
+            Self::Ready(r) => {
+                let size = r.image.size(0);
+                usize::try_from(size.width.0).unwrap_or(0)
+                    * usize::try_from(size.height.0).unwrap_or(0)
+                    * 4
+            }
+            Self::Failed(_) => ERROR_BYTES,
+        }
+    }
+}
+
+/// Typeset formulas by (source hash, style, size, color, scale), so a
+/// frame only looks them up. Errors are kept too.
+struct MathCache(super::svg::Lru<Key, Typeset>);
+
+impl Default for MathCache {
+    fn default() -> Self {
+        Self(super::svg::Lru::new(CACHE_BYTES))
+    }
+}
 
 impl Global for MathCache {}
 
-/// The cached raster of `source`, typesetting it on first use.
-///
-/// # Errors
-/// RaTeX's message, as [`rasterize`].
+/// The cached raster of `source`, typesetting it in the background on
+/// first use ([`Typeset::Loading`] until it lands).
 pub fn typeset(
     source: &str,
     display: bool,
@@ -153,11 +196,11 @@ pub fn typeset(
     color: Hsla,
     window: &Window,
     cx: &mut App,
-) -> Result<Arc<Rendered>, SharedString> {
+) -> Typeset {
     let font_size = f32::from(font_size);
     let scale = window.scale_factor();
     let key = Key {
-        source: source.to_owned(),
+        source: source_hash(source),
         display,
         font_size: font_size.to_bits(),
         color: u32::from(Rgba::from(color)),
@@ -165,16 +208,26 @@ pub fn typeset(
     };
     let cache = cx.default_global::<MathCache>();
     if let Some(hit) = cache.0.get(&key) {
-        return hit.clone();
+        return hit;
     }
-    let result = rasterize(source, display, font_size, scale, color)
-        .map(Arc::new)
-        .map_err(SharedString::from);
-    if cache.0.len() >= CACHE_LIMIT {
-        cache.0.clear();
-    }
-    cache.0.insert(key, result.clone());
-    result
+    cache.0.insert(key, Typeset::Loading, 0);
+    let source = source.to_owned();
+    let task = cx.background_executor().spawn(async move {
+        match rasterize(&source, display, font_size, scale, color) {
+            Ok(r) => Typeset::Ready(Arc::new(r)),
+            Err(message) => Typeset::Failed(message.into()),
+        }
+    });
+    cx.spawn(async move |cx| {
+        let state = task.await;
+        cx.update(|cx| {
+            let bytes = state.bytes();
+            cx.default_global::<MathCache>().0.insert(key, state, bytes);
+            cx.refresh_windows();
+        });
+    })
+    .detach();
+    Typeset::Loading
 }
 
 /// One formula as an element outside markdown, in the theme's foreground
@@ -187,8 +240,9 @@ pub fn element(source: &str, display: bool, window: &mut Window, cx: &mut App) -
         display_element(source, size * DISPLAY_SCALE, color, window, cx)
     } else {
         match typeset(source, false, size, color, window, cx) {
-            Ok(r) => image_element(&r),
-            Err(message) => inline_error(source, &message, cx),
+            Typeset::Ready(r) => image_element(&r),
+            Typeset::Loading => inline_placeholder(source, cx),
+            Typeset::Failed(message) => inline_error(source, &message, cx),
         }
     }
 }
@@ -235,15 +289,33 @@ pub struct MarkdownState {
     /// source...), so the same source in another view is not mistaken for
     /// the one already shown.
     variant: String,
+    /// Whether `source` cannot hold math ([`may_hold_math`]), so that it
+    /// normalizes to itself.
+    plain: bool,
     state: Entity<TextViewState>,
+}
+
+/// Whether `text` may hold a formula or a dollar [`domain::math::normalize`]
+/// rewrites: without `$`, `\` or a `math` fence it returns the text as is.
+fn may_hold_math(text: &str) -> bool {
+    text.contains(['$', '\\']) || text.contains("math")
+}
+
+/// `at`, moved back to the start of the character it falls in.
+fn floor_boundary(text: &str, mut at: usize) -> usize {
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
 }
 
 impl MarkdownState {
     fn new(variant: &str, source: &str, shown: &str, cx: &mut Context<Self>) -> Self {
         Self {
+            plain: !may_hold_math(source),
             source: source.to_owned(),
             variant: variant.to_owned(),
-            state: cx.new(|cx| TextViewState::markdown(shown, cx)),
+            state: document(variant, shown, cx),
         }
     }
 
@@ -264,18 +336,52 @@ impl MarkdownState {
         if self.variant == variant && self.source == source {
             return;
         }
+        // A streamed reply grows by appends. While it holds no math at all
+        // its normalized form is itself, so the new tail goes straight to
+        // the document instead of normalizing the whole reply again.
+        if variant == DOCUMENT
+            && self.variant == DOCUMENT
+            && self.plain
+            && let Some(tail) = source.strip_prefix(self.source.as_str())
+            // "math" may straddle the old end.
+            && !may_hold_math(&source[floor_boundary(source, self.source.len().saturating_sub(4))..])
+        {
+            self.source.push_str(tail);
+            self.state
+                .update(cx, |state, cx| state.set_text(source, cx));
+            return;
+        }
+        self.plain = !may_hold_math(source);
         self.source.clear();
         self.source.push_str(source);
+        let reformat = (self.variant == HTML) != (variant == HTML);
         self.variant.clear();
         self.variant.push_str(variant);
         let shown = derive(source);
-        self.state
-            .update(cx, |state, cx| state.set_text(&shown, cx));
+        if reformat {
+            // Markdown and HTML are parsed differently: a new document.
+            self.state = document(variant, &shown, cx);
+        } else {
+            self.state
+                .update(cx, |state, cx| state.set_text(&shown, cx));
+        }
+    }
+}
+
+/// A document of `text`: HTML for the [`HTML`] variant, markdown
+/// otherwise.
+fn document(variant: &str, text: &str, cx: &mut App) -> Entity<TextViewState> {
+    if variant == HTML {
+        cx.new(|cx| TextViewState::html(text, cx))
+    } else {
+        cx.new(|cx| TextViewState::markdown(text, cx))
     }
 }
 
 /// Variant of [`markdown_block`].
 const DOCUMENT: &str = "document";
+/// Variant of [`html_block`].
+const HTML: &str = "html";
 
 /// The persistent [`MarkdownState`] of block `id` showing `derive(source)`.
 fn document_state(
@@ -297,6 +403,13 @@ fn document_state(
 pub fn markdown_block(id: BlockId, source: &str, window: &mut Window, cx: &mut App) -> TextView {
     let state = document_state(id, DOCUMENT, source, domain::math::normalize, window, cx);
     with_math(TextView::new(&state))
+}
+
+/// `source` as an HTML document for block `id`, whose parse is kept across
+/// frames like [`markdown_block`]'s.
+pub fn html_block(id: BlockId, source: &str, window: &mut Window, cx: &mut App) -> TextView {
+    let state = document_state(id, HTML, source, str::to_owned, window, cx);
+    TextView::new(&state)
 }
 
 /// `source` as one fenced code block in `lang` for block `id`, highlighted
@@ -371,8 +484,13 @@ impl MarkdownPlugin for InlineMath {
                 window,
                 cx,
             ) {
-                Ok(r) => InlineElement::new(image_element(&r)).with_baseline(px(r.baseline)),
-                Err(message) => InlineElement::new(inline_error(&formula.source, &message, cx)),
+                Typeset::Ready(r) => {
+                    InlineElement::new(image_element(&r)).with_baseline(px(r.baseline))
+                }
+                Typeset::Loading => InlineElement::new(inline_placeholder(&formula.source, cx)),
+                Typeset::Failed(message) => {
+                    InlineElement::new(inline_error(&formula.source, &message, cx))
+                }
             },
         )
     }
@@ -431,15 +549,30 @@ fn display_element(
     cx: &mut App,
 ) -> AnyElement {
     match typeset(source, true, size, color, window, cx) {
-        Ok(r) => div()
+        Typeset::Ready(r) => div()
             .id(element_id("math-display", source))
             .w_full()
             .overflow_x_scroll()
             .py_1()
             .child(h_flex().child(div().mx_auto().child(image_element(&r))))
             .into_any_element(),
-        Err(message) => display_error(source, &message, cx),
+        Typeset::Loading => div()
+            .w_full()
+            .py_1()
+            .child(h_flex().child(div().mx_auto().child(inline_placeholder(source, cx))))
+            .into_any_element(),
+        Typeset::Failed(message) => display_error(source, &message, cx),
     }
+}
+
+/// A formula still being typeset: its source, muted.
+fn inline_placeholder(source: &str, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .font_family(theme.mono_font_family.clone())
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(source.to_owned()))
+        .into_any_element()
 }
 
 fn element_id(prefix: &str, source: &str) -> ElementId {
@@ -573,6 +706,81 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn html_nodes_keep_their_parse_and_get_their_own_document(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| crate::timeline::TimelineView::new(cx));
+        let id = BlockId::new();
+        let document = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            let holder = cx
+                .update(|_, cx| crate::blocks::existing_block_state::<MarkdownState>(id, cx))
+                .unwrap_or_else(|| panic!("the node has a document state"));
+            holder.read_with(cx, |holder, cx| {
+                (
+                    holder.state.entity_id(),
+                    holder.state.read(cx).rendered_text().as_str().to_owned(),
+                )
+            })
+        };
+        cx.update(|window, cx| {
+            html_block(id, "<p>One <b>bold</b></p>", window, cx);
+        });
+        let (first, text) = document(cx);
+        assert!(text.contains("One bold"), "{text:?}");
+        cx.update(|window, cx| {
+            html_block(id, "<p>One <b>bold</b></p>", window, cx);
+        });
+        assert_eq!(document(cx).0, first, "kept across frames");
+        // The same node as markdown is parsed as markdown, in a new document.
+        cx.update(|window, cx| {
+            markdown_block(id, "<b>raw</b> *em*", window, cx);
+        });
+        let (second, _) = document(cx);
+        assert_ne!(second, first);
+    }
+
+    #[gpui::test]
+    fn streamed_appends_reach_the_document_and_math_is_still_normalized(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(gpui_component::init);
+        let (_, cx) = cx.add_window_view(|_, cx| crate::timeline::TimelineView::new(cx));
+        let id = BlockId::new();
+        let mut source = String::new();
+        for piece in [
+            "Plain ",
+            "streamed ",
+            "text, then ",
+            "a price of $5 ",
+            "and $x_1$.",
+        ] {
+            source.push_str(piece);
+            cx.update(|window, cx| {
+                markdown_block(id, &source, window, cx);
+            });
+        }
+        // The same text handed over at once.
+        let whole = BlockId::new();
+        cx.update(|window, cx| {
+            markdown_block(whole, &source, window, cx);
+        });
+        cx.run_until_parked();
+        let shown = |id: BlockId, cx: &mut gpui::VisualTestContext| {
+            let holder = cx
+                .update(|_, cx| crate::blocks::existing_block_state::<MarkdownState>(id, cx))
+                .unwrap_or_else(|| panic!("the block has a document state"));
+            holder.read_with(cx, |holder, cx| {
+                assert_eq!(holder.source, source);
+                assert!(!holder.plain, "the dollars end the plain run");
+                holder.state.read(cx).rendered_text().as_str().to_owned()
+            })
+        };
+        let streamed = shown(id, cx);
+        assert!(streamed.starts_with("Plain streamed text, then a price of "));
+        assert_eq!(streamed, shown(whole, cx));
+    }
+
     #[test]
     fn rasterizes_inline_and_display_with_the_baseline_inside() {
         let inline = rasterize(r"x_i^2 + \frac{a}{b}", false, 16.0, 2.0, gpui::black())
@@ -637,17 +845,24 @@ mod tests {
         cx.update(|_, cx| {
             let cache = &cx.default_global::<MathCache>().0;
             let typeset = |source: &str, display: bool| {
+                let hash = source_hash(source);
                 cache
-                    .iter()
-                    .find(|(k, _)| k.source == source && k.display == display)
-                    .map(|(_, v)| v.is_ok())
+                    .entries()
+                    .find(|(k, _)| k.source == hash && k.display == display)
+                    .map(|(_, v)| match v {
+                        Typeset::Ready(_) => Some(true),
+                        Typeset::Failed(_) => Some(false),
+                        Typeset::Loading => None,
+                    })
             };
-            assert_eq!(typeset("\\bar x_1", false), Some(true), "{:?}", cache.len());
-            assert_eq!(typeset("a_i", false), Some(true));
-            assert_eq!(typeset("\\ce{H2O}", false), Some(true));
-            assert_eq!(typeset("\\sum_{i=1}^n x_i", true), Some(true));
-            assert_eq!(typeset("\\frac{a", false), Some(false));
-            assert!(cache.keys().all(|k| !k.source.contains("and")));
+            assert_eq!(typeset("\\bar x_1", false), Some(Some(true)));
+            assert_eq!(typeset("a_i", false), Some(Some(true)));
+            assert_eq!(typeset("\\ce{H2O}", false), Some(Some(true)));
+            assert_eq!(typeset("\\sum_{i=1}^n x_i", true), Some(Some(true)));
+            assert_eq!(typeset("\\frac{a", false), Some(Some(false)));
+            // Prices are prose, not a formula.
+            assert_eq!(typeset("5 and ", false), None);
+            assert_eq!(cache.entries().count(), 5);
         });
     }
 

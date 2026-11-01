@@ -41,11 +41,13 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
     FontWeight, HighlightStyle, InteractiveElement as _, IntoElement, KeystrokeEvent, MouseButton,
-    MouseDownEvent, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task, Window, div, px,
+    MouseDownEvent, ParentElement as _, Render, ScrollStrategy, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledText, Subscription, Task,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_component::{ActiveTheme as _, IconName, Selectable as _, Sizable as _, h_flex, v_flex};
 use uuid::Uuid;
 
@@ -405,7 +407,7 @@ pub struct PickerView {
     total: usize,
     truncated: bool,
     selected: usize,
-    scroll: ScrollHandle,
+    scroll: UniformListScrollHandle,
     error: Option<String>,
     search: Option<Task<()>>,
     options: GrepOptions,
@@ -455,7 +457,7 @@ impl PickerView {
             total: 0,
             truncated: false,
             selected: 0,
-            scroll: ScrollHandle::new(),
+            scroll: UniformListScrollHandle::new(),
             error: None,
             search: None,
             options: GrepOptions::default(),
@@ -490,7 +492,7 @@ impl PickerView {
     }
 
     /// The scroll of the results, which follows the highlighted row.
-    pub fn scroll_handle(&self) -> &ScrollHandle {
+    pub fn scroll_handle(&self) -> &UniformListScrollHandle {
         &self.scroll
     }
 
@@ -654,7 +656,8 @@ impl PickerView {
         }
         let len = len as isize;
         self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
-        crate::keyscroll::ensure_visible(&self.scroll, self.selected);
+        self.scroll
+            .scroll_to_item(self.selected, ScrollStrategy::Nearest);
         self.schedule_preview(cx);
         cx.notify();
     }
@@ -745,7 +748,7 @@ impl PickerView {
             }
         }
         self.selected = 0;
-        self.scroll.scroll_to_item(0);
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.schedule_preview(cx);
         cx.notify();
     }
@@ -1338,16 +1341,29 @@ impl Render for PickerView {
         let stale = self.search.is_some();
         let theme = cx.theme();
         let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
-        let rows: Vec<_> = self
-            .items
-            .iter()
-            .enumerate()
-            .map(|(ix, item)| {
-                self.render_item(ix, item, path_chars, stale, cx)
-                    .into_any_element()
-            })
-            .collect();
-        let results = crate::keyscroll::list("picker-results", &self.scroll, rows)
+        // The rows are one line each: only those in view are built.
+        let rows = uniform_list(
+            "picker-rows",
+            self.items.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .filter_map(|ix| {
+                        let item = this.items.get(ix)?;
+                        Some(
+                            this.render_item(ix, item, path_chars, stale, cx)
+                                .into_any_element(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(&self.scroll)
+        .size_full();
+        let results = div()
+            .id("picker-results")
+            .relative()
+            .child(rows)
+            .scrollbar(&self.scroll, ScrollbarAxis::Vertical)
             .when(two_columns, |div| div.w(px(results_width)).flex_none())
             .when(!two_columns, |div| div.flex_1())
             .min_w_0()
@@ -1989,9 +2005,20 @@ mod tests {
         cx.run_until_parked();
         picker.read_with(cx, |picker, _| {
             assert_eq!(picker.selected(), 30);
-            let scroll = picker.scroll_handle();
-            assert!(scroll.offset().y < px(0.), "the list scrolled");
-            assert!(crate::keyscroll::is_visible(scroll, 30), "row 30 in view");
+            let scroll = picker.scroll_handle().0.borrow();
+            let offset = -scroll.base_handle.offset().y;
+            assert!(offset > px(0.), "the list scrolled");
+            // The last layout's content is the 40 rows.
+            let row = scroll
+                .last_item_size
+                .map(|size| size.contents.height / 40.)
+                .unwrap_or_else(|| panic!("the rows were laid out"));
+            let view = scroll.base_handle.bounds().size.height;
+            let top = row * 30.;
+            assert!(
+                top >= offset - px(1.) && top + row <= offset + view + px(1.),
+                "row 30 in view: top {top:?}, offset {offset:?}, view {view:?}"
+            );
         });
     }
 
