@@ -255,7 +255,7 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 
 ## Composition root
 
-`crates/bin/src/root.rs::build_app` builds everything:
+`crates/bin/src/root.rs::build_app` builds everything, with helpers in `root/` for the model ports (`llm_ports.rs`), the tool registry (`tool_registry.rs`) and the stores and resumed session (`stores.rs`):
 
 1. `WorkspaceGuard::open`: canonicalizes the workspace (if it fails, the error is fatal).
 2. Starts `LuaHost` and loads the config. Errors become `Error` blocks and crest carries on with the defaults.
