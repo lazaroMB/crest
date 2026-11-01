@@ -25,7 +25,6 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::custom::node_id;
-use crate::theme::token;
 use crate::timeline::TimelineEntry;
 use crate::widgets;
 
@@ -134,22 +133,13 @@ impl Render for NetworkView {
             .map(|m| {
                 let on = m == current;
                 let key = m.key();
-                div()
+                crate::kit::toggle_chip(m.label(), on, cx)
                     .id(SharedString::from(format!("network-size-{key}")))
                     .debug_selector(move || format!("network-size-{key}"))
-                    .px_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .when(on, |d| {
-                        d.bg(token(cx, "accent.bg"))
-                            .text_color(token(cx, "accent.fg"))
-                    })
-                    .when(!on, |d| d.text_color(muted))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.set_metric(m, cx);
                     }))
-                    .child(m.label())
                     .into_any_element()
             })
             .collect();

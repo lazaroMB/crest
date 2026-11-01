@@ -40,6 +40,7 @@ use super::trace::caption;
 use crate::blocks::chart::layout::{Align, Label};
 use crate::blocks::chart::paint::LabelFont;
 use crate::kit::{readout, tool_button};
+use crate::theme::token;
 use crate::timeline::TimelineEntry;
 use crate::widgets::register_input;
 
@@ -627,8 +628,10 @@ impl Render for FlameView {
                 font: window.text_style().font(),
                 size: window.rem_size() * 0.7,
             },
+            // Frames are filled in bright warm colors in every theme, so
+            // their labels stay dark. design: fixed color
             text: hsla(0.0, 0.0, 0.08, 1.0),
-            matched: hsla(0.83, 0.6, 0.62, 1.0),
+            matched: token(cx, "ansi.magenta"),
             outline: theme.foreground,
         };
         let bounds_cell = self.bounds.clone();

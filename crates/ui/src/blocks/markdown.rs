@@ -9,10 +9,9 @@
 
 use domain::block::{BlockKind, BlockTag};
 use gpui::{
-    AnyElement, App, FontWeight, IntoElement as _, ParentElement as _, SharedString, Styled as _,
-    Window, div,
+    AnyElement, App, IntoElement as _, ParentElement as _, SharedString, Styled as _, Window,
 };
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, v_flex};
 
 use super::BlockView;
 use crate::timeline::BlockWidth;
@@ -44,28 +43,15 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
         ("document", "t: source")
     };
     let title = title.as_deref().filter(|t| !t.trim().is_empty());
-    let header = h_flex()
-        .gap_2()
+    let header = crate::kit::header(cx)
         .pb_1()
         .border_b_1()
         .border_color(theme.border)
         .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.foreground)
-                .child(SharedString::from(title.unwrap_or("Markdown").to_owned())),
+            crate::kit::title(SharedString::from(title.unwrap_or("Markdown").to_owned()))
+                .text_color(theme.foreground),
         )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(format!("{mode} · {hint}")),
-        );
+        .child(crate::kit::caption(format!("{mode} · {hint}"), cx));
     v_flex()
         .gap_2()
         .px_3()
@@ -108,7 +94,7 @@ mod tests {
     use domain::block::Block;
 
     use crate::timeline::TimelineView;
-    use gpui::{AppContext as _, TestAppContext, point, px, size};
+    use gpui::{AppContext as _, TestAppContext, div, point, px, size};
     use gpui_component::highlighter::LanguageRegistry;
 
     const DOC: &str = "# crest\n\n## Tabla\n\n| ext | bytes |\n| --- | ---: |\n| rs | 120 |\n\n\
