@@ -365,6 +365,52 @@ fn a_prompt_sent_during_a_paste_waits_for_its_images(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_mode_switch_during_a_paste_applies_once_the_images_land(cx: &mut TestAppContext) {
+    let (view, cx, events) = input(cx);
+    let png = |width| {
+        gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            attachments::tests::encoded(width, 2, image::ImageFormat::Png),
+        )
+    };
+    // `<leader>i` right after the paste, before the image is in the tray.
+    view.update(cx, |view, cx| {
+        view.attach_images(vec![png(3)], cx);
+        view.toggle_image_mode(cx);
+        assert!(view.images().is_empty());
+        assert_eq!(view.image_mode(), ImageMode::Model);
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.images().len(), 1);
+        assert_eq!(view.image_mode(), ImageMode::ChatOnly);
+    });
+    // Switches and a prompt sent during a later paste land in order: the
+    // prompt goes with the mode switched twice more, back and forth again.
+    view.update_in(cx, |view, window, cx| {
+        view.attach_images(vec![png(5)], cx);
+        view.toggle_image_mode(cx);
+        view.toggle_image_mode(cx);
+        view.set_text("keep these", window, cx);
+        view.submit(window, cx);
+        view.toggle_image_mode(cx);
+    });
+    cx.run_until_parked();
+    let sent = take(&events);
+    let [InputEvent::SubmitImages { text, images, mode }] = sent.as_slice() else {
+        panic!("{sent:?}");
+    };
+    assert_eq!((text.as_str(), *mode), ("keep these", ImageMode::ChatOnly));
+    assert_eq!(images.len(), 2);
+    // The switch after `Enter` found an empty tray: nothing to switch.
+    view.read_with(cx, |view, _| {
+        assert!(!view.pastes_pending());
+        assert!(view.images().is_empty());
+        assert_eq!(view.image_mode(), ImageMode::Model);
+    });
+}
+
+#[gpui::test]
 fn the_tray_buttons_remove_images_and_switch_the_mode(cx: &mut TestAppContext) {
     let (view, cx, _events) = input(cx);
     clipboard_png(4, cx);

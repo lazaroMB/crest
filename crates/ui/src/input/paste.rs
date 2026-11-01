@@ -12,12 +12,16 @@ pub(super) enum PasteStep {
     Images(Task<Vec<Result<PendingImage, String>>>),
     /// A prompt sent while images were being prepared.
     Submit(String),
+    /// The image mode switched while images were being prepared: it
+    /// applies to the tray as it is once they land.
+    ToggleMode,
 }
 
 /// A [`PasteStep`] ready to land.
 enum Landed {
     Images(Vec<Result<PendingImage, String>>),
     Submit(String),
+    ToggleMode,
 }
 
 impl InputView {
@@ -32,8 +36,13 @@ impl InputView {
     }
 
     /// Switches what `Enter` does with the images (no-op without images).
+    /// While pasted images are still being prepared, the switch waits for
+    /// them (it is chained after them, like a prompt sent meanwhile), so a
+    /// `<leader>i` pressed right after a paste is not lost.
     pub fn toggle_image_mode(&mut self, cx: &mut Context<Self>) {
-        if self.tray.toggle() {
+        if self.pastes_pending() {
+            self.after_pastes(PasteStep::ToggleMode, cx);
+        } else if self.tray.toggle() {
             cx.notify();
         }
     }
@@ -48,8 +57,8 @@ impl InputView {
         self.after_pastes(PasteStep::Images(prepared), cx);
     }
 
-    /// Whether pasted images are still being prepared (or a prompt sent
-    /// meanwhile still waits for them).
+    /// Whether pasted images are still being prepared (or a prompt sent or
+    /// a mode switch pressed meanwhile still waits for them).
     pub fn pastes_pending(&self) -> bool {
         self.pastes_pending > 0
     }
@@ -64,6 +73,7 @@ impl InputView {
             let landed = match step {
                 PasteStep::Images(prepared) => Landed::Images(prepared.await),
                 PasteStep::Submit(text) => Landed::Submit(text),
+                PasteStep::ToggleMode => Landed::ToggleMode,
             };
             // An earlier step lands first.
             if let Some(previous) = previous {
@@ -81,6 +91,11 @@ impl InputView {
                             cx.emit(event);
                         }
                         cx.notify();
+                    }
+                    Landed::ToggleMode => {
+                        if this.tray.toggle() {
+                            cx.notify();
+                        }
                     }
                 }
             })
