@@ -53,6 +53,7 @@ flowchart TB
 | `application-testing` | `crates/app-testing` | In-memory fakes of every port (`ScriptedLlm`, `InMemoryFs`, `RecordingSink`…), used only as a dev-dependency by the adapters, `ui` and `crest`. |
 | `adapter-anthropic` | `crates/adapters/anthropic` | Messages API with SSE streaming, the `GET /v1/models` catalog and server tools (web search and fetch); also the client of OpenCode's Messages endpoint and the keyring entries of every key. |
 | `adapter-openai` | `crates/adapters/openai` | OpenAI Chat Completions and Responses with SSE streaming, and the `GET /models` catalog (OpenCode's GPT, Grok and open models). |
+| `adapter-support` | `crates/adapters/support` | What the model adapters share: the server-sent events loop and its `Decoder` trait, the reqwest client, `retry-after`, the typed error of an HTTP status (rejected keys and full contexts included) and `TokioClock`, the real clock of the retries. |
 | `adapter-search` | `crates/adapters/search` | `rg --files`, `rg --json` and `fzf --filter` as processes without a shell. Includes version detection. |
 | `adapter-fs` | `crates/adapters/fs` | Reading and writing through `WorkspaceGuard` (canonicalization and sensitive paths) and diffs with `similar`. |
 | `adapter-shell` | `crates/adapters/shell` | `tokio::process` with a timeout, `cwd` in the workspace and capped output. |
@@ -273,12 +274,13 @@ Every non-essential step degrades to a notice: without Lua, without a database o
 | --- | --- | --- |
 | `domain` | no crate of the project | I/O crates |
 | `application` (must be named so) | `domain` | I/O crates, adapters, `ui` |
-| adapters | `application`, `domain`, `platform` | other adapters, `ui` |
+| adapters | `application`, `domain`, `platform`, `adapter-support` | other adapters, `ui` |
+| `adapter-support` (`crates/adapters/support`, must be named so) | `application`, `domain`, `platform` | adapters, `ui` |
 | `ui` | `application`, `domain`, `platform` | adapters |
 | `platform` (`crates/platform`) | no crate of the project | everything internal |
 | `bin` | everything | — |
 
-`platform` is the operating-system glue several outer crates need (spawning and killing processes, `PATH` lookup with `PATHEXT`, crest's config and data directories, the Windows console). It only uses `std`, `dirs` and `windows-sys`, and is the one crate allowed `unsafe` (two Win32 console calls).
+`platform` is the operating-system glue several outer crates need (spawning and killing processes, `PATH` lookup with `PATHEXT`, crest's config and data directories, the Windows console, the keyring service `crest`). It only uses `std`, `dirs` and `windows-sys`, and is the one crate allowed `unsafe` (two Win32 console calls).
 
 The I/O crates that `domain` and `application` cannot use (in normal and build dependencies) are:
 

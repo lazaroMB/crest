@@ -2,7 +2,8 @@
 //!
 //! [`StreamDecoder`] is the pure state machine (one [`StreamEvent`] in,
 //! zero or more [`LlmEvent`]s out); [`llm_events`] runs it over the raw
-//! bytes of a response with `eventsource-stream`.
+//! bytes of a response with the shared server-sent events loop of
+//! `adapter-support`.
 //!
 //! Mapping:
 //!
@@ -29,14 +30,13 @@
 //!   stream; so does a stream that ends without `message_stop`.
 
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::fmt::Display;
 
+use adapter_support::Decoder;
 use application::ports::llm::{LlmError, LlmEvent};
 use domain::conversation::{StopReason, ToolUseId};
 use domain::model::ModelId;
-use eventsource_stream::{EventStreamError, Eventsource};
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde_json::Value;
 
 use crate::convert;
@@ -315,11 +315,27 @@ pub fn parse_event(data: &str) -> Result<StreamEvent, LlmError> {
         .map_err(|err| LlmError::Decode(format!("invalid stream event: {err}")))
 }
 
-struct State<S> {
-    source: S,
-    decoder: StreamDecoder,
-    pending: VecDeque<Result<LlmEvent, LlmError>>,
-    done: bool,
+/// [`StreamDecoder`] fed with the `data` of each event, for the shared
+/// loop of `adapter-support`.
+struct Messages(StreamDecoder);
+
+impl Decoder for Messages {
+    fn decode(&mut self, data: &str) -> Result<Vec<LlmEvent>, LlmError> {
+        parse_event(data).and_then(|event| self.0.decode(event))
+    }
+
+    fn finish(&mut self) -> Result<Vec<LlmEvent>, LlmError> {
+        if self.0.is_stopped() {
+            return Ok(Vec::new());
+        }
+        Err(LlmError::Network(
+            "the stream ended before message_stop".into(),
+        ))
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.0.is_stopped()
+    }
 }
 
 /// Decodes the body of a streaming Messages response.
@@ -338,51 +354,7 @@ where
     B: AsRef<[u8]> + Send + 'static,
     E: Display + Send + 'static,
 {
-    let state = State {
-        source: bytes.eventsource(),
-        decoder: StreamDecoder::new(requested),
-        pending: VecDeque::new(),
-        done: false,
-    };
-    futures::stream::unfold(state, |mut state| async move {
-        loop {
-            if let Some(item) = state.pending.pop_front() {
-                if item.is_err() {
-                    state.pending.clear();
-                    state.done = true;
-                }
-                return Some((item, state));
-            }
-            if state.done {
-                return None;
-            }
-            let item = match state.source.next().await {
-                Some(Ok(event)) if event.data.trim().is_empty() => continue,
-                Some(Ok(event)) => parse_event(&event.data).and_then(|ev| state.decoder.decode(ev)),
-                Some(Err(err)) => Err(sse_error(&err)),
-                None if state.decoder.is_stopped() => return None,
-                None => Err(LlmError::Network(
-                    "the stream ended before message_stop".into(),
-                )),
-            };
-            match item {
-                Ok(events) => {
-                    state.done = state.decoder.is_stopped();
-                    state.pending.extend(events.into_iter().map(Ok));
-                }
-                Err(err) => state.pending.push_back(Err(err)),
-            }
-        }
-    })
-}
-
-fn sse_error<E: Display>(err: &EventStreamError<E>) -> LlmError {
-    match err {
-        EventStreamError::Transport(err) => LlmError::Network(err.to_string()),
-        EventStreamError::Utf8(_) | EventStreamError::Parser(_) => {
-            LlmError::Decode(format!("invalid server-sent events: {err}"))
-        }
-    }
+    adapter_support::llm_events(bytes, Messages(StreamDecoder::new(requested)))
 }
 
 #[cfg(test)]
