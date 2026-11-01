@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 
 use super::cad::csv_field;
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::tree::{BadgeTone, ColumnKind, TreeColumn, TreeNode, TreeSpec};
 
 /// What a space without an area in the file shows.
@@ -412,6 +412,21 @@ fn trim(v: f64) -> String {
         "0".to_owned()
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for IfcScheduleSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[ifc schedule: {} storeys, {} spaces, {} without area]",
+            self.storeys.len(),
+            self.space_count(),
+            self.missing_areas()
+        ))
     }
 }
 

@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::list::{LevelClass, ListSpec};
 
 /// Lines a log block keeps; the rest of a larger file is counted only.
@@ -272,6 +272,16 @@ fn word_shape(word: &str) -> String {
         }
     }
     out
+}
+
+impl BlockSpec for LogSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[logs: {} lines]", self.total_lines))
+    }
 }
 
 #[cfg(test)]

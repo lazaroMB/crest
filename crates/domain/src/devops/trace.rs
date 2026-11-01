@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::list::value_text;
 use crate::widget::timeline::{SpanStatus, TimelineRow, TimelineSpec};
 
@@ -335,6 +335,20 @@ pub fn critical_path(timeline: &TimelineSpec) -> Vec<String> {
     // Tree order is time order within each parent.
     path.sort_unstable();
     path.into_iter().map(|ix| rows[ix].id.clone()).collect()
+}
+
+impl BlockSpec for TraceSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[trace: {} spans, {} errors]",
+            self.span_count(),
+            self.errors().len()
+        ))
+    }
 }
 
 #[cfg(test)]

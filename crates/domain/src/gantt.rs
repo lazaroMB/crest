@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 use crate::widget::timeline::{
     Marker, Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec, civil_from_days,
@@ -633,6 +633,21 @@ fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for GanttSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[gantt: {} tasks, {} d, critical {}]",
+            self.tasks.len(),
+            days(self.project_duration),
+            self.critical_path.join(" → ")
+        ))
     }
 }
 

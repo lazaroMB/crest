@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 
 /// Most features kept.
@@ -606,6 +606,20 @@ fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for MapSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[map: {} features, {}]",
+            self.features.len(),
+            self.crs.label()
+        ))
     }
 }
 

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cad::csv_field;
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Most entities a drawing keeps (after expanding inserts).
 pub const MAX_ENTITIES: usize = 200_000;
@@ -546,6 +546,21 @@ fn hsv(hue: f64, s: f64, v: f64) -> [u8; 3] {
 pub fn normal_degrees(d: f64) -> f64 {
     let r = d.rem_euclid(360.0);
     if (r - 360.0).abs() < 1e-12 { 0.0 } else { r }
+}
+
+impl BlockSpec for DrawingSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[dxf: {}, {} entities, {} layers]",
+            self.display_title(),
+            self.entities.len(),
+            self.layers.len()
+        ))
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ use std::f64::consts::{PI, TAU};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::model3d::{ModelMesh, ModelSpec, UpAxis};
 
 /// Most atoms drawn.
@@ -461,6 +461,21 @@ impl Molecule3dSpec {
             ));
         }
         out
+    }
+}
+
+impl BlockSpec for Molecule3dSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[molecule 3D: {}, {} atoms, {} bonds]",
+            self.formula(),
+            self.atoms.len(),
+            self.bonds.len()
+        ))
     }
 }
 

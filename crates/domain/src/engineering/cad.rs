@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::model3d::{ModelMesh, ModelSpec};
 
 /// Most solids a part may list.
@@ -233,6 +233,22 @@ pub(crate) fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for CadModelSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[step: {}, {} solids, {} triangles, {} faces not meshed]",
+            self.display_title(),
+            self.solids.len(),
+            self.mesh.triangles.len(),
+            self.failed_faces()
+        ))
     }
 }
 

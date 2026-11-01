@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::MoleculeSpec;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 
 /// Most molecules on one side.
@@ -230,6 +230,23 @@ impl ReactionSpec {
             self.charge.1 - self.charge.0
         ));
         out
+    }
+}
+
+impl BlockSpec for ReactionSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        let balance = if self.error.is_some() {
+            "not read"
+        } else if self.is_balanced() {
+            "balanced"
+        } else {
+            "not balanced"
+        };
+        Some(format!("[reaction: {}, {balance}]", self.equation(None)))
     }
 }
 

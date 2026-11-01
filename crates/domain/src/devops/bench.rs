@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::widget::timeline::{TimeUnit, format_duration};
 
 /// Benchmarks a block keeps.
@@ -254,6 +254,21 @@ impl BenchSpec {
             ));
         }
         out
+    }
+}
+
+impl BlockSpec for BenchSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[benchmarks: {}, {} regressed, {} improved]",
+            self.benches.len(),
+            self.with_verdict(Verdict::Regressed).len(),
+            self.with_verdict(Verdict::Improved).len()
+        ))
     }
 }
 

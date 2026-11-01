@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Signals a block keeps.
 pub const MAX_SIGNALS: usize = 2_000;
@@ -451,6 +451,21 @@ fn csv(field: &str) -> String {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {
         field.to_owned()
+    }
+}
+
+impl BlockSpec for WaveformSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[waveform: {} signals, {} – {}]",
+            self.signals.len(),
+            self.time_text(self.start),
+            self.time_text(self.end)
+        ))
     }
 }
 

@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Nodes a flame graph keeps; smaller frames beyond it are hidden.
 pub const MAX_NODES: usize = 100_000;
@@ -447,6 +447,16 @@ impl FlameTree {
             work.extend(self.nodes[at].children.values().copied());
         }
         count
+    }
+}
+
+impl BlockSpec for FlameSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[flame graph: {} {}]", self.total(), self.unit))
     }
 }
 

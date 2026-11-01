@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 use crate::plot::{AxisScale, PlotSpec, SeriesLook, SeriesStyle, XySeries};
 
@@ -516,6 +516,20 @@ fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_owned()
+    }
+}
+
+impl BlockSpec for TrainingSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[training curves: {} runs, {} metrics]",
+            self.runs.len(),
+            self.metrics.len()
+        ))
     }
 }
 

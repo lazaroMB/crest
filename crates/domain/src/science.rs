@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// A molecule drawn from SMILES.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -337,6 +337,26 @@ impl PlateSpec {
             }
         }
         Ok(())
+    }
+}
+
+impl BlockSpec for MoleculeSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[molecule: {}]", self.smiles))
+    }
+}
+
+impl BlockSpec for PlateSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some("[plate]".to_owned())
     }
 }
 

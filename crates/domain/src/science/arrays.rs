@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 use crate::computed::Computed;
 use crate::widget::tree::{BadgeTone, ColumnKind, TreeColumn, TreeNode, TreeSpec};
 
@@ -486,6 +486,21 @@ fn pop(stack: &mut Vec<(u32, TreeNode)>, roots: &mut Vec<TreeNode>) {
             Some((_, parent)) => parent.children.push(node),
             None => roots.push(node),
         }
+    }
+}
+
+impl BlockSpec for ArrayFileSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[array file: {}, {} variables, {} previews]",
+            self.format.name(),
+            self.variables().count(),
+            self.previews.len()
+        ))
     }
 }
 

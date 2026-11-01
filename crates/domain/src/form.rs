@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 pub mod schema;
 
@@ -564,6 +564,16 @@ impl FieldKind {
             }
             _ => false,
         }
+    }
+}
+
+impl BlockSpec for FormSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!("[form: {}]", self.title))
     }
 }
 

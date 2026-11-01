@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invalid;
-use crate::block::BlockError;
+use crate::block::{BlockError, BlockSpec};
 
 /// Properties a card keeps.
 pub const MAX_PROPERTIES: usize = 200;
@@ -146,6 +146,21 @@ impl MaterialSpec {
             ));
         }
         out
+    }
+}
+
+impl BlockSpec for MaterialSpec {
+    fn validate(&self) -> Result<(), BlockError> {
+        Self::validate(self)
+    }
+
+    fn summary_line(&self) -> Option<String> {
+        Some(format!(
+            "[material: {}, {} properties, {} unverified]",
+            self.full_name(),
+            self.properties.len(),
+            self.unverified().len()
+        ))
     }
 }
 
