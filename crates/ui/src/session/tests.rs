@@ -14,19 +14,23 @@ use application_testing::fs::{InMemoryFs, ScriptedShell, test_root};
 use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use application_testing::permissions::MemoryPermissionStore;
 use application_testing::system::{RecordingSink, RecordingTelemetry};
-use domain::block::ToolStatus;
+use domain::block::{BlockKind, ToolStatus};
 use domain::conversation::ContentPart;
 use domain::conversation::Session as Conversation;
 use domain::model::{ModelPolicy, ModelRole};
 use domain::permission::PermissionPolicy;
 
 use futures::channel::oneshot;
-use gpui::{ParentElement as _, Styled as _, TestAppContext, VisualTestContext};
+use gpui::{Focusable as _, ParentElement as _, Styled as _, TestAppContext, VisualTestContext};
 use serde_json::json;
 
 use super::*;
 use crate::approval::UiApproval;
+use crate::commands::unknown_command_hint;
+use crate::help::{HelpView, Section, help_modal_id};
 use crate::input::ModelPopup;
+use crate::input::attachments::ImageMode;
+use crate::permissions::PermissionsView;
 
 /// A controller over the real `AgentService`, running each turn on its
 /// own thread as the binary runs it on tokio.
@@ -204,11 +208,7 @@ impl SessionController for AgentController {
     }
 
     /// Only `sk-ant-good` is accepted; `sk-ant-slow` never answers.
-    fn login(
-        &self,
-        _account: Account,
-        key: String,
-    ) -> BoxFuture<'static, Result<String, String>> {
+    fn login(&self, _account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
         self.logins.lock().unwrap().push(key.clone());
         if key == "sk-ant-slow" {
             return futures::future::pending().boxed();
@@ -337,8 +337,7 @@ fn harness_parts(
 ) -> (Harness, &mut VisualTestContext) {
     cx.executor().allow_parking();
     cx.update(gpui_component::init);
-    let fs =
-        Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "pub fn add() {}\n"));
+    let fs = Arc::new(InMemoryFs::new(test_root()).with_file("src/lib.rs", "pub fn add() {}\n"));
     let (sink, events) = RecordingSink::with_channel();
     let sink = Arc::new(sink);
     let (approval, approvals) = UiApproval::channel();
@@ -1424,9 +1423,8 @@ fn a_focused_block_widget_gets_esc_and_its_keys(cx: &mut TestAppContext) {
         window.focus(&f.focus_handle(cx), cx);
     });
     cx.run_until_parked();
-    let prompt = |cx: &mut VisualTestContext| {
-        h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
-    };
+    let prompt =
+        |cx: &mut VisualTestContext| h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx));
     let in_input = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| {
             let input = h.session.read(cx).input().focus_handle(cx);
@@ -1611,9 +1609,8 @@ fn vim_keys_move_in_the_focused_timeline(cx: &mut TestAppContext) {
         h.session
             .read_with(cx, |s, cx| s.timeline().read(cx).state().selected())
     };
-    let prompt = |cx: &mut VisualTestContext| {
-        h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
-    };
+    let prompt =
+        |cx: &mut VisualTestContext| h.session.read_with(cx, |s, cx| s.input().read(cx).text(cx));
     cx.simulate_keystrokes("ctrl-g w");
     let last = selected(cx);
     assert!(last.is_some());
@@ -1969,10 +1966,7 @@ fn the_new_actions_have_descriptions_in_the_help() {
     }
 }
 
-fn permissions_view(
-    h: &Harness,
-    cx: &mut VisualTestContext,
-) -> Option<Entity<PermissionsView>> {
+fn permissions_view(h: &Harness, cx: &mut VisualTestContext) -> Option<Entity<PermissionsView>> {
     h.session.read_with(cx, |s, cx| s.permissions_view(cx))
 }
 
