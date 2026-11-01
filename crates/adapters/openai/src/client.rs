@@ -10,8 +10,10 @@
 
 use std::time::Duration;
 
+use adapter_support::errors::{self, Named, is_context_error};
+use adapter_support::http::{self, Refusal, network_error};
 use application::ports::llm::LlmError;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -75,26 +77,13 @@ impl OpenAiClient {
         let mut bearer = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|_| auth())?;
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
-        if let Some(agent) = &config.user_agent {
-            let agent = HeaderValue::from_str(agent).map_err(|err| LlmError::InvalidRequest {
-                message: format!("invalid user agent: {err}"),
-            })?;
-            headers.insert(USER_AGENT, agent);
-        }
-        let session_header = config
-            .session_header
-            .as_deref()
-            .map(HeaderName::try_from)
-            .transpose()
-            .map_err(|err| LlmError::InvalidRequest {
-                message: format!("invalid session header: {err}"),
-            })?;
-        let http = reqwest::Client::builder()
-            .default_headers(headers)
-            .connect_timeout(config.connect_timeout)
-            .read_timeout(config.read_timeout)
-            .build()
-            .map_err(|err| LlmError::Network(err.to_string()))?;
+        let session_header = http::session_header(config.session_header.as_deref())?;
+        let http = http::client(
+            headers,
+            config.user_agent.as_deref(),
+            config.connect_timeout,
+            config.read_timeout,
+        )?;
         Ok(Self {
             http,
             base_url: config.base_url.trim_end_matches('/').to_owned(),
@@ -143,23 +132,19 @@ impl OpenAiClient {
     }
 }
 
-fn network_error(err: reqwest::Error) -> LlmError {
-    // `without_url` keeps query strings out of the message; the key is a
-    // header and never part of it.
-    LlmError::Network(err.without_url().to_string())
-}
-
 /// Passes 2xx responses through and turns the rest into typed errors.
 async fn check(response: reqwest::Response, provider: &str) -> Result<reqwest::Response, LlmError> {
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
-    }
-    let retry_after_ms = retry_after_ms(response.headers());
-    let text = response.text().await.unwrap_or_default();
-    let err = from_status(status.as_u16(), &text, retry_after_ms, provider);
-    tracing::warn!(status = status.as_u16(), error = %err, "{provider} API error");
-    Err(err)
+    http::accepted(response).await.map_err(|refusal| {
+        let Refusal {
+            status,
+            retry_after_ms,
+            text,
+            ..
+        } = refusal;
+        let err = from_status(status, &text, retry_after_ms, provider);
+        tracing::warn!(status, error = %err, "{provider} API error");
+        err
+    })
 }
 
 /// The message of an OpenAI-style error body (`{"error": {"message"}}`),
@@ -187,23 +172,12 @@ pub fn from_status(
     retry_after_ms: Option<u64>,
     provider: &str,
 ) -> LlmError {
-    let message = error_message(text);
-    match status {
-        401 => LlmError::Auth {
-            message: format!("{provider} rejected the API key ({status}): {message}"),
-        },
-        403 if is_key_error(&message) => LlmError::Auth {
-            message: format!("{provider} rejected the API key ({status}): {message}"),
-        },
-        403 => LlmError::NotEntitled {
-            message: format!("{provider} refused the request ({status}): {message}"),
-        },
-        429 => LlmError::RateLimited { retry_after_ms },
-        529 => LlmError::Overloaded,
-        400 | 404 | 413 | 422 if is_context_error(&message) => LlmError::ContextTooLong,
-        400..=499 => LlmError::InvalidRequest { message },
-        _ => LlmError::Server { status, message },
-    }
+    errors::from_status(
+        status,
+        error_message(text),
+        retry_after_ms,
+        &Named(provider),
+    )
 }
 
 /// The typed error of an error object sent inside a stream.
@@ -232,42 +206,6 @@ pub fn from_stream_error(error: &Value) -> LlmError {
             message,
         },
     }
-}
-
-/// Whether a 403 is about the key itself rather than what the account may
-/// use (OpenCode answers 403 to a missing subscription or a free tier used
-/// outside its own client).
-fn is_key_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    [
-        "invalid api key",
-        "invalid_api_key",
-        "incorrect api key",
-        "api key is invalid",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
-}
-
-fn is_context_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("context_length_exceeded")
-        || message.contains("context length")
-        || message.contains("context window")
-        || message.contains("maximum context")
-}
-
-/// Parses `retry-after` (whole or fractional seconds).
-#[must_use]
-pub fn retry_after_ms(headers: &HeaderMap) -> Option<u64> {
-    let secs: f64 = headers
-        .get("retry-after")?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()?;
-    (secs.is_finite() && secs >= 0.0).then(|| (secs * 1000.0).round() as u64)
 }
 
 #[cfg(test)]

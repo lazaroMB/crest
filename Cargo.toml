@@ -18,6 +18,7 @@ members = [
     "crates/adapters/export",
     "crates/adapters/compute",
     "crates/adapters/formats",
+    "crates/adapters/support",
     "crates/platform",
     "crates/ui",
     "crates/bin",
@@ -49,6 +50,7 @@ adapter-telemetry = { path = "crates/adapters/telemetry" }
 adapter-export = { path = "crates/adapters/export" }
 adapter-compute = { path = "crates/adapters/compute" }
 adapter-formats = { path = "crates/adapters/formats" }
+adapter-support = { path = "crates/adapters/support" }
 ui = { path = "crates/ui" }
 platform = { path = "crates/platform" }
 

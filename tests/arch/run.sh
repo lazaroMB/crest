@@ -56,6 +56,8 @@ fixture domain-io-glob 1 "crate domain (layer domain) depends on the I/O crate o
 fixture app-misnamed 1 "crate app (layer app) must be named 'application'"
 fixture app-testing-normal-dep 1 "crate ui (layer ui) depends on application-testing (layer app-testing) [normal]: only allowed in [dev-dependencies]"
 fixture app-to-app-testing 1 "crate application (layer app) depends on application-testing (layer app-testing) [dev]: forbidden"
+fixture support-to-adapter 1 "crate adapter-support (layer adapter-support) depends on adapter-fs (layer adapter) [normal]: forbidden"
+fixture support-misnamed 1 "crate adapter-common (layer adapter-support) must be named 'adapter-support'"
 fixture unknown-path 1 "crate misc (crates/misc) does not belong to any known layer"
 
 check "env CHECK_ARCH_MANIFEST" 1 "must be named 'application'" \

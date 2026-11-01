@@ -11,8 +11,10 @@
 use std::fmt;
 use std::time::Duration;
 
+use adapter_support::http::{self, Refusal, network_error};
 use application::ports::llm::{LlmError, LlmStream};
 use domain::model::ModelId;
+use platform::KEYRING_SERVICE;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 
@@ -26,8 +28,6 @@ pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Environment variable read by [`ApiKey::from_env_or_keyring`].
 pub const API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
-/// Keyring service under which the key may be stored.
-pub const KEYRING_SERVICE: &str = "crest";
 /// Keyring user (entry name) of the key within [`KEYRING_SERVICE`].
 pub const KEYRING_USER: &str = "ANTHROPIC_API_KEY";
 
@@ -221,20 +221,7 @@ impl AnthropicClient {
             bearer.set_sensitive(true);
             headers.insert(reqwest::header::AUTHORIZATION, bearer);
         }
-        if let Some(agent) = &config.user_agent {
-            let agent = HeaderValue::from_str(agent).map_err(|err| LlmError::InvalidRequest {
-                message: format!("invalid user agent: {err}"),
-            })?;
-            headers.insert(reqwest::header::USER_AGENT, agent);
-        }
-        let session_header = config
-            .session_header
-            .as_deref()
-            .map(HeaderName::try_from)
-            .transpose()
-            .map_err(|err| LlmError::InvalidRequest {
-                message: format!("invalid session header: {err}"),
-            })?;
+        let session_header = http::session_header(config.session_header.as_deref())?;
         headers.insert(
             HeaderName::from_static("anthropic-version"),
             HeaderValue::from_static(ANTHROPIC_VERSION),
@@ -247,12 +234,12 @@ impl AnthropicClient {
             })?;
             headers.insert(HeaderName::from_static("anthropic-beta"), betas);
         }
-        let http = reqwest::Client::builder()
-            .default_headers(headers)
-            .connect_timeout(config.connect_timeout)
-            .read_timeout(config.read_timeout)
-            .build()
-            .map_err(|err| LlmError::Network(err.to_string()))?;
+        let http = http::client(
+            headers,
+            config.user_agent.as_deref(),
+            config.connect_timeout,
+            config.read_timeout,
+        )?;
         Ok(Self {
             http,
             base_url: config.base_url.trim_end_matches('/').to_owned(),
@@ -327,55 +314,32 @@ impl AnthropicClient {
     }
 }
 
-fn network_error(err: reqwest::Error) -> LlmError {
-    // `without_url` keeps query strings out of the message; the key is a
-    // header and never part of it.
-    LlmError::Network(err.without_url().to_string())
-}
-
 /// Passes 2xx responses through and turns the rest into typed errors.
 async fn check(
     response: reqwest::Response,
     key_source: KeySource,
 ) -> Result<reqwest::Response, LlmError> {
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
-    }
-    let retry_after_ms = retry_after_ms(response.headers());
-    let request_id = response
-        .headers()
-        .get("request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let text = response.text().await.unwrap_or_default();
-    let err = match serde_json::from_str::<ApiErrorBody>(&text) {
-        Ok(body) => error::from_api(Some(status.as_u16()), &body.error, retry_after_ms),
-        Err(_) => error::from_status(status.as_u16(), text, retry_after_ms),
-    };
-    // Say where the rejected key came from instead of "invalid or missing".
-    let err = match err {
-        LlmError::Auth { message } if message == AUTH_HINT => LlmError::Auth {
-            message: key_source.rejected_hint(),
-        },
-        other => other,
-    };
-    tracing::warn!(status = status.as_u16(), request_id, error = %err, "Anthropic API error");
-    Err(err)
-}
-
-/// Parses `retry-after` (whole or fractional seconds). HTTP dates are not
-/// used by the API and are ignored.
-#[must_use]
-pub fn retry_after_ms(headers: &HeaderMap) -> Option<u64> {
-    let secs: f64 = headers
-        .get("retry-after")?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()?;
-    (secs.is_finite() && secs >= 0.0).then(|| (secs * 1000.0).round() as u64)
+    http::accepted(response).await.map_err(|refusal| {
+        let Refusal {
+            status,
+            retry_after_ms,
+            request_id,
+            text,
+        } = refusal;
+        let err = match serde_json::from_str::<ApiErrorBody>(&text) {
+            Ok(body) => error::from_api(Some(status), &body.error, retry_after_ms),
+            Err(_) => error::from_status(status, text, retry_after_ms),
+        };
+        // Say where the rejected key came from instead of "invalid or missing".
+        let err = match err {
+            LlmError::Auth { message } if message == AUTH_HINT => LlmError::Auth {
+                message: key_source.rejected_hint(),
+            },
+            other => other,
+        };
+        tracing::warn!(status, request_id, error = %err, "Anthropic API error");
+        err
+    })
 }
 
 #[cfg(test)]

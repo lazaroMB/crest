@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::research::Research;
 use adapter_anthropic::{
-    AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig, TokioClock,
+    AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig,
 };
 use adapter_compute::StatsEngine;
 use adapter_export::HtmlExporter;
@@ -22,6 +22,7 @@ use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
 use adapter_shell::LocalShell;
 use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage, SqliteSessionStore};
+use adapter_support::TokioClock;
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
 use application::cost::CostTracker;

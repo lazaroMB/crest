@@ -1,0 +1,18 @@
+[package]
+name = "adapter-support"
+description = "What the model adapters share: the server-sent events loop, HTTP error mapping, the reqwest client and the tokio clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+eventsource-stream.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
