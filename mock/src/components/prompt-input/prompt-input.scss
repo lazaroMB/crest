@@ -1,10 +1,66 @@
 .prompt {
+  position: relative;
   padding: 0 8px 4px;
   border-top: 1px solid var(--border);
 
   &__row {
     display: flex;
+    align-items: flex-start;
     gap: 8px;
+  }
+
+  &__plus {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    margin-top: 5px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    color: var(--muted-fg);
+
+    &:hover,
+    &--open {
+      color: var(--foreground);
+      border-color: var(--accent);
+    }
+  }
+
+  &__chip-slot {
+    display: contents;
+  }
+
+  &__chip {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    margin: 7px 0 0 -4px;
+    padding: 0 2px 0 7px;
+    border-radius: 11px;
+    font-size: var(--text-xs);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    white-space: nowrap;
+
+    &--research {
+      color: var(--info, var(--accent));
+      background: color-mix(in srgb, var(--info, var(--accent)) 14%, transparent);
+    }
+  }
+
+  &__chip-close {
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+
+    &:hover {
+      background: color-mix(in srgb, var(--accent) 25%, transparent);
+    }
   }
 
   &__glyph {
@@ -19,6 +75,7 @@
 
   &__text {
     flex: 1;
+    min-width: 0;
     padding: 8px 0 4px;
     resize: none;
     border: 0;
@@ -31,5 +88,62 @@
     &::placeholder {
       color: var(--muted-fg);
     }
+  }
+}
+
+.mode-menu {
+  width: 340px;
+  margin: 0 0 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  font-size: var(--text-sm);
+
+  &__label-row {
+    padding: 2px 6px;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-fg);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+
+    &--selected {
+      background: var(--list-selected-bg);
+    }
+
+    &--on {
+      color: var(--accent);
+    }
+  }
+
+  &__label {
+    flex: none;
+  }
+
+  &__hint {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted-fg);
+  }
+
+  &__check {
+    color: var(--accent);
+  }
+
+  &__sep {
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
   }
 }

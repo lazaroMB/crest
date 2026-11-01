@@ -4,6 +4,8 @@
 import { h } from "../../lib/h.js";
 import { cycleMode } from "../../actions.js";
 import { Brand } from "../brand/brand.js";
+import { workspaceLabel } from "../chats-panel/chats-panel.js";
+import { chatRoots } from "../../organization.js";
 import "./status-bar.scss";
 
 function gitText(git) {
@@ -51,7 +53,7 @@ export function StatusBar(state) {
       notice && [h("span", { class: `status__notice status__notice--${notice.level}` }, notice.text), bar()],
       h("span", { class: `status__git status__git--${gitTone(status.git)}` }, gitText(status.git)),
       bar(),
-      h("span", { class: "muted" }, status.workspace),
+      h("span", { class: "muted", title: chatRoots(state.organization, state.openChatId).join("\n") || "This chat has no directory" }, workspaceLabel(state)),
     ),
     ),
   );

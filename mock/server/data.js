@@ -291,7 +291,15 @@ export const chats = {
   "c-kitchen": chat("c-kitchen", "p-crest", "Every block kind", kitchen),
   "c-site-1": chat("c-site-1", "p-site", "Hero section copy"),
   "c-site-2": chat("c-site-2", "p-site", "Lighthouse below 90"),
+  "c-solo-1": chat("c-solo-1", null, "GPUI or egui for a plot widget?"),
+  "c-solo-2": chat("c-solo-2", null, "Regex for ISO 8601 dates"),
 };
+
+/** Chats started with no directory, newest first. */
+export const standalone = [
+  { id: "c-solo-1", title: chats["c-solo-1"].title },
+  { id: "c-solo-2", title: chats["c-solo-2"].title },
+];
 
 const summary = (id, activity) => ({ id, title: chats[id].title, activity });
 
@@ -328,7 +336,7 @@ export const commands = [
   { usage: "/clear", description: "Start a new, empty session (not while a turn runs)" },
   { usage: "/project", description: "Close this project and choose another one" },
   { usage: "/open @<path>", description: "Show a workspace file in a modal, 3D models included" },
-  { usage: "/! <command>", description: "Run a shell command in the workspace; its output goes to the model" },
+  { usage: "! <command>", description: "Run a shell command in the workspace; its output goes to the model" },
   { usage: "/research <problem>", description: "Start the research flow on a problem (5 stages, depth picked by the model)" },
   { usage: "/research --deep <problem>", description: "The full 14-stage flow, with experiments and a prototype" },
   { usage: "/research resume [n]", description: "Continue the last research flow" },
@@ -349,4 +357,6 @@ export const commands = [
   { usage: "/login", description: "Store your API key in the system keyring" },
   { usage: "/logout", description: "Delete the API key from the system keyring" },
   { usage: "/q", description: "Quit crest (also /quit and /qa)" },
+  { usage: "/jira <issue>", description: "Show a Jira issue in the timeline", source: "jira-tools" },
+  { usage: "/standup", description: "Draft today's standup from the git log", source: "jira-tools" },
 ];

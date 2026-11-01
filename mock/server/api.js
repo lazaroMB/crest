@@ -1,24 +1,50 @@
 // The mock backend, served by the Vite dev server under /api.
 //
-//   GET    /api/workbench           projects, the open chat id and the status bar
+//   GET    /api/workbench           the organization (projects and chats), the open chat id and the status bar
 //   GET    /api/commands            the / commands
 //   GET    /api/chats/:id           one chat with its blocks
-//   POST   /api/chats               { projectId } -> a new, empty chat
-//   PATCH  /api/chats/:id           { title }
+//   POST   /api/chats               { projectId | null } -> a new, empty chat (standalone when null)
+//   PATCH  /api/chats/:id           { title?, projectId?, archived? } (projectId null takes it out of its project)
+//   POST   /api/chats/:id/branch    a new chat that copies this chat's blocks up to now and diverges from there
 //   DELETE /api/chats/:id
+//   POST   /api/projects            { name, roots, chatId? } -> a new project, the chat promoted into it
+//   PATCH  /api/projects/:id        { name?, addRoot?, removeRoot?, pinned?, archived? }
 //   GET    /api/turn?chat=&prompt=  runs a scripted turn, streamed as server-sent events
 //   POST   /api/approval/:id        { choice: once|session|project|all-edits|reject }
 //   POST   /api/interrupt/:chatId
 //   PATCH  /api/status              { mode?, model? }
 
-import { chats, commands, projects, status } from "./data.js";
+import { chats, commands, projects, standalone, status } from "./data.js";
 import { pickScenario } from "./scenarios.js";
+import * as org from "../src/organization.js";
 
 class Interrupted extends Error {}
 
 const approvals = new Map(); // approval id -> resolve(choice)
 const interrupts = new Map(); // chat id -> abort()
 let openChatId = "c-bugfix";
+
+// Today's store knows only directories; the organization starts as their migration.
+const START = Date.now();
+let organization = fromStore();
+
+function fromStore() {
+  const migrated = org.fromDirectoryCatalog(projects, START);
+  return standalone.reduce(
+    (o, chat, i) => org.renameChat(org.addChat(o, { id: chat.id, now: START - 2 - i }), chat.id, chat.title),
+    migrated,
+  );
+}
+
+/** Applies `change` to the organization; a refusal becomes a 409 with its message. */
+function change(res, fn) {
+  try {
+    organization = fn(organization);
+    send(res, { organization });
+  } catch (error) {
+    send(res, { error: error.message }, 409);
+  }
+}
 
 function send(res, body, code = 200) {
   res.writeHead(code, { "Content-Type": "application/json" });
@@ -31,8 +57,8 @@ async function readBody(req) {
   return text ? JSON.parse(text) : {};
 }
 
-function chatSummary(chatId) {
-  return projects.flatMap((p) => p.chats).find((c) => c.id === chatId);
+function setChat(chatId, patch) {
+  organization = { ...organization, chats: organization.chats.map((c) => (c.id === chatId ? { ...c, ...patch } : c)) };
 }
 
 function upsert(chat, block) {
@@ -56,8 +82,7 @@ async function runTurn(req, res) {
   interrupts.set(chat.id, abort);
   req.on("close", abort);
 
-  const summary = chatSummary(chat.id);
-  const setActivity = (activity) => summary && (summary.activity = activity);
+  const setActivity = (activity) => setChat(chat.id, { activity });
 
   const turn = {
     push(block) {
@@ -95,11 +120,12 @@ async function runTurn(req, res) {
 
   if (chat.title === "New chat" && prompt) {
     chat.title = prompt.length > 40 ? `${prompt.slice(0, 39).trimEnd()}…` : prompt;
-    if (summary) summary.title = chat.title;
+    setChat(chat.id, { title: chat.title });
     emit({ type: "chat", chatId: chat.id, title: chat.title });
   }
 
   setActivity("running");
+  setChat(chat.id, { updatedAt: Date.now() });
   turn.push({ id: `user-${Date.now().toString(36)}`, kind: "user", text: prompt });
   try {
     await pickScenario(prompt)(turn);
@@ -116,7 +142,7 @@ async function runTurn(req, res) {
 }
 
 const routes = [
-  ["GET", /^\/api\/workbench$/, (req, res) => send(res, { projects, openChatId, status })],
+  ["GET", /^\/api\/workbench$/, (req, res) => send(res, { organization, openChatId, status })],
   ["GET", /^\/api\/commands$/, (req, res) => send(res, commands)],
   [
     "GET",
@@ -131,11 +157,10 @@ const routes = [
     "POST",
     /^\/api\/chats$/,
     async (req, res) => {
-      const { projectId } = await readBody(req);
-      const project = projects.find((p) => p.id === projectId) ?? projects[0];
+      const { projectId = null } = await readBody(req);
       const id = `c-${Date.now().toString(36)}`;
-      chats[id] = { id, projectId: project.id, title: "New chat", blocks: [] };
-      project.chats.unshift({ id, title: "New chat" });
+      organization = org.addChat(organization, { id, projectId });
+      chats[id] = { id, projectId, title: "New chat", blocks: [] };
       openChatId = id;
       send(res, chats[id]);
     },
@@ -144,11 +169,40 @@ const routes = [
     "PATCH",
     /^\/api\/chats\/([\w-]+)$/,
     async (req, res, id) => {
-      const { title } = await readBody(req);
+      const body = await readBody(req);
       if (!chats[id]) return send(res, { error: "no such chat" }, 404);
-      chats[id].title = title;
-      chatSummary(id).title = title;
-      send(res, chats[id]);
+      change(res, (o) => {
+        let next = o;
+        if (body.title !== undefined) next = org.renameChat(next, id, body.title);
+        if (body.projectId !== undefined) next = org.moveChat(next, id, body.projectId);
+        if (body.archived !== undefined) next = body.archived ? org.archiveChat(next, id) : org.unarchiveChat(next, id);
+        if (body.title !== undefined) chats[id].title = body.title;
+        if (body.projectId !== undefined) chats[id].projectId = body.projectId;
+        if (body.archived !== undefined) chats[id].archived = body.archived;
+        return next;
+      });
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/chats\/([\w-]+)\/branch$/,
+    (req, res, id) => {
+      const source = chats[id];
+      if (!source) return send(res, { error: "no such chat" }, 404);
+      const newId = `c-${Date.now().toString(36)}`;
+      const atBlock = source.blocks.length;
+      organization = org.branchChat(organization, id, newId);
+      const branched = organization.chats.find((c) => c.id === newId);
+      if (branched) branched.branchedFrom.atBlock = atBlock;
+      chats[newId] = {
+        id: newId,
+        projectId: source.projectId,
+        title: branched?.title ?? `${source.title} (branch)`,
+        branchedFrom: { chatId: id, title: source.title, atBlock },
+        blocks: source.blocks.map((b) => ({ ...b })),
+      };
+      openChatId = newId;
+      send(res, chats[newId]);
     },
   ],
   [
@@ -156,8 +210,41 @@ const routes = [
     /^\/api\/chats\/([\w-]+)$/,
     (req, res, id) => {
       delete chats[id];
-      for (const project of projects) project.chats = project.chats.filter((c) => c.id !== id);
-      send(res, { ok: true });
+      change(res, (o) => org.removeChat(o, id));
+    },
+  ],
+  [
+    "POST",
+    /^\/api\/projects$/,
+    async (req, res) => {
+      const { name, roots, chatId } = await readBody(req);
+      const id = `p-${Date.now().toString(36)}`;
+      change(res, (o) => {
+        let next = org.createProject(o, { id, name, roots });
+        if (chatId) {
+          next = org.moveChat(next, chatId, id);
+          if (chats[chatId]) chats[chatId].projectId = id;
+        }
+        return next;
+      });
+    },
+  ],
+  [
+    "PATCH",
+    /^\/api\/projects\/([\w-]+)$/,
+    async (req, res, id) => {
+      const body = await readBody(req);
+      change(res, (o) => {
+        let next = o;
+        if (body.name !== undefined) next = org.renameProject(next, id, body.name);
+        if (body.addRoot) next = org.addRoot(next, id, body.addRoot);
+        if (body.removeRoot) next = org.removeRoot(next, id, body.removeRoot);
+        if (body.pinned !== undefined && Boolean(next.projects.find((p) => p.id === id)?.pinned) !== body.pinned) {
+          next = org.togglePin(next, id);
+        }
+        if (body.archived !== undefined) next = body.archived ? org.archiveProject(next, id) : org.unarchiveProject(next, id);
+        return next;
+      });
     },
   ],
   ["GET", /^\/api\/turn$/, runTurn],

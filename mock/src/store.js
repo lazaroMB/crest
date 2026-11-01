@@ -1,7 +1,7 @@
 // The whole UI state, in one object. Components read it; only actions.js changes it.
 
 export const state = {
-  projects: [],
+  organization: { projects: [], chats: [] }, // src/organization.js
   openChatId: null,
   chat: null, // { id, projectId, title, blocks }
   status: null, // { model, mode, cost, git, workspace }
@@ -24,10 +24,15 @@ export const state = {
     width: "fill", // the mock bar's window width: fill | 1440 | 1024 | 720
     mockBar: true,
     focus: "prompt", // prompt | timeline | chats | tree
-    chatsShown: true,
+    sidebar: "hidden", // full | strip | hidden (src/modes.js); closed until the person opens it
+    search: null, // the sidebar's search text while its field is open
     treeShown: false,
     folded: {}, // project id -> true when folded
-    menu: null, // { chatId, mode: "menu" | "rename" | "delete" }
+    standaloneFolded: false,
+    archivedOpen: false, // the "Archived" section, folded by default
+    menu: null, // { chatId | projectId, mode: "menu" | "rename" | "delete" | "move" | "new-project" | "add-root" }
+    chatMode: "chat", // chat | research | deep (src/modes.js)
+    modeMenu: false, // the prompt's + menu is open
     selected: null, // the selected block id
     expanded: {}, // block id -> true
     altView: {}, // block id -> true when a chart shows its table

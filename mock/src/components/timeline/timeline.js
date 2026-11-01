@@ -83,7 +83,9 @@ export function mountTimeline(root) {
     const top = scroll.scrollTop;
 
     root.classList.toggle("timeline--focused", state.ui.focus === "timeline");
-    scroll.replaceChildren(blocks.length ? h("div", { class: "timeline__list" }, blocks.map((b) => BlockRow(b, state))) : Welcome());
+    const from = state.chat?.branchedFrom;
+    const banner = from && h("div", { class: "timeline__branch" }, `Branched from "${from.title}" after ${from.atBlock} block${from.atBlock === 1 ? "" : "s"}. The original chat is unchanged.`);
+    scroll.replaceChildren(blocks.length ? h("div", { class: "timeline__list" }, banner, blocks.map((b) => BlockRow(b, state))) : Welcome());
     overlay.replaceChildren(Outline(state) ?? "");
 
     scroll.scrollTop = switched || atBottom ? scroll.scrollHeight : top;

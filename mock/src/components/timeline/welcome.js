@@ -5,7 +5,8 @@ import { Brand } from "../brand/brand.js";
 import "./welcome.scss";
 
 const KEYS = [
-  ["/", "commands: /research, /implement, /!cmd, /help…"],
+  ["/", "commands: /research, /implement, /help…"],
+  ["!", "shell: ! cat ~/file"],
   ["<C-g>", "shortcuts: e tree · ff files · fg grep · m model · j/k blocks · h help"],
   ["<C-Tab>", "move the focus: prompt → timeline → tree"],
   ["<Esc>", "back to the prompt"],
@@ -17,7 +18,7 @@ export function Welcome() {
   return h(
     "div",
     { class: "welcome" },
-    h("div", { class: "welcome__hero" }, Brand({ height: 48 }), h("span", { class: "welcome__word" }, "crest")),
+    h("div", { class: "welcome__hero" }, Brand({ height: 48 }), h("span", { class: "welcome__word" }, "Crest")),
     h(
       "div",
       { class: "welcome__keys" },

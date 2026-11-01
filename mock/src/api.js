@@ -6,17 +6,23 @@ async function call(method, url, body) {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${method} ${url}: ${res.status}`);
-  return res.json();
+  const reply = await res.json();
+  if (!res.ok) throw new Error(reply.error ?? `${method} ${url}: ${res.status}`);
+  return reply;
 }
 
 export const api = {
   workbench: () => call("GET", "/api/workbench"),
   commands: () => call("GET", "/api/commands"),
   chat: (id) => call("GET", `/api/chats/${id}`),
-  newChat: (projectId) => call("POST", "/api/chats", { projectId }),
+  newChat: (projectId = null) => call("POST", "/api/chats", { projectId }),
   renameChat: (id, title) => call("PATCH", `/api/chats/${id}`, { title }),
+  moveChat: (id, projectId) => call("PATCH", `/api/chats/${id}`, { projectId }),
+  patchChat: (id, patch) => call("PATCH", `/api/chats/${id}`, patch),
+  branchChat: (id) => call("POST", `/api/chats/${id}/branch`),
   deleteChat: (id) => call("DELETE", `/api/chats/${id}`),
+  createProject: (body) => call("POST", "/api/projects", body),
+  patchProject: (id, patch) => call("PATCH", `/api/projects/${id}`, patch),
   approve: (id, choice) => call("POST", `/api/approval/${id}`, { choice }),
   interrupt: (chatId) => call("POST", `/api/interrupt/${chatId}`),
   setStatus: (patch) => call("PATCH", "/api/status", patch),

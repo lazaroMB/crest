@@ -3,13 +3,30 @@
 //   Esc            back to the prompt (closes the outline and menus first)
 //   Ctrl+C         interrupt the turn, or clear the prompt
 //   Ctrl+Tab / F6  move the focus: prompt → timeline → tree → chats
-//   Ctrl+G …       the leader: s chats · e tree · O outline · p permission mode
+//   Ctrl+G …       the leader: s sidebar full → strip → hidden · / search chats · n new chat
+//                  m chat mode (chat → research → deep) · e tree · O outline · p permission mode
 //   in the timeline: j/k ↑/↓ move · gg/G ends · o/Enter expand · t chart/table · y copy
 //   in an approval: y s p e n answer · ↑/↓ + Enter · Esc rejects
 //
 // Browsers keep Ctrl+Tab for their own tabs, so F6 does the same.
 
-import { approve, copySelected, cycleMode, interrupt, moveOutline, moveSelection, notice, selectEdge, toggleAltView, toggleExpanded } from "./actions.js";
+import {
+  approve,
+  copySelected,
+  cycleChatMode,
+  cycleMode,
+  cycleSidebar,
+  interrupt,
+  moveOutline,
+  moveSelection,
+  newChat,
+  notice,
+  selectEdge,
+  setSearch,
+  toggleAltView,
+  toggleExpanded,
+  toggleModeMenu,
+} from "./actions.js";
 import { APPROVAL_OPTIONS } from "./components/approval-dialog/approval-dialog.js";
 import { setUi, state } from "./store.js";
 import { onKey } from "./visibility.js";
@@ -19,7 +36,7 @@ let leaderTimer;
 let lastKey = null;
 
 function focusOrder() {
-  return ["prompt", "timeline", state.ui.treeShown && "tree", state.ui.chatsShown && "chats"].filter(Boolean);
+  return ["prompt", "timeline", state.ui.treeShown && "tree", state.ui.sidebar !== "hidden" && "chats"].filter(Boolean);
 }
 
 function focus(target, prompt) {
@@ -42,10 +59,13 @@ function onApproval(e) {
 
 function onLeader(e) {
   const actions = {
-    s: () => setUi({ chatsShown: !state.ui.chatsShown }),
+    s: cycleSidebar,
+    "/": () => setSearch(""),
     e: () => setUi({ treeShown: !state.ui.treeShown }),
     O: () => setUi({ outlineOpen: !state.ui.outlineOpen, focus: "timeline" }),
     p: cycleMode,
+    m: cycleChatMode,
+    n: () => newChat(null),
   };
   (actions[e.key] ?? (() => notice("warning", `<C-g>${e.key} is not in the mock yet`)))();
 }
@@ -120,6 +140,7 @@ export function bindKeys(prompt) {
     }
 
     if (e.key === "Escape") {
+      if (state.ui.modeMenu) return toggleModeMenu(false);
       if (state.ui.infoOpen) return setUi({ infoOpen: false });
       if (state.ui.outlineOpen) return setUi({ outlineOpen: false });
       if (state.ui.menu) return setUi({ menu: null });

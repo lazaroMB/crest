@@ -26,10 +26,10 @@ export function MockBar(state) {
       "width",
       WIDTHS.map((w) => toggle(String(w), ui.width === w, () => setUi({ width: w }))),
     ),
-    h("span", { class: "mockbar__group" }, "panels", [
-      toggle("chats", ui.chatsShown, () => setUi({ chatsShown: !ui.chatsShown })),
-      toggle("tree", ui.treeShown, () => setUi({ treeShown: !ui.treeShown })),
+    h("span", { class: "mockbar__group" }, "sidebar", [
+      ["full", "strip", "hidden"].map((s) => toggle(s, ui.sidebar === s, () => setUi({ sidebar: s }))),
     ]),
+    h("span", { class: "mockbar__group" }, "panels", [toggle("tree", ui.treeShown, () => setUi({ treeShown: !ui.treeShown }))]),
     h("span", { class: "mockbar__hint" }, "try: fix the bug · rename add · /research … · is it faster · fail"),
     h("button", { class: "mockbar__button", onClick: () => setUi({ mockBar: false }) }, "hide (Ctrl+Shift+M)"),
   );
