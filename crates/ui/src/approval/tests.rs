@@ -1,8 +1,11 @@
-use application::ports::approval::{ApprovalPreview, ApprovalRequestId};
+use application::ports::approval::{
+    ApprovalError, ApprovalPort as _, ApprovalPreview, ApprovalRequestId,
+};
 use domain::conversation::ToolUseId;
 use domain::permission::ToolEffect;
 use futures::FutureExt as _;
 use futures::executor::block_on;
+use gpui::{ParentElement as _, Styled as _, div, px};
 
 use super::*;
 
