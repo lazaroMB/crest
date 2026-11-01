@@ -85,6 +85,10 @@ struct FrameKey {
 
 type Surface = GpuFrames<FrameKey>;
 
+/// Colours per triangle: as the caller handed them (compared by pointer)
+/// and a copy the background builder can take.
+type Colors = (Rc<[Rgb]>, Arc<[Rgb]>);
+
 /// What the drawn mesh is built from, to build it off the UI thread.
 struct MeshJob {
     spec: Arc<ModelSpec>,
@@ -159,7 +163,7 @@ pub struct ModelView {
     height: Option<f32>,
     /// A colour per triangle (linear RGB), instead of clay; the same
     /// colours shareable with the background builder.
-    colors: Option<(Rc<[Rgb]>, Arc<[Rgb]>)>,
+    colors: Option<Colors>,
     /// Points (file coordinates) a measured point snaps to, e.g. atom
     /// centres.
     snap: Rc<[V3]>,

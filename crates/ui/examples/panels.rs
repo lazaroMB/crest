@@ -261,8 +261,10 @@ fn wire(
         }
     };
     let on_tree = opened.clone();
+    let tree_fakes = fakes.clone();
     cx.subscribe(tree, move |_, event: &TreePanelEvent, _| match event {
         TreePanelEvent::Open(path) => on_tree(path, None),
+        TreePanelEvent::WatchFailed(message) => tree_fakes.notice(message.clone()),
     })
     .detach();
     let (input_back, on_picker) = (input.clone(), opened);
