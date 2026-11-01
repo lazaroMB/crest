@@ -86,8 +86,12 @@ use application::tools::formats::devops::{
     build_flamegraph, build_logs, build_trace, normalize_flamegraph, normalize_logs,
     normalize_trace,
 };
+use application::tools::formats::diagram::{build_dot, build_er, normalize_dot, normalize_er};
 use application::tools::formats::har::{build_har, normalize_har};
+use application::tools::formats::netlist::{build_netlist, normalize_netlist};
+use application::tools::formats::query_plan::{build_query_plan, normalize_query_plan};
 use application::tools::formats::reaction::{build_reaction, normalize_reaction};
+use application::tools::formats::sequence::{build_sequence, normalize_sequence};
 use application::tools::formats::terraform::{build_terraform_plan, normalize_terraform_plan};
 use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
@@ -247,81 +251,6 @@ fn molecule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Molecule(spec))
 }
 
-fn query_plan(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "query_plan";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?;
-    let bytes = match (&path, text(args, F, "plan")?) {
-        (Some(_), Some(_)) => return Err(error(F, "give `path` or `plan`, not both")),
-        (None, None) => return Err(error(F, "`path` or `plan` is required")),
-        (Some(path), None) => context(lua)?
-            .block_on(read_report(services.fs.as_ref(), path))?
-            .map_err(|e| error(F, e))?,
-        (None, Some(plan)) => plan.into_bytes(),
-    };
-    let mut spec = services
-        .formats
-        .parse_query_plan(&bytes, path.as_deref())
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::QueryPlan(Box::new(spec)))
-}
-
-/// The text of `path` (through the guard) or of the inline `inline`
-/// argument; exactly one must be given.
-fn path_or_inline(
-    lua: &Lua,
-    args: &Table,
-    function: &str,
-    inline: &str,
-) -> mlua::Result<(Option<String>, String)> {
-    let services = services(lua, function)?;
-    match (text(args, function, "path")?, text(args, function, inline)?) {
-        (Some(_), Some(_)) => Err(error(
-            function,
-            format!("give `path` or `{inline}`, not both"),
-        )),
-        (None, None) => Err(error(function, format!("`path` or `{inline}` is required"))),
-        (Some(path), None) => {
-            let bytes = context(lua)?
-                .block_on(read_report(services.fs.as_ref(), &path))?
-                .map_err(|e| error(function, e))?;
-            let text = String::from_utf8(bytes)
-                .map_err(|_| error(function, format!("`{path}` is not UTF-8 text")))?;
-            Ok((Some(path), text))
-        }
-        (None, Some(source)) => Ok((None, source)),
-    }
-}
-
-fn dot(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "dot";
-    let services = services(lua, F)?;
-    let (path, source) = path_or_inline(lua, args, F, "source")?;
-    let mut spec = services
-        .formats
-        .parse_dot(&source, path.as_deref())
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
-}
-
-fn er(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "er";
-    let services = services(lua, F)?;
-    let (path, sql) = path_or_inline(lua, args, F, "sql")?;
-    let dialect = text(args, F, "dialect")?;
-    let mut spec = services
-        .formats
-        .parse_ddl(&sql, dialect.as_deref(), path.as_deref())
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Diagram(Box::new(spec)))
-}
-
 /// `args` with `key` as a list: Lua also takes one item as a plain
 /// string (`signals = 'tb.*'`). A copy, so the caller's table is left
 /// as it was.
@@ -416,65 +345,6 @@ fn ifc_schedule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     spec.validate()
         .map_err(|e| error(F, format!("`{path}`: {e}")))?;
     block_value(lua, &BlockKind::IfcSchedule(Box::new(spec)))
-}
-
-fn netlist(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "netlist";
-    let services = services(lua, F)?;
-    let (path, source) = path_or_inline(lua, args, F, "source")?;
-    let format = match text(args, F, "format")? {
-        Some(name) => Some(
-            serde_json::from_value(json!(name))
-                .map_err(|_| error(F, format!("unknown `format` `{name}`")))?,
-        ),
-        None => None,
-    };
-    let mut spec = services
-        .formats
-        .parse_netlist(&source, format, path.as_deref())
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Netlist(Box::new(spec)))
-}
-
-fn sequence(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "sequence";
-    let services = services(lua, F)?;
-    let (path, source) = path_or_inline(lua, args, F, "sequence")?;
-    let record = match args.get::<Option<i64>>("record")? {
-        Some(n) if n >= 1 => usize::try_from(n - 1).unwrap_or(0),
-        Some(_) => return Err(error(F, "`record` counts from 1")),
-        None => 0,
-    };
-    let alphabet = match text(args, F, "alphabet")? {
-        Some(name) => Some(
-            serde_json::from_value(json!(name.to_ascii_lowercase()))
-                .map_err(|_| error(F, format!("unknown `alphabet` `{name}`")))?,
-        ),
-        None => None,
-    };
-    let topology = args.get::<Option<bool>>("circular")?.map(|c| {
-        if c {
-            domain::science::sequence::Topology::Circular
-        } else {
-            domain::science::sequence::Topology::Linear
-        }
-    });
-    let request = SequenceRequest {
-        path,
-        record,
-        alphabet,
-        topology,
-        enzymes: args.get::<Option<bool>>("enzymes")?.unwrap_or(true),
-    };
-    let mut spec = services
-        .formats
-        .parse_sequence(source.as_bytes(), &request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Sequence(Box::new(spec)))
 }
 
 fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -669,12 +539,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         })?,
     )?;
     formats.set("reaction", lua.create_function(reaction)?)?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "sequence",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => sequence(lua, &args),
-            _ => Err(error("sequence", "expected a table of arguments")),
-        })?,
+        normalize_sequence,
+        build_sequence,
+        |spec| BlockKind::Sequence(Box::new(spec)),
     )?;
     register(
         lua,
@@ -737,27 +608,20 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("ifc_schedule", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "netlist",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => netlist(lua, &args),
-            _ => Err(error("netlist", "expected a table of arguments")),
-        })?,
+        normalize_netlist,
+        build_netlist,
+        |spec| BlockKind::Netlist(Box::new(spec)),
     )?;
-    formats.set(
-        "dot",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => dot(lua, &args),
-            _ => Err(error("dot", "expected a table of arguments")),
-        })?,
-    )?;
-    formats.set(
-        "er",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => er(lua, &args),
-            _ => Err(error("er", "expected a table of arguments")),
-        })?,
-    )?;
+    register(lua, &formats, "dot", normalize_dot, build_dot, |spec| {
+        BlockKind::Diagram(Box::new(spec))
+    })?;
+    register(lua, &formats, "er", normalize_er, build_er, |spec| {
+        BlockKind::Diagram(Box::new(spec))
+    })?;
     register(
         lua,
         &formats,
@@ -769,12 +633,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     register(lua, &formats, "har", normalize_har, build_har, |spec| {
         BlockKind::Har(Box::new(spec))
     })?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "query_plan",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => query_plan(lua, &args),
-            _ => Err(error("query_plan", "expected a table of arguments")),
-        })?,
+        normalize_query_plan,
+        build_query_plan,
+        |spec| BlockKind::QueryPlan(Box::new(spec)),
     )?;
     register(lua, &formats, "logs", normalize_logs, build_logs, |spec| {
         BlockKind::Logs(Box::new(spec))

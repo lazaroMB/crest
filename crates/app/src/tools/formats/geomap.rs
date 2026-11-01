@@ -121,12 +121,8 @@ impl TypedTool for ShowMapTool {
     }
 
     async fn prepare(&self, input: ShowMap, _ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        let (path, inline) = one_of(
-            SHOW_MAP,
-            input.path,
-            inline_geojson(input.geojson),
-            "geojson",
-        )?;
+        let (path, inline) = one_of(input.path, inline_geojson(input.geojson), "geojson")
+            .map_err(|e| invalid(SHOW_MAP, e))?;
         if inline.as_ref().is_some_and(|s| s.len() > MAX_INLINE_SOURCE) {
             return Err(invalid(
                 SHOW_MAP,
