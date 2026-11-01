@@ -6,13 +6,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use adapter_store::{SqliteFlowStorage, SqliteSessionStore};
 use application::ports::checkpoint::TurnCheckpointPort;
+use application::ports::events::DomainEvent;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::usecases::approval::lock_permissions;
+use application::usecases::resume::{
+    restore_permission_rules, resume_by_id, resume_latest, settle_orphan_forms,
+};
 use application::usecases::run_turn::SharedPermissions;
-use domain::conversation::Session;
+use domain::conversation::{Session, SessionId};
+use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
 
-use super::{SharedPromptHistory, session_title};
+use super::{Config, SharedPromptHistory, now_ms, session_title};
 
 /// Saves the turn in progress when a tool waits on the user (a form), so a
 /// restart finds the question and asks it again. The session is written
@@ -66,5 +71,75 @@ pub(super) fn open_flow_storage(path: Option<&Path>) -> Result<SqliteFlowStorage
     match path {
         Some(path) => SqliteFlowStorage::open(path),
         None => SqliteFlowStorage::open_default(),
+    }
+}
+
+/// The session [`resume_session`] settled on.
+pub(super) struct Resumed {
+    pub(super) session: Session,
+    /// Says that the latest session was resumed, and how to start anew.
+    pub(super) notice: Option<String>,
+    pub(super) prompt_history: Vec<String>,
+}
+
+/// The session to continue: the one `--session` names, else the latest of
+/// the workspace with `--resume`, else a new one. A resumed session brings
+/// back its timeline (into `timeline`), its permission rules and its
+/// prompt history; what fails becomes a warning.
+pub(super) async fn resume_session(
+    store: Option<&Arc<dyn SessionStorePort>>,
+    config: &Config,
+    root: &WorkspaceRoot,
+    timeline: &Mutex<TimelineState>,
+    permissions: &SharedPermissions,
+    warnings: &mut Vec<String>,
+) -> Resumed {
+    let mut session = Session::new(root.as_path().display().to_string(), now_ms());
+    let mut resumed_notice = None;
+    let mut prompt_history = Vec::new();
+    if let Some(store) = store {
+        let chosen = config.session_id.as_deref().and_then(SessionId::parse);
+        let loaded = if let Some(id) = chosen {
+            match resume_by_id(store.as_ref(), id, &session.workspace_root).await {
+                Ok(stored) => Ok(Some(stored)),
+                Err(err) => {
+                    warnings.push(format!("could not open the chosen session: {err}"));
+                    Ok(None)
+                }
+            }
+        } else if config.resume {
+            resume_latest(store.as_ref(), &session.workspace_root).await
+        } else {
+            Ok(None)
+        };
+        match loaded {
+            Ok(Some(mut stored)) => {
+                // Forms of calls that are over close; one whose call still
+                // waits is asked again once the session opens.
+                if settle_orphan_forms(&mut stored) > 0 {
+                    warnings.push("a form left unanswered by an earlier run was closed".into());
+                }
+                restore_permission_rules(&permissions, &stored.permission_rules);
+                let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
+                for block in stored.timeline {
+                    state.apply(&DomainEvent::BlockAdded { block });
+                }
+                if chosen.is_none() {
+                    resumed_notice = Some(format!(
+                        "previous session resumed ({} turns); `crest --new` starts a new one",
+                        stored.session.turns.len()
+                    ));
+                }
+                session = stored.session;
+                prompt_history = stored.prompt_history;
+            }
+            Ok(None) => {}
+            Err(err) => warnings.push(format!("could not resume the last session: {err}")),
+        }
+    }
+    Resumed {
+        session,
+        notice: resumed_notice,
+        prompt_history,
     }
 }

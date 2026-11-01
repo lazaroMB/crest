@@ -11,16 +11,17 @@ use adapter_support::TokioClock;
 use anyhow::anyhow;
 use application::llm_retry::RetryingLlm;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
-use application::ports::plugin::AppOptions;
+use application::ports::plugin::{AppOptions, LoadedConfig};
 use application::providers::{
     CachedCatalog, Provider, ProviderRouter, ProvidersOptions, effective_default,
 };
-use domain::model::ProviderId;
+use domain::model::{BuiltinDefaults, ModelPolicy, ProviderId};
+use tokio::task::JoinHandle;
 
 use super::{MissingApiKey, Overrides};
 use crate::opencode::PlanAccess;
 use crate::preferences::{self, Preferences};
-use crate::startup::CATALOG_TIMEOUT;
+use crate::startup::{self, CATALOG_TIMEOUT};
 
 type ModelPorts = (
     Arc<dyn LlmPort>,
@@ -60,7 +61,7 @@ async fn opencode_access(
     access
 }
 
-pub(super) async fn model_ports(
+async fn model_ports(
     overrides: &Overrides,
     options: &AppOptions,
     preferences: &Preferences,
@@ -149,4 +150,70 @@ pub(super) async fn model_ports(
         .unwrap_or_else(|| Arc::new(router.catalog()));
     let llm = RetryingLlm::new(Arc::new(router), Arc::new(TokioClock));
     Ok((Arc::new(llm), Some(catalog), default))
+}
+
+/// What [`resolve_models`] settles at start.
+pub(super) struct Models {
+    pub(super) llm: Arc<dyn LlmPort>,
+    pub(super) catalog: Option<Arc<dyn ModelCatalogPort>>,
+    pub(super) default_provider: ProviderId,
+    pub(super) policy: ModelPolicy,
+    /// Problems found on the way, for the caller to report in order.
+    pub(super) warnings: Vec<String>,
+}
+
+/// The model ports and the policy of the session: the saved preferences
+/// (being read by `preferences`), the providers with a key and the models
+/// checked against their catalog. Its warnings are returned, not pushed,
+/// so it runs alongside the other steps of the start.
+pub(super) async fn resolve_models(
+    preferences: JoinHandle<Option<Result<Preferences, String>>>,
+    overrides: &Overrides,
+    loaded: &LoadedConfig,
+    preferences_path: Option<&Path>,
+    keys: (Option<ApiKey>, Option<String>),
+) -> anyhow::Result<Models> {
+    let mut warnings = Vec::new();
+    let preferences = match preferences.await.ok().flatten() {
+        Some(Ok(preferences)) => preferences,
+        Some(Err(err)) => {
+            warnings.push(format!("the saved preferences were ignored: {err}"));
+            Preferences::default()
+        }
+        None => Preferences::default(),
+    };
+    let (llm, catalog, default_provider) = model_ports(
+        overrides,
+        &loaded.options,
+        &preferences,
+        preferences_path,
+        keys,
+        &mut warnings,
+    )
+    .await?;
+    let defaults = if default_provider == ProviderId::Anthropic {
+        BuiltinDefaults::Claude
+    } else {
+        BuiltinDefaults::None
+    };
+    let selected = preferences.models.get(&default_provider).cloned();
+    let mut policy = loaded.model_policy().with_selection(selected, defaults);
+    if policy.needs_selection() {
+        warnings.push(format!(
+            "no model is selected for {default_provider}: pick one with /model"
+        ));
+    }
+    if let Some(catalog) = &catalog {
+        let (checked, model_warnings) =
+            startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
+        policy = checked;
+        warnings.extend(model_warnings);
+    }
+    Ok(Models {
+        llm,
+        catalog,
+        default_provider,
+        policy,
+        warnings,
+    })
 }
