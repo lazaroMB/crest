@@ -1,8 +1,19 @@
-use super::*;
-use gpui::{Keystroke, TestAppContext, VisualTestContext};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
+
+use application::keymap::Key;
+use gpui::{
+    InteractiveElement as _, IntoElement, Keystroke, ParentElement as _, Render, ScrollWheelEvent,
+    Styled as _, TestAppContext, VisualTestContext, div, px,
+};
+use gpui_component::v_flex;
+
+use super::completion::{PALETTE_ROWS, scroll_window, window_note};
+use super::palette::{Choice, choice};
+use super::*;
+use crate::session::ModelChoice;
 
 type Events = Rc<RefCell<Vec<InputEvent>>>;
 
