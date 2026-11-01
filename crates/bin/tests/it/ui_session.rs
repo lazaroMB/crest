@@ -698,8 +698,11 @@ fn chat_only_images_are_saved_without_a_model_call(cx: &mut TestAppContext) {
             vec![gpui::Image::from_bytes(gpui::ImageFormat::Png, png)],
             cx,
         );
-        input.toggle_image_mode(cx);
     });
+    // The images are prepared in the background; the mode switches only
+    // once they are in the tray.
+    cx.run_until_parked();
+    input.update(cx, |input, cx| input.toggle_image_mode(cx));
     cx.simulate_input("the screenshot");
     cx.simulate_keystrokes("enter");
     wait_until(&w, cx, "the saved notice", |s, cx| {
