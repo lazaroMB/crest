@@ -24,10 +24,7 @@ use crate::ports::formats::StepRequest;
 use crate::ports::fs::FileSystemPort;
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
-/// Largest STEP file read, in bytes (as the other 3D models).
-pub const MAX_STEP_BYTES: u64 = crate::usecases::model3d::MAX_MODEL_BYTES;
-/// Extensions of STEP files, lowercase.
-pub const STEP_EXTENSIONS: [&str; 2] = ["step", "stp"];
+pub use crate::usecases::open_file::{MAX_STEP_BYTES, STEP_EXTENSIONS};
 
 /// Input of `show_step`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
