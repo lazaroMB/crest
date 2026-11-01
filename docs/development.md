@@ -204,7 +204,7 @@ For the UI there are runnable examples in `crates/ui/examples/`, for example `ca
    - `effect(&input)`: returns `ToolEffect::{Read, Write, Execute, Network}`. This is what the permission policy decides on.
    - `prepare(input, ctx)`: validates and returns a `PreparedCall::new(subject, future)`. `subject` is what is shown and what an "always" rule covers (a path, a command line). Optionally add `.with_preview(ApprovalPreview::…)` and an extra block (like the `Diff` of `edit_file`). The future does the work and returns a `ToolOutput`.
 2. If the tool needs I/O, ask for a port, not an adapter. If no suitable one exists, extend or create one in `crates/app/src/ports/`, with its fake in `testing`.
-3. Register it in `crates/bin/src/root.rs::build_app` with `tools.register_typed(...)` or `tools.register(Arc::new(...))`. File tools are registered in `register_file_tools` and component tools in `register_component_tools`.
+3. Register it in `register_tools` (`crates/bin/src/root/tool_registry.rs`, called by `build_app`) with `tools.register_typed(...)` or `tools.register(Arc::new(...))`. File tools are registered in `register_file_tools` and component tools in `register_component_tools`.
 4. Add an `insta` snapshot of its definition, as in `tools/files.rs` and `tools/components.rs`, and tests with the fakes.
 
 If a tool should show something rich in the timeline, return `ToolOutput::text(confirmation).with_block_update(BlockKind::…)`. The model only gets the confirmation, as with `show_chart` and friends.

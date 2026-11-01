@@ -952,6 +952,23 @@ impl UiController {
         self
     }
 
+    /// Runs `turn` on the runtime and answers on a channel, so the UI
+    /// awaits it without tokio. A turn that never answers (it panicked, or
+    /// the runtime shut down) ends as failed.
+    fn spawn_turn(
+        &self,
+        turn: impl Future<Output = TurnEnd> + Send + 'static,
+    ) -> BoxFuture<'static, TurnEnd> {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(async move {
+            tx.send(turn.await).ok();
+        });
+        rx.map(|end| {
+            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
+        })
+        .boxed()
+    }
+
     /// Runs the command `name` on the runtime; `Ctrl+C` aborts it
     /// ([`SessionController::interrupt_commands`]).
     fn spawn_command(
@@ -1277,28 +1294,13 @@ pub fn command_turn(prompt: &str) -> TurnRequest {
 
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
-        let (tx, rx) = oneshot::channel();
         let router = self.router();
-        self.handle.spawn(async move {
-            tx.send(router.line(request).await).ok();
-        });
-        rx.map(|end| {
-            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
-        })
-        .boxed()
+        self.spawn_turn(async move { router.line(request).await })
     }
 
     fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
-        let (tx, rx) = oneshot::channel();
         let app = Arc::clone(&self.app);
-        self.handle.spawn(async move {
-            let end = resume_pending(&mut *app.lock().await, cancel).await;
-            tx.send(end).ok();
-        });
-        rx.map(|end| {
-            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
-        })
-        .boxed()
+        self.spawn_turn(async move { resume_pending(&mut *app.lock().await, cancel).await })
     }
 
     fn recompute(&self, block: domain::block::Block) -> BoxFuture<'static, Result<(), String>> {
