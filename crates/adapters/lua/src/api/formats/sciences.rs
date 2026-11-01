@@ -10,7 +10,11 @@ use domain::block::BlockKind;
 use domain::science::training::{Goal, TrainingAxis};
 use mlua::{Lua, Table, Value};
 
-use super::{block_value, error, services, text};
+use application::tools::formats::arrays::{build_array_file, normalize_array_file};
+use application::tools::formats::geomap::{build_map, normalize_map};
+use application::tools::formats::network::{build_network, normalize_network};
+
+use super::{block_value, error, register, services, text};
 use crate::caps::context;
 use crate::convert;
 
@@ -28,34 +32,6 @@ fn inline_json(lua: &Lua, args: &Table, function: &str, key: &str) -> mlua::Resu
             ),
         )),
     }
-}
-
-fn map(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "map";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?;
-    let inline = inline_json(lua, args, F, "geojson")?;
-    let bytes = match (&path, inline) {
-        (Some(_), Some(_)) => return Err(error(F, "give `path` or `geojson`, not both")),
-        (None, None) => return Err(error(F, "`path` or `geojson` is required")),
-        (Some(path), None) => context(lua)?
-            .block_on(read_map(services.fs.as_ref(), path))?
-            .map_err(|e| error(F, e))?,
-        (None, Some(source)) => source.into_bytes(),
-    };
-    let request = MapRequest {
-        path: path.clone(),
-        crs: text(args, F, "crs")?,
-        color_by: text(args, F, "color_by")?,
-    };
-    let name = path.unwrap_or_else(|| "inline GeoJSON".to_owned());
-    let mut spec = services
-        .formats
-        .parse_geojson(&bytes, &request)
-        .map_err(|e| error(F, format!("`{name}`: {e}")))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::GeoMap(Box::new(spec)))
 }
 
 fn gantt(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -109,87 +85,6 @@ fn gantt(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     spec.title = text(args, F, "title")?;
     spec.validate().map_err(|e| error(F, e))?;
     block_value(lua, &BlockKind::Gantt(Box::new(spec)))
-}
-
-fn array_file(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "array_file";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_array(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = ArrayRequest {
-        path: path.clone(),
-        variable: text(args, F, "variable")?,
-    };
-    let mut spec = services
-        .formats
-        .inspect_array_file(&bytes, &request)
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::ArrayFile(Box::new(spec)))
-}
-
-fn network(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "network";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?;
-    let edges: Option<Vec<EdgeInput>> = match args.get::<Value>("edges")? {
-        Value::Nil => None,
-        value @ Value::Table(_) => {
-            let json = convert::to_json(lua, value)?;
-            Some(serde_json::from_value(json).map_err(|e| error(F, format!("`edges`: {e}")))?)
-        }
-        other => {
-            return Err(error(
-                F,
-                format!("`edges` must be a list, got {}", other.type_name()),
-            ));
-        }
-    };
-    let bytes = match (&path, edges) {
-        (Some(_), Some(_)) => return Err(error(F, "give `path` or `edges`, not both")),
-        (None, None) => return Err(error(F, "`path` or `edges` is required")),
-        (Some(path), None) => context(lua)?
-            .block_on(read_report(services.fs.as_ref(), path))?
-            .map_err(|e| error(F, e))?,
-        (None, Some(edges)) => edges_json(&edges),
-    };
-    let size_by = match text(args, F, "size_by")? {
-        None => domain::science::network::NetworkMetric::Degree,
-        Some(name) => {
-            serde_json::from_value(serde_json::Value::String(name.clone())).map_err(|_| {
-                error(
-                    F,
-                    format!(
-                        "`size_by` is degree, betweenness, closeness or pagerank, not {name:?}"
-                    ),
-                )
-            })?
-        }
-    };
-    let seed = match args.get::<Option<i64>>("seed")? {
-        Some(s) => Some(u64::try_from(s).map_err(|_| error(F, "`seed` must not be negative"))?),
-        None => None,
-    };
-    let request = NetworkRequest {
-        path: path.clone(),
-        bytes,
-        directed: args.get::<Option<bool>>("directed")?,
-        source: text(args, F, "source")?,
-        target: text(args, F, "target")?,
-        weight: text(args, F, "weight")?,
-        size_by,
-        seed,
-    };
-    let mut spec = services
-        .formats
-        .analyse_network(&request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Network(Box::new(spec)))
 }
 
 fn training_curves(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -248,14 +143,10 @@ fn training_curves(lua: &Lua, args: &Table) -> mlua::Result<Value> {
 }
 
 /// Adds the science B functions to the `app.formats` table.
-pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
-    formats.set(
-        "map",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => map(lua, &args),
-            _ => Err(error("map", "expected a table of arguments")),
-        })?,
-    )?;
+pub(super) fn add(lua: &Lua, formats: &Table) -> mlua::Result<()> {
+    register(lua, formats, "map", normalize_map, build_map, |spec| {
+        BlockKind::GeoMap(Box::new(spec))
+    })?;
     formats.set(
         "gantt",
         lua.create_function(|lua, args: Value| match args {
@@ -263,19 +154,21 @@ pub(super) fn register(lua: &Lua, formats: &Table) -> mlua::Result<()> {
             _ => Err(error("gantt", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        formats,
         "array_file",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => array_file(lua, &args),
-            _ => Err(error("array_file", "expected a table of arguments")),
-        })?,
+        normalize_array_file,
+        build_array_file,
+        |spec| BlockKind::ArrayFile(Box::new(spec)),
     )?;
-    formats.set(
+    register(
+        lua,
+        formats,
         "network",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => network(lua, &args),
-            _ => Err(error("network", "expected a table of arguments")),
-        })?,
+        normalize_network,
+        build_network,
+        |spec| BlockKind::Network(Box::new(spec)),
     )?;
     formats.set(
         "training_curves",

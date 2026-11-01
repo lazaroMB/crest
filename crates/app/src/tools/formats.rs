@@ -1003,31 +1003,17 @@ impl TypedTool for ShowMoleculeTool {
         input: ShowMolecule,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.smiles.trim().is_empty() {
-            return Err(invalid(SHOW_MOLECULE, "`smiles` is empty"));
-        }
+        let input = normalize_molecule(input).map_err(|e| invalid(SHOW_MOLECULE, e))?;
         let ports = self.ports.clone();
-        let subject = input
-            .name
-            .clone()
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| input.smiles.clone());
+        let subject = input.name.clone().unwrap_or_else(|| input.smiles.clone());
         let run = async move {
-            let formats = Arc::clone(&ports.formats);
-            let smiles = input.smiles.trim().to_owned();
-            let claimed = input
-                .claimed_formula
-                .clone()
-                .filter(|c| !c.trim().is_empty());
-            let depicted = offloaded(&ports.offload, move || {
-                formats.depict_molecule(&smiles, claimed.as_deref())
-            })
-            .await;
-            let Some(mut spec) = depicted else {
-                return Ok(ToolOutput::error("the molecule renderer did not run"));
+            let spec = match build_molecule(&ports, input).await {
+                Ok(spec) => spec,
+                Err(message) => return Ok(ToolOutput::error(message)),
             };
-            spec.name = input.name.filter(|n| !n.trim().is_empty());
             let summary = molecule_summary(&spec);
+            // A SMILES that does not parse is still drawn (with its
+            // error) so the user sees what was asked.
             let output = if spec.error.is_some() {
                 ToolOutput::error(summary)
             } else {
@@ -1037,6 +1023,46 @@ impl TypedTool for ShowMoleculeTool {
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_molecule` input: a SMILES (trimmed), and the name and
+/// claimed formula when not blank.
+///
+/// # Errors
+///
+/// "`smiles` is empty" when it is blank.
+pub fn normalize_molecule(input: ShowMolecule) -> Result<ShowMolecule, String> {
+    let smiles = input.smiles.trim().to_owned();
+    if smiles.is_empty() {
+        return Err("`smiles` is empty".to_owned());
+    }
+    Ok(ShowMolecule {
+        smiles,
+        name: non_blank(input.name),
+        claimed_formula: non_blank(input.claimed_formula),
+    })
+}
+
+/// The molecule block of a checked call ([`normalize_molecule`]), drawn
+/// off the executor. A SMILES that does not parse gives a spec with its
+/// `error` set, not an `Err`.
+///
+/// # Errors
+///
+/// When the renderer did not run.
+pub async fn build_molecule(
+    ports: &FormatToolPorts,
+    input: ShowMolecule,
+) -> Result<MoleculeSpec, String> {
+    let formats = Arc::clone(&ports.formats);
+    let smiles = input.smiles;
+    let claimed = input.claimed_formula;
+    let mut spec = parse_off(ports, "the molecule renderer", move || {
+        formats.depict_molecule(&smiles, claimed.as_deref())
+    })
+    .await?;
+    spec.name = input.name;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_molecule`: the computed values and

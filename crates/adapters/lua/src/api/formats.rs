@@ -90,6 +90,7 @@ use application::tools::formats::diagram::{build_dot, build_er, normalize_dot, n
 use application::tools::formats::dxf::{build_dxf, normalize_dxf};
 use application::tools::formats::har::{build_har, normalize_har};
 use application::tools::formats::ifc::{build_ifc_schedule, normalize_ifc_schedule};
+use application::tools::formats::molecule_grid::{build_molecule_grid, normalize_molecule_grid};
 use application::tools::formats::molecule3d::{build_molecule_3d, normalize_molecule_3d};
 use application::tools::formats::netlist::{build_netlist, normalize_netlist};
 use application::tools::formats::query_plan::{build_query_plan, normalize_query_plan};
@@ -100,8 +101,8 @@ use application::tools::formats::step::{build_step, normalize_step};
 use application::tools::formats::terraform::{build_terraform_plan, normalize_terraform_plan};
 use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
-    FormatToolPorts, build_dataset, grid_entries, normalize_dataset, read_har, read_ifc, read_log,
-    read_report, read_spectrum, read_step,
+    FormatToolPorts, build_dataset, build_molecule, grid_entries, normalize_dataset,
+    normalize_molecule, read_har, read_ifc, read_log, read_report, read_spectrum, read_step,
 };
 use application::usecases::compute::inline_offload;
 use domain::block::BlockKind;
@@ -241,21 +242,6 @@ fn text(args: &Table, function: &str, key: &str) -> mlua::Result<Option<String>>
     }
 }
 
-fn molecule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "molecule";
-    let services = services(lua, F)?;
-    let smiles = text(args, F, "smiles")?.ok_or_else(|| error(F, "`smiles` is required"))?;
-    let claimed = text(args, F, "claimed_formula")?;
-    let mut spec = services
-        .formats
-        .depict_molecule(&smiles, claimed.as_deref());
-    if let Some(err) = &spec.error {
-        return Err(error(F, format!("`{smiles}`: {err}")));
-    }
-    spec.name = text(args, F, "name")?;
-    block_value(lua, &BlockKind::Molecule(spec))
-}
-
 /// `args` with `key` as a list: Lua also takes one item as a plain
 /// string (`signals = 'tb.*'`). A copy, so the caller's table is left
 /// as it was.
@@ -317,58 +303,6 @@ fn ghs(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Ghs(Box::new(spec)))
 }
 
-fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "molecule_grid";
-    let services = services(lua, F)?;
-    let listed: Vec<application::ports::formats::GridEntry> =
-        match args.get::<Value>("molecules")? {
-            Value::Nil => Vec::new(),
-            value @ Value::Table(_) => {
-                let json = convert::to_json(lua, value)?;
-                serde_json::from_value(json).map_err(|e| error(F, format!("`molecules`: {e}")))?
-            }
-            other => {
-                return Err(error(
-                    F,
-                    format!("`molecules` must be a list, got {}", other.type_name()),
-                ));
-            }
-        };
-    let molecules = match (text(args, F, "path")?, listed.is_empty()) {
-        (Some(_), false) => return Err(error(F, "give `molecules` or `path`, not both")),
-        (None, true) => return Err(error(F, "`molecules` or `path` is required")),
-        (None, false) => listed,
-        (Some(path), true) => {
-            let bytes = context(lua)?
-                .block_on(read_report(services.fs.as_ref(), &path))?
-                .map_err(|e| error(F, e))?;
-            let text_body = String::from_utf8(bytes)
-                .map_err(|_| error(F, format!("`{path}` is not UTF-8 text")))?;
-            let column = text(args, F, "activity_column")?.unwrap_or_else(|| "activity".into());
-            grid_entries(&text_body, application::csv::delimiter_for(&path), &column)
-                .map_err(|e| error(F, format!("`{path}`: {e}")))?
-        }
-    };
-    let direction = match text(args, F, "direction")? {
-        Some(d) => serde_json::from_value(json!(d.to_ascii_lowercase()))
-            .map_err(|_| error(F, format!("unknown `direction` `{d}`")))?,
-        None => domain::science::molecule_grid::ActivityDirection::default(),
-    };
-    let request = application::ports::formats::MoleculeGridRequest {
-        molecules,
-        activity_label: text(args, F, "activity_label")?,
-        activity_unit: text(args, F, "activity_unit")?,
-        direction,
-    };
-    let mut spec = services
-        .formats
-        .molecule_grid(&request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::MoleculeGrid(Box::new(spec)))
-}
-
 fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
     let args = one_or_many(lua, args, "names")?;
     // A reaction that does not parse raises here; the tool draws it with
@@ -392,7 +326,7 @@ fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
 /// The `app.formats` table.
 pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
     let formats = lua.create_table()?;
-    sciences::register(lua, &formats)?;
+    sciences::add(lua, &formats)?;
     formats.set(
         "ghs",
         lua.create_function(|lua, args: Value| match args {
@@ -416,12 +350,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         build_spectrum,
         |spec| BlockKind::Spectrum(Box::new(spec)),
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "molecule_grid",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => molecule_grid(lua, &args),
-            _ => Err(error("molecule_grid", "expected a table of arguments")),
-        })?,
+        normalize_molecule_grid,
+        build_molecule_grid,
+        |spec| BlockKind::MoleculeGrid(Box::new(spec)),
     )?;
     formats.set("reaction", lua.create_function(reaction)?)?;
     register(
@@ -440,12 +375,21 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         build_dataset,
         BlockKind::Dataset,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "molecule",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => molecule(lua, &args),
-            _ => Err(error("molecule", "expected a table of arguments")),
-        })?,
+        normalize_molecule,
+        // A SMILES that does not parse raises here; the tool draws it
+        // with its error for the model.
+        async |ports, input| {
+            let spec = build_molecule(ports, input).await?;
+            match &spec.error {
+                Some(e) => Err(format!("`{}`: {e}", spec.smiles)),
+                None => Ok(spec),
+            }
+        },
+        BlockKind::Molecule,
     )?;
     register(
         lua,
