@@ -1,6 +1,8 @@
 //! `crest --headless --simulate <spec>`: simulates the solution of a Spec
-//! in the terminal. Prints the verdict of every scenario (and each failed
-//! check with its counterexample time) and the path of `board.html`.
+//! in the terminal. Prints the verdicts as the window's `/simulate` shows
+//! them ([`simulation_markdown`]: every scenario and each failed check with
+//! its counterexample time), the lint warnings, the evidence recorded and
+//! the path of `board.html`.
 //! Exits with 0 when every scenario passes and with 1 otherwise, or when
 //! the simulation could not be produced.
 
@@ -10,6 +12,7 @@ use super::run::frontend;
 use super::terminal::{Style, Terminal};
 use super::{Exit, StdinApproval};
 use crate::args::Args;
+use crate::gui::{simulate_failed_notice, simulation_markdown};
 use crate::root::{App, Config, Overrides, build_app, now_ms};
 
 /// Simulates `spec` with the app's simulator and prints the result.
@@ -22,60 +25,30 @@ pub async fn run_simulation(app: &App, spec: &str, terminal: &Terminal) -> Exit 
     let report = match app.simulator.run(request).await {
         Ok(report) => report,
         Err(err) => {
-            terminal.lock().line(
-                Some(Style::Red),
-                &format!("error: simulation failed: {err}"),
-            );
+            terminal
+                .lock()
+                .line(Some(Style::Red), &simulate_failed_notice(&err));
             return Exit::TurnFailed;
         }
     };
     let mut w = terminal.lock();
     w.break_line();
-    let runs = &report.board.runs;
-    let passed = runs.iter().filter(|r| r.passed).count();
-    w.line(
-        Some(Style::Bold),
-        &format!(
-            "Simulation of {}: {passed} of {} scenarios passed (model {})",
-            report.folder,
-            runs.len(),
-            report.board.model.hash()
-        ),
-    );
-    for run in runs {
-        let ok = run.verdicts.iter().filter(|v| v.passed).count();
-        let (style, label) = if run.passed {
-            (Style::Green, "PASS")
+    // The verdicts as the window shows them, coloured; the board's path
+    // follows in full, so its relative line is left out.
+    let markdown = simulation_markdown(&report);
+    for (ix, line) in markdown.lines().enumerate() {
+        let style = if ix == 0 {
+            Some(Style::Bold)
+        } else if line.starts_with("- PASS") {
+            Some(Style::Green)
+        } else if line.starts_with("- FAIL") || line.starts_with("  - ✗") {
+            Some(Style::Red)
+        } else if line.starts_with("- Board: ") {
+            continue;
         } else {
-            (Style::Red, "FAIL")
+            None
         };
-        w.line(
-            Some(style),
-            &format!(
-                "{label} {} ({ok}/{} checks, seed {})",
-                run.scenario,
-                run.verdicts.len(),
-                run.trace.seed
-            ),
-        );
-        for v in run.failures() {
-            w.line(
-                Some(Style::Red),
-                &format!("  ✗ {}: {}", v.property, v.detail),
-            );
-        }
-    }
-    if report.repairs > 0 {
-        w.line(
-            Some(Style::Dim),
-            &format!("repair rounds: {}", report.repairs),
-        );
-    }
-    for note in &report.loosening {
-        w.line(
-            Some(Style::Yellow),
-            &format!("frozen assertions restored: {note}"),
-        );
+        w.line(style, line);
     }
     for warning in &report.warnings {
         w.line(Some(Style::Dim), &format!("lint: {warning}"));
