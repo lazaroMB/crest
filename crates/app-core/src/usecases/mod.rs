@@ -4,6 +4,7 @@
 
 pub mod approval;
 pub mod cancel;
+pub mod commands;
 pub mod compact;
 pub mod compute;
 pub mod evidence;
