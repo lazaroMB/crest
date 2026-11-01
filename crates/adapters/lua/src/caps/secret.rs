@@ -10,12 +10,10 @@
 use std::sync::Arc;
 
 use mlua::{Function, Lua};
+use platform::KEYRING_SERVICE;
 
 use super::{Context, authorize, context};
 use crate::config::api::Origin;
-
-/// Keyring service of crest's secrets.
-pub(crate) const KEYRING_SERVICE: &str = "crest";
 
 const API: &str = "app.secret";
 

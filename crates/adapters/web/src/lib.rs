@@ -16,12 +16,11 @@ use std::ffi::OsString;
 use application::ports::web::{SearchHit, WebError, WebPage, WebPort};
 use application::web::{SearchBackend, WebOptions};
 use async_trait::async_trait;
+use platform::KEYRING_SERVICE;
 
 /// Environment variable and keyring entry (service `crest`) of the Brave
 /// Search API key.
 pub const BRAVE_KEY_NAME: &str = "BRAVE_API_KEY";
-/// Keyring service of the key.
-const KEYRING_SERVICE: &str = "crest";
 
 /// The Brave key from `BRAVE_API_KEY`, else from the keyring (service
 /// `crest`, entry `BRAVE_API_KEY`). The keyring call may block (D-Bus,
