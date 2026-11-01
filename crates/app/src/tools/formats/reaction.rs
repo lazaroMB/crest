@@ -16,9 +16,8 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, invalid, one_line};
+use super::{FormatToolPorts, invalid, non_blank, one_line, parse_off};
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
 
 /// Input of `show_reaction`.
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -89,32 +88,17 @@ impl TypedTool for ShowReactionTool {
         input: ShowReaction,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.smiles.trim().is_empty() {
-            return Err(invalid(SHOW_REACTION, "`smiles` is empty"));
-        }
+        let input = normalize_reaction(input).map_err(|e| invalid(SHOW_REACTION, e))?;
         let ports = self.ports.clone();
         let subject = input.smiles.clone();
         let run = async move {
-            let formats = Arc::clone(&ports.formats);
-            let smiles = input.smiles.trim().to_owned();
-            let coefficients = input.coefficients.clone();
-            let depicted = offloaded(&ports.offload, move || {
-                formats.depict_reaction(&smiles, coefficients.as_deref())
-            })
-            .await;
-            let Some(mut spec) = depicted else {
-                return Ok(ToolOutput::error("the reaction renderer did not run"));
+            let spec = match build_reaction(&ports, input).await {
+                Ok(spec) => spec,
+                Err(message) => return Ok(ToolOutput::error(message)),
             };
-            spec.title = input.title.filter(|t| !t.trim().is_empty());
-            spec.conditions = input.conditions.filter(|c| !c.trim().is_empty());
-            let mut names = input.names.into_iter();
-            for c in &mut spec.components {
-                c.molecule.name = names.next().filter(|n| !n.trim().is_empty());
-            }
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(err.to_string()));
-            }
             let summary = reaction_summary(&spec);
+            // A reaction that does not parse is still drawn (with its
+            // error) so the user sees what was asked.
             let output = if spec.error.is_some() {
                 ToolOutput::error(summary)
             } else {
@@ -124,6 +108,55 @@ impl TypedTool for ShowReactionTool {
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// Checks a `show_reaction` input: a SMILES (trimmed), and the
+/// conditions and title when not blank.
+///
+/// # Errors
+///
+/// "`smiles` is empty" when it is blank.
+pub fn normalize_reaction(input: ShowReaction) -> Result<ShowReaction, String> {
+    let smiles = input.smiles.trim().to_owned();
+    if smiles.is_empty() {
+        return Err("`smiles` is empty".to_owned());
+    }
+    Ok(ShowReaction {
+        smiles,
+        conditions: non_blank(input.conditions),
+        title: non_blank(input.title),
+        ..input
+    })
+}
+
+/// The reaction block of a checked call ([`normalize_reaction`]), drawn
+/// off the executor. A SMILES that does not parse gives a spec with its
+/// `error` set, not an `Err`.
+///
+/// # Errors
+///
+/// A message for the caller: the renderer did not run, or the result is
+/// not a valid block.
+pub async fn build_reaction(
+    ports: &FormatToolPorts,
+    input: ShowReaction,
+) -> Result<ReactionSpec, String> {
+    let formats = Arc::clone(&ports.formats);
+    let smiles = input.smiles;
+    let coefficients = input.coefficients;
+    let mut spec = parse_off(ports, "reaction", move || {
+        formats.depict_reaction(&smiles, coefficients.as_deref())
+    })
+    .await
+    .map_err(|_| "the reaction renderer did not run".to_owned())?;
+    spec.title = input.title;
+    spec.conditions = input.conditions;
+    let mut names = input.names.into_iter();
+    for c in &mut spec.components {
+        c.molecule.name = names.next().filter(|n| !n.trim().is_empty());
+    }
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_reaction`.

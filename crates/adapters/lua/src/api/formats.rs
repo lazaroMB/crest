@@ -78,19 +78,21 @@
 use std::sync::Arc;
 
 use application::ports::formats::{
-    DatasetRequest, FormatsPort, LogRequest, ProfileRequest, SequenceRequest, StepRequest,
-    WaveRequest,
+    FormatsPort, LogRequest, ProfileRequest, SequenceRequest, StepRequest,
 };
 use application::ports::fs::FileSystemPort;
+use application::tools::formats::bench::{build_benchmarks, normalize_benchmarks};
+use application::tools::formats::reaction::{build_reaction, normalize_reaction};
+use application::tools::formats::waveform::{build_waveform, normalize_waveform};
 use application::tools::formats::{
-    DEFAULT_BASELINE, DEFAULT_CRITERION_DIR, DEFAULT_PREVIEW_ROWS, MAX_PREVIEW_ROWS,
-    collect_benchmarks, dataset_format, grid_entries, read_dataset, read_har, read_ifc, read_log,
-    read_report, read_spectrum, read_step, read_wave,
+    FormatToolPorts, build_dataset, grid_entries, normalize_dataset, read_har, read_ifc, read_log,
+    read_report, read_spectrum, read_step,
 };
+use application::usecases::compute::inline_offload;
 use domain::block::BlockKind;
 use domain::devops::logs::LogFormat;
-use domain::engineering::waveform::Radix;
 use mlua::{Lua, Table, Value};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::ui::BLOCK_KEY;
@@ -126,6 +128,83 @@ fn services(lua: &Lua, function: &str) -> mlua::Result<FormatsServices> {
         .ok_or_else(|| error(function, "the format parsers are not available"))
 }
 
+impl FormatsServices {
+    /// The ports the format builders run on. The Lua thread already
+    /// blocks while a call runs, so the parsers run inline on it.
+    fn ports(&self) -> FormatToolPorts {
+        FormatToolPorts {
+            formats: Arc::clone(&self.formats),
+            fs: Arc::clone(&self.fs),
+            offload: inline_offload(),
+        }
+    }
+}
+
+/// The table of arguments of `function` as the tool's input `I`: unknown
+/// keys, missing fields and wrong types fail as they do for the tool,
+/// with the field's path (`signals[2]: invalid type …`).
+fn input<I: DeserializeOwned>(function: &str, args: Value) -> mlua::Result<I> {
+    if !args.is_table() {
+        return Err(error(function, "expected a table of arguments"));
+    }
+    serde_path_to_error::deserialize(mlua::serde::Deserializer::new(args)).map_err(|e| {
+        let path = e.path().to_string();
+        let message = match e.into_inner() {
+            mlua::Error::DeserializeError(message) => message,
+            other => other.to_string(),
+        };
+        if path == "." {
+            error(function, message)
+        } else {
+            error(function, format!("{path}: {message}"))
+        }
+    })
+}
+
+/// Runs `function` the way its tool does: `args` as the tool's input,
+/// checked by `normalize`, built by `build` (reading and parsing while
+/// the VM waits) and returned as the block `block` makes of the spec.
+/// Messages are the tool's, prefixed with `app.formats.{function}`.
+fn show<I, C, S>(
+    lua: &Lua,
+    function: &str,
+    args: Value,
+    normalize: fn(I) -> Result<C, String>,
+    build: impl AsyncFnOnce(&FormatToolPorts, C) -> Result<S, String>,
+    block: fn(S) -> BlockKind,
+) -> mlua::Result<Value>
+where
+    I: DeserializeOwned,
+{
+    let services = services(lua, function)?;
+    let call = normalize(input(function, args)?).map_err(|e| error(function, e))?;
+    let ports = services.ports();
+    let spec = context(lua)?
+        .block_on(build(&ports, call))?
+        .map_err(|e| error(function, e))?;
+    block_value(lua, &block(spec))
+}
+
+/// Adds `function` to `formats`, run by [`show`].
+fn register<I, C, S>(
+    lua: &Lua,
+    formats: &Table,
+    function: &'static str,
+    normalize: fn(I) -> Result<C, String>,
+    build: impl AsyncFn(&FormatToolPorts, C) -> Result<S, String> + Send + 'static,
+    block: fn(S) -> BlockKind,
+) -> mlua::Result<()>
+where
+    I: DeserializeOwned + 'static,
+    C: 'static,
+    S: 'static,
+{
+    let run = lua.create_function(move |lua, args: Value| {
+        show(lua, function, args, normalize, &build, block)
+    })?;
+    formats.set(function, run)
+}
+
 /// `block` as the table `app.ui.block` returns.
 pub(crate) fn block_value(lua: &Lua, block: &BlockKind) -> mlua::Result<Value> {
     let json = serde_json::to_value(block).map_err(mlua::Error::external)?;
@@ -145,40 +224,6 @@ fn text(args: &Table, function: &str, key: &str) -> mlua::Result<Option<String>>
             format!("`{key}` must be a string, got {}", other.type_name()),
         )),
     }
-}
-
-fn dataset(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "dataset";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let format = dataset_format(&path).ok_or_else(|| {
-        error(
-            F,
-            format!("`{path}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet"),
-        )
-    })?;
-    let rows = match args.get::<Option<i64>>("rows")? {
-        Some(n) if n >= 1 => usize::try_from(n).unwrap_or(MAX_PREVIEW_ROWS),
-        Some(_) => return Err(error(F, "`rows` must be at least 1")),
-        None => DEFAULT_PREVIEW_ROWS,
-    };
-    let ctx = context(lua)?;
-    let (bytes, truncated) = ctx
-        .block_on(read_dataset(services.fs.as_ref(), &path, format))?
-        .map_err(|e| error(F, e))?;
-    let request = DatasetRequest {
-        path: path.clone(),
-        format,
-        preview_rows: rows.min(MAX_PREVIEW_ROWS),
-        truncated,
-    };
-    let spec = services
-        .formats
-        .preview_dataset(&bytes, &request)
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Dataset(spec))
 }
 
 fn molecule(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -376,84 +421,36 @@ fn er(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::Diagram(Box::new(spec)))
 }
 
-fn benchmarks(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "benchmarks";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.unwrap_or_else(|| DEFAULT_CRITERION_DIR.to_owned());
-    let baseline = text(args, F, "baseline")?.unwrap_or_else(|| DEFAULT_BASELINE.to_owned());
-    let filter = text(args, F, "filter")?;
-    let request = context(lua)?
-        .block_on(collect_benchmarks(
-            services.fs.as_ref(),
-            &path,
-            &baseline,
-            filter.as_deref(),
-        ))?
-        .map_err(|e| error(F, e))?;
-    let mut spec = services
-        .formats
-        .parse_benchmarks(&request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Benchmarks(Box::new(spec)))
-}
-
-/// A list of strings (or one string).
-fn strings(args: &Table, function: &str, key: &str) -> mlua::Result<Vec<String>> {
-    match args.get::<Value>(key)? {
-        Value::Nil => Ok(Vec::new()),
-        Value::String(s) => Ok(vec![s.to_str()?.to_owned()]),
-        Value::Table(list) => list
-            .sequence_values::<Value>()
-            .map(|v| match v? {
-                Value::String(s) => Ok(s.to_str()?.to_owned()),
-                other => Err(error(
-                    function,
-                    format!("`{key}` must hold strings, got {}", other.type_name()),
-                )),
-            })
-            .collect(),
-        other => Err(error(
-            function,
-            format!(
-                "`{key}` must be a list of strings, got {}",
-                other.type_name()
-            ),
-        )),
-    }
-}
-
-/// The radix field (`hex`, `bin`, `dec`; `hex` when absent).
-fn radix(args: &Table, function: &str) -> mlua::Result<Radix> {
-    match text(args, function, "radix")? {
-        Some(name) => serde_json::from_value(json!(name))
-            .map_err(|_| error(function, format!("unknown `radix` `{name}`"))),
-        None => Ok(Radix::default()),
-    }
-}
-
-fn waveform(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "waveform";
-    let services = services(lua, F)?;
-    let path = text(args, F, "path")?.ok_or_else(|| error(F, "`path` is required"))?;
-    let bytes = context(lua)?
-        .block_on(read_wave(services.fs.as_ref(), &path))?
-        .map_err(|e| error(F, e))?;
-    let request = WaveRequest {
-        path: path.clone(),
-        signals: strings(args, F, "signals")?,
-        radix: radix(args, F)?,
+/// `args` with `key` as a list: Lua also takes one item as a plain
+/// string (`signals = 'tb.*'`). A copy, so the caller's table is left
+/// as it was.
+fn one_or_many(lua: &Lua, args: Value, key: &str) -> mlua::Result<Value> {
+    let Value::Table(table) = &args else {
+        return Ok(args);
     };
-    let mut spec = services
-        .formats
-        .parse_waveform(&bytes, &request)
-        .map_err(|e| error(F, e))?;
-    spec.title = text(args, F, "title")?;
-    spec.validate()
-        .map_err(|e| error(F, format!("`{path}`: {e}")))?;
-    block_value(lua, &BlockKind::Waveform(Box::new(spec)))
+    let item = table.get::<Value>(key)?;
+    if !item.is_string() {
+        return Ok(args);
+    }
+    let copy = lua.create_table()?;
+    for pair in table.pairs::<Value, Value>() {
+        let (k, v) = pair?;
+        copy.set(k, v)?;
+    }
+    copy.set(key, lua.create_sequence_from([item])?)?;
+    Ok(Value::Table(copy))
+}
+
+fn waveform(lua: &Lua, args: Value) -> mlua::Result<Value> {
+    let args = one_or_many(lua, args, "signals")?;
+    show(
+        lua,
+        "waveform",
+        args,
+        normalize_waveform,
+        build_waveform,
+        |spec| BlockKind::Waveform(Box::new(spec)),
+    )
 }
 
 fn step(lua: &Lua, args: &Table) -> mlua::Result<Value> {
@@ -718,38 +715,24 @@ fn molecule_grid(lua: &Lua, args: &Table) -> mlua::Result<Value> {
     block_value(lua, &BlockKind::MoleculeGrid(Box::new(spec)))
 }
 
-fn reaction(lua: &Lua, args: &Table) -> mlua::Result<Value> {
-    const F: &str = "reaction";
-    let services = services(lua, F)?;
-    let smiles = text(args, F, "smiles")?.ok_or_else(|| error(F, "`smiles` is required"))?;
-    let coefficients = match args.get::<Value>("coefficients")? {
-        Value::Nil => None,
-        Value::Table(t) => Some(
-            t.sequence_values::<u32>()
-                .collect::<mlua::Result<Vec<_>>>()
-                .map_err(|_| error(F, "`coefficients` must be a list of positive integers"))?,
-        ),
-        other => {
-            return Err(error(
-                F,
-                format!("`coefficients` must be a list, got {}", other.type_name()),
-            ));
-        }
-    };
-    let mut spec = services
-        .formats
-        .depict_reaction(&smiles, coefficients.as_deref());
-    if let Some(e) = &spec.error {
-        return Err(error(F, e));
-    }
-    spec.title = text(args, F, "title")?;
-    spec.conditions = text(args, F, "conditions")?;
-    let mut names = strings(args, F, "names")?.into_iter();
-    for c in &mut spec.components {
-        c.molecule.name = names.next().filter(|n| !n.trim().is_empty());
-    }
-    spec.validate().map_err(|e| error(F, e))?;
-    block_value(lua, &BlockKind::Reaction(Box::new(spec)))
+fn reaction(lua: &Lua, args: Value) -> mlua::Result<Value> {
+    let args = one_or_many(lua, args, "names")?;
+    // A reaction that does not parse raises here; the tool draws it with
+    // its error for the model.
+    show(
+        lua,
+        "reaction",
+        args,
+        normalize_reaction,
+        async |ports, input| {
+            let spec = build_reaction(ports, input).await?;
+            match spec.error {
+                Some(e) => Err(e),
+                None => Ok(spec),
+            }
+        },
+        |spec| BlockKind::Reaction(Box::new(spec)),
+    )
 }
 
 /// The `app.formats` table.
@@ -784,13 +767,7 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("molecule_grid", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
-        "reaction",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => reaction(lua, &args),
-            _ => Err(error("reaction", "expected a table of arguments")),
-        })?,
-    )?;
+    formats.set("reaction", lua.create_function(reaction)?)?;
     formats.set(
         "sequence",
         lua.create_function(|lua, args: Value| match args {
@@ -798,12 +775,13 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("sequence", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "dataset",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => dataset(lua, &args),
-            _ => Err(error("dataset", "expected a table of arguments")),
-        })?,
+        normalize_dataset,
+        build_dataset,
+        BlockKind::Dataset,
     )?;
     formats.set(
         "molecule",
@@ -826,20 +804,15 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
             _ => Err(error("flamegraph", "expected a table of arguments")),
         })?,
     )?;
-    formats.set(
+    register(
+        lua,
+        &formats,
         "benchmarks",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => benchmarks(lua, &args),
-            _ => Err(error("benchmarks", "expected a table of arguments")),
-        })?,
+        normalize_benchmarks,
+        build_benchmarks,
+        |spec| BlockKind::Benchmarks(Box::new(spec)),
     )?;
-    formats.set(
-        "waveform",
-        lua.create_function(|lua, args: Value| match args {
-            Value::Table(args) => waveform(lua, &args),
-            _ => Err(error("waveform", "expected a table of arguments")),
-        })?,
-    )?;
+    formats.set("waveform", lua.create_function(waveform)?)?;
     formats.set(
         "step",
         lua.create_function(|lua, args: Value| match args {
@@ -1087,7 +1060,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(bad.contains("unknown `radix`"), "{bad}");
+        assert!(bad.contains("radix: unknown variant `oct`"), "{bad}");
         let out = run_code(
             "return app.formats.netlist{ source = 'div\\nR1 a 0 1k', format = 'spice' }",
             Some(Arc::new(FakeFormats::new())),
@@ -1292,7 +1265,24 @@ mod tests {
             err("return app.formats.dataset{ path = 'x/../../a.csv' }")
                 .contains("app.formats.dataset")
         );
-        assert!(err("return app.formats.dataset{}").contains("`path` is required"));
+        assert!(err("return app.formats.dataset{}").contains("missing field `path`"));
+        assert!(err("return app.formats.dataset{ path = ' ' }").contains("`path` is empty"));
+        assert!(
+            err("return app.formats.dataset{ path = 'data/cars.csv', rows = 0 }")
+                .contains("`rows` must be at least 1")
+        );
+        assert!(
+            err("return app.formats.dataset{ path = 'data/cars.csv', row = 2 }")
+                .contains("unknown field `row`")
+        );
+        assert!(
+            err("return app.formats.benchmarks{ baseline = '../x' }")
+                .contains("app.formats.benchmarks: `baseline` is a baseline name")
+        );
+        assert!(
+            err("return app.formats.waveform{ path = 'sim/tb.vcd', signals = { 'a', 2 } }")
+                .contains("signals[1]: invalid type")
+        );
         assert!(err("return app.formats.molecule(1)").contains("expected a table"));
         assert!(err("return app.formats.molecule{ smiles = 'bad' }").contains("invalid SMILES"));
         let failing = run_code(

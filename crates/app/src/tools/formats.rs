@@ -135,6 +135,52 @@ fn invalid(tool: &str, message: impl Into<String>) -> ToolError {
     }
 }
 
+/// `text` trimmed, or `None` when it is blank: optional text inputs
+/// (titles, filters, names) the caller left empty.
+#[must_use]
+pub fn non_blank(text: Option<String>) -> Option<String> {
+    text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// A required `path`, trimmed.
+///
+/// # Errors
+///
+/// "`path` is empty" when it is blank.
+pub fn required_path(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("`path` is empty".to_owned());
+    }
+    Ok(path.to_owned())
+}
+
+/// Runs `work` (a parser) through the ports' [`Offload`]; `reader` names
+/// it in the error of a job dropped without running.
+async fn parse_off<R: Send + 'static>(
+    ports: &FormatToolPorts,
+    reader: &str,
+    work: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, String> {
+    offloaded(&ports.offload, work)
+        .await
+        .ok_or_else(|| format!("the {reader} reader did not run"))
+}
+
+/// The tool output of a builder's result: `summary` of the spec for the
+/// model with `block` of it for the timeline, or the builder's message
+/// as an error the model can act on.
+fn shown<S>(
+    built: Result<S, String>,
+    summary: impl FnOnce(&S) -> String,
+    block: impl FnOnce(S) -> BlockKind,
+) -> Result<ToolOutput, ToolError> {
+    Ok(match built {
+        Ok(spec) => ToolOutput::text(summary(&spec)).with_block_update(block(spec)),
+        Err(message) => ToolOutput::error(message),
+    })
+}
+
 /// Reads `path` of the workspace through the guard.
 async fn read(fs: &dyn FileSystemPort, path: &str) -> Result<Vec<u8>, String> {
     let parsed = WorkspacePath::parse(path).map_err(|e| format!("report path `{path}`: {e}"))?;
@@ -781,56 +827,81 @@ impl TypedTool for ShowDatasetTool {
         input: ShowDataset,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        if input.path.trim().is_empty() {
-            return Err(invalid(SHOW_DATASET, "`path` is empty"));
-        }
-        let Some(format) = dataset_format(&input.path) else {
-            return Err(invalid(
-                SHOW_DATASET,
-                format!(
-                    "`{}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet",
-                    input.path
-                ),
-            ));
-        };
-        let preview_rows = input
-            .rows
-            .unwrap_or(DEFAULT_PREVIEW_ROWS)
-            .min(MAX_PREVIEW_ROWS);
+        let call = normalize_dataset(input).map_err(|e| invalid(SHOW_DATASET, e))?;
         let ports = self.ports.clone();
-        let subject = input.path.clone();
+        let subject = call.path.clone();
         let run = async move {
-            let (bytes, truncated) =
-                match read_dataset(ports.fs.as_ref(), &input.path, format).await {
-                    Ok(read) => read,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                };
-            let request = DatasetRequest {
-                path: input.path.clone(),
-                format,
-                preview_rows,
-                truncated,
-            };
-            let formats = Arc::clone(&ports.formats);
-            let parsed = offloaded(&ports.offload, move || {
-                formats.preview_dataset(&bytes, &request)
-            })
-            .await;
-            let spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => {
-                    return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-                }
-                None => return Ok(ToolOutput::error("the dataset reader did not run")),
-            };
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{}`: {err}", input.path)));
-            }
-            let summary = dataset_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Dataset(spec)))
+            shown(
+                build_dataset(&ports, call).await,
+                dataset_summary,
+                BlockKind::Dataset,
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// A `show_dataset` call, checked, with its defaults applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DatasetCall {
+    /// The data file.
+    pub path: String,
+    /// Its format, from the extension.
+    pub format: DatasetFormat,
+    /// Preview rows, at most [`MAX_PREVIEW_ROWS`].
+    pub rows: usize,
+}
+
+/// Checks a `show_dataset` input and applies its defaults.
+///
+/// # Errors
+///
+/// A message for the caller: an empty path, one that is not a dataset
+/// file, or `rows` of 0.
+pub fn normalize_dataset(input: ShowDataset) -> Result<DatasetCall, String> {
+    let path = required_path(&input.path)?;
+    let Some(format) = dataset_format(&path) else {
+        return Err(format!(
+            "`{path}` is not a dataset file: use .csv, .tsv, .jsonl/.ndjson or .parquet"
+        ));
+    };
+    if input.rows == Some(0) {
+        return Err("`rows` must be at least 1".to_owned());
+    }
+    let rows = input
+        .rows
+        .unwrap_or(DEFAULT_PREVIEW_ROWS)
+        .min(MAX_PREVIEW_ROWS);
+    Ok(DatasetCall { path, format, rows })
+}
+
+/// The dataset block of a checked call: reads the file through the guard
+/// and profiles it off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the file cannot be read or parsed, or the
+/// result is not a valid block.
+pub async fn build_dataset(
+    ports: &FormatToolPorts,
+    call: DatasetCall,
+) -> Result<DatasetSpec, String> {
+    let (bytes, truncated) = read_dataset(ports.fs.as_ref(), &call.path, call.format).await?;
+    let request = DatasetRequest {
+        path: call.path.clone(),
+        format: call.format,
+        preview_rows: call.rows,
+        truncated,
+    };
+    let formats = Arc::clone(&ports.formats);
+    let spec = parse_off(ports, "dataset", move || {
+        formats.preview_dataset(&bytes, &request)
+    })
+    .await?
+    .map_err(|e| format!("`{}`: {e}", call.path))?;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", call.path))?;
+    Ok(spec)
 }
 
 /// What the model gets back from `show_dataset`: the shape, whether the
@@ -1416,6 +1487,14 @@ mod tests {
         let tool = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::new()))));
         let not_data = tool.prepare(json!({ "path": "src/lib.rs" }), &ctx()).await;
         assert!(matches!(not_data, Err(ToolError::InvalidInput { .. })));
+        let no_rows = tool
+            .prepare(json!({ "path": "data/cars.csv", "rows": 0 }), &ctx())
+            .await;
+        assert!(
+            matches!(&no_rows, Err(ToolError::InvalidInput { message, .. }) if message == "`rows` must be at least 1"),
+            "{:?}",
+            no_rows.err()
+        );
         let guarded = call(&tool, json!({ "path": "../x.csv" })).await.unwrap();
         assert!(guarded.is_error);
         let bad = Typed(ShowDatasetTool::new(ports(Arc::new(FakeFormats::failing(

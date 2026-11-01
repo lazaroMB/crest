@@ -22,11 +22,10 @@ use futures::FutureExt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{FormatToolPorts, MAX_LISTED, invalid, one_line};
+use super::{FormatToolPorts, MAX_LISTED, invalid, non_blank, one_line, parse_off, shown};
 use crate::ports::formats::{BenchFiles, BenchRequest};
 use crate::ports::fs::FileSystemPort;
-use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, TypedTool};
-use crate::usecases::compute::offloaded;
+use crate::tools::registry::{PreparedCall, ToolContext, ToolError, TypedTool};
 
 /// Where `cargo bench` writes criterion's results.
 pub const DEFAULT_CRITERION_DIR: &str = "target/criterion";
@@ -220,49 +219,81 @@ impl TypedTool for ShowBenchmarksTool {
         input: ShowBenchmarks,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let path = input
-            .path
-            .filter(|p| !p.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_CRITERION_DIR.to_owned());
-        let baseline = input
-            .baseline
-            .filter(|b| !b.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_BASELINE.to_owned());
-        if baseline.contains(['/', '\\']) || baseline == "new" || baseline == "change" {
-            return Err(invalid(
-                SHOW_BENCHMARKS,
-                "`baseline` is a baseline name such as `base`, not a path",
-            ));
-        }
+        let call = normalize_benchmarks(input).map_err(|e| invalid(SHOW_BENCHMARKS, e))?;
         let ports = self.ports.clone();
-        let subject = path.clone();
-        let filter = input.filter.filter(|f| !f.trim().is_empty());
-        let title = input.title.filter(|t| !t.trim().is_empty());
+        let subject = call.path.clone();
         let run = async move {
-            let request =
-                match collect_benchmarks(ports.fs.as_ref(), &path, &baseline, filter.as_deref())
-                    .await
-                {
-                    Ok(request) => request,
-                    Err(message) => return Ok(ToolOutput::error(message)),
-                };
-            let formats = Arc::clone(&ports.formats);
-            let parsed =
-                offloaded(&ports.offload, move || formats.parse_benchmarks(&request)).await;
-            let mut spec = match parsed {
-                Some(Ok(spec)) => spec,
-                Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
-                None => return Ok(ToolOutput::error("the benchmark reader did not run")),
-            };
-            spec.title = title;
-            if let Err(err) = spec.validate() {
-                return Ok(ToolOutput::error(format!("`{path}`: {err}")));
-            }
-            let summary = bench_summary(&spec);
-            Ok(ToolOutput::text(summary).with_block_update(BlockKind::Benchmarks(Box::new(spec))))
+            shown(
+                build_benchmarks(&ports, call).await,
+                bench_summary,
+                |spec| BlockKind::Benchmarks(Box::new(spec)),
+            )
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// A `show_benchmarks` call, checked, with its defaults applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchmarksCall {
+    /// The criterion directory ([`DEFAULT_CRITERION_DIR`] by default).
+    pub path: String,
+    /// The baseline name ([`DEFAULT_BASELINE`] by default).
+    pub baseline: String,
+    /// Text the benchmark directories must contain.
+    pub filter: Option<String>,
+    /// Title above the table.
+    pub title: Option<String>,
+}
+
+/// Checks a `show_benchmarks` input and applies its defaults.
+///
+/// # Errors
+///
+/// A message for the caller: a baseline that looks like a path or names
+/// one of criterion's own directories.
+pub fn normalize_benchmarks(input: ShowBenchmarks) -> Result<BenchmarksCall, String> {
+    let path = non_blank(input.path).unwrap_or_else(|| DEFAULT_CRITERION_DIR.to_owned());
+    let baseline = non_blank(input.baseline).unwrap_or_else(|| DEFAULT_BASELINE.to_owned());
+    if baseline.contains(['/', '\\']) || baseline == "new" || baseline == "change" {
+        return Err("`baseline` is a baseline name such as `base`, not a path".to_owned());
+    }
+    Ok(BenchmarksCall {
+        path,
+        baseline,
+        filter: non_blank(input.filter),
+        title: non_blank(input.title),
+    })
+}
+
+/// The benchmarks block of a checked call: walks the criterion directory
+/// through the guard and parses the estimates off the executor.
+///
+/// # Errors
+///
+/// A message for the caller: the directory cannot be listed or the
+/// estimates parsed, or the result is not a valid block.
+pub async fn build_benchmarks(
+    ports: &FormatToolPorts,
+    call: BenchmarksCall,
+) -> Result<BenchSpec, String> {
+    let request = collect_benchmarks(
+        ports.fs.as_ref(),
+        &call.path,
+        &call.baseline,
+        call.filter.as_deref(),
+    )
+    .await?;
+    let formats = Arc::clone(&ports.formats);
+    let mut spec = parse_off(ports, "benchmark", move || {
+        formats.parse_benchmarks(&request)
+    })
+    .await?
+    .map_err(|e| e.to_string())?;
+    spec.title = call.title;
+    spec.validate()
+        .map_err(|e| format!("`{}`: {e}", call.path))?;
+    Ok(spec)
 }
 
 fn interval_ns(e: &Estimate) -> String {
@@ -382,7 +413,7 @@ mod tests {
     use super::*;
     use crate::testing::formats::FakeFormats;
     use crate::testing::fs::{InMemoryFs, test_root};
-    use crate::tools::registry::{Tool, Typed};
+    use crate::tools::registry::{Tool, ToolOutput, Typed};
     use crate::usecases::compute::inline_offload;
 
     fn ctx() -> ToolContext {
