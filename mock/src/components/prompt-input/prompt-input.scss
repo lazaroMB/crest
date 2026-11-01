@@ -92,8 +92,11 @@
 }
 
 .mode-menu {
+  position: absolute;
+  z-index: 5;
+  left: 8px;
+  bottom: calc(100% + 4px);
   width: 340px;
-  margin: 0 0 4px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
