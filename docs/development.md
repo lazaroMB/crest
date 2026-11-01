@@ -171,11 +171,11 @@ Tests use no network, no `rg` and no window, except where they are adapter integ
 - Use cases are tested with the fakes of the `application-testing` crate (`application::testing` inside `application`'s own unit tests).
 - The Anthropic API is tested with `wiremock`.
 - GPUI tests use `gpui`'s `TestAppContext` (`test-support` feature), which opens no windows.
-- Snapshots of the tools' JSON schemas are stored with `insta` (`crates/app/src/tools/snapshots/`). If you change a schema, review the snapshot with `cargo insta review`.
+- Snapshots of the tools' JSON schemas are stored with `insta` (`crates/app/src/tools/snapshots/`, and `crates/app-core/src/tools/snapshots/` for the tools that live in `application-core`). If you change a schema, review the snapshot with `cargo insta review`.
 
 ## Fakes in `application-testing`
 
-The fakes live in `crates/app-testing` (package `application-testing`). Another crate uses them as a dev-dependency only, `application-testing.workspace = true` under `[dev-dependencies]`, and imports them as `application_testing::llm::ScriptedLlm`; `scripts/check-arch.sh` rejects it anywhere else. `application` mounts the same files as its `testing` module for its own unit tests (`crate::testing::llm::…`). They are not a feature of `application`: a feature turned on by dev-dependencies would build `application` and every crate above it twice, once for `cargo build` and once for `cargo test`.
+The fakes live in `crates/app-testing` (package `application-testing`). Another crate uses them as a dev-dependency only, `application-testing.workspace = true` under `[dev-dependencies]`, and imports them as `application_testing::llm::ScriptedLlm`; `scripts/check-arch.sh` rejects it anywhere else. `application-core` and `application` each mount the same files as their `testing` module for their own unit tests (`crate::testing::llm::…`), so the fakes' own tests run in both. They are not a feature of the application crates: a feature turned on by dev-dependencies would build them and every crate above them twice, once for `cargo build` and once for `cargo test`.
 
 | Module | Fakes |
 | --- | --- |
@@ -198,12 +198,12 @@ For the UI there are runnable examples in `crates/ui/examples/`, for example `ca
 
 ## Adding a tool
 
-1. Write a type that implements `TypedTool` (`crates/app/src/tools/registry.rs`). The input is a `struct` with `Deserialize + JsonSchema`, and the schema is derived with `schemars`. If you need full control over the schema, implement `Tool` directly.
+1. Write a type that implements `TypedTool` (`crates/app-core/src/tools/registry.rs`). The input is a `struct` with `Deserialize + JsonSchema`, and the schema is derived with `schemars`. If you need full control over the schema, implement `Tool` directly.
    - `name`: must match `^[a-zA-Z0-9_-]{1,128}$` and be unique in the registry.
    - `description`: written for the model; say when to use it and when not to.
    - `effect(&input)`: returns `ToolEffect::{Read, Write, Execute, Network}`. This is what the permission policy decides on.
    - `prepare(input, ctx)`: validates and returns a `PreparedCall::new(subject, future)`. `subject` is what is shown and what an "always" rule covers (a path, a command line). Optionally add `.with_preview(ApprovalPreview::…)` and an extra block (like the `Diff` of `edit_file`). The future does the work and returns a `ToolOutput`.
-2. If the tool needs I/O, ask for a port, not an adapter. If no suitable one exists, extend or create one in `crates/app/src/ports/`, with its fake in `testing`.
+2. If the tool needs I/O, ask for a port, not an adapter. If no suitable one exists, extend or create one in `crates/app-core/src/ports/`, with its fake in `testing`.
 3. Register it in `register_tools` (`crates/bin/src/root/tool_registry.rs`, called by `build_app`) with `tools.register_typed(...)` or `tools.register(Arc::new(...))`. File tools are registered in `register_file_tools` and component tools in `register_component_tools`.
 4. Add an `insta` snapshot of its definition, as in `tools/files.rs` and `tools/components.rs`, and tests with the fakes.
 
