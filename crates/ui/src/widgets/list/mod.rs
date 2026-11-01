@@ -326,18 +326,8 @@ impl ListView {
             format!("{} of {} items", self.visible.len(), self.spec.items.len())
         };
         let follow = if self.follow { "following" } else { "follow" };
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(title.to_owned())),
-            )
+        crate::kit::header(cx)
+            .child(crate::kit::title(SharedString::from(title.to_owned())))
             .child(
                 div()
                     .text_xs()
@@ -346,24 +336,26 @@ impl ListView {
                     .child(count),
             )
             .child(
-                h_flex()
-                    .gap_1()
-                    .text_xs()
+                crate::kit::toolbar(cx)
                     .child(
-                        super::tool_button("filter-list-follow", follow, cx).on_click(cx.listener(
-                            |this, _, _, cx| {
+                        crate::kit::tool_button("filter-list-follow", follow, cx).on_click(
+                            cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
                                 let follow = !this.follow;
                                 this.set_follow(follow, cx);
-                            },
-                        )),
+                            }),
+                        ),
                     )
-                    .child(super::tool_button("filter-list-copy", "copy", cx).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            cx.write_to_clipboard(ClipboardItem::new_string(this.visible_text()));
-                        }),
-                    )),
+                    .child(
+                        crate::kit::tool_button("filter-list-copy", "copy", cx).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    this.visible_text(),
+                                ));
+                            }),
+                        ),
+                    ),
             )
             .into_any_element()
     }

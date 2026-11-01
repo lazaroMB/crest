@@ -19,11 +19,10 @@ use std::rc::Rc;
 use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::engineering::waveform::{Radix, SignalKind, WaveSignal, WaveformSpec, format_value};
 use gpui::{
-    AnyElement, App, Bounds, ContentMask, Context, FocusHandle, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, canvas, div, fill, point,
-    px, size,
+    AnyElement, App, Bounds, ContentMask, Context, FocusHandle, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, fill, point, px, size,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -32,9 +31,9 @@ use super::copy::CopyFormat;
 use super::trace::file_name;
 use crate::blocks::chart::layout::{Align, Label};
 use crate::blocks::chart::paint::LabelFont;
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
 use crate::widgets::timeline::axis::{Viewport, visible_rows};
-use crate::widgets::{readout, tool_button};
 
 /// Height of the axis band.
 pub const AXIS_HEIGHT: f32 = 22.0;
@@ -425,18 +424,8 @@ impl WaveformView {
             tool_button(id, label, cx)
                 .on_click(cx.listener(move |this, _, _, cx| this.set_radix(radix, cx)))
         };
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(title)),
-            )
+        crate::kit::header(cx)
+            .child(crate::kit::title(SharedString::from(title)))
             .child(
                 div()
                     .debug_selector(|| "waveform-cursor".to_owned())

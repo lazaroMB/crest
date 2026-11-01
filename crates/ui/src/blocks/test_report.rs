@@ -21,9 +21,9 @@ use std::collections::BTreeSet;
 use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::report::{TestCase, TestOutcome, TestReportSpec};
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _, px, relative,
+    AnyElement, App, Context, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
+    div, px, relative,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -198,17 +198,9 @@ impl TestReportView {
             let tint = color(outcome, cx);
             let name = outcome_name(outcome);
             chips = chips.child(
-                div()
+                crate::kit::filter_chip(format!("{count} {name}"), tint, active, cx)
                     .id(self.element_id(&format!("chip-{name}")))
                     .debug_selector(move || format!("test-report-chip-{name}"))
-                    .px_1p5()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(if active { tint } else { theme.border })
-                    .when(active, |chip| chip.bg(tint.opacity(0.15)))
-                    .text_color(tint)
-                    .cursor_pointer()
-                    .child(SharedString::from(format!("{count} {name}")))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.toggle_filter(outcome, cx);
@@ -249,18 +241,8 @@ impl TestReportView {
         v_flex()
             .gap_1()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(SharedString::from(title)),
-                    )
+                crate::kit::header(cx)
+                    .child(crate::kit::title(SharedString::from(title)))
                     .child(chips),
             )
             .child(bar)
@@ -316,12 +298,7 @@ impl TestReportView {
             );
         }
         if let Some(secs) = case.time_secs {
-            line = line.child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(duration(secs))),
-            );
+            line = line.child(crate::kit::caption(SharedString::from(duration(secs)), cx));
         }
         let mut row = v_flex().gap_0p5().child(line);
         if let Some(message) = &case.message {

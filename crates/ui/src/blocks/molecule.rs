@@ -16,9 +16,8 @@ use domain::block::{BlockKind, BlockTag, ImageData};
 use domain::science::MoleculeSpec;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, FontWeight, Hsla, ImageSource, InteractiveElement as _, IntoElement as _,
-    ObjectFit, ParentElement as _, SharedString, Styled as _, StyledImage as _, Window, div, img,
-    px,
+    AnyElement, App, FontWeight, ImageSource, InteractiveElement as _, IntoElement as _, ObjectFit,
+    ParentElement as _, SharedString, Styled as _, StyledImage as _, Window, div, img, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
@@ -83,17 +82,6 @@ pub fn claim_text(spec: &MoleculeSpec) -> Option<(String, Option<bool>)> {
 /// The SVG of the block as image data, hashed, made once per revision of
 /// the block.
 struct Depiction(Option<SvgData>);
-
-fn chip(text: String, color: Hsla) -> gpui::Div {
-    div()
-        .px_1p5()
-        .rounded_sm()
-        .border_1()
-        .border_color(color)
-        .text_xs()
-        .text_color(color)
-        .child(text)
-}
 
 fn field(label: &'static str, value: String, mono: Option<SharedString>, cx: &App) -> gpui::Div {
     let theme = cx.theme();
@@ -190,8 +178,13 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     if let Some(error) = &spec.error {
         return card
             .child(
-                chip(format!("SMILES parse error: {error}"), theme.danger)
-                    .debug_selector(|| "molecule-error".to_owned()),
+                crate::kit::chip(
+                    format!("SMILES parse error: {error}"),
+                    theme.danger,
+                    crate::kit::ChipKind::Outline,
+                    cx,
+                )
+                .debug_selector(|| "molecule-error".to_owned()),
             )
             .child(
                 div()
@@ -237,7 +230,10 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
             None => theme.warning,
         };
         card = card.child(
-            h_flex().child(chip(text, color).debug_selector(|| "molecule-claim".to_owned())),
+            h_flex().child(
+                crate::kit::chip(text, color, crate::kit::ChipKind::Outline, cx)
+                    .debug_selector(|| "molecule-claim".to_owned()),
+            ),
         );
     }
     card.into_any_element()

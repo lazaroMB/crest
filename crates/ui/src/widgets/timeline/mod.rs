@@ -391,44 +391,30 @@ impl TimelineView {
             self.spec.rows.len(),
             self.spec.span_count()
         );
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(title.to_owned())),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(hint),
-            )
+        crate::kit::header(cx)
+            .child(crate::kit::title(SharedString::from(title.to_owned())))
+            .child(crate::kit::caption(hint, cx))
             .child(self.toolbar(cx))
             .into_any_element()
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
-        h_flex()
-            .gap_1()
-            .text_xs()
-            .child(super::readout(format!("×{}", zoom_text(self.zoom())), cx))
+        crate::kit::toolbar(cx)
+            .child(crate::kit::readout(
+                format!("×{}", zoom_text(self.zoom())),
+                cx,
+            ))
             .child(
-                super::tool_button("timeline-zoom-out", "−", cx).on_click(
+                crate::kit::tool_button("timeline-zoom-out", "−", cx).on_click(
                     cx.listener(|this, _, _, cx| this.zoom_by(1.0 / ZOOM_STEP, None, cx)),
                 ),
             )
             .child(
-                super::tool_button("timeline-zoom-in", "+", cx)
+                crate::kit::tool_button("timeline-zoom-in", "+", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, None, cx))),
             )
             .child(
-                super::tool_button("timeline-fit", "fit", cx)
+                crate::kit::tool_button("timeline-fit", "fit", cx)
                     .on_click(cx.listener(|this, _, _, cx| this.fit(cx))),
             )
             .into_any_element()

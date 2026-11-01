@@ -39,8 +39,9 @@ use super::copy::CopyFormat;
 use super::trace::caption;
 use crate::blocks::chart::layout::{Align, Label};
 use crate::blocks::chart::paint::LabelFont;
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
-use crate::widgets::{readout, register_input, tool_button};
+use crate::widgets::register_input;
 
 /// Height of a frame row.
 pub const ROW_HEIGHT: f32 = 18.0;
@@ -311,7 +312,7 @@ impl FlameView {
 
     fn header(&self, cx: &mut Context<Self>) -> AnyElement {
         let spec = &self.spec;
-        let theme = cx.theme();
+        let _theme = cx.theme();
         let mut info = format!(
             "{} · {} {} · {} frames",
             spec.format.name(),
@@ -334,24 +335,9 @@ impl FlameView {
             )
             .debug_selector(|| "flame-matches".to_owned())
         });
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.title.clone()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(info),
-            )
+        crate::kit::header(cx)
+            .child(crate::kit::title(self.title.clone()))
+            .child(crate::kit::caption(info, cx))
             .children(found)
             .child(
                 div()

@@ -299,13 +299,7 @@ impl ComputedCard {
             }));
         title = title.child(chip);
         let pill = |text: String, color: Hsla| {
-            div()
-                .px_1()
-                .rounded_sm()
-                .text_xs()
-                .bg(color.opacity(0.15))
-                .text_color(color)
-                .child(SharedString::from(text))
+            crate::kit::chip(text, color, crate::kit::ChipKind::Soft, cx)
         };
         match badge(computed) {
             Some(Badge::Verified(at)) => {

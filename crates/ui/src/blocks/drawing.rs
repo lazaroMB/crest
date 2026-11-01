@@ -27,9 +27,9 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::BlockView;
 use super::copy::CopyFormat;
+use crate::kit::{readout, tool_button};
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
-use crate::widgets::{readout, tool_button};
 
 /// Height of the drawing canvas, in pixels.
 pub const CANVAS_HEIGHT: f32 = 480.0;

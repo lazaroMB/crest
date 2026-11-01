@@ -43,8 +43,9 @@ use self::map::{MapColors, plasmid_svg};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::svg::{SvgData, SvgState, hex};
+use crate::kit::{readout, tool_button};
 use crate::timeline::TimelineEntry;
-use crate::widgets::{palette, readout, register_input, tool_button};
+use crate::widgets::{palette, register_input};
 
 /// Residues per line.
 pub const LINE_WIDTH: usize = 60;

@@ -23,7 +23,7 @@ use std::rc::Rc;
 use domain::block::{BlockId, BlockKind, BlockTag};
 use domain::plot::{CompiledFunction, PlotSpec};
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, Context, ElementId, Entity, FontWeight, Hsla,
+    AnyElement, App, AppContext as _, Bounds, Context, ElementId, Entity, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, SharedString,
     Styled as _, Subscription, Window, div, point, prelude::FluentBuilder as _, px,
 };
@@ -621,18 +621,8 @@ impl Render for PlotView {
             .border_1()
             .border_color(border)
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(SharedString::from(title)),
-                    )
+                crate::kit::header(cx)
+                    .child(crate::kit::title(SharedString::from(title)))
                     .child(
                         div()
                             .text_xs()

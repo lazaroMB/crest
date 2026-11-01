@@ -35,9 +35,10 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::drawing::Viewport;
+use crate::kit::{readout, tool_button};
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
-use crate::widgets::{palette, readout, tool_button};
+use crate::widgets::palette;
 
 /// Height of the map canvas, in pixels.
 pub const CANVAS_HEIGHT: f32 = 440.0;

@@ -432,18 +432,8 @@ impl GraphView {
             self.spec.edges.len(),
             self.spec.layout.name(),
         );
-        h_flex()
-            .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(title.to_owned())),
-            )
+        crate::kit::header(cx)
+            .child(crate::kit::title(SharedString::from(title.to_owned())))
             .child(
                 div()
                     .min_w_0()
@@ -455,20 +445,21 @@ impl GraphView {
                     .child(hint),
             )
             .child(
-                h_flex()
-                    .gap_1()
-                    .text_xs()
-                    .child(super::readout(format!("{:.0}%", self.scale * 100.0), cx))
-                    .child(super::tool_button("graph-zoom-out", "−", cx).on_click(
+                crate::kit::toolbar(cx)
+                    .child(crate::kit::readout(
+                        format!("{:.0}%", self.scale * 100.0),
+                        cx,
+                    ))
+                    .child(crate::kit::tool_button("graph-zoom-out", "−", cx).on_click(
                         cx.listener(|this, _, _, cx| this.zoom_by(1.0 / ZOOM_STEP, None, cx)),
                     ))
                     .child(
-                        super::tool_button("graph-zoom-in", "+", cx).on_click(
+                        crate::kit::tool_button("graph-zoom-in", "+", cx).on_click(
                             cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, None, cx)),
                         ),
                     )
                     .child(
-                        super::tool_button("graph-fit", "fit", cx)
+                        crate::kit::tool_button("graph-fit", "fit", cx)
                             .on_click(cx.listener(|this, _, _, cx| this.fit(cx))),
                     ),
             )

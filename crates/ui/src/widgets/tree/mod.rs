@@ -193,34 +193,20 @@ impl TreeView {
             .as_deref()
             .filter(|t| !t.trim().is_empty())
             .unwrap_or("Tree");
-        h_flex()
-            .gap_2()
+        crate::kit::header(cx)
+            .child(crate::kit::title(SharedString::from(title.to_owned())))
+            .child(crate::kit::caption(
+                format!("{} nodes", self.rows.len()),
+                cx,
+            ))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(SharedString::from(title.to_owned())),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("{} nodes", self.rows.len())),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .text_xs()
+                crate::kit::toolbar(cx)
                     .child(
-                        super::tool_button("tree-expand-all", "expand all", cx)
+                        crate::kit::tool_button("tree-expand-all", "expand all", cx)
                             .on_click(cx.listener(|this, _, _, cx| this.expand_all(cx))),
                     )
                     .child(
-                        super::tool_button("tree-collapse-all", "collapse all", cx)
+                        crate::kit::tool_button("tree-collapse-all", "collapse all", cx)
                             .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
                     ),
             )

@@ -597,13 +597,21 @@ pub const MAX_SHAPE: u16 = 128;
 /// Every shape token. The defaults are the sizes the UI was drawn with
 /// before they were tokens, so a theme that sets none looks the same.
 pub const SHAPE: &[ShapeSpec] = &[
-    shape("space.xxs", 2, "Hairline gaps: between an icon and its label."),
+    shape(
+        "space.xxs",
+        2,
+        "Hairline gaps: between an icon and its label.",
+    ),
     shape("space.xs", 4, "Gaps inside a row of chips or a toolbar."),
     shape("space.sm", 6, "Padding of chips and small buttons."),
     shape("space.md", 8, "Gaps between the parts of a block."),
     shape("space.lg", 12, "Padding of cards and dialogs."),
     shape("space.xl", 16, "Gaps between sections."),
-    shape("radius.sm", 4, "Corners of chips, badges and small buttons."),
+    shape(
+        "radius.sm",
+        4,
+        "Corners of chips, badges and small buttons.",
+    ),
     shape("radius.md", 6, "Corners of cards, inputs and popovers."),
     shape("radius.lg", 8, "Corners of dialogs and large panels."),
     shape("text.caption", 12, "Captions, readouts and chip labels."),

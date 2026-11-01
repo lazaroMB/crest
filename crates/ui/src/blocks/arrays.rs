@@ -29,9 +29,10 @@ use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use super::BlockView;
 use super::copy::CopyFormat;
 use super::custom::node_id;
+use crate::kit::readout;
 use crate::theme::token;
 use crate::timeline::TimelineEntry;
-use crate::widgets::{self, palette, readout};
+use crate::widgets::{self, palette};
 
 /// Height of the heatmap canvas, in pixels.
 pub const HEATMAP_HEIGHT: f32 = 320.0;

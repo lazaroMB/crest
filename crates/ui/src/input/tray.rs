@@ -142,8 +142,8 @@ impl ImageTray {
             .enumerate()
             .map(|(ix, image)| thumbnail(ix, image, cx))
             .collect();
-        let model = self.chip("→ Model", ImageMode::Model, cx);
-        let chat = self.chip("Chat only", ImageMode::ChatOnly, cx);
+        let model = self.mode_chip("→ Model", ImageMode::Model, cx);
+        let chat = self.mode_chip("Chat only", ImageMode::ChatOnly, cx);
         let theme = cx.theme();
         Some(
             v_flex()
@@ -169,7 +169,7 @@ impl ImageTray {
         )
     }
 
-    fn chip(
+    fn mode_chip(
         &self,
         label: &'static str,
         mode: ImageMode,
@@ -184,29 +184,16 @@ impl ImageTray {
             input.tray.mode = mode;
             cx.notify();
         });
-        let theme = cx.theme();
-        let chip = div()
+        let text = if on {
+            format!("◉ {label}")
+        } else {
+            format!("○ {label}")
+        };
+        crate::kit::toggle_chip(text, on, cx)
             .id(label)
             .debug_selector(move || selector.to_owned())
-            .px_2()
-            .rounded_md()
-            .border_1()
-            .cursor_pointer()
-            .child(if on {
-                format!("◉ {label}")
-            } else {
-                format!("○ {label}")
-            })
-            .on_click(listener);
-        if on {
-            chip.border_color(theme.primary)
-                .text_color(theme.primary)
-                .into_any_element()
-        } else {
-            chip.border_color(theme.border)
-                .text_color(theme.muted_foreground)
-                .into_any_element()
-        }
+            .on_click(listener)
+            .into_any_element()
     }
 }
 
