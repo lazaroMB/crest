@@ -2,8 +2,8 @@
 //! Surfer's backend).
 //!
 //! The header gives the scope tree and the variables; the selected
-//! variables' signals are loaded single-threaded from an in-memory copy
-//! of the file and their changes copied as strings: bits most significant
+//! variables' signals are loaded from an in-memory copy of the file, one
+//! signal per rayon job, and their changes copied as strings: bits most significant
 //! first, reals as Rust prints them, text as is. Consecutive repeats of a
 //! value (VCD files rewrite values at `$dumpvars`) are dropped, so every
 //! change is a visible edge. A var's bit range (`[7:0]`) is appended to
@@ -108,8 +108,12 @@ fn value_text(value: &SignalValueRef<'_>) -> String {
 }
 
 fn read(bytes: Vec<u8>, request: &WaveRequest) -> Result<WaveformSpec, String> {
+    // `multi_thread` splits the parse of a VCD body across threads, but
+    // wellen does so only for files it maps itself; an in-memory reader
+    // (bytes read through the file system port) is parsed in one pass
+    // either way. The signals are loaded in parallel below.
     let options = LoadOptions {
-        multi_thread: false,
+        multi_thread: true,
         remove_scopes_with_empty_name: false,
     };
     let header = read_header(Cursor::new(bytes), &options).map_err(|e| e.to_string())?;
@@ -152,7 +156,7 @@ fn read(bytes: Vec<u8>, request: &WaveRequest) -> Result<WaveformSpec, String> {
     ids.sort();
     ids.dedup();
     let loaded: HashMap<wellen::SignalRef, wellen::Signal> = source
-        .load_signals(&ids, &h, false)
+        .load_signals(&ids, &h, true)
         .into_iter()
         .map(|s| (s.signal_ref(), s))
         .collect();

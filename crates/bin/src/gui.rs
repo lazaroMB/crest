@@ -1510,13 +1510,14 @@ impl SessionController for UiController {
     }
 
     fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
-        login_on(
+        let login = login_on(
             &self.handle,
             Arc::clone(&self.api_keys),
             account,
             key,
             self.preferences_path.clone(),
-        )
+        );
+        forget_models_after(self.catalog.clone(), login)
     }
 
     fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
@@ -1599,7 +1600,8 @@ impl SessionController for UiController {
     }
 
     fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
-        logout_on(&self.handle, Arc::clone(&self.api_keys), account)
+        let logout = logout_on(&self.handle, Arc::clone(&self.api_keys), account);
+        forget_models_after(self.catalog.clone(), logout)
     }
 
     fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
@@ -1715,6 +1717,21 @@ fn login_on(
         joined.unwrap_or_else(|err| Err(err.to_string()))
     })
     .boxed()
+}
+
+/// Runs `change` (a `/login` or `/logout`) and, if it went through, drops
+/// the model listings `catalog` keeps, so the next `/model` asks again.
+fn forget_models_after(
+    catalog: Option<Arc<dyn ModelCatalogPort>>,
+    change: BoxFuture<'static, Result<String, String>>,
+) -> BoxFuture<'static, Result<String, String>> {
+    change
+        .inspect(move |done| {
+            if let (Ok(_), Some(catalog)) = (done, &catalog) {
+                catalog.invalidate();
+            }
+        })
+        .boxed()
 }
 
 /// Aborts a runtime task when dropped.
@@ -2128,7 +2145,7 @@ impl ProjectOpener for Launcher {
                 };
                 let mut stored = store.load(id).await.map_err(|err| err.to_string())?;
                 stored.session.title = Some(title);
-                store.save(&stored).await.map_err(|err| err.to_string())
+                store.save(stored).await.map_err(|err| err.to_string())
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()

@@ -108,6 +108,9 @@ numbat = { version = "=1.24.0", default-features = false }
 # Seeded resampling and simulation (bootstrap, Monte Carlo, simulated
 # p-values): ChaCha20, the same stream on every platform.
 rand_chacha = { version = "0.10.0", default-features = false }
+# Data parallelism for CPU-bound adapter work (resampling statistics, STEP
+# shells, waveform signals); the version wellen and truck already pull.
+rayon = "1.12.0"
 # Forecasts: MSTL decomposition with an AutoETS trend (augurs, MIT OR
 # Apache-2.0; pulls nalgebra, stlrs and rand 0.8, all permissive).
 augurs-core = "=0.10.2"

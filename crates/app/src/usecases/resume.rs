@@ -118,7 +118,7 @@ mod tests {
         let old = stored("/ws", 10);
         let new = stored("/ws", 20);
         for session in [&old, &new, &stored("/otro", 30)] {
-            store.save(session).await.unwrap();
+            store.save(session.clone()).await.unwrap();
         }
         let resumed = resume_latest(&store, "/ws").await.unwrap();
         assert_eq!(resumed, Some(new));
@@ -129,7 +129,7 @@ mod tests {
         let store = InMemorySessionStore::new();
         let session = stored(r"C:\ws", 10);
         let id = session.session.id;
-        store.save(&session).await.unwrap();
+        store.save(session.clone()).await.unwrap();
         assert_eq!(
             resume_by_id(&store, id, "C:/ws").await.unwrap().session.id,
             id

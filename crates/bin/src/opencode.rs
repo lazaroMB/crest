@@ -15,6 +15,8 @@
 //! ones the account cannot use: Go without a subscription, and Zen's free
 //! models outside OpenCode's own client. [`probe_access`] asks once with a
 //! one-token request, and [`provider`] hides what the answer ruled out.
+//! Both list the models through the same [`PlanListings`], so a start that
+//! probes lists each plan once.
 
 use std::sync::Arc;
 
@@ -23,7 +25,7 @@ use adapter_openai::{Api, OpenAiBackend, OpenAiCatalog, OpenAiClient, OpenAiConf
 use application::llm_retry::ModelBackend;
 use application::ports::credentials::KeyCheck;
 use application::ports::llm::{LlmError, LlmRequest, LlmStream, ModelCatalogPort, ModelInfo};
-use application::providers::{Provider, ProvidersOptions, WireFormat};
+use application::providers::{CachedCatalog, Provider, ProvidersOptions, WireFormat};
 use async_trait::async_trait;
 use domain::conversation::{Message, SessionId};
 use domain::model::{ModelId, ModelRole, ModelSpec, ProviderId, ResolvedModel, SpecSource};
@@ -127,12 +129,13 @@ fn is_free(model: &str) -> bool {
 pub async fn probe_access(
     key: &str,
     options: &ProvidersOptions,
+    listings: &PlanListings,
     timeout: std::time::Duration,
 ) -> PlanAccess {
     let all = PlanAccess::default();
     let (Ok(go), Ok(zen)) = (
-        provider(key, ProviderId::OpencodeGo, options, all),
-        provider(key, ProviderId::OpencodeZen, options, all),
+        provider(key, ProviderId::OpencodeGo, options, all, listings),
+        provider(key, ProviderId::OpencodeZen, options, all, listings),
     ) else {
         return all;
     };
@@ -203,9 +206,47 @@ fn probe_request(model: &ModelId) -> LlmRequest {
     request
 }
 
+/// The model lists of both plans for one key, each a [`CachedCatalog`]:
+/// the plan probe, the role validation at start-up and the `/model`
+/// picker all read the same listing.
+#[derive(Clone)]
+pub struct PlanListings {
+    go: Arc<CachedCatalog>,
+    zen: Arc<CachedCatalog>,
+}
+
+impl PlanListings {
+    /// The listings of `key`'s plans, at the base URL of `options`.
+    ///
+    /// # Errors
+    ///
+    /// When a client cannot be built (an invalid key or TLS failure).
+    pub fn new(key: &str, options: &ProvidersOptions) -> Result<Self, LlmError> {
+        let base = options.opencode_base_url.as_deref().unwrap_or(BASE_URL);
+        let listing = |plan| -> Result<Arc<CachedCatalog>, LlmError> {
+            let base = plan_base(base, plan);
+            let client = OpenAiClient::new(key, openai_config(&format!("{base}/v1")))?;
+            Ok(Arc::new(CachedCatalog::new(Arc::new(OpenAiCatalog::new(
+                client,
+            )))))
+        };
+        Ok(Self {
+            go: listing(ProviderId::OpencodeGo)?,
+            zen: listing(ProviderId::OpencodeZen)?,
+        })
+    }
+
+    fn of(&self, plan: ProviderId) -> Arc<CachedCatalog> {
+        match plan {
+            ProviderId::OpencodeGo => Arc::clone(&self.go),
+            _ => Arc::clone(&self.zen),
+        }
+    }
+}
+
 /// The model list of one plan without the models `access` rules out.
 struct PlanCatalog {
-    inner: OpenAiCatalog,
+    inner: Arc<CachedCatalog>,
     plan: ProviderId,
     access: PlanAccess,
 }
@@ -220,10 +261,15 @@ impl ModelCatalogPort for PlanCatalog {
         models.retain(|m| self.access.allows(self.plan, m.id.as_str()));
         Ok(models)
     }
+
+    fn invalidate(&self) {
+        self.inner.invalidate();
+    }
 }
 
-/// The OpenCode provider `plan` (Go or Zen) with `key`; its catalog leaves
-/// out what `access` rules out.
+/// The OpenCode provider `plan` (Go or Zen) with `key`; its catalog is the
+/// plan's listing in `listings` (made for the same key) without what
+/// `access` rules out.
 ///
 /// # Errors
 ///
@@ -233,6 +279,7 @@ pub fn provider(
     plan: ProviderId,
     options: &ProvidersOptions,
     access: PlanAccess,
+    listings: &PlanListings,
 ) -> Result<Provider, LlmError> {
     let base = options.opencode_base_url.as_deref().unwrap_or(BASE_URL);
     let base = plan_base(base, plan);
@@ -247,7 +294,6 @@ pub fn provider(
         },
     )?;
     let openai = OpenAiClient::new(key, openai_config(&format!("{base}/openai/v1")))?;
-    let catalog = OpenAiClient::new(key, openai_config(&format!("{base}/v1")))?;
     let backend = OpencodeBackend {
         anthropic: AnthropicBackend::new(anthropic),
         chat: OpenAiBackend::new(openai.clone(), Api::Chat),
@@ -258,7 +304,7 @@ pub fn provider(
     Ok(Provider {
         backend: Arc::new(backend),
         catalog: Arc::new(PlanCatalog {
-            inner: OpenAiCatalog::new(catalog),
+            inner: listings.of(plan),
             plan,
             access,
         }),
@@ -401,11 +447,14 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        let options = options(&server);
+        let listings = PlanListings::new("oc-key", &options).unwrap();
         let provider = provider(
             "oc-key",
             ProviderId::OpencodeGo,
-            &options(&server),
+            &options,
             PlanAccess::default(),
+            &listings,
         )
         .unwrap();
         for model in ["glm-5.3", "claude-haiku-5-5"] {
@@ -441,11 +490,14 @@ mod tests {
             })))
             .mount(&server)
             .await;
+        let options = options(&server);
+        let listings = PlanListings::new("bad", &options).unwrap();
         let provider = provider(
             "bad",
             ProviderId::OpencodeZen,
-            &options(&server),
+            &options,
             PlanAccess::default(),
+            &listings,
         )
         .unwrap();
         let Err(LlmError::Auth { message }) = provider
@@ -457,7 +509,7 @@ mod tests {
         };
         assert!(message.contains("/login opencode"), "{message}");
         assert!(matches!(
-            check_key("bad", &options(&server)).await,
+            check_key("bad", &options).await,
             KeyCheck::Rejected(_)
         ));
     }
@@ -478,9 +530,11 @@ mod tests {
         };
         let ok = "data: {\"model\":\"x\",\"choices\":[{\"delta\":{\"content\":\"h\"},\
                   \"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n";
+        // Each plan is listed once: the probe and the catalogs share it.
         Mock::given(method("GET"))
             .and(path("/go/v1/models"))
             .respond_with(list(&["glm-5.3"]))
+            .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -495,6 +549,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/v1/models"))
             .respond_with(list(&["beam-free", "glm-5.3", "glm-5.3-flash"]))
+            .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -516,13 +571,15 @@ mod tests {
             .await;
 
         let options = options(&server);
-        let access = probe_access("oc-key", &options, std::time::Duration::from_secs(5)).await;
+        let listings = PlanListings::new("oc-key", &options).unwrap();
+        let timeout = std::time::Duration::from_secs(5);
+        let access = probe_access("oc-key", &options, &listings, timeout).await;
         assert_eq!(
             (access.go, access.zen, access.zen_free),
             (Some(false), Some(true), Some(false))
         );
         let ids = |plan| {
-            let provider = provider("oc-key", plan, &options, access).unwrap();
+            let provider = provider("oc-key", plan, &options, access, &listings).unwrap();
             async move {
                 let models = provider.catalog.list_models().await.unwrap();
                 models

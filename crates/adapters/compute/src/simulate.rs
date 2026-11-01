@@ -20,6 +20,7 @@ use domain::computed::{
     SimulationBody, TornadoBar, UncertaintyKind, WarningSeverity, apa,
 };
 use domain::plot::expr::Expr;
+use rayon::prelude::*;
 use serde_json::Value;
 
 use crate::data::key_part;
@@ -150,6 +151,38 @@ pub(crate) fn draw(d: &SimDistribution, rng: &mut Rng) -> f64 {
     }
 }
 
+/// The part of [`draw`] that reads the seeded stream: the uniform an
+/// inverse-CDF draw maps through [`quantile_of`], or the finished value of
+/// a draw that needs the stream itself (PERT's gamma rejection) or none
+/// (fixed). `finish(d, draw_raw(d, rng))` is `draw(d, rng)` bit for bit,
+/// and reads the stream the same way, so the stream can be read in order
+/// and the mapping done later on another thread.
+pub(crate) fn draw_raw(d: &SimDistribution, rng: &mut Rng) -> f64 {
+    match *d {
+        SimDistribution::Fixed { value } => value,
+        SimDistribution::Pert { .. } => draw(d, rng),
+        SimDistribution::Uniform { .. }
+        | SimDistribution::Normal { .. }
+        | SimDistribution::Lognormal { .. }
+        | SimDistribution::Triangular { .. } => rng.uniform(),
+    }
+}
+
+/// The draw of `d` from what [`draw_raw`] read.
+pub(crate) fn finish(d: &SimDistribution, raw: f64) -> f64 {
+    match *d {
+        SimDistribution::Fixed { .. } | SimDistribution::Pert { .. } => raw,
+        SimDistribution::Uniform { .. }
+        | SimDistribution::Normal { .. }
+        | SimDistribution::Lognormal { .. }
+        | SimDistribution::Triangular { .. } => quantile_of(d, raw),
+    }
+}
+
+/// Raw draws read from the stream ahead of their mapping (samples × inputs):
+/// bounds that memory while keeping each batch big enough to share.
+pub(crate) const BATCH_VALUES: usize = 1 << 20;
+
 /// The distribution in words.
 fn describe(d: &SimDistribution) -> String {
     let n = |x: f64| apa::significant(x, 4);
@@ -231,22 +264,46 @@ pub fn run(
         columns: names.iter().map(|n| (*n).to_owned()).collect(),
         filter: None,
     });
-    // Draws.
+    // Draws. The stream is read in order, a batch at a time; mapping the
+    // draws through their distributions and the model runs in parallel,
+    // and the outputs keep the draw order, so the numbers are those of
+    // drawing and evaluating one point at a time.
     let mut rng = Rng::new(request.seed);
     let k = request.inputs.len();
-    let mut point = vec![0.0; k];
-    let mut out: Vec<f64> = Vec::with_capacity(request.samples as usize);
+    let samples = request.samples as usize;
+    let batch = (BATCH_VALUES / k).clamp(1, samples);
+    let mut raw: Vec<f64> = Vec::with_capacity(batch * k);
+    let mut ys: Vec<f64> = Vec::with_capacity(batch);
+    let mut out: Vec<f64> = Vec::with_capacity(samples);
     let mut undefined = 0u64;
-    for _ in 0..request.samples {
-        for (slot, input) in point.iter_mut().zip(&request.inputs) {
-            *slot = draw(&input.distribution, &mut rng);
+    let mut left = samples;
+    while left > 0 {
+        let size = left.min(batch);
+        raw.clear();
+        for _ in 0..size {
+            for input in &request.inputs {
+                raw.push(draw_raw(&input.distribution, &mut rng));
+            }
         }
-        let y = model.eval(&point);
-        if y.is_finite() {
-            out.push(y);
-        } else {
-            undefined += 1;
+        raw.par_chunks(k)
+            .map_init(
+                || vec![0.0; k],
+                |point, drawn| {
+                    for ((slot, input), raw) in point.iter_mut().zip(&request.inputs).zip(drawn) {
+                        *slot = finish(&input.distribution, *raw);
+                    }
+                    model.eval(point)
+                },
+            )
+            .collect_into_vec(&mut ys);
+        for &y in &ys {
+            if y.is_finite() {
+                out.push(y);
+            } else {
+                undefined += 1;
+            }
         }
+        left -= size;
     }
     let medians: Vec<f64> = request
         .inputs
@@ -511,6 +568,42 @@ fn reproduce(computed: &mut Computed, request: &SimulateRequest, names: &[&str])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_raw_draw_finished_later_is_the_same_draw() {
+        let all = [
+            SimDistribution::Fixed { value: 2.5 },
+            SimDistribution::Uniform {
+                min: -1.0,
+                max: 3.0,
+            },
+            SimDistribution::Normal { mean: 3.0, sd: 0.4 },
+            SimDistribution::Lognormal {
+                low: 1.0,
+                high: 9.0,
+            },
+            SimDistribution::Triangular {
+                min: 0.0,
+                mode: 1.0,
+                max: 4.0,
+            },
+            SimDistribution::Pert {
+                min: 1.0,
+                mode: 2.0,
+                max: 5.0,
+            },
+        ];
+        let (mut a, mut b) = (Rng::new(3), Rng::new(3));
+        for _ in 0..500 {
+            for d in &all {
+                let direct = draw(d, &mut a);
+                let later = finish(d, draw_raw(d, &mut b));
+                assert_eq!(direct.to_bits(), later.to_bits(), "{d:?}");
+            }
+        }
+        // Both read the stream the same way.
+        assert_eq!(a.uniform().to_bits(), b.uniform().to_bits());
+    }
 
     #[test]
     fn quantiles_of_the_distributions() {

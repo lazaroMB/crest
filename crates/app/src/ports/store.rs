@@ -79,7 +79,10 @@ pub enum StoreError {
 pub trait SessionStorePort: Send + Sync {
     /// Inserts or replaces the session with the same id, updating its
     /// listing entry. Must be atomic: a crash leaves the old or new version.
-    async fn save(&self, session: &StoredSession) -> Result<(), StoreError>;
+    /// Takes the session by value: callers build it for the save, and an
+    /// adapter that writes on another thread can move it there instead of
+    /// copying the whole timeline again.
+    async fn save(&self, session: StoredSession) -> Result<(), StoreError>;
 
     /// Loads the session `id`, or fails with [`StoreError::NotFound`].
     async fn load(&self, id: SessionId) -> Result<StoredSession, StoreError>;
